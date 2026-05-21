@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 	"stonesuite-backend/config"
 	"stonesuite-backend/database"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var emailRegex = regexp.MustCompile(`\S+@\S+\.\S+`)
@@ -118,7 +119,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		expiresDuration = 24 * time.Hour
 	}
-	
+
 	token, err := generateJWT(user.ID, user.Email, expiresDuration)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -158,7 +159,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{
 			Success: false,
-			Message: "Invalid request payload format.",
+			Message: "Login failed. Invalid request payload format.",
 		})
 		return
 	}
@@ -190,7 +191,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{
 			Success: false,
-			Message: "Invalid email address or password.",
+			Message: "Login failed. Invalid email address or password.",
 		})
 		return
 	}
@@ -200,7 +201,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{
 			Success: false,
-			Message: "Invalid email address or password.",
+			Message: "Login failed. Invalid email address or password.",
 		})
 		return
 	}
@@ -216,7 +217,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		if req.RememberMe {
 			duration = 30 * 24 * time.Hour // 30 Days default remember me
 		} else {
-			duration = 24 * time.Hour      // 24 Hours default standard session
+			duration = 24 * time.Hour // 24 Hours default standard session
 		}
 	}
 
@@ -304,12 +305,12 @@ func generateJWT(userID, email string, duration time.Duration) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	secret := []byte(config.AppConfig.JWTSecret)
-	
+
 	signedToken, err := token.SignedString(secret)
 	if err != nil {
 		log.Printf("Token signing error: %v", err)
 		return "", err
 	}
-	
+
 	return signedToken, nil
 }

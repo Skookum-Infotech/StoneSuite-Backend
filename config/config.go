@@ -41,7 +41,7 @@ func Load() {
 	}
 
 	AppConfig = Config{
-		Port:                   getEnv("PORT", "5000"),
+		Port:                   getEnv("PORT", "8080"),
 		JWTSecret:              getEnv("JWT_SECRET", "stone_suite_go_backend_default_secret_key_change_me_in_prod"),
 		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "24h"),
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
@@ -50,12 +50,12 @@ func Load() {
 		// Microsoft Entra ID
 		EntraIDClientID:     getEnv("ENTRA_ID_CLIENT_ID", ""),
 		EntraIDClientSecret: getEnv("ENTRA_ID_CLIENT_SECRET", ""),
-		EntraIDRedirectURI:  getEnv("ENTRA_ID_REDIRECT_URI", "http://localhost:5000/api/auth/entra/callback"),
+		EntraIDRedirectURI:  getEnv("ENTRA_ID_REDIRECT_URI", "http://localhost:8080/api/auth/entra/callback"),
 		// AWS Cognito
 		CognitoClientID:     getEnv("COGNITO_CLIENT_ID", ""),
 		CognitoClientSecret: getEnv("COGNITO_CLIENT_SECRET", ""),
 		CognitoDomain:       getEnv("COGNITO_DOMAIN", ""),
-		CognitoRedirectURI:  getEnv("COGNITO_REDIRECT_URI", "http://localhost:5000/api/auth/cognito/callback"),
+		CognitoRedirectURI:  getEnv("COGNITO_REDIRECT_URI", "http://localhost:8080/api/auth/cognito/callback"),
 	}
 }
 

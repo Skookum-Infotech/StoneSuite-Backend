@@ -6,7 +6,7 @@ import "time"
 type User struct {
 	ID            string    `json:"id"`
 	Email         string    `json:"email"`
-	PasswordHash  string    `json:"-"` // Never output password hash in responses
+	PasswordHash  string    `json:"passwordHash,omitempty"` // Persist password hash but never expose it in API responses
 	FullName      string    `json:"fullName,omitempty"`
 	OAuthProvider string    `json:"oauthProvider,omitempty"` // "entra_id", "cognito", or empty for password auth
 	OAuthID       string    `json:"oauthId,omitempty"`       // External OAuth provider ID

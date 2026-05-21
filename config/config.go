@@ -13,8 +13,14 @@ type Config struct {
 	JWTSecret              string
 	JWTExpiresIn           string
 	JWTRememberMeExpiresIn string
-	DBFilePath             string
 	CorsOrigin             string
+	// PostgreSQL
+	DBHost     string
+	DBPort     string
+	DBUser     string
+	DBPassword string
+	DBName     string
+	DBSSLMode  string
 	// Microsoft Entra ID OAuth
 	EntraIDClientID     string
 	EntraIDClientSecret string
@@ -45,8 +51,14 @@ func Load() {
 		JWTSecret:              getEnv("JWT_SECRET", "stone_suite_go_backend_default_secret_key_change_me_in_prod"),
 		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "24h"),
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
-		DBFilePath:             getEnv("DB_FILE_PATH", "./data/users.json"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
+		// PostgreSQL
+		DBHost:     getEnv("DB_HOST", "localhost"),
+		DBPort:     getEnv("DB_PORT", "5432"),
+		DBUser:     getEnv("DB_USER", "stonesuite"),
+		DBPassword: getEnv("DB_PASSWORD", "stonesuite_secret"),
+		DBName:     getEnv("DB_NAME", "stonesuite"),
+		DBSSLMode:  getEnv("DB_SSLMODE", "disable"),
 		// Microsoft Entra ID
 		EntraIDClientID:     getEnv("ENTRA_ID_CLIENT_ID", ""),
 		EntraIDClientSecret: getEnv("ENTRA_ID_CLIENT_SECRET", ""),

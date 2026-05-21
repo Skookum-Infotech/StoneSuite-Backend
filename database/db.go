@@ -1,272 +1,187 @@
 package database
 
 import (
-	"crypto/rand"
-	"encoding/json"
-	"errors"
+	"database/sql"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"stonesuite-backend/config"
 	"stonesuite-backend/models"
+
+	_ "github.com/lib/pq"
 )
 
-var (
-	mu           sync.RWMutex
-	initialized  bool
-	resolvedPath string
-)
+var DB *sql.DB
 
-// Init resolves the DB filepath and creates the parent folder and empty file if missing.
+// Init initializes the PostgreSQL connection and ensures the users table exists.
 func Init() error {
-	mu.Lock()
-	defer mu.Unlock()
+	dsn := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		config.AppConfig.DBHost,
+		config.AppConfig.DBPort,
+		config.AppConfig.DBUser,
+		config.AppConfig.DBPassword,
+		config.AppConfig.DBName,
+		config.AppConfig.DBSSLMode,
+	)
 
-	if initialized {
-		return nil
-	}
-
-	dbPath := config.AppConfig.DBFilePath
-	// Resolve relative or absolute path based on CWD
-	cwd, err := os.Getwd()
+	var err error
+	DB, err = sql.Open("postgres", dsn)
 	if err != nil {
-		return fmt.Errorf("failed to get current working directory: %w", err)
+		return fmt.Errorf("failed to open database connection: %w", err)
 	}
 
-	if filepath.IsAbs(dbPath) {
-		resolvedPath = dbPath
-	} else {
-		resolvedPath = filepath.Join(cwd, dbPath)
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(5)
+	DB.SetConnMaxLifetime(5 * time.Minute)
+
+	if err = DB.Ping(); err != nil {
+		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	dir := filepath.Dir(resolvedPath)
+	log.Println("Connected to PostgreSQL successfully")
 
-	// Create directory if not exists
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create database directory: %w", err)
+	if err = runMigrations(); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	// Create file with empty array if not exists
-	if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
-		emptyDB := []models.User{}
-		data, err := json.MarshalIndent(emptyDB, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal empty database: %w", err)
-		}
-
-		if err := os.WriteFile(resolvedPath, data, 0644); err != nil {
-			return fmt.Errorf("failed to write initial empty database: %w", err)
-		}
-	}
-
-	initialized = true
 	return nil
 }
 
-// readUsersRaw reads from disk. Caller MUST hold RLock or Lock.
-func readUsersRaw() ([]models.User, error) {
-	file, err := os.Open(resolvedPath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-
-	var users []models.User
-	if err := json.Unmarshal(data, &users); err != nil {
-		return nil, err
-	}
-
-	return users, nil
-}
-
-// writeUsersRaw writes back to disk. Caller MUST hold Lock.
-func writeUsersRaw(users []models.User) error {
-	data, err := json.MarshalIndent(users, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(resolvedPath, data, 0644)
+func runMigrations() error {
+	query := `
+	CREATE TABLE IF NOT EXISTS users (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		email VARCHAR(255) UNIQUE NOT NULL,
+		password_hash TEXT,
+		full_name VARCHAR(255) NOT NULL,
+		oauth_provider VARCHAR(50),
+		oauth_id TEXT,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+	CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(oauth_provider, oauth_id);
+	`
+	_, err := DB.Exec(query)
+	return err
 }
 
 // GetAllUsers retrieves all user accounts.
 func GetAllUsers() ([]models.User, error) {
-	if err := Init(); err != nil {
+	query := `SELECT id, email, COALESCE(password_hash, ''), full_name,
+		COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''), created_at, updated_at
+		FROM users ORDER BY created_at DESC`
+
+	rows, err := DB.Query(query)
+	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	mu.RLock()
-	defer mu.RUnlock()
+	var users []models.User
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+			&u.OAuthProvider, &u.OAuthID, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
 
-	return readUsersRaw()
+	return users, rows.Err()
 }
 
 // GetUserByEmail finds a user by their email address (case-insensitive).
 func GetUserByEmail(email string) (*models.User, error) {
-	if err := Init(); err != nil {
-		return nil, err
+	query := `SELECT id, email, COALESCE(password_hash, ''), full_name,
+		COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''), created_at, updated_at
+		FROM users WHERE LOWER(email) = LOWER($1)`
+
+	var u models.User
+	err := DB.QueryRow(query, strings.TrimSpace(email)).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+		&u.OAuthProvider, &u.OAuthID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
 	}
-
-	mu.RLock()
-	defer mu.RUnlock()
-
-	users, err := readUsersRaw()
 	if err != nil {
 		return nil, err
 	}
-
-	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
-	for _, u := range users {
-		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
-			return &u, nil
-		}
-	}
-
-	return nil, nil // Not found
+	return &u, nil
 }
 
 // GetUserByID finds a user by their ID.
 func GetUserByID(id string) (*models.User, error) {
-	if err := Init(); err != nil {
-		return nil, err
+	query := `SELECT id, email, COALESCE(password_hash, ''), full_name,
+		COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''), created_at, updated_at
+		FROM users WHERE id = $1`
+
+	var u models.User
+	err := DB.QueryRow(query, id).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+		&u.OAuthProvider, &u.OAuthID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
 	}
-
-	mu.RLock()
-	defer mu.RUnlock()
-
-	users, err := readUsersRaw()
 	if err != nil {
 		return nil, err
 	}
-
-	for _, u := range users {
-		if u.ID == id {
-			return &u, nil
-		}
-	}
-
-	return nil, nil // Not found
+	return &u, nil
 }
 
 // CreateUser registers a new user with email, hashed password, and full name.
 func CreateUser(email, passwordHash, fullName string) (*models.User, error) {
-	if err := Init(); err != nil {
-		return nil, err
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	users, err := readUsersRaw()
-	if err != nil {
-		return nil, err
-	}
-
-	// Double-check duplicates under full Lock to prevent race condition
 	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
-	for _, u := range users {
-		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
-			return nil, errors.New("user with this email already exists")
+
+	query := `INSERT INTO users (email, password_hash, full_name)
+		VALUES ($1, $2, $3)
+		RETURNING id, email, COALESCE(password_hash, ''), full_name,
+			COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''), created_at, updated_at`
+
+	var u models.User
+	err := DB.QueryRow(query, normalizedEmail, passwordHash, strings.TrimSpace(fullName)).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+		&u.OAuthProvider, &u.OAuthID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			return nil, fmt.Errorf("user with this email already exists")
 		}
-	}
-
-	newUser := models.User{
-		ID:           generateUUID(),
-		Email:        normalizedEmail,
-		PasswordHash: passwordHash,
-		FullName:     strings.TrimSpace(fullName),
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-
-	users = append(users, newUser)
-	if err := writeUsersRaw(users); err != nil {
 		return nil, err
 	}
 
-	log.Printf("Successfully created and saved user: %s", newUser.Email)
-	return &newUser, nil
-}
-
-// generateUUID creates a cryptographically secure UUID v4.
-func generateUUID() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		// Fallback to timestamp + random string if rand fails
-		return fmt.Sprintf("u-%d-%s", time.Now().UnixNano(), strings.ReplaceAll(time.Now().Format("15-04-05.000"), ".", ""))
-	}
-
-	// RFC 4122 Variant and Version settings
-	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // Variant 10
-
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	log.Printf("Successfully created and saved user: %s", u.Email)
+	return &u, nil
 }
 
 // UpsertOAuthUser creates or updates a user authenticated via OAuth provider.
-// If the user already exists by email, it updates their OAuth info.
-// If they don't exist, it creates a new user record.
 func UpsertOAuthUser(email, fullName, provider, providerID string) (*models.User, error) {
-	if err := Init(); err != nil {
-		return nil, err
-	}
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
 
-	mu.Lock()
-	defer mu.Unlock()
+	query := `INSERT INTO users (email, full_name, oauth_provider, oauth_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (email) DO UPDATE SET
+			full_name = EXCLUDED.full_name,
+			oauth_provider = EXCLUDED.oauth_provider,
+			oauth_id = EXCLUDED.oauth_id,
+			updated_at = NOW()
+		RETURNING id, email, COALESCE(password_hash, ''), full_name,
+			COALESCE(oauth_provider, ''), COALESCE(oauth_id, ''), created_at, updated_at`
 
-	users, err := readUsersRaw()
+	var u models.User
+	err := DB.QueryRow(query, normalizedEmail, strings.TrimSpace(fullName), provider, providerID).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+		&u.OAuthProvider, &u.OAuthID, &u.CreatedAt, &u.UpdatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
-
-	// Check if user exists by email
-	for i, u := range users {
-		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
-			// Update existing user
-			users[i].FullName = strings.TrimSpace(fullName)
-			users[i].OAuthProvider = provider
-			users[i].OAuthID = providerID
-			users[i].UpdatedAt = time.Now()
-
-			if err := writeUsersRaw(users); err != nil {
-				return nil, err
-			}
-
-			log.Printf("Successfully updated OAuth user: %s (provider: %s)", users[i].Email, provider)
-			return &users[i], nil
-		}
-	}
-
-	// Create new user
-	newUser := models.User{
-		ID:            generateUUID(),
-		Email:         normalizedEmail,
-		FullName:      strings.TrimSpace(fullName),
-		OAuthProvider: provider,
-		OAuthID:       providerID,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-
-	users = append(users, newUser)
-	if err := writeUsersRaw(users); err != nil {
-		return nil, err
-	}
-
-	log.Printf("Successfully created new OAuth user: %s (provider: %s)", newUser.Email, provider)
-	return &newUser, nil
+	log.Printf("Successfully upserted OAuth user: %s (provider: %s)", u.Email, provider)
+	return &u, nil
 }

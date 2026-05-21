@@ -20,9 +20,9 @@ func main() {
 	config.Load()
 
 	// 2. Initialize Database Service
-	log.Println("Initializing persistent JSON database service...")
+	log.Println("Connecting to PostgreSQL database...")
 	if err := database.Init(); err != nil {
-		log.Fatalf("CRITICAL ERROR: Failed to initialize flat-file database: %v", err)
+		log.Fatalf("CRITICAL ERROR: Failed to initialize database: %v", err)
 	}
 	log.Println("Database initialized successfully.")
 

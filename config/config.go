@@ -13,8 +13,13 @@ type Config struct {
 	JWTSecret              string
 	JWTExpiresIn           string
 	JWTRememberMeExpiresIn string
-	DBFilePath             string
+	DBHost                 string
+	DBPort                 string
+	DBUser                 string
+	DBPassword             string
+	DBName                 string
 	CorsOrigin             string
+	FrontendURL            string
 	// Microsoft Entra ID OAuth
 	EntraIDClientID     string
 	EntraIDClientSecret string
@@ -24,6 +29,11 @@ type Config struct {
 	CognitoClientSecret string
 	CognitoDomain       string
 	CognitoRedirectURI  string
+	// Email Configuration
+	SMTPHost       string
+	SMTPPort       string
+	SenderEmail    string
+	SenderPassword string
 }
 
 var AppConfig Config
@@ -47,6 +57,7 @@ func Load() {
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
 		DBFilePath:             getEnv("DB_FILE_PATH", "./data/users.json"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
+		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
 		// Microsoft Entra ID
 		EntraIDClientID:     getEnv("ENTRA_ID_CLIENT_ID", ""),
 		EntraIDClientSecret: getEnv("ENTRA_ID_CLIENT_SECRET", ""),
@@ -56,6 +67,11 @@ func Load() {
 		CognitoClientSecret: getEnv("COGNITO_CLIENT_SECRET", ""),
 		CognitoDomain:       getEnv("COGNITO_DOMAIN", ""),
 		CognitoRedirectURI:  getEnv("COGNITO_REDIRECT_URI", "http://localhost:8080/api/auth/cognito/callback"),
+		// Email Configuration
+		SMTPHost:       getEnv("SMTP_HOST", ""),
+		SMTPPort:       getEnv("SMTP_PORT", "587"),
+		SenderEmail:    getEnv("SENDER_EMAIL", ""),
+		SenderPassword: getEnv("SENDER_PASSWORD", ""),
 	}
 }
 

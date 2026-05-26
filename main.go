@@ -19,12 +19,12 @@ func main() {
 	// 1. Load Configurations
 	config.Load()
 
-	// 2. Initialize Database Service
-	log.Println("Initializing persistent JSON database service...")
-	if err := database.Init(); err != nil {
-		log.Fatalf("CRITICAL ERROR: Failed to initialize flat-file database: %v", err)
+	// 2. Initialize PostgreSQL Database Service
+	log.Println("Initializing PostgreSQL database service...")
+	if err := database.InitPostgres(); err != nil {
+		log.Fatalf("CRITICAL ERROR: Failed to initialize PostgreSQL database: %v", err)
 	}
-	log.Println("Database initialized successfully.")
+	log.Println("PostgreSQL database initialized successfully.")
 
 	// 3. Setup HTTP Routing
 	mux := http.NewServeMux()
@@ -53,6 +53,12 @@ func main() {
 	// Mount Register & Login routes
 	mux.HandleFunc("/api/auth/register", controllers.Register)
 	mux.HandleFunc("/api/auth/login", controllers.Login)
+
+	// Mount Password Reset & Email Verification routes
+	mux.HandleFunc("/api/auth/forgot-password", controllers.ForgotPassword)
+	mux.HandleFunc("/api/auth/reset-password", controllers.ResetPassword)
+	mux.HandleFunc("/api/auth/verify-email", controllers.VerifyEmail)
+	mux.HandleFunc("/api/auth/resend-verification", controllers.ResendVerification)
 
 	// Mount OAuth callback routes
 	mux.HandleFunc("/api/auth/entra/callback", controllers.EntraIDCallback)

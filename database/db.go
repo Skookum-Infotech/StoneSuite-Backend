@@ -24,7 +24,50 @@ var (
 )
 
 // Init resolves the DB filepath and creates the parent folder and empty file if missing.
-func Init() error {
+func InitJSON() error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if initialized {
+		return nil
+	}
+
+	dbPath := config.AppConfig.DBFilePath
+	// Resolve relative or absolute path based on CWD
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	if filepath.IsAbs(dbPath) {
+		resolvedPath = dbPath
+	} else {
+		resolvedPath = filepath.Join(cwd, dbPath)
+	}
+
+	dir := filepath.Dir(resolvedPath)
+
+	// Create directory if not exists
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create database directory: %w", err)
+	}
+
+	// Create file with empty array if not exists
+	if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
+		emptyDB := []models.User{}
+		data, err := json.MarshalIndent(emptyDB, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal empty database: %w", err)
+		}
+
+		if err := os.WriteFile(resolvedPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write initial empty database: %w", err)
+		}
+	}
+
+	initialized = true
+	return nil
+}
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -113,7 +156,28 @@ func GetAllUsers() ([]models.User, error) {
 }
 
 // GetUserByEmail finds a user by their email address (case-insensitive).
-func GetUserByEmail(email string) (*models.User, error) {
+func GetUserByEmailJSON(email string) (*models.User, error) {
+	if err := InitJSON(); err != nil {
+		return nil, err
+	}
+
+	mu.RLock()
+	defer mu.RUnlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for _, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			return &u, nil
+		}
+	}
+
+	return nil, nil // Not found
+}
 	if err := Init(); err != nil {
 		return nil, err
 	}
@@ -137,7 +201,27 @@ func GetUserByEmail(email string) (*models.User, error) {
 }
 
 // GetUserByID finds a user by their ID.
-func GetUserByID(id string) (*models.User, error) {
+func GetUserByIDJSON(id string) (*models.User, error) {
+	if err := InitJSON(); err != nil {
+		return nil, err
+	}
+
+	mu.RLock()
+	defer mu.RUnlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, u := range users {
+		if u.ID == id {
+			return &u, nil
+		}
+	}
+
+	return nil, nil // Not found
+}
 	if err := Init(); err != nil {
 		return nil, err
 	}
@@ -160,7 +244,44 @@ func GetUserByID(id string) (*models.User, error) {
 }
 
 // CreateUser registers a new user with email, hashed password, and full name.
-func CreateUser(email, passwordHash, fullName string) (*models.User, error) {
+func CreateUserJSON(email, passwordHash, fullName string) (*models.User, error) {
+	if err := InitJSON(); err != nil {
+		return nil, err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return nil, err
+	}
+
+	// Double-check duplicates under full Lock to prevent race condition
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for _, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			return nil, errors.New("user with this email already exists")
+		}
+	}
+
+	newUser := models.User{
+		ID:           generateUUID(),
+		Email:        normalizedEmail,
+		PasswordHash: passwordHash,
+		FullName:     strings.TrimSpace(fullName),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+	users = append(users, newUser)
+	if err := writeUsersRaw(users); err != nil {
+		return nil, err
+	}
+
+	log.Printf("Successfully created and saved user: %s", newUser.Email)
+	return &newUser, nil
+}
 	if err := Init(); err != nil {
 		return nil, err
 	}
@@ -269,4 +390,236 @@ func UpsertOAuthUser(email, fullName, provider, providerID string) (*models.User
 
 	log.Printf("Successfully created new OAuth user: %s (provider: %s)", newUser.Email, provider)
 	return &newUser, nil
+}
+
+// IncrementFailedLoginAttempts increments failed login counter for a user.
+func IncrementFailedLoginAttempts(email string) (*models.User, error) {
+	if err := Init(); err != nil {
+		return nil, err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for i, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			users[i].FailedLoginAttempts++
+
+			// Lock account after 3 failed attempts for 15 minutes
+			if users[i].FailedLoginAttempts >= 3 {
+				users[i].IsLocked = true
+				users[i].LockedUntil = time.Now().Add(15 * time.Minute)
+			}
+
+			users[i].UpdatedAt = time.Now()
+
+			if err := writeUsersRaw(users); err != nil {
+				return nil, err
+			}
+
+			log.Printf("Failed login attempt for user: %s (attempts: %d)", users[i].Email, users[i].FailedLoginAttempts)
+			return &users[i], nil
+		}
+	}
+
+	return nil, errors.New("user not found")
+}
+
+// ResetFailedLoginAttempts resets the failed login counter.
+func ResetFailedLoginAttempts(email string) error {
+	if err := Init(); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for i, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			users[i].FailedLoginAttempts = 0
+			users[i].IsLocked = false
+			users[i].LockedUntil = time.Time{}
+			users[i].UpdatedAt = time.Now()
+
+			if err := writeUsersRaw(users); err != nil {
+				return err
+			}
+
+			log.Printf("Reset failed login attempts for user: %s", users[i].Email)
+			return nil
+		}
+	}
+
+	return errors.New("user not found")
+}
+
+// SetPasswordResetToken saves a password reset token for the user.
+func SetPasswordResetToken(email string, token string, expiryMinutes int) error {
+	if err := Init(); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for i, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			users[i].PasswordResetToken = token
+			users[i].PasswordResetExpiry = time.Now().Add(time.Duration(expiryMinutes) * time.Minute)
+			users[i].UpdatedAt = time.Now()
+
+			if err := writeUsersRaw(users); err != nil {
+				return err
+			}
+
+			log.Printf("Password reset token set for user: %s", users[i].Email)
+			return nil
+		}
+	}
+
+	return errors.New("user not found")
+}
+
+// GetUserByPasswordResetToken finds a user by their password reset token.
+func GetUserByPasswordResetToken(token string) (*models.User, error) {
+	if err := Init(); err != nil {
+		return nil, err
+	}
+
+	mu.RLock()
+	defer mu.RUnlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, u := range users {
+		if u.PasswordResetToken == token && time.Now().Before(u.PasswordResetExpiry) {
+			return &u, nil
+		}
+	}
+
+	return nil, errors.New("invalid or expired reset token")
+}
+
+// UpdatePassword updates the user's password hash and clears reset token.
+func UpdatePassword(email string, newPasswordHash string) error {
+	if err := Init(); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for i, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			users[i].PasswordHash = newPasswordHash
+			users[i].PasswordResetToken = ""
+			users[i].PasswordResetExpiry = time.Time{}
+			users[i].UpdatedAt = time.Now()
+
+			if err := writeUsersRaw(users); err != nil {
+				return err
+			}
+
+			log.Printf("Password updated for user: %s", users[i].Email)
+			return nil
+		}
+	}
+
+	return errors.New("user not found")
+}
+
+// SetEmailVerificationCode saves email verification code for a user.
+func SetEmailVerificationCode(email string, code string) error {
+	if err := Init(); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for i, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			users[i].EmailVerificationCode = code
+			users[i].UpdatedAt = time.Now()
+
+			if err := writeUsersRaw(users); err != nil {
+				return err
+			}
+
+			log.Printf("Email verification code set for user: %s", users[i].Email)
+			return nil
+		}
+	}
+
+	return errors.New("user not found")
+}
+
+// VerifyEmail marks the user's email as verified.
+func VerifyEmail(email string, code string) error {
+	if err := Init(); err != nil {
+		return err
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	users, err := readUsersRaw()
+	if err != nil {
+		return err
+	}
+
+	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
+	for i, u := range users {
+		if strings.ToLower(strings.TrimSpace(u.Email)) == normalizedEmail {
+			if u.EmailVerificationCode != code {
+				return errors.New("invalid verification code")
+			}
+
+			users[i].EmailVerified = true
+			users[i].EmailVerificationCode = ""
+			users[i].UpdatedAt = time.Now()
+
+			if err := writeUsersRaw(users); err != nil {
+				return err
+			}
+
+			log.Printf("Email verified for user: %s", users[i].Email)
+			return nil
+		}
+	}
+
+	return errors.New("user not found")
 }

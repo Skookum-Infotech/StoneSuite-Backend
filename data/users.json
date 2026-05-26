@@ -35,5 +35,13 @@
     "fullName": "Akhila Nagaboyina",
     "createdAt": "2026-05-21T09:15:59.6431127+05:30",
     "updatedAt": "2026-05-21T09:15:59.6431127+05:30"
+  },
+  {
+    "id": "2b82eb23-41dc-4690-93cd-a765337a6196",
+    "email": "admin@stonesuite.com",
+    "passwordHash": "$2a$10$bo3.OiyXk7ny3NWeWhr4tuEb5gRTp6VTp3OMu0VwEyej25rSQ5YG.",
+    "fullName": "Admin User",
+    "createdAt": "2026-05-21T15:55:00.0582345+05:30",
+    "updatedAt": "2026-05-21T15:55:00.0582345+05:30"
   }
 ]

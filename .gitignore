@@ -1,0 +1,29 @@
+
+.env
+.env.*
+# Dependencies
+node_modules/
+
+# Compiled binaries
+*.exe
+*.bin
+*.out
+
+# Build outputs
+/dist
+/build
+/out
+
+# Editor files
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+.DS_Store
+Thumbs.db

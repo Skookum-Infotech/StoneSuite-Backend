@@ -55,7 +55,6 @@ func Load() {
 		JWTSecret:              getEnv("JWT_SECRET", "stone_suite_go_backend_default_secret_key_change_me_in_prod"),
 		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "24h"),
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
-		DBFilePath:             getEnv("DB_FILE_PATH", "./data/users.json"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
 		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
 		// Microsoft Entra ID

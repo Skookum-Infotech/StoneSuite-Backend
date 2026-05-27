@@ -68,6 +68,12 @@ func main() {
 	meHandler := http.HandlerFunc(controllers.GetMe)
 	mux.Handle("/api/auth/me", middleware.RequireAuth(meHandler))
 
+	// Mount Customer Onboarding routes
+	mux.Handle("/api/customers", middleware.RequireAuth(http.HandlerFunc(controllers.CustomersHandler)))
+	mux.Handle("/api/customers/", middleware.RequireAuth(http.HandlerFunc(controllers.CustomerHandler)))
+	mux.HandleFunc("/api/onboarding/accept", controllers.CompleteOnboarding)
+	mux.HandleFunc("/api/onboarding/invite/", controllers.GetOnboardingInvite)
+
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger
 	globalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Log Request

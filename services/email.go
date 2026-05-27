@@ -90,6 +90,28 @@ func SendWelcomeEmail(recipientEmail, userName string) error {
 	return sendEmail(recipientEmail, subject, body)
 }
 
+// SendOnboardingInviteEmail sends an invitation email for customer onboarding.
+func SendOnboardingInviteEmail(recipientEmail, recipientName, inviteLink string) error {
+	subject := "Your StoneSuite Onboarding Invitation"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>You're invited to join StoneSuite</h2>
+			<p>Hello %s,</p>
+			<p>You've been invited to complete an onboarding experience with StoneSuite.</p>
+			<p>To begin your onboarding, click the link below:</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Start Onboarding</a></p>
+			<p>If the button does not work, copy and paste this link into your browser:</p>
+			<p>%s</p>
+			<p>This invitation link is time-limited for security.</p>
+			<p>Best regards,<br>StoneSuite Team</p>
+		</body>
+		</html>
+	`, recipientName, inviteLink, inviteLink)
+
+	return sendEmail(recipientEmail, subject, body)
+}
+
 // sendEmail is a helper function to send emails
 func sendEmail(to, subject, body string) error {
 	es := InitEmailService()

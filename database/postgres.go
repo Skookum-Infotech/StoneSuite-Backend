@@ -2,12 +2,14 @@ package database
 
 import (
     "context"
+    "errors"
     "fmt"
     "log"
     "os"
     "strings"
     "time"
 
+    "github.com/jackc/pgx/v5"
     "github.com/jackc/pgx/v5/pgxpool"
     "stonesuite-backend/config"
     "stonesuite-backend/models"
@@ -52,22 +54,48 @@ func getEnv(key, fallback string) string {
 
 // ----- CRUD helpers -----
 
+// scanUser reads the standard 15-column user row (with COALESCE on nullable strings).
+// Nullable timestamps (locked_until, password_reset_expiry) are scanned into *time.Time.
+func scanUser(row interface{ Scan(...any) error }) (*models.User, error) {
+    var u models.User
+    var lockedUntil *time.Time
+    var resetExpiry *time.Time
+    err := row.Scan(
+        &u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+        &u.OAuthProvider, &u.OAuthID,
+        &u.FailedLoginAttempts, &u.IsLocked, &lockedUntil, &u.EmailVerified,
+        &u.EmailVerificationCode, &u.PasswordResetToken, &resetExpiry,
+        &u.CreatedAt, &u.UpdatedAt,
+    )
+    if errors.Is(err, pgx.ErrNoRows) {
+        return nil, nil
+    }
+    if err != nil {
+        return nil, err
+    }
+    if lockedUntil != nil {
+        u.LockedUntil = *lockedUntil
+    }
+    if resetExpiry != nil {
+        u.PasswordResetExpiry = *resetExpiry
+    }
+    return &u, nil
+}
+
 func GetUserByEmail(email string) (*models.User, error) {
-    // Ensure DB is ready
     if pgPool == nil {
         if err := InitPostgres(); err != nil {
             return nil, err
         }
     }
     row := pgPool.QueryRow(context.Background(),
-        `SELECT id, email, password_hash, full_name, oauth_provider, oauth_id, failed_login_attempts, is_locked, locked_until, email_verified, email_verification_code, password_reset_token, password_reset_expiry, created_at, updated_at
+        `SELECT id, email, COALESCE(password_hash,''), full_name,
+                COALESCE(oauth_provider,''), COALESCE(oauth_id,''),
+                failed_login_attempts, is_locked, locked_until, email_verified,
+                COALESCE(email_verification_code,''), COALESCE(password_reset_token,''),
+                password_reset_expiry, created_at, updated_at
          FROM users WHERE LOWER(email)=LOWER($1)`, email)
-    var u models.User
-    err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.OAuthProvider, &u.OAuthID, &u.FailedLoginAttempts, &u.IsLocked, &u.LockedUntil, &u.EmailVerified, &u.EmailVerificationCode, &u.PasswordResetToken, &u.PasswordResetExpiry, &u.CreatedAt, &u.UpdatedAt)
-    if err != nil {
-        return nil, err
-    }
-    return &u, nil
+    return scanUser(row)
 }
 
 func GetUserByID(id string) (*models.User, error) {
@@ -77,14 +105,13 @@ func GetUserByID(id string) (*models.User, error) {
         }
     }
     row := pgPool.QueryRow(context.Background(),
-        `SELECT id, email, password_hash, full_name, oauth_provider, oauth_id, failed_login_attempts, is_locked, locked_until, email_verified, email_verification_code, password_reset_token, password_reset_expiry, created_at, updated_at
+        `SELECT id, email, COALESCE(password_hash,''), full_name,
+                COALESCE(oauth_provider,''), COALESCE(oauth_id,''),
+                failed_login_attempts, is_locked, locked_until, email_verified,
+                COALESCE(email_verification_code,''), COALESCE(password_reset_token,''),
+                password_reset_expiry, created_at, updated_at
          FROM users WHERE id=$1`, id)
-    var u models.User
-    err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.OAuthProvider, &u.OAuthID, &u.FailedLoginAttempts, &u.IsLocked, &u.LockedUntil, &u.EmailVerified, &u.EmailVerificationCode, &u.PasswordResetToken, &u.PasswordResetExpiry, &u.CreatedAt, &u.UpdatedAt)
-    if err != nil {
-        return nil, err
-    }
-    return &u, nil
+    return scanUser(row)
 }
 
 func CreateUser(email, passwordHash, fullName string) (*models.User, error) {
@@ -177,12 +204,20 @@ func GetUserByPasswordResetToken(token string) (*models.User, error) {
         }
     }
     row := pgPool.QueryRow(context.Background(),
-        `SELECT id, email, password_hash, full_name, password_reset_token, password_reset_expiry, created_at, updated_at
+        `SELECT id, email, COALESCE(password_hash,''), full_name,
+                COALESCE(password_reset_token,''), password_reset_expiry, created_at, updated_at
          FROM users WHERE password_reset_token=$1 AND password_reset_expiry > NOW()`, token)
     var u models.User
-    err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.PasswordResetToken, &u.PasswordResetExpiry, &u.CreatedAt, &u.UpdatedAt)
+    var resetExpiry *time.Time
+    err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.PasswordResetToken, &resetExpiry, &u.CreatedAt, &u.UpdatedAt)
+    if errors.Is(err, pgx.ErrNoRows) {
+        return nil, nil
+    }
     if err != nil {
         return nil, err
+    }
+    if resetExpiry != nil {
+        u.PasswordResetExpiry = *resetExpiry
     }
     return &u, nil
 }

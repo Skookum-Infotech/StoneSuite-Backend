@@ -436,6 +436,31 @@ func sendInvite(w http.ResponseWriter, r *http.Request, customerID string) {
 		}
 	}
 
+	// 2. Prevent conflicting invites and duplicate account creation.
+	existingUser, err := database.GetUserByEmail(contact.Email)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Error checking existing user."})
+		return
+	}
+	if existingUser != nil {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "A user account already exists for this email."})
+		return
+	}
+
+	activeInvite, err := database.GetActiveOnboardingInvite(customerID, contact.Email)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Error checking existing onboarding invites."})
+		return
+	}
+	if activeInvite != nil {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "An active invite already exists for this contact."})
+		return
+	}
+
 	if req.ExpiresInHours <= 0 {
 		req.ExpiresInHours = 72
 	}

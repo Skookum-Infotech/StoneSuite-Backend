@@ -96,7 +96,7 @@ func main() {
 		// Unmatched routes under ServeMux will fall through. Let's make sure we handle a standard 404 response
 		// if the path doesn't start with registered prefixes.
 		path := r.URL.Path
-		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") {
+		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/customers") && !strings.HasPrefix(path, "/api/onboarding") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

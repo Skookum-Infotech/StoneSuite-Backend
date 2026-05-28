@@ -1,18 +1,20 @@
 package database
 
 import (
-    "context"
-    "errors"
-    "fmt"
-    "log"
-    "os"
-    "strings"
-    "time"
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"time"
 
-    "github.com/jackc/pgx/v5"
-    "github.com/jackc/pgx/v5/pgxpool"
-    "stonesuite-backend/config"
-    "stonesuite-backend/models"
+	"stonesuite-backend/config"
+	"stonesuite-backend/models"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var pgPool *pgxpool.Pool
@@ -62,61 +64,61 @@ func getEnv(key, fallback string) string {
 // scanUser reads the standard 15-column user row (with COALESCE on nullable strings).
 // Nullable timestamps (locked_until, password_reset_expiry) are scanned into *time.Time.
 func scanUser(row interface{ Scan(...any) error }) (*models.User, error) {
-    var u models.User
-    var lockedUntil *time.Time
-    var resetExpiry *time.Time
-    err := row.Scan(
-        &u.ID, &u.Email, &u.PasswordHash, &u.FullName,
-        &u.OAuthProvider, &u.OAuthID,
-        &u.FailedLoginAttempts, &u.IsLocked, &lockedUntil, &u.EmailVerified,
-        &u.EmailVerificationCode, &u.PasswordResetToken, &resetExpiry,
-        &u.CreatedAt, &u.UpdatedAt,
-    )
-    if errors.Is(err, pgx.ErrNoRows) {
-        return nil, nil
-    }
-    if err != nil {
-        return nil, err
-    }
-    if lockedUntil != nil {
-        u.LockedUntil = *lockedUntil
-    }
-    if resetExpiry != nil {
-        u.PasswordResetExpiry = *resetExpiry
-    }
-    return &u, nil
+	var u models.User
+	var lockedUntil *time.Time
+	var resetExpiry *time.Time
+	err := row.Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
+		&u.OAuthProvider, &u.OAuthID,
+		&u.FailedLoginAttempts, &u.IsLocked, &lockedUntil, &u.EmailVerified,
+		&u.EmailVerificationCode, &u.PasswordResetToken, &resetExpiry,
+		&u.CreatedAt, &u.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lockedUntil != nil {
+		u.LockedUntil = *lockedUntil
+	}
+	if resetExpiry != nil {
+		u.PasswordResetExpiry = *resetExpiry
+	}
+	return &u, nil
 }
 
 func GetUserByEmail(email string) (*models.User, error) {
-    if pgPool == nil {
-        if err := InitPostgres(); err != nil {
-            return nil, err
-        }
-    }
-    row := pgPool.QueryRow(context.Background(),
-        `SELECT id, email, COALESCE(password_hash,''), full_name,
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return nil, err
+		}
+	}
+	row := pgPool.QueryRow(context.Background(),
+		`SELECT id, email, COALESCE(password_hash,''), full_name,
                 COALESCE(oauth_provider,''), COALESCE(oauth_id,''),
                 failed_login_attempts, is_locked, locked_until, email_verified,
                 COALESCE(email_verification_code,''), COALESCE(password_reset_token,''),
                 password_reset_expiry, created_at, updated_at
          FROM users WHERE LOWER(email)=LOWER($1)`, email)
-    return scanUser(row)
+	return scanUser(row)
 }
 
 func GetUserByID(id string) (*models.User, error) {
-    if pgPool == nil {
-        if err := InitPostgres(); err != nil {
-            return nil, err
-        }
-    }
-    row := pgPool.QueryRow(context.Background(),
-        `SELECT id, email, COALESCE(password_hash,''), full_name,
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return nil, err
+		}
+	}
+	row := pgPool.QueryRow(context.Background(),
+		`SELECT id, email, COALESCE(password_hash,''), full_name,
                 COALESCE(oauth_provider,''), COALESCE(oauth_id,''),
                 failed_login_attempts, is_locked, locked_until, email_verified,
                 COALESCE(email_verification_code,''), COALESCE(password_reset_token,''),
                 password_reset_expiry, created_at, updated_at
          FROM users WHERE id=$1`, id)
-    return scanUser(row)
+	return scanUser(row)
 }
 
 func CreateUser(email, passwordHash, fullName string) (*models.User, error) {
@@ -203,28 +205,28 @@ func SetPasswordResetToken(email, token string, expiryMinutes int) error {
 }
 
 func GetUserByPasswordResetToken(token string) (*models.User, error) {
-    if pgPool == nil {
-        if err := InitPostgres(); err != nil {
-            return nil, err
-        }
-    }
-    row := pgPool.QueryRow(context.Background(),
-        `SELECT id, email, COALESCE(password_hash,''), full_name,
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return nil, err
+		}
+	}
+	row := pgPool.QueryRow(context.Background(),
+		`SELECT id, email, COALESCE(password_hash,''), full_name,
                 COALESCE(password_reset_token,''), password_reset_expiry, created_at, updated_at
          FROM users WHERE password_reset_token=$1 AND password_reset_expiry > NOW()`, token)
-    var u models.User
-    var resetExpiry *time.Time
-    err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.PasswordResetToken, &resetExpiry, &u.CreatedAt, &u.UpdatedAt)
-    if errors.Is(err, pgx.ErrNoRows) {
-        return nil, nil
-    }
-    if err != nil {
-        return nil, err
-    }
-    if resetExpiry != nil {
-        u.PasswordResetExpiry = *resetExpiry
-    }
-    return &u, nil
+	var u models.User
+	var resetExpiry *time.Time
+	err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.FullName, &u.PasswordResetToken, &resetExpiry, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if resetExpiry != nil {
+		u.PasswordResetExpiry = *resetExpiry
+	}
+	return &u, nil
 }
 
 func SetEmailVerificationCode(email, code string) error {
@@ -627,6 +629,33 @@ func CreateOnboardingInvite(customerID, contactID, contactEmail, token string, e
 	}
 
 	return GetOnboardingInviteByID(id)
+}
+
+func GetActiveOnboardingInvite(customerID, contactEmail string) (*models.OnboardingInvite, error) {
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return nil, err
+		}
+	}
+	row := pgPool.QueryRow(context.Background(),
+		`SELECT id, customer_id, contact_id, contact_email, token, status, expires_at, COALESCE(sent_at, '0001-01-01'), COALESCE(accepted_at, '0001-01-01'), created_at, updated_at
+         FROM onboarding_invites WHERE customer_id=$1 AND LOWER(contact_email)=LOWER($2) AND status IN ('sent','pending') AND expires_at > NOW()`,
+		customerID, strings.TrimSpace(contactEmail))
+	var invite models.OnboardingInvite
+	var sentAt, acceptedAt time.Time
+	if err := row.Scan(&invite.ID, &invite.CustomerID, &invite.ContactID, &invite.ContactEmail, &invite.Token, &invite.Status, &invite.ExpiresAt, &sentAt, &acceptedAt, &invite.CreatedAt, &invite.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !sentAt.IsZero() {
+		invite.SentAt = sentAt
+	}
+	if !acceptedAt.IsZero() {
+		invite.AcceptedAt = acceptedAt
+	}
+	return &invite, nil
 }
 
 func GetOnboardingInviteByID(inviteID string) (*models.OnboardingInvite, error) {

@@ -113,7 +113,11 @@ func createCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customer, err := database.CreateCustomer(req.Name, req.Industry, req.Website)
+	customer, err := database.CreateCustomer(
+		req.Name, req.LegalName, req.Industry, req.Website,
+		req.Country, req.Currency, req.Timezone, req.TaxID,
+		req.BillingAddress, req.ShippingAddress, req.ReturnAddress,
+	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create customer record."})
@@ -125,6 +129,10 @@ func createCustomer(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create customer contact."})
 		return
+	}
+
+	if req.FinanceEmail != "" {
+		_, _ = database.CreateCustomerContact(customer.ID, req.FinanceName, req.FinanceEmail, req.FinancePhone, "finance")
 	}
 
 	actor, _ := middleware.GetUserFromContext(r.Context())
@@ -171,7 +179,11 @@ func updateCustomer(w http.ResponseWriter, r *http.Request, customerID string) {
 		return
 	}
 
-	updated, err := database.UpdateCustomer(customerID, req.Name, req.Industry, req.Website, req.Status)
+	updated, err := database.UpdateCustomer(
+		customerID, req.Name, req.LegalName, req.Industry, req.Website,
+		req.Country, req.Currency, req.Timezone, req.TaxID,
+		req.BillingAddress, req.ShippingAddress, req.ReturnAddress, req.Status,
+	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to update customer."})

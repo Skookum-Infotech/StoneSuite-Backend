@@ -316,6 +316,14 @@ func runMigrations(ctx context.Context) error {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );`,
 		`CREATE INDEX IF NOT EXISTS idx_customers_status ON customers(status);`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255);`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS country VARCHAR(100);`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS currency VARCHAR(10);`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS timezone VARCHAR(100);`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS tax_id VARCHAR(100);`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS billing_address TEXT;`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS shipping_address TEXT;`,
+		`ALTER TABLE customers ADD COLUMN IF NOT EXISTS return_address TEXT;`,
 		`CREATE TABLE IF NOT EXISTS customer_contacts (
             id UUID PRIMARY KEY,
             customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -372,7 +380,10 @@ func GetAllCustomers() ([]models.Customer, error) {
 	}
 
 	rows, err := pgPool.Query(context.Background(),
-		`SELECT id, name, COALESCE(industry, ''), COALESCE(website, ''), status, created_at, updated_at
+		`SELECT id, name, COALESCE(legal_name,''), COALESCE(industry,''), COALESCE(website,''),
+		        COALESCE(country,''), COALESCE(currency,''), COALESCE(timezone,''), COALESCE(tax_id,''),
+		        COALESCE(billing_address,''), COALESCE(shipping_address,''), COALESCE(return_address,''),
+		        status, created_at, updated_at
          FROM customers ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -382,7 +393,10 @@ func GetAllCustomers() ([]models.Customer, error) {
 	var customers []models.Customer
 	for rows.Next() {
 		var c models.Customer
-		if err := rows.Scan(&c.ID, &c.Name, &c.Industry, &c.Website, &c.Status, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.LegalName, &c.Industry, &c.Website,
+			&c.Country, &c.Currency, &c.Timezone, &c.TaxID,
+			&c.BillingAddress, &c.ShippingAddress, &c.ReturnAddress,
+			&c.Status, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		customers = append(customers, c)
@@ -411,10 +425,16 @@ func GetCustomerByIDWithContacts(id string) (*models.Customer, error) {
 	}
 
 	row := pgPool.QueryRow(context.Background(),
-		`SELECT id, name, COALESCE(industry, ''), COALESCE(website, ''), status, created_at, updated_at
+		`SELECT id, name, COALESCE(legal_name,''), COALESCE(industry,''), COALESCE(website,''),
+		        COALESCE(country,''), COALESCE(currency,''), COALESCE(timezone,''), COALESCE(tax_id,''),
+		        COALESCE(billing_address,''), COALESCE(shipping_address,''), COALESCE(return_address,''),
+		        status, created_at, updated_at
          FROM customers WHERE id=$1`, id)
 	var c models.Customer
-	if err := row.Scan(&c.ID, &c.Name, &c.Industry, &c.Website, &c.Status, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.LegalName, &c.Industry, &c.Website,
+		&c.Country, &c.Currency, &c.Timezone, &c.TaxID,
+		&c.BillingAddress, &c.ShippingAddress, &c.ReturnAddress,
+		&c.Status, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -429,7 +449,7 @@ func GetCustomerByIDWithContacts(id string) (*models.Customer, error) {
 	return &c, nil
 }
 
-func CreateCustomer(name, industry, website string) (*models.Customer, error) {
+func CreateCustomer(name, legalName, industry, website, country, currency, timezone, taxID, billingAddress, shippingAddress, returnAddress string) (*models.Customer, error) {
 	if pgPool == nil {
 		if err := InitPostgres(); err != nil {
 			return nil, err
@@ -441,9 +461,14 @@ func CreateCustomer(name, industry, website string) (*models.Customer, error) {
 	}
 
 	_, err = pgPool.Exec(context.Background(),
-		`INSERT INTO customers (id, name, industry, website, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'draft', NOW(), NOW())`,
-		id, strings.TrimSpace(name), strings.TrimSpace(industry), strings.TrimSpace(website))
+		`INSERT INTO customers (id, name, legal_name, industry, website, country, currency, timezone, tax_id,
+		                        billing_address, shipping_address, return_address, status, created_at, updated_at)
+         VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
+                 NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), 'draft', NOW(), NOW())`,
+		id, strings.TrimSpace(name), strings.TrimSpace(legalName), strings.TrimSpace(industry),
+		strings.TrimSpace(website), strings.TrimSpace(country), strings.TrimSpace(currency),
+		strings.TrimSpace(timezone), strings.TrimSpace(taxID), strings.TrimSpace(billingAddress),
+		strings.TrimSpace(shippingAddress), strings.TrimSpace(returnAddress))
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +476,7 @@ func CreateCustomer(name, industry, website string) (*models.Customer, error) {
 	return GetCustomerByIDWithContacts(id)
 }
 
-func UpdateCustomer(id, name, industry, website, status string) (*models.Customer, error) {
+func UpdateCustomer(id, name, legalName, industry, website, country, currency, timezone, taxID, billingAddress, shippingAddress, returnAddress, status string) (*models.Customer, error) {
 	if pgPool == nil {
 		if err := InitPostgres(); err != nil {
 			return nil, err
@@ -459,12 +484,25 @@ func UpdateCustomer(id, name, industry, website, status string) (*models.Custome
 	}
 
 	_, err := pgPool.Exec(context.Background(),
-		`UPDATE customers SET name=COALESCE(NULLIF($1, ''), name),
-            industry=COALESCE(NULLIF($2, ''), industry),
-            website=COALESCE(NULLIF($3, ''), website),
-            status=COALESCE(NULLIF($4, ''), status),
-            updated_at=NOW()
-         WHERE id=$5`, strings.TrimSpace(name), strings.TrimSpace(industry), strings.TrimSpace(website), strings.TrimSpace(status), id)
+		`UPDATE customers SET
+			name=COALESCE(NULLIF($1,''), name),
+			legal_name=COALESCE(NULLIF($2,''), legal_name),
+			industry=COALESCE(NULLIF($3,''), industry),
+			website=COALESCE(NULLIF($4,''), website),
+			country=COALESCE(NULLIF($5,''), country),
+			currency=COALESCE(NULLIF($6,''), currency),
+			timezone=COALESCE(NULLIF($7,''), timezone),
+			tax_id=COALESCE(NULLIF($8,''), tax_id),
+			billing_address=COALESCE(NULLIF($9,''), billing_address),
+			shipping_address=COALESCE(NULLIF($10,''), shipping_address),
+			return_address=COALESCE(NULLIF($11,''), return_address),
+			status=COALESCE(NULLIF($12,''), status),
+			updated_at=NOW()
+         WHERE id=$13`,
+		strings.TrimSpace(name), strings.TrimSpace(legalName), strings.TrimSpace(industry),
+		strings.TrimSpace(website), strings.TrimSpace(country), strings.TrimSpace(currency),
+		strings.TrimSpace(timezone), strings.TrimSpace(taxID), strings.TrimSpace(billingAddress),
+		strings.TrimSpace(shippingAddress), strings.TrimSpace(returnAddress), strings.TrimSpace(status), id)
 	if err != nil {
 		return nil, err
 	}

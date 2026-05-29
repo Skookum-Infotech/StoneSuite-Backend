@@ -4,14 +4,22 @@ import "time"
 
 // Customer represents a customer account managed by StoneSuite operations.
 type Customer struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Industry  string            `json:"industry,omitempty"`
-	Website   string            `json:"website,omitempty"`
-	Status    string            `json:"status"`
-	Contacts  []CustomerContact `json:"contacts,omitempty"`
-	CreatedAt time.Time         `json:"createdAt"`
-	UpdatedAt time.Time         `json:"updatedAt"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	LegalName       string            `json:"legalName,omitempty"`
+	Industry        string            `json:"industry,omitempty"`
+	Website         string            `json:"website,omitempty"`
+	Country         string            `json:"country,omitempty"`
+	Currency        string            `json:"currency,omitempty"`
+	Timezone        string            `json:"timezone,omitempty"`
+	TaxID           string            `json:"taxId,omitempty"`
+	BillingAddress  string            `json:"billingAddress,omitempty"`
+	ShippingAddress string            `json:"shippingAddress,omitempty"`
+	ReturnAddress   string            `json:"returnAddress,omitempty"`
+	Status          string            `json:"status"`
+	Contacts        []CustomerContact `json:"contacts,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
 }
 
 // CustomerContact captures a named customer contact such as a super admin.
@@ -55,20 +63,40 @@ type OnboardingAuditLog struct {
 
 // CreateCustomerRequest defines the payload for creating a new customer record.
 type CreateCustomerRequest struct {
-	Name            string `json:"name"`
-	Industry        string `json:"industry,omitempty"`
-	Website         string `json:"website,omitempty"`
-	SuperAdminName  string `json:"superAdminName"`
-	SuperAdminEmail string `json:"superAdminEmail"`
-	SuperAdminPhone string `json:"superAdminPhone,omitempty"`
+	Name               string `json:"name"`
+	LegalName          string `json:"legalName,omitempty"`
+	Industry           string `json:"industry,omitempty"`
+	Website            string `json:"website,omitempty"`
+	Country            string `json:"country,omitempty"`
+	Currency           string `json:"currency,omitempty"`
+	Timezone           string `json:"timezone,omitempty"`
+	TaxID              string `json:"taxId,omitempty"`
+	BillingAddress     string `json:"billingAddress,omitempty"`
+	ShippingAddress    string `json:"shippingAddress,omitempty"`
+	ReturnAddress      string `json:"returnAddress,omitempty"`
+	SuperAdminName     string `json:"superAdminName"`
+	SuperAdminEmail    string `json:"superAdminEmail"`
+	SuperAdminPhone    string `json:"superAdminPhone,omitempty"`
+	SuperAdminJobTitle string `json:"superAdminJobTitle,omitempty"`
+	FinanceName        string `json:"financeName,omitempty"`
+	FinanceEmail       string `json:"financeEmail,omitempty"`
+	FinancePhone       string `json:"financePhone,omitempty"`
 }
 
 // UpdateCustomerRequest defines the allowed update payload for a customer.
 type UpdateCustomerRequest struct {
-	Name     string `json:"name,omitempty"`
-	Industry string `json:"industry,omitempty"`
-	Website  string `json:"website,omitempty"`
-	Status   string `json:"status,omitempty"`
+	Name            string `json:"name,omitempty"`
+	LegalName       string `json:"legalName,omitempty"`
+	Industry        string `json:"industry,omitempty"`
+	Website         string `json:"website,omitempty"`
+	Country         string `json:"country,omitempty"`
+	Currency        string `json:"currency,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
+	TaxID           string `json:"taxId,omitempty"`
+	BillingAddress  string `json:"billingAddress,omitempty"`
+	ShippingAddress string `json:"shippingAddress,omitempty"`
+	ReturnAddress   string `json:"returnAddress,omitempty"`
+	Status          string `json:"status,omitempty"`
 }
 
 // CreateContactRequest defines the request body to add a customer contact.

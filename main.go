@@ -74,6 +74,9 @@ func main() {
 	mux.HandleFunc("/api/onboarding/accept", controllers.CompleteOnboarding)
 	mux.HandleFunc("/api/onboarding/invite/", controllers.GetOnboardingInvite)
 
+	// Mount CRM Lead routes
+	mux.Handle("/api/leads", middleware.RequireAuth(http.HandlerFunc(controllers.LeadsHandler)))
+
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger
 	globalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Log Request
@@ -96,7 +99,7 @@ func main() {
 		// Unmatched routes under ServeMux will fall through. Let's make sure we handle a standard 404 response
 		// if the path doesn't start with registered prefixes.
 		path := r.URL.Path
-		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/customers") && !strings.HasPrefix(path, "/api/onboarding") {
+		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/customers") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/leads") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

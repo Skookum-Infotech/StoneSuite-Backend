@@ -362,6 +362,53 @@ func runMigrations(ctx context.Context) error {
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );`,
 		`CREATE INDEX IF NOT EXISTS idx_onboarding_audit_customer ON onboarding_audit_logs(customer_id);`,
+		// leads table
+		`CREATE TABLE IF NOT EXISTS leads (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            lead_id VARCHAR(50) UNIQUE NOT NULL,
+            custom_form VARCHAR(255) NOT NULL DEFAULT 'Standard Lead Form',
+            lead_status VARCHAR(100) NOT NULL DEFAULT 'LEAD-Unqualified',
+            default_order_priority VARCHAR(100),
+            type VARCHAR(50) NOT NULL DEFAULT 'Company',
+            company_name VARCHAR(255),
+            first_name VARCHAR(255),
+            last_name VARCHAR(255),
+            sales_rep VARCHAR(255),
+            territory VARCHAR(255),
+            partner VARCHAR(255),
+            email VARCHAR(255),
+            phone VARCHAR(100),
+            fax VARCHAR(100),
+            address TEXT,
+            primary_subsidiary VARCHAR(255),
+            email_for_payment_notification VARCHAR(255),
+            white_glove BOOLEAN NOT NULL DEFAULT FALSE,
+            display_product_code BOOLEAN NOT NULL DEFAULT FALSE,
+            blackline_ar_cash_app BOOLEAN NOT NULL DEFAULT FALSE,
+            sfdc_account_id VARCHAR(255),
+            prev_external_id VARCHAR(255),
+            sfdc_customer_status VARCHAR(255),
+            crm_account_owner VARCHAR(255),
+            customer_legal_name VARCHAR(255),
+            customer_type VARCHAR(100) DEFAULT 'Customer',
+            crm_csm_team VARCHAR(255),
+            sfdc_external_id VARCHAR(255),
+            additional_emails TEXT,
+            crm_csm VARCHAR(255),
+            talkdesk_region VARCHAR(255),
+            crm_growth_manager VARCHAR(255),
+            talkdesk_id_platform VARCHAR(255),
+            zuora_invoice_name VARCHAR(255),
+            estimated_budget VARCHAR(100),
+            budget_approved BOOLEAN NOT NULL DEFAULT FALSE,
+            sales_readiness VARCHAR(100),
+            buying_reason VARCHAR(255),
+            buying_time_frame VARCHAR(100),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );`,
+		`CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(lead_status);`,
+		`CREATE INDEX IF NOT EXISTS idx_leads_type ON leads(type);`,
 	}
 
 	for _, statement := range statements {
@@ -869,4 +916,156 @@ func NewUUID() (string, error) {
 // Additional helper: wrapper Init for compatibility with existing JSON code.
 func Init() error {
 	return InitPostgres()
+}
+
+// ─── Leads ────────────────────────────────────────────────────────────────────
+
+func GetAllLeads() ([]models.Lead, error) {
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return nil, err
+		}
+	}
+
+	rows, err := pgPool.Query(context.Background(), `
+		SELECT id, lead_id, custom_form, lead_status,
+		       COALESCE(default_order_priority,''), type,
+		       COALESCE(company_name,''), COALESCE(first_name,''), COALESCE(last_name,''),
+		       COALESCE(sales_rep,''), COALESCE(territory,''), COALESCE(partner,''),
+		       COALESCE(email,''), COALESCE(phone,''), COALESCE(fax,''), COALESCE(address,''),
+		       COALESCE(primary_subsidiary,''), COALESCE(email_for_payment_notification,''),
+		       white_glove, display_product_code, blackline_ar_cash_app,
+		       COALESCE(sfdc_account_id,''), COALESCE(prev_external_id,''),
+		       COALESCE(sfdc_customer_status,''), COALESCE(crm_account_owner,''),
+		       COALESCE(customer_legal_name,''), COALESCE(customer_type,''),
+		       COALESCE(crm_csm_team,''), COALESCE(sfdc_external_id,''),
+		       COALESCE(additional_emails,''), COALESCE(crm_csm,''),
+		       COALESCE(talkdesk_region,''), COALESCE(crm_growth_manager,''),
+		       COALESCE(talkdesk_id_platform,''), COALESCE(zuora_invoice_name,''),
+		       COALESCE(estimated_budget,''), budget_approved,
+		       COALESCE(sales_readiness,''), COALESCE(buying_reason,''), COALESCE(buying_time_frame,''),
+		       created_at, updated_at
+		FROM leads ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var leads []models.Lead
+	for rows.Next() {
+		var l models.Lead
+		if err := rows.Scan(
+			&l.ID, &l.LeadID, &l.CustomForm, &l.LeadStatus,
+			&l.DefaultOrderPriority, &l.Type,
+			&l.CompanyName, &l.FirstName, &l.LastName,
+			&l.SalesRep, &l.Territory, &l.Partner,
+			&l.Email, &l.Phone, &l.Fax, &l.Address,
+			&l.PrimarySubsidiary, &l.EmailForPaymentNotification,
+			&l.WhiteGlove, &l.DisplayProductCode, &l.BlacklineArCashApp,
+			&l.SfdcAccountID, &l.PrevExternalID,
+			&l.SfdcCustomerStatus, &l.CrmAccountOwner,
+			&l.CustomerLegalName, &l.CustomerType,
+			&l.CrmCsmTeam, &l.SfdcExternalID,
+			&l.AdditionalEmails, &l.CrmCsm,
+			&l.TalkdeskRegion, &l.CrmGrowthManager,
+			&l.TalkdeskIdPlatform, &l.ZuoraInvoiceName,
+			&l.EstimatedBudget, &l.BudgetApproved,
+			&l.SalesReadiness, &l.BuyingReason, &l.BuyingTimeFrame,
+			&l.CreatedAt, &l.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		leads = append(leads, l)
+	}
+	return leads, rows.Err()
+}
+
+func CreateLead(req models.CreateLeadRequest) (*models.Lead, error) {
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Generate sequential lead ID like LEAD-0001
+	var seq int
+	if err := pgPool.QueryRow(context.Background(), `SELECT COUNT(*) FROM leads`).Scan(&seq); err != nil {
+		return nil, fmt.Errorf("lead count: %w", err)
+	}
+	leadID := fmt.Sprintf("LEAD-%04d", seq+1)
+
+	var id string
+	err := pgPool.QueryRow(context.Background(), `
+		INSERT INTO leads (
+			lead_id, custom_form, lead_status, default_order_priority, type,
+			company_name, first_name, last_name, sales_rep, territory, partner,
+			email, phone, fax, address, primary_subsidiary, email_for_payment_notification,
+			white_glove, display_product_code, blackline_ar_cash_app,
+			sfdc_account_id, prev_external_id, sfdc_customer_status, crm_account_owner,
+			customer_legal_name, customer_type, crm_csm_team, sfdc_external_id,
+			additional_emails, crm_csm, talkdesk_region, crm_growth_manager,
+			talkdesk_id_platform, zuora_invoice_name, estimated_budget, budget_approved,
+			sales_readiness, buying_reason, buying_time_frame,
+			created_at, updated_at
+		) VALUES (
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+			$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,
+			$33,$34,$35,$36,$37,$38,$39,NOW(),NOW()
+		) RETURNING id`,
+		leadID, req.CustomForm, req.LeadStatus, req.DefaultOrderPriority, req.Type,
+		req.CompanyName, req.FirstName, req.LastName, req.SalesRep, req.Territory, req.Partner,
+		req.Email, req.Phone, req.Fax, req.Address, req.PrimarySubsidiary, req.EmailForPaymentNotification,
+		req.WhiteGlove, req.DisplayProductCode, req.BlacklineArCashApp,
+		req.SfdcAccountID, req.PrevExternalID, req.SfdcCustomerStatus, req.CrmAccountOwner,
+		req.CustomerLegalName, req.CustomerType, req.CrmCsmTeam, req.SfdcExternalID,
+		req.AdditionalEmails, req.CrmCsm, req.TalkdeskRegion, req.CrmGrowthManager,
+		req.TalkdeskIdPlatform, req.ZuoraInvoiceName, req.EstimatedBudget, req.BudgetApproved,
+		req.SalesReadiness, req.BuyingReason, req.BuyingTimeFrame,
+	).Scan(&id)
+	if err != nil {
+		return nil, fmt.Errorf("insert lead: %w", err)
+	}
+
+	var l models.Lead
+	err = pgPool.QueryRow(context.Background(), `
+		SELECT id, lead_id, custom_form, lead_status,
+		       COALESCE(default_order_priority,''), type,
+		       COALESCE(company_name,''), COALESCE(first_name,''), COALESCE(last_name,''),
+		       COALESCE(sales_rep,''), COALESCE(territory,''), COALESCE(partner,''),
+		       COALESCE(email,''), COALESCE(phone,''), COALESCE(fax,''), COALESCE(address,''),
+		       COALESCE(primary_subsidiary,''), COALESCE(email_for_payment_notification,''),
+		       white_glove, display_product_code, blackline_ar_cash_app,
+		       COALESCE(sfdc_account_id,''), COALESCE(prev_external_id,''),
+		       COALESCE(sfdc_customer_status,''), COALESCE(crm_account_owner,''),
+		       COALESCE(customer_legal_name,''), COALESCE(customer_type,''),
+		       COALESCE(crm_csm_team,''), COALESCE(sfdc_external_id,''),
+		       COALESCE(additional_emails,''), COALESCE(crm_csm,''),
+		       COALESCE(talkdesk_region,''), COALESCE(crm_growth_manager,''),
+		       COALESCE(talkdesk_id_platform,''), COALESCE(zuora_invoice_name,''),
+		       COALESCE(estimated_budget,''), budget_approved,
+		       COALESCE(sales_readiness,''), COALESCE(buying_reason,''), COALESCE(buying_time_frame,''),
+		       created_at, updated_at
+		FROM leads WHERE id=$1`, id).Scan(
+		&l.ID, &l.LeadID, &l.CustomForm, &l.LeadStatus,
+		&l.DefaultOrderPriority, &l.Type,
+		&l.CompanyName, &l.FirstName, &l.LastName,
+		&l.SalesRep, &l.Territory, &l.Partner,
+		&l.Email, &l.Phone, &l.Fax, &l.Address,
+		&l.PrimarySubsidiary, &l.EmailForPaymentNotification,
+		&l.WhiteGlove, &l.DisplayProductCode, &l.BlacklineArCashApp,
+		&l.SfdcAccountID, &l.PrevExternalID,
+		&l.SfdcCustomerStatus, &l.CrmAccountOwner,
+		&l.CustomerLegalName, &l.CustomerType,
+		&l.CrmCsmTeam, &l.SfdcExternalID,
+		&l.AdditionalEmails, &l.CrmCsm,
+		&l.TalkdeskRegion, &l.CrmGrowthManager,
+		&l.TalkdeskIdPlatform, &l.ZuoraInvoiceName,
+		&l.EstimatedBudget, &l.BudgetApproved,
+		&l.SalesReadiness, &l.BuyingReason, &l.BuyingTimeFrame,
+		&l.CreatedAt, &l.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fetch created lead: %w", err)
+	}
+	return &l, nil
 }

@@ -311,7 +311,7 @@ func runMigrations(ctx context.Context) error {
             name VARCHAR(255) NOT NULL,
             industry VARCHAR(255),
             website VARCHAR(255),
-            status VARCHAR(50) NOT NULL DEFAULT 'draft',
+            status VARCHAR(50) NOT NULL DEFAULT 'pendingApproval',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );`,
@@ -464,7 +464,7 @@ func CreateCustomer(name, legalName, industry, website, country, currency, timez
 		`INSERT INTO customers (id, name, legal_name, industry, website, country, currency, timezone, tax_id,
 		                        billing_address, shipping_address, return_address, status, created_at, updated_at)
          VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''),
-                 NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), 'draft', NOW(), NOW())`,
+                 NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), 'pendingApproval', NOW(), NOW())`,
 		id, strings.TrimSpace(name), strings.TrimSpace(legalName), strings.TrimSpace(industry),
 		strings.TrimSpace(website), strings.TrimSpace(country), strings.TrimSpace(currency),
 		strings.TrimSpace(timezone), strings.TrimSpace(taxID), strings.TrimSpace(billingAddress),

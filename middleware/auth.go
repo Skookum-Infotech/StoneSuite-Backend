@@ -17,9 +17,16 @@ type contextKey string
 const UserContextKey contextKey = "userContext"
 
 // UserContextPayload holds the authenticated user metadata stored in request context.
+//
+//	ID       - control-plane identity id (the login identity)
+//	Email    - identity email
+//	TenantID - tenant the identity belongs to (drives DB routing)
+//	UserID   - tenant-local users.id (profile within the tenant DB)
 type UserContextPayload struct {
-	ID    string
-	Email string
+	ID       string
+	Email    string
+	TenantID string
+	UserID   string
 }
 
 // RequireAuth is the HTTP middleware that verifies incoming JWT tokens and injects user context.
@@ -83,7 +90,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		userID, okID := claims["id"].(string)
+		identityID, okID := claims["id"].(string)
 		email, okEmail := claims["email"].(string)
 
 		if !okID || !okEmail {
@@ -95,10 +102,17 @@ func RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		// Multi-tenant claims (optional for legacy tokens; required for
+		// tenant-scoped routes via TenantResolver).
+		tenantID, _ := claims["tenant_id"].(string)
+		userID, _ := claims["user_id"].(string)
+
 		// Inject user context payload into request context
 		ctxPayload := UserContextPayload{
-			ID:    userID,
-			Email: email,
+			ID:       identityID,
+			Email:    email,
+			TenantID: tenantID,
+			UserID:   userID,
 		}
 		
 		ctx := context.WithValue(r.Context(), UserContextKey, ctxPayload)

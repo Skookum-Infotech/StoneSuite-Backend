@@ -1,0 +1,49 @@
+package authz
+
+import "testing"
+
+func TestCatalogIsReturnedAsCopy(t *testing.T) {
+	a := Catalog()
+	if len(a) == 0 {
+		t.Fatal("catalog is empty")
+	}
+	a[0] = Permission{Resource: "tampered", Action: "tampered"}
+	b := Catalog()
+	if b[0].Resource == "tampered" {
+		t.Fatal("Catalog() leaked the underlying slice; mutation persisted")
+	}
+}
+
+func TestIsValidPermission(t *testing.T) {
+	tests := []struct {
+		name string
+		r    Resource
+		a    Action
+		want bool
+	}{
+		{"valid catalog entry", ResourceRecord, ActionTransition, true},
+		{"valid configure", ResourceRole, ActionConfigure, true},
+		{"resource exists but action not paired", ResourceSSOConfig, ActionTransition, false},
+		{"unknown resource", Resource("ghost"), ActionRead, false},
+		{"unknown action", ResourceRecord, Action("haunt"), false},
+		{"wildcards rejected for role editing", ResourceAny, ActionAny, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsValidPermission(tc.r, tc.a); got != tc.want {
+				t.Fatalf("IsValidPermission(%s,%s) = %v, want %v", tc.r, tc.a, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsValidScope(t *testing.T) {
+	for _, s := range []Scope{ScopeAll, ScopeTeam, ScopeOwn} {
+		if !IsValidScope(s) {
+			t.Fatalf("scope %q should be valid", s)
+		}
+	}
+	if IsValidScope(Scope("galaxy")) {
+		t.Fatal("unknown scope should be invalid")
+	}
+}

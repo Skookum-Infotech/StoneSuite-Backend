@@ -20,6 +20,15 @@ type Config struct {
 	DBName                 string
 	CorsOrigin             string
 	FrontendURL            string
+	// Multi-tenant control plane
+	ControlPlaneDBURL string // full DSN to the shared control-plane database
+	// Neon provisioning (used when creating per-tenant databases)
+	NeonAPIKey    string
+	NeonProjectID string
+	// Admin DSN with rights to CREATE/DROP tenant databases (e.g. .../postgres)
+	ProvisionAdminDBURL string
+	// Secret encryption: key (base64) used to encrypt tenant DB DSNs / SSO secrets at rest
+	SecretEncryptionKey string
 	// Microsoft Entra ID OAuth
 	EntraIDClientID     string
 	EntraIDClientSecret string
@@ -57,6 +66,12 @@ func Load() {
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
 		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
+		// Multi-tenant control plane + provisioning
+		ControlPlaneDBURL:   getEnv("CONTROL_PLANE_DB_URL", ""),
+		NeonAPIKey:          getEnv("NEON_API_KEY", ""),
+		NeonProjectID:       getEnv("NEON_PROJECT_ID", ""),
+		ProvisionAdminDBURL: getEnv("PROVISION_ADMIN_DB_URL", ""),
+		SecretEncryptionKey: getEnv("SECRET_ENCRYPTION_KEY", ""),
 		// Microsoft Entra ID
 		EntraIDClientID:     getEnv("ENTRA_ID_CLIENT_ID", ""),
 		EntraIDClientSecret: getEnv("ENTRA_ID_CLIENT_SECRET", ""),

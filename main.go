@@ -71,7 +71,9 @@ func main() {
 	// Mount Customer Onboarding routes
 	mux.Handle("/api/customers", middleware.RequireAuth(http.HandlerFunc(controllers.CustomersHandler)))
 	mux.Handle("/api/customers/", middleware.RequireAuth(http.HandlerFunc(controllers.CustomerHandler)))
+	mux.Handle("/api/invitations", middleware.RequireAuth(http.HandlerFunc(controllers.SendInvitation)))
 	mux.HandleFunc("/api/onboarding/accept", controllers.CompleteOnboarding)
+	mux.HandleFunc("/api/onboarding/submit", controllers.SubmitOnboarding)
 	mux.HandleFunc("/api/onboarding/invite/", controllers.GetOnboardingInvite)
 
 	// Mount CRM Lead routes
@@ -99,7 +101,7 @@ func main() {
 		// Unmatched routes under ServeMux will fall through. Let's make sure we handle a standard 404 response
 		// if the path doesn't start with registered prefixes.
 		path := r.URL.Path
-		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/customers") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/leads") {
+		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/customers") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/invitations") && !strings.HasPrefix(path, "/api/leads") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

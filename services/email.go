@@ -133,8 +133,10 @@ func sendEmail(to, subject, body string) error {
 	// Send email
 	addr := fmt.Sprintf("%s:%s", es.SMTPHost, es.SMTPPort)
 	if err := smtp.SendMail(addr, auth, es.SenderEmail, to_list, message); err != nil {
-		log.Printf("Failed to send email to %s: %v", to, err)
-		return nil // Log error but don't fail - allow auth to continue
+		return fmt.Errorf("send email to %s: %w", to, err)
+		// log.Printf("Failed to send email to %s: %v", to, err)
+		// return nil // Log error but don't fail - allow auth to continue
+
 	}
 
 	log.Printf("Email sent successfully to %s", to)

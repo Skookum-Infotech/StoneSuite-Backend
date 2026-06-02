@@ -123,6 +123,37 @@ type SendInviteRequest struct {
 	ExpiresInHours int    `json:"expiresInHours,omitempty"`
 }
 
+// SendInvitationRequest is the payload for the top-level "Invite Customer" action.
+type SendInvitationRequest struct {
+	CompanyName    string `json:"companyName"`
+	RecipientName  string `json:"recipientName"`
+	RecipientEmail string `json:"recipientEmail"`
+	ExpiresInHours int    `json:"expiresInHours,omitempty"`
+}
+
+// SubmitOnboardingRequest is the form submitted by the invite recipient.
+type SubmitOnboardingRequest struct {
+	Token              string `json:"token"`
+	Name               string `json:"name"`
+	LegalName          string `json:"legalName,omitempty"`
+	Industry           string `json:"industry,omitempty"`
+	Website            string `json:"website,omitempty"`
+	Country            string `json:"country,omitempty"`
+	Currency           string `json:"currency,omitempty"`
+	Timezone           string `json:"timezone,omitempty"`
+	TaxID              string `json:"taxId,omitempty"`
+	BillingAddress     string `json:"billingAddress,omitempty"`
+	ShippingAddress    string `json:"shippingAddress,omitempty"`
+	ReturnAddress      string `json:"returnAddress,omitempty"`
+	SuperAdminName     string `json:"superAdminName"`
+	SuperAdminEmail    string `json:"superAdminEmail"`
+	SuperAdminPhone    string `json:"superAdminPhone,omitempty"`
+	SuperAdminJobTitle string `json:"superAdminJobTitle,omitempty"`
+	FinanceName        string `json:"financeName,omitempty"`
+	FinanceEmail       string `json:"financeEmail,omitempty"`
+	FinancePhone       string `json:"financePhone,omitempty"`
+}
+
 // CompleteOnboardingRequest defines the request payload for customer self-service onboarding.
 type CompleteOnboardingRequest struct {
 	Token    string `json:"token"`

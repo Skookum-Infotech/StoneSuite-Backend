@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -491,7 +492,13 @@ func sendInvite(w http.ResponseWriter, r *http.Request, customerID string) {
 	_ = database.CreateOnboardingAuditLog(customerID, invite.ID, actor.ID, actor.Email, "invite_sent", fmt.Sprintf("Sent onboarding invite to %s", contact.Email))
 
 	inviteLink := fmt.Sprintf("%s/onboarding/accept?token=%s", config.AppConfig.FrontendURL, token)
-	_ = services.SendOnboardingInviteEmail(contact.Email, contact.FullName, inviteLink)
+	if err := services.SendOnboardingInviteEmail(contact.Email, contact.FullName, inviteLink); err != nil {
+		_ = database.DeleteOnboardingInvite(invite.ID)
+		log.Printf("ERROR: Invite send failed — email error, rolled back invite %s: %v", invite.ID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to send invitation email. No invite was created."})
+		return
+	}
 
 	_ = json.NewEncoder(w).Encode(struct {
 		Success bool                     `json:"success"`
@@ -554,6 +561,188 @@ func listAuditLogs(w http.ResponseWriter, r *http.Request, customerID string) {
 	_ = json.NewEncoder(w).Encode(models.AuditListResponse{Success: true, AuditLogs: logs})
 }
 
+// SendInvitation handles POST /api/invitations — creates a customer shell and sends the invite email.
+func SendInvitation(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Method not allowed. Use POST."})
+		return
+	}
+
+	var req models.SendInvitationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Invalid request payload."})
+		return
+	}
+
+	req.CompanyName = strings.TrimSpace(req.CompanyName)
+	req.RecipientName = strings.TrimSpace(req.RecipientName)
+	req.RecipientEmail = strings.ToLower(strings.TrimSpace(req.RecipientEmail))
+
+	if req.CompanyName == "" || req.RecipientName == "" || req.RecipientEmail == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Company name, recipient name, and email are required."})
+		return
+	}
+	if !emailRegex.MatchString(req.RecipientEmail) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Recipient email is not valid."})
+		return
+	}
+
+	existingUser, err := database.GetUserByEmail(req.RecipientEmail)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Error checking existing user."})
+		return
+	}
+	if existingUser != nil {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "A user account already exists for this email."})
+		return
+	}
+
+	customer, err := database.CreateCustomer(req.CompanyName, "", "", "", "", "", "", "", "", "", "")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create customer record."})
+		return
+	}
+
+	contact, err := database.CreateCustomerContact(customer.ID, req.RecipientName, req.RecipientEmail, "", "", "super_admin")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create customer contact."})
+		return
+	}
+
+	if req.ExpiresInHours <= 0 {
+		req.ExpiresInHours = 24
+	}
+	token := generateRandomToken(48)
+	expiresAt := time.Now().Add(time.Duration(req.ExpiresInHours) * time.Hour)
+
+	invite, err := database.CreateOnboardingInvite(customer.ID, contact.ID, contact.Email, token, expiresAt)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create onboarding invite."})
+		return
+	}
+
+	_ = database.UpdateCustomerStatus(customer.ID, "invitation_sent")
+	actor, _ := middleware.GetUserFromContext(r.Context())
+	_ = database.CreateOnboardingAuditLog(customer.ID, invite.ID, actor.ID, actor.Email, "invite_sent", fmt.Sprintf("Sent onboarding invite to %s (%s)", req.RecipientName, req.RecipientEmail))
+
+	inviteLink := fmt.Sprintf("%s/onboarding/invite/%s", config.AppConfig.FrontendURL, token)
+	if err := services.SendOnboardingInviteEmail(contact.Email, contact.FullName, inviteLink); err != nil {
+		_ = database.DeleteCustomer(customer.ID) // cascades to contact, invite, audit logs
+		log.Printf("ERROR: Invitation failed — email send error, rolled back customer %s: %v", customer.ID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to send invitation email. No records were created."})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(struct {
+		Success bool                     `json:"success"`
+		Message string                   `json:"message"`
+		Invite  *models.OnboardingInvite `json:"invite"`
+	}{Success: true, Message: "Invitation sent successfully.", Invite: invite})
+}
+
+// SubmitOnboarding handles POST /api/onboarding/submit — recipient submits the full customer form.
+func SubmitOnboarding(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Method not allowed. Use POST."})
+		return
+	}
+
+	var req models.SubmitOnboardingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Invalid request payload."})
+		return
+	}
+	req.Token = strings.TrimSpace(req.Token)
+	req.Name = strings.TrimSpace(req.Name)
+	req.SuperAdminName = strings.TrimSpace(req.SuperAdminName)
+	req.SuperAdminEmail = strings.ToLower(strings.TrimSpace(req.SuperAdminEmail))
+
+	if req.Token == "" || req.Name == "" || req.SuperAdminEmail == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Token, company name, and super admin email are required."})
+		return
+	}
+
+	invite, err := database.GetOnboardingInviteByToken(req.Token)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to load invite."})
+		return
+	}
+	if invite == nil || invite.Status != "sent" {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Invite token is invalid or no longer active."})
+		return
+	}
+	if time.Now().After(invite.ExpiresAt) {
+		_, _ = database.UpdateInviteStatus(invite.ID, "expired", time.Time{})
+		w.WriteHeader(http.StatusGone)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Invite token has expired."})
+		return
+	}
+
+	_, err = database.UpdateCustomer(
+		invite.CustomerID, req.Name, req.LegalName, req.Industry, req.Website,
+		req.Country, req.Currency, req.Timezone, req.TaxID,
+		req.BillingAddress, req.ShippingAddress, req.ReturnAddress, "active",
+	)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to update customer record."})
+		return
+	}
+
+	if invite.ContactID != "" {
+		_, _ = database.UpdateCustomerContact(invite.ContactID, req.SuperAdminName, req.SuperAdminEmail, req.SuperAdminPhone, req.SuperAdminJobTitle, "super_admin")
+	}
+
+	if req.FinanceEmail != "" {
+		contacts, _ := database.GetCustomerContacts(invite.CustomerID)
+		var financeContact *models.CustomerContact
+		for i := range contacts {
+			if contacts[i].Role == "finance" {
+				financeContact = &contacts[i]
+				break
+			}
+		}
+		if financeContact != nil {
+			_, _ = database.UpdateCustomerContact(financeContact.ID, req.FinanceName, req.FinanceEmail, req.FinancePhone, "", "finance")
+		} else {
+			_, _ = database.CreateCustomerContact(invite.CustomerID, req.FinanceName, req.FinanceEmail, req.FinancePhone, "", "finance")
+		}
+	}
+
+	_, _ = database.UpdateInviteStatus(invite.ID, "accepted", time.Now())
+	_ = database.CreateOnboardingAuditLog(invite.CustomerID, invite.ID, "", invite.ContactEmail, "onboarding_submitted", fmt.Sprintf("Onboarding form submitted by %s", invite.ContactEmail))
+
+	customer, err := database.GetCustomerByIDWithContacts(invite.CustomerID)
+	if err != nil || customer == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to retrieve updated customer."})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(struct {
+		Success  bool             `json:"success"`
+		Message  string           `json:"message"`
+		Customer *models.Customer `json:"customer"`
+	}{Success: true, Message: "Onboarding submitted successfully.", Customer: customer})
+}
+
 func GetOnboardingInvite(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	token := strings.TrimPrefix(r.URL.Path, "/api/onboarding/invite/")
@@ -575,18 +764,28 @@ func GetOnboardingInvite(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Invite not found."})
 		return
 	}
-	if time.Now().After(invite.ExpiresAt) && invite.Status == "pending" {
-		_ = json.NewEncoder(w).Encode(struct {
-			Success bool                     `json:"success"`
-			Invite  *models.OnboardingInvite `json:"invite"`
-			Message string                   `json:"message"`
-		}{Success: true, Invite: invite, Message: "Invite has expired."})
-		return
+	if time.Now().After(invite.ExpiresAt) && invite.Status == "sent" {
+		_, _ = database.UpdateInviteStatus(invite.ID, "expired", time.Time{})
+		invite.Status = "expired"
 	}
+
+	var companyName, recipientName string
+	if customer, cerr := database.GetCustomerByIDWithContacts(invite.CustomerID); cerr == nil && customer != nil {
+		companyName = customer.Name
+		for _, c := range customer.Contacts {
+			if c.Email == invite.ContactEmail {
+				recipientName = c.FullName
+				break
+			}
+		}
+	}
+
 	_ = json.NewEncoder(w).Encode(struct {
-		Success bool                     `json:"success"`
-		Invite  *models.OnboardingInvite `json:"invite"`
-	}{Success: true, Invite: invite})
+		Success       bool                     `json:"success"`
+		Invite        *models.OnboardingInvite `json:"invite"`
+		CompanyName   string                   `json:"companyName"`
+		RecipientName string                   `json:"recipientName"`
+	}{Success: true, Invite: invite, CompanyName: companyName, RecipientName: recipientName})
 }
 
 func CompleteOnboarding(w http.ResponseWriter, r *http.Request) {

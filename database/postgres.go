@@ -713,6 +713,16 @@ func UpdateInviteStatus(inviteID, status string, acceptedAt time.Time) (*models.
 	return GetOnboardingInviteByID(inviteID)
 }
 
+func DeleteOnboardingInvite(inviteID string) error {
+	if pgPool == nil {
+		if err := InitPostgres(); err != nil {
+			return err
+		}
+	}
+	_, err := pgPool.Exec(context.Background(), `DELETE FROM onboarding_invites WHERE id=$1`, inviteID)
+	return err
+}
+
 func CreateOnboardingAuditLog(customerID, inviteID, actorID, actorEmail, action, details string) error {
 	if pgPool == nil {
 		if err := InitPostgres(); err != nil {

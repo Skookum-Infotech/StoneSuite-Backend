@@ -183,6 +183,15 @@ func main() {
 			}{true, tenant.ID, tenant.Slug, tenant.DisplayName, tenant.DBName, userCount})
 		})
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(resolver.Middleware(tenantMe)))
+
+		// Tenant-scoped RBAC management (role editor API). Each handler runs
+		// after RequireAuth + the tenancy resolver, then enforces the relevant
+		// catalog permission (role:read / role:configure) per method.
+		rbac := controllers.NewRBACOps()
+		mux.Handle("/api/tenant/permissions/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Catalog))))
+		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))
+		mux.Handle("/api/tenant/roles/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Role))))
+		mux.Handle("/api/tenant/users/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.UserRoles))))
 	}
 
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger

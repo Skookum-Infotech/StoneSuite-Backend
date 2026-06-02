@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/authz"
 	"stonesuite-backend/database"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/tenancy"
@@ -108,12 +109,20 @@ func (p *Provisioner) provision(ctx context.Context, j Job) error {
 		return err
 	}
 
-	// Seed the accepting user as the tenant's first member (idempotent on identity_id).
-	if _, err := pool.Exec(ctx, `
+	// Seed the accepting user as the tenant's first member (idempotent on
+	// identity_id). The upsert returns the user id whether inserted or existing.
+	var firstUserID string
+	if err := pool.QueryRow(ctx, `
 		INSERT INTO users (identity_id, email, full_name, status)
 		VALUES ($1, $2, $3, 'active')
-		ON CONFLICT (identity_id) DO NOTHING`,
-		j.IdentityID, j.Email, j.FullName); err != nil {
+		ON CONFLICT (identity_id) DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()
+		RETURNING id`,
+		j.IdentityID, j.Email, j.FullName).Scan(&firstUserID); err != nil {
+		return err
+	}
+
+	// Seed RBAC: super_admin system role + grant it to the first user (idempotent).
+	if err := authz.SeedTenantRBAC(ctx, pool, firstUserID); err != nil {
 		return err
 	}
 

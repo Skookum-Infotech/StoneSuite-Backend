@@ -100,8 +100,18 @@ func createCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
+	req.LegalName = strings.TrimSpace(req.LegalName)
+	req.Industry = strings.TrimSpace(req.Industry)
+	req.Website = strings.TrimSpace(req.Website)
+	req.Country = strings.TrimSpace(req.Country)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.Timezone = strings.TrimSpace(req.Timezone)
+	req.TaxID = strings.TrimSpace(req.TaxID)
 	req.SuperAdminName = strings.TrimSpace(req.SuperAdminName)
 	req.SuperAdminEmail = strings.ToLower(strings.TrimSpace(req.SuperAdminEmail))
+	req.SuperAdminPhone = strings.TrimSpace(req.SuperAdminPhone)
+	req.FinanceName = strings.TrimSpace(req.FinanceName)
+	req.FinanceEmail = strings.ToLower(strings.TrimSpace(req.FinanceEmail))
 
 	if req.Name == "" || req.SuperAdminName == "" || req.SuperAdminEmail == "" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -111,6 +121,49 @@ func createCustomer(w http.ResponseWriter, r *http.Request) {
 	if !emailRegex.MatchString(req.SuperAdminEmail) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Super admin email is not valid."})
+		return
+	}
+	if req.FinanceEmail != "" && !emailRegex.MatchString(req.FinanceEmail) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Finance contact email is not valid."})
+		return
+	}
+
+	// Length checks — match DB schema column sizes exactly.
+	type colLimit struct{ val, field, label string; max int }
+	for _, c := range []colLimit{
+		{req.Name, "companyName", "Company name", 255},
+		{req.LegalName, "legalName", "Legal name", 255},
+		{req.Industry, "industry", "Industry", 255},
+		{req.Website, "website", "Website URL", 255},
+		{req.Country, "country", "Country", 100},
+		{req.Currency, "currency", "Currency code", 10},
+		{req.Timezone, "timezone", "Timezone", 100},
+		{req.TaxID, "taxId", "Tax / VAT ID", 100},
+		{req.SuperAdminName, "superAdminName", "Super admin name", 255},
+		{req.SuperAdminEmail, "superAdminEmail", "Super admin email", 255},
+		{req.SuperAdminPhone, "superAdminPhone", "Super admin phone", 50},
+		{req.FinanceName, "financeName", "Finance contact name", 255},
+		{req.FinanceEmail, "financeEmail", "Finance contact email", 255},
+		{req.FinancePhone, "financePhone", "Finance contact phone", 50},
+	} {
+		if len(c.val) > c.max {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+				Field   string `json:"field,omitempty"`
+			}{Success: false, Message: fmt.Sprintf("%s must be %d characters or fewer (currently %d).", c.label, c.max, len(c.val)), Field: c.field})
+			return
+		}
+	}
+	if req.Currency != "" && len(req.Currency) > 3 {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+			Field   string `json:"field,omitempty"`
+		}{Success: false, Message: fmt.Sprintf("Currency should be a 3-letter ISO 4217 code (e.g. USD, EUR, GBP). '%s' is too long.", req.Currency), Field: "currency"})
 		return
 	}
 
@@ -666,14 +719,86 @@ func SubmitOnboarding(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Invalid request payload."})
 		return
 	}
+
+	// Trim all string fields up front.
 	req.Token = strings.TrimSpace(req.Token)
 	req.Name = strings.TrimSpace(req.Name)
+	req.LegalName = strings.TrimSpace(req.LegalName)
+	req.Industry = strings.TrimSpace(req.Industry)
+	req.Website = strings.TrimSpace(req.Website)
+	req.Country = strings.TrimSpace(req.Country)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.Timezone = strings.TrimSpace(req.Timezone)
+	req.TaxID = strings.TrimSpace(req.TaxID)
+	req.BillingAddress = strings.TrimSpace(req.BillingAddress)
+	req.ShippingAddress = strings.TrimSpace(req.ShippingAddress)
+	req.ReturnAddress = strings.TrimSpace(req.ReturnAddress)
 	req.SuperAdminName = strings.TrimSpace(req.SuperAdminName)
 	req.SuperAdminEmail = strings.ToLower(strings.TrimSpace(req.SuperAdminEmail))
+	req.SuperAdminPhone = strings.TrimSpace(req.SuperAdminPhone)
+	req.SuperAdminJobTitle = strings.TrimSpace(req.SuperAdminJobTitle)
+	req.FinanceName = strings.TrimSpace(req.FinanceName)
+	req.FinanceEmail = strings.ToLower(strings.TrimSpace(req.FinanceEmail))
+	req.FinancePhone = strings.TrimSpace(req.FinancePhone)
 
-	if req.Token == "" || req.Name == "" || req.SuperAdminEmail == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Token, company name, and super admin email are required."})
+	// --- Field validation (matches DB schema constraints) ---
+	type fieldErr struct{ field, msg string }
+	var errs []fieldErr
+
+	// Required fields
+	if req.Name == "" {
+		errs = append(errs, fieldErr{"companyName", "Company name is required."})
+	}
+	if req.SuperAdminName == "" {
+		errs = append(errs, fieldErr{"superAdminName", "Super admin full name is required."})
+	}
+	if req.SuperAdminEmail == "" {
+		errs = append(errs, fieldErr{"superAdminEmail", "Super admin email is required."})
+	}
+
+	// Length limits — exact column definitions from the DB schema
+	checkLen := func(val, field string, max int, label string) {
+		if len(val) > max {
+			errs = append(errs, fieldErr{field, fmt.Sprintf("%s must be %d characters or fewer (currently %d).", label, max, len(val))})
+		}
+	}
+	checkLen(req.Name, "companyName", 255, "Company name")
+	checkLen(req.LegalName, "legalName", 255, "Legal name")
+	checkLen(req.Industry, "industry", 255, "Industry")
+	checkLen(req.Website, "website", 255, "Website URL")
+	checkLen(req.Country, "country", 100, "Country")
+	checkLen(req.Currency, "currency", 10, "Currency code")
+	checkLen(req.Timezone, "timezone", 100, "Timezone")
+	checkLen(req.TaxID, "taxId", 100, "Tax / VAT ID")
+	checkLen(req.SuperAdminName, "superAdminName", 255, "Super admin name")
+	checkLen(req.SuperAdminEmail, "superAdminEmail", 255, "Super admin email")
+	checkLen(req.SuperAdminPhone, "superAdminPhone", 50, "Super admin phone")
+	checkLen(req.SuperAdminJobTitle, "superAdminJobTitle", 255, "Super admin job title")
+	checkLen(req.FinanceName, "financeName", 255, "Finance contact name")
+	checkLen(req.FinanceEmail, "financeEmail", 255, "Finance contact email")
+	checkLen(req.FinancePhone, "financePhone", 50, "Finance contact phone")
+
+	// Email format checks
+	if req.SuperAdminEmail != "" && !emailRegex.MatchString(req.SuperAdminEmail) {
+		errs = append(errs, fieldErr{"superAdminEmail", "Super admin email address is not valid."})
+	}
+	if req.FinanceEmail != "" && !emailRegex.MatchString(req.FinanceEmail) {
+		errs = append(errs, fieldErr{"financeEmail", "Finance contact email address is not valid."})
+	}
+
+	// Currency: should be a 2–3 letter ISO 4217 code
+	if req.Currency != "" && len(req.Currency) > 3 {
+		errs = append(errs, fieldErr{"currency", fmt.Sprintf("Currency should be a 3-letter ISO 4217 code (e.g. USD, EUR, GBP). '%s' is too long.", req.Currency)})
+	}
+
+	if len(errs) > 0 {
+		// Return the first (most important) validation error with its field label so the UI can surface it.
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+			Field   string `json:"field,omitempty"`
+		}{Success: false, Message: errs[0].msg, Field: errs[0].field})
 		return
 	}
 
@@ -698,11 +823,12 @@ func SubmitOnboarding(w http.ResponseWriter, r *http.Request) {
 	_, err = database.UpdateCustomer(
 		invite.CustomerID, req.Name, req.LegalName, req.Industry, req.Website,
 		req.Country, req.Currency, req.Timezone, req.TaxID,
-		req.BillingAddress, req.ShippingAddress, req.ReturnAddress, "active",
+		req.BillingAddress, req.ShippingAddress, req.ReturnAddress, "pendingApproval",
 	)
 	if err != nil {
+		log.Printf("ERROR: SubmitOnboarding UpdateCustomer failed for customer %s: %v", invite.CustomerID, err)
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to update customer record."})
+		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to save your information. Please check your inputs and try again."})
 		return
 	}
 

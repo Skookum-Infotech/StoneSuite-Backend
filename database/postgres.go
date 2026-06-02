@@ -437,7 +437,7 @@ func GetCustomerContacts(customerID string) ([]models.CustomerContact, error) {
 	}
 
 	rows, err := pgPool.Query(context.Background(),
-		`SELECT id, customer_id, full_name, email, COALESCE(phone, ''), role, created_at, updated_at
+		`SELECT id, customer_id, full_name, email, COALESCE(phone, ''), COALESCE(job_title, ''), role, created_at, updated_at
          FROM customer_contacts WHERE customer_id=$1 ORDER BY created_at DESC`, customerID)
 	if err != nil {
 		return nil, err
@@ -447,7 +447,7 @@ func GetCustomerContacts(customerID string) ([]models.CustomerContact, error) {
 	var contacts []models.CustomerContact
 	for rows.Next() {
 		var c models.CustomerContact
-		if err := rows.Scan(&c.ID, &c.CustomerID, &c.FullName, &c.Email, &c.Phone, &c.Role, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.CustomerID, &c.FullName, &c.Email, &c.Phone, &c.JobTitle, &c.Role, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		contacts = append(contacts, c)
@@ -462,10 +462,10 @@ func GetCustomerContactByID(contactID string) (*models.CustomerContact, error) {
 		}
 	}
 	row := pgPool.QueryRow(context.Background(),
-		`SELECT id, customer_id, full_name, email, COALESCE(phone, ''), role, created_at, updated_at
+		`SELECT id, customer_id, full_name, email, COALESCE(phone, ''), COALESCE(job_title, ''), role, created_at, updated_at
          FROM customer_contacts WHERE id=$1`, contactID)
 	var c models.CustomerContact
-	if err := row.Scan(&c.ID, &c.CustomerID, &c.FullName, &c.Email, &c.Phone, &c.Role, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.CustomerID, &c.FullName, &c.Email, &c.Phone, &c.JobTitle, &c.Role, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -481,10 +481,10 @@ func GetCustomerContactByEmail(customerID, email string) (*models.CustomerContac
 		}
 	}
 	row := pgPool.QueryRow(context.Background(),
-		`SELECT id, customer_id, full_name, email, COALESCE(phone, ''), role, created_at, updated_at
+		`SELECT id, customer_id, full_name, email, COALESCE(phone, ''), COALESCE(job_title, ''), role, created_at, updated_at
          FROM customer_contacts WHERE customer_id=$1 AND LOWER(email)=LOWER($2)`, customerID, strings.TrimSpace(strings.ToLower(email)))
 	var c models.CustomerContact
-	if err := row.Scan(&c.ID, &c.CustomerID, &c.FullName, &c.Email, &c.Phone, &c.Role, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.CustomerID, &c.FullName, &c.Email, &c.Phone, &c.JobTitle, &c.Role, &c.CreatedAt, &c.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
@@ -493,7 +493,7 @@ func GetCustomerContactByEmail(customerID, email string) (*models.CustomerContac
 	return &c, nil
 }
 
-func UpdateCustomerContact(contactID, fullName, email, phone, role string) (*models.CustomerContact, error) {
+func UpdateCustomerContact(contactID, fullName, email, phone, jobTitle, role string) (*models.CustomerContact, error) {
 	if pgPool == nil {
 		if err := InitPostgres(); err != nil {
 			return nil, err
@@ -505,9 +505,10 @@ func UpdateCustomerContact(contactID, fullName, email, phone, role string) (*mod
 			full_name=COALESCE(NULLIF($1, ''), full_name),
 			email=COALESCE(NULLIF(LOWER($2), ''), email),
 			phone=COALESCE(NULLIF($3, ''), phone),
-			role=COALESCE(NULLIF($4, ''), role),
+			job_title=COALESCE(NULLIF($4, ''), job_title),
+			role=COALESCE(NULLIF($5, ''), role),
 			updated_at=NOW()
-		 WHERE id=$5`, strings.TrimSpace(fullName), strings.TrimSpace(email), strings.TrimSpace(phone), strings.TrimSpace(role), contactID)
+		 WHERE id=$6`, strings.TrimSpace(fullName), strings.TrimSpace(email), strings.TrimSpace(phone), strings.TrimSpace(jobTitle), strings.TrimSpace(role), contactID)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +516,7 @@ func UpdateCustomerContact(contactID, fullName, email, phone, role string) (*mod
 	return GetCustomerContactByID(contactID)
 }
 
-func CreateCustomerContact(customerID, fullName, email, phone, role string) (*models.CustomerContact, error) {
+func CreateCustomerContact(customerID, fullName, email, phone, jobTitle, role string) (*models.CustomerContact, error) {
 	if pgPool == nil {
 		if err := InitPostgres(); err != nil {
 			return nil, err
@@ -537,9 +538,9 @@ func CreateCustomerContact(customerID, fullName, email, phone, role string) (*mo
 	}
 
 	_, err = pgPool.Exec(context.Background(),
-		`INSERT INTO customer_contacts (id, customer_id, full_name, email, phone, role, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, NOW(), NOW())`,
-		id, customerID, fullName, email, strings.TrimSpace(phone), strings.TrimSpace(role))
+		`INSERT INTO customer_contacts (id, customer_id, full_name, email, phone, job_title, role, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, NOW(), NOW())`,
+		id, customerID, fullName, email, strings.TrimSpace(phone), strings.TrimSpace(jobTitle), strings.TrimSpace(role))
 	if err != nil {
 		return nil, err
 	}

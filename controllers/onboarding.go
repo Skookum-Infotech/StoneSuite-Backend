@@ -124,7 +124,7 @@ func createCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = database.CreateCustomerContact(customer.ID, req.SuperAdminName, req.SuperAdminEmail, req.SuperAdminPhone, "super_admin")
+	_, err = database.CreateCustomerContact(customer.ID, req.SuperAdminName, req.SuperAdminEmail, req.SuperAdminPhone, req.SuperAdminJobTitle, "super_admin")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create customer contact."})
@@ -132,7 +132,7 @@ func createCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.FinanceEmail != "" {
-		_, _ = database.CreateCustomerContact(customer.ID, req.FinanceName, req.FinanceEmail, req.FinancePhone, "finance")
+		_, _ = database.CreateCustomerContact(customer.ID, req.FinanceName, req.FinanceEmail, req.FinancePhone, "", "finance")
 	}
 
 	actor, _ := middleware.GetUserFromContext(r.Context())
@@ -276,7 +276,7 @@ func createContact(w http.ResponseWriter, r *http.Request, customerID string) {
 		return
 	}
 
-	contact, err := database.CreateCustomerContact(customerID, req.FullName, req.Email, req.Phone, req.Role)
+	contact, err := database.CreateCustomerContact(customerID, req.FullName, req.Email, req.Phone, "", req.Role)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create customer contact."})
@@ -320,7 +320,7 @@ func updateContact(w http.ResponseWriter, r *http.Request, customerID, contactID
 		}
 	}
 
-	updated, err := database.UpdateCustomerContact(contactID, req.FullName, req.Email, req.Phone, req.Role)
+	updated, err := database.UpdateCustomerContact(contactID, req.FullName, req.Email, req.Phone, "", req.Role)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to update contact."})
@@ -439,7 +439,7 @@ func sendInvite(w http.ResponseWriter, r *http.Request, customerID string) {
 			return
 		}
 		if contact == nil {
-			contact, err = database.CreateCustomerContact(customerID, "", req.ContactEmail, "", "super_admin")
+			contact, err = database.CreateCustomerContact(customerID, "", req.ContactEmail, "", "", "super_admin")
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: "Failed to create contact for invite."})

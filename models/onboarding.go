@@ -29,6 +29,7 @@ type CustomerContact struct {
 	FullName   string    `json:"fullName"`
 	Email      string    `json:"email"`
 	Phone      string    `json:"phone,omitempty"`
+	JobTitle   string    `json:"jobTitle,omitempty"`
 	Role       string    `json:"role"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`

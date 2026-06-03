@@ -11,19 +11,21 @@ func TestTenantServable(t *testing.T) {
 		name      string
 		status    string
 		migration string
+		dbName    string
 		want      bool
 	}{
-		{"active and migrated", StatusActive, MigrationOK, true},
-		{"active but migration pending", StatusActive, MigrationPending, false},
-		{"active but migration failed", StatusActive, MigrationFailed, false},
-		{"provisioning", StatusProvisioning, MigrationOK, false},
-		{"suspended", StatusSuspended, MigrationOK, false},
-		{"deleted", StatusDeleted, MigrationOK, false},
-		{"invited", StatusInvited, MigrationPending, false},
+		{"active, migrated, provisioned", StatusActive, MigrationOK, "tenant_acme", true},
+		{"active and migrated but no database", StatusActive, MigrationOK, "", false},
+		{"active but migration pending", StatusActive, MigrationPending, "tenant_acme", false},
+		{"active but migration failed", StatusActive, MigrationFailed, "tenant_acme", false},
+		{"provisioning", StatusProvisioning, MigrationOK, "", false},
+		{"suspended", StatusSuspended, MigrationOK, "tenant_acme", false},
+		{"deleted", StatusDeleted, MigrationOK, "tenant_acme", false},
+		{"invited", StatusInvited, MigrationPending, "", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tn := &Tenant{Status: tc.status, MigrationStatus: tc.migration}
+			tn := &Tenant{Status: tc.status, MigrationStatus: tc.migration, DBName: tc.dbName}
 			if got := tn.Servable(); got != tc.want {
 				t.Fatalf("Servable()=%v, want %v", got, tc.want)
 			}

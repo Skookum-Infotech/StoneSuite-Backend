@@ -87,3 +87,10 @@ func (c *ControlPlane) TenantBySlug(ctx context.Context, slug string) (*Tenant, 
 	q := "SELECT " + tenantColumns + " FROM tenants WHERE slug = $1"
 	return scanTenant(c.pool.QueryRow(ctx, q, slug))
 }
+
+// PlatformOwnerTenant loads the single platform-owner tenant (your company).
+// Returns ErrTenantNotFound if none has been designated.
+func (c *ControlPlane) PlatformOwnerTenant(ctx context.Context) (*Tenant, error) {
+	q := "SELECT " + tenantColumns + " FROM tenants WHERE is_platform_owner = TRUE LIMIT 1"
+	return scanTenant(c.pool.QueryRow(ctx, q))
+}

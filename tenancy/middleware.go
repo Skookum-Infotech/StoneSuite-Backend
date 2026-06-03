@@ -92,14 +92,15 @@ func PoolFromContext(ctx context.Context) (*pgxpool.Pool, error) {
 
 func tenantUnservableMessage(t *Tenant) string {
 	switch {
-	case t.Status == StatusProvisioning:
-		return "Your workspace is still being set up. Please try again shortly."
 	case t.Status == StatusSuspended:
 		return "This workspace is suspended."
 	case t.Status == StatusDeleted:
 		return "This workspace has been deleted."
 	case t.MigrationStatus == MigrationFailed:
 		return "This workspace is temporarily unavailable (maintenance)."
+	case t.Status == StatusProvisioning, t.DBName == "":
+		// Provisioning, or active-but-not-yet-provisioned (no DB).
+		return "Your workspace is still being set up. Please try again shortly."
 	default:
 		return "This workspace is not available."
 	}

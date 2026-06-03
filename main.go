@@ -60,6 +60,12 @@ func main() {
 			provisioner = provisioning.New(cp, provider, cipher)
 			provisioner.Start(2)
 			log.Println("Tenant provisioner started (2 workers).")
+
+			// Self-heal: the platform owner is a first-class tenant too. If its
+			// workspace database was never provisioned (e.g. the owner was seeded
+			// by hand), provision it now so platform admins get a working
+			// workspace (workflows/roles) like any tenant.
+			ensureOwnerWorkspace(context.Background(), cp, provisioner)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -231,4 +237,35 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("CRITICAL SERVER FAILURE: %v", err)
 	}
+}
+
+// ensureOwnerWorkspace provisions the platform-owner tenant's database if it was
+// never set up. The owner is a first-class tenant, so its members need a real
+// workspace (seeded workflows/roles). Idempotent and non-fatal: any failure is
+// logged and the server continues. Provisioning is asynchronous.
+func ensureOwnerWorkspace(ctx context.Context, cp *tenancy.ControlPlane, p *provisioning.Provisioner) {
+	if p == nil {
+		return
+	}
+	owner, err := cp.PlatformOwnerTenant(ctx)
+	if err != nil {
+		log.Printf("owner-workspace bootstrap skipped: no platform-owner tenant (%v)", err)
+		return
+	}
+	if owner.DBName != "" {
+		return // already provisioned
+	}
+	identity, err := cp.AnyIdentityForTenant(ctx, owner.ID)
+	if err != nil {
+		log.Printf("owner-workspace bootstrap skipped: no identity for owner tenant %s (%v)", owner.Slug, err)
+		return
+	}
+	log.Printf("Provisioning platform-owner workspace %q...", owner.Slug)
+	p.Enqueue(provisioning.Job{
+		TenantID:   owner.ID,
+		Slug:       owner.Slug,
+		IdentityID: identity.ID,
+		Email:      identity.Email,
+		FullName:   identity.FullName,
+	})
 }

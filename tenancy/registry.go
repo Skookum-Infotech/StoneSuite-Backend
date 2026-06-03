@@ -167,6 +167,13 @@ func (c *ControlPlane) IdentityByEmail(ctx context.Context, email string) (*Iden
 	return scanIdentity(c.pool.QueryRow(ctx, q, email))
 }
 
+// AnyIdentityForTenant returns the earliest-created identity for a tenant. Used
+// to pick the first user to seed when provisioning the platform-owner workspace.
+func (c *ControlPlane) AnyIdentityForTenant(ctx context.Context, tenantID string) (*Identity, error) {
+	q := "SELECT " + identityColumns + " FROM identities WHERE tenant_id = $1 ORDER BY created_at LIMIT 1"
+	return scanIdentity(c.pool.QueryRow(ctx, q, tenantID))
+}
+
 // ----- Invite writes/reads ---------------------------------------------------
 
 // CreateInvite inserts a pending invite for a tenant.

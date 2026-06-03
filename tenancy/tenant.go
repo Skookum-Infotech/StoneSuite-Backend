@@ -45,7 +45,10 @@ type Tenant struct {
 }
 
 // Servable reports whether requests for this tenant may be served. A tenant is
-// only servable when it is active and its database migrations are current.
+// only servable when it is active, its migrations are current, and it has a
+// provisioned database. A tenant with no DB (seeded but not yet provisioned)
+// is treated as unservable so callers get a friendly "still being set up"
+// message instead of a raw connection error.
 func (t *Tenant) Servable() bool {
-	return t.Status == StatusActive && t.MigrationStatus == MigrationOK
+	return t.Status == StatusActive && t.MigrationStatus == MigrationOK && t.DBName != ""
 }

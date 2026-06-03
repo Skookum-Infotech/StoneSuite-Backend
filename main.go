@@ -11,7 +11,6 @@ import (
 
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
-	"stonesuite-backend/database"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
@@ -23,14 +22,7 @@ func main() {
 	// 1. Load Configurations
 	config.Load()
 
-	// 2. Initialize PostgreSQL Database Service
-	log.Println("Initializing PostgreSQL database service...")
-	if err := database.InitPostgres(); err != nil {
-		log.Fatalf("CRITICAL ERROR: Failed to initialize PostgreSQL database: %v", err)
-	}
-	log.Println("PostgreSQL database initialized successfully.")
-
-	// 2b. Initialize the multi-tenant control plane (optional until configured).
+	// 2. Initialize the multi-tenant control plane (required).
 	// When CONTROL_PLANE_DB_URL is set, requests can be resolved to a tenant and
 	// routed to that tenant's isolated database. Until then, legacy routes work
 	// unchanged so existing functionality is not disrupted during the migration.
@@ -75,7 +67,7 @@ func main() {
 		tenantOps = controllers.NewTenantOps(cp, provisioner)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {
-		log.Println("Note: CONTROL_PLANE_DB_URL not set — multi-tenant routes disabled (legacy mode).")
+		log.Fatalf("CRITICAL ERROR: CONTROL_PLANE_DB_URL is required (the legacy single-tenant backend has been removed).")
 	}
 
 	// 3. Setup HTTP Routing
@@ -102,36 +94,7 @@ func main() {
 		})
 	})
 
-	// Mount Register & Login routes
-	mux.HandleFunc("/api/auth/register", controllers.Register)
-	mux.HandleFunc("/api/auth/login", controllers.Login)
-
-	// Mount Password Reset & Email Verification routes
-	mux.HandleFunc("/api/auth/forgot-password", controllers.ForgotPassword)
-	mux.HandleFunc("/api/auth/reset-password", controllers.ResetPassword)
-	mux.HandleFunc("/api/auth/verify-email", controllers.VerifyEmail)
-	mux.HandleFunc("/api/auth/resend-verification", controllers.ResendVerification)
-
-	// Mount OAuth callback routes
-	mux.HandleFunc("/api/auth/entra/callback", controllers.EntraIDCallback)
-	mux.HandleFunc("/api/auth/cognito/callback", controllers.CognitoCallback)
-
-	// Mount Protected /me route using RequireAuth middleware
-	meHandler := http.HandlerFunc(controllers.GetMe)
-	mux.Handle("/api/auth/me", middleware.RequireAuth(meHandler))
-
-	// Mount Customer Onboarding routes
-	mux.Handle("/api/customers", middleware.RequireAuth(http.HandlerFunc(controllers.CustomersHandler)))
-	mux.Handle("/api/customers/", middleware.RequireAuth(http.HandlerFunc(controllers.CustomerHandler)))
-	mux.Handle("/api/invitations", middleware.RequireAuth(http.HandlerFunc(controllers.SendInvitation)))
-	mux.HandleFunc("/api/onboarding/accept", controllers.CompleteOnboarding)
-	mux.HandleFunc("/api/onboarding/submit", controllers.SubmitOnboarding)
-	mux.HandleFunc("/api/onboarding/invite/", controllers.GetOnboardingInvite)
-
-	// Mount CRM Lead routes
-	mux.Handle("/api/leads", middleware.RequireAuth(http.HandlerFunc(controllers.LeadsHandler)))
-
-	// Multi-tenant routes (only when the control plane is configured).
+	// Multi-tenant routes (the control plane is always configured at this point).
 	if tenantOps != nil {
 		// Public: tenant-scoped login + onboarding.
 		mux.HandleFunc("/api/auth/tenant-login", tenantOps.TenantLogin)
@@ -236,7 +199,7 @@ func main() {
 		// Unmatched routes under ServeMux will fall through. Let's make sure we handle a standard 404 response
 		// if the path doesn't start with registered prefixes.
 		path := r.URL.Path
-		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/customers") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/invitations") && !strings.HasPrefix(path, "/api/leads") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") {
+		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

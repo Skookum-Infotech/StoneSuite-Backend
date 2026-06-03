@@ -1,1 +1,0 @@
-ALTER TABLE customer_contacts ADD COLUMN IF NOT EXISTS job_title VARCHAR(255);

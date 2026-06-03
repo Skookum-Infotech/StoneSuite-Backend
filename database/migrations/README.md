@@ -1,14 +1,27 @@
 # Database Migrations
 
-StoneSuite uses [golang-migrate](https://github.com/golang-migrate/migrate) via Docker — no local installation needed.
+StoneSuite is **multi-tenant (database-per-tenant)**, so there are two migration
+sets — no single shared application database:
+
+| Set | Path | Applies to |
+|---|---|---|
+| **Control plane** | `control_plane/` | the shared `stonesuite_cp` DB (tenant registry, identities, invites, platform admins) |
+| **Tenant template** | `tenant/` | each per-tenant DB (`tenant_<slug>`): users, roles, workflows, records |
+
+Tenant migrations are also **embedded into the Go binary** (`database/tenant_migrations.go`)
+and applied automatically by the provisioner when a tenant database is created.
+
+Migrations use [golang-migrate](https://github.com/golang-migrate/migrate) via Docker —
+no local installation needed.
 
 ---
 
 ## Prerequisites
 
 - Docker running
-- `make` installed (`choco install make` on Windows, or use Git Bash)
+- `make` installed
 - Postgres container up: `docker compose up -d postgres`
+- Control-plane DB created: `docker exec stonesuite-db createdb -U stonesuite stonesuite_cp`
 
 ---
 
@@ -16,119 +29,78 @@ StoneSuite uses [golang-migrate](https://github.com/golang-migrate/migrate) via 
 
 | Command | What it does |
 |---|---|
-| `make migrate-create name=<name>` | Create a new migration pair |
-| `make migrate-up` | Apply all pending migrations |
-| `make migrate-down` | Roll back the last migration |
-| `make migrate-version` | Show the current migration version |
-| `make migrate-force v=<n>` | Force-set version (fixes dirty state) |
+| `make migrate-cp-create name=<name>` | Create a control-plane migration pair |
+| `make migrate-cp-up` | Apply control-plane migrations to `stonesuite_cp` |
+| `make migrate-cp-down` | Roll back the last control-plane migration |
+| `make migrate-tenant-create name=<name>` | Create a tenant-template migration pair |
+| `make migrate-tenant-up db="postgres://…/tenant_acme?sslmode=disable"` | Apply tenant migrations to ONE tenant DB |
+
+> New tenants get the full tenant-template set automatically at provisioning time.
+> Use `migrate-tenant-up` to bring an **existing** tenant DB up to date after adding a
+> tenant migration. (A fan-out runner across all tenants is a Phase 4+ enhancement.)
 
 ---
 
-## Workflow
-
-### 1. Create a migration
+## Workflow (example: add a field to every tenant)
 
 ```bash
-make migrate-create name=add_orders_table
+make migrate-tenant-create name=add_priority_to_records
 ```
 
-This generates two files in this directory:
-
-```
-000002_add_orders_table.up.sql
-000002_add_orders_table.down.sql
-```
-
-### 2. Write the SQL
-
-**`up.sql`** — the change you want to apply:
-```sql
-CREATE TABLE orders (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-**`down.sql`** — the exact reverse:
-```sql
-DROP TABLE IF EXISTS orders;
-```
-
-> Always write the `down.sql`. It's your rollback safety net.
-
-### 3. Apply
-
-```bash
-make migrate-up
-```
-
-### 4. Roll back if something goes wrong
-
-```bash
-make migrate-down   # undoes the last migration
-```
+Write the `up.sql` / `down.sql` in `tenant/`, then either re-provision (new tenants pick
+it up automatically) or apply to existing tenants with `migrate-tenant-up`. Always write
+the `down.sql` — it's your rollback safety net.
 
 ---
 
 ## File Naming
 
-Files follow the pattern `<version>_<description>.<direction>.sql`:
+Files follow `<version>_<description>.<direction>.sql`, e.g.:
 
 ```
-000001_initial_schema.up.sql
-000001_initial_schema.down.sql
-000002_add_orders_table.up.sql
-000002_add_orders_table.down.sql
+control_plane/000002_tenant_metadata.up.sql
+tenant/000003_tenant_workflow.up.sql
 ```
 
-Use descriptive, snake_case names:
-
-| Scenario | Name |
-|---|---|
-| New table | `add_orders_table` |
-| New column | `add_status_to_leads` |
-| Drop column | `remove_fax_from_leads` |
-| New index | `add_leads_email_index` |
-| Rename table | `rename_users_to_accounts` |
+Use descriptive, snake_case names (`add_sso_configs`, `add_priority_to_records`).
 
 ---
 
 ## Troubleshooting
 
 ### Dirty state
-
-If a migration fails halfway, the DB is marked **dirty** and further `migrate-up` calls are blocked.
-
-1. Manually fix the partial change in Postgres (undo whatever partially ran)
-2. Force-set the version back to the last clean state:
+If a migration fails halfway, golang-migrate marks the DB **dirty** and blocks further
+`up` calls. Fix the partial change manually, force-set the version to the last clean one,
+then re-run:
 
 ```bash
-make migrate-force v=1   # replace 1 with the last successful version
+docker run --rm --network host -v "$PWD/backend/database/migrations/control_plane:/migrations" \
+  migrate/migrate -path=/migrations -database "$CP_DB_URL" force <version>
 ```
 
-3. Re-run the migration after fixing the SQL:
+### macOS note
+The control-plane / tenant targets use `--network host`. On Docker Desktop, `localhost`
+host networking can be unreliable; if so, apply a migration directly:
 
 ```bash
-make migrate-up
+docker exec -i stonesuite-db psql -U stonesuite -d stonesuite_cp < control_plane/000002_tenant_metadata.up.sql
 ```
-
-### Check current version
-
-```bash
-make migrate-version
-```
-
-### Migration already applied
-
-golang-migrate tracks applied versions in a `schema_migrations` table. It will skip already-applied migrations automatically — you can always run `migrate-up` safely.
 
 ---
 
 ## Migration History
 
+**Control plane (`control_plane/`)**
+
 | Version | Description |
 |---|---|
-| 000001 | Initial schema — users, customers, contacts, onboarding, leads |
+| 000001 | Control-plane schema — tenants, identities, invites, SSO configs, platform admins, audit |
+| 000002 | Add `tenants.metadata` JSONB (rich company-onboarding details) |
+
+**Tenant template (`tenant/`)**
+
+| Version | Description |
+|---|---|
+| 000001 | Tenant base — users, profile |
+| 000002 | Dynamic RBAC — roles, role_permissions, user_roles, teams |
+| 000003 | Workflow engine — workflows, states, transitions, fields, records, history |

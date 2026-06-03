@@ -82,10 +82,59 @@ func (h *TenantOps) requirePlatformAdmin(r *http.Request) (middleware.UserContex
 
 // ---- platform admin: tenants -----------------------------------------------
 
+// createTenantRequest carries the rich customer-onboarding form. Only a few
+// fields drive provisioning (slug/displayName/contactEmail); everything else is
+// captured as tenant metadata. slug is optional — derived from companyName when
+// omitted. displayName falls back to companyName, contactEmail to superAdminEmail.
 type createTenantRequest struct {
 	Slug         string `json:"slug"`
 	DisplayName  string `json:"displayName"`
 	ContactEmail string `json:"contactEmail"`
+
+	// Rich company profile (stored as metadata).
+	CompanyName  string `json:"companyName"`
+	LegalName    string `json:"legalName"`
+	Industry     string `json:"industry"`
+	Website      string `json:"website"`
+	Country      string `json:"country"`
+	Currency     string `json:"currency"`
+	Timezone     string `json:"timezone"`
+	TaxID        string `json:"taxId"`
+
+	BillingAddress  string `json:"billingAddress"`
+	ShippingAddress string `json:"shippingAddress"`
+	ReturnAddress   string `json:"returnAddress"`
+
+	SuperAdminName     string `json:"superAdminName"`
+	SuperAdminEmail    string `json:"superAdminEmail"`
+	SuperAdminPhone    string `json:"superAdminPhone"`
+	SuperAdminJobTitle string `json:"superAdminJobTitle"`
+
+	FinanceName  string `json:"financeName"`
+	FinanceEmail string `json:"financeEmail"`
+	FinancePhone string `json:"financePhone"`
+}
+
+// slugify converts a company name into a DNS/db-safe slug: lowercase, runs of
+// non-alphanumerics collapsed to single hyphens, trimmed, capped at 63 chars.
+func slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastHyphen = false
+		} else if !lastHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 63 {
+		out = strings.Trim(out[:63], "-")
+	}
+	return out
 }
 
 // CreateTenant creates a tenant and sends an onboarding invite. Platform-admin only.
@@ -105,16 +154,49 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	req.Slug = strings.ToLower(strings.TrimSpace(req.Slug))
-	if req.Slug == "" || req.DisplayName == "" || req.ContactEmail == "" {
-		fail(w, http.StatusBadRequest, "slug, displayName and contactEmail are required.")
+
+	// Derive the provisioning essentials from the rich form when not given.
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = strings.TrimSpace(req.CompanyName)
+	}
+	contactEmail := strings.TrimSpace(req.ContactEmail)
+	if contactEmail == "" {
+		contactEmail = strings.TrimSpace(req.SuperAdminEmail)
+	}
+	slug := slugify(req.Slug)
+	if slug == "" {
+		slug = slugify(displayName)
+	}
+	if slug == "" || displayName == "" || contactEmail == "" {
+		fail(w, http.StatusBadRequest, "A company name and a super-admin (contact) email are required.")
 		return
 	}
 
-	tenant, err := h.CP.CreateTenant(r.Context(), req.Slug, req.DisplayName, false)
+	tenant, err := h.CP.CreateTenant(r.Context(), slug, displayName, false)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to create tenant (slug may be taken).")
 		return
+	}
+
+	// Persist the rich company profile as tenant metadata (best-effort).
+	metadata := map[string]any{
+		"companyName": req.CompanyName, "legalName": req.LegalName,
+		"industry": req.Industry, "website": req.Website,
+		"country": req.Country, "currency": req.Currency,
+		"timezone": req.Timezone, "taxId": req.TaxID,
+		"billingAddress": req.BillingAddress, "shippingAddress": req.ShippingAddress,
+		"returnAddress": req.ReturnAddress,
+		"superAdmin": map[string]string{
+			"name": req.SuperAdminName, "email": req.SuperAdminEmail,
+			"phone": req.SuperAdminPhone, "jobTitle": req.SuperAdminJobTitle,
+		},
+		"finance": map[string]string{
+			"name": req.FinanceName, "email": req.FinanceEmail, "phone": req.FinancePhone,
+		},
+	}
+	if md, mErr := json.Marshal(metadata); mErr == nil {
+		_ = h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md))
 	}
 
 	token, err := randomToken()
@@ -122,13 +204,13 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to generate invite token.")
 		return
 	}
-	if _, err := h.CP.CreateInvite(r.Context(), tenant.ID, req.ContactEmail, token, time.Now().Add(7*24*time.Hour)); err != nil {
+	if _, err := h.CP.CreateInvite(r.Context(), tenant.ID, contactEmail, token, time.Now().Add(7*24*time.Hour)); err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to create invite.")
 		return
 	}
 
 	inviteLink := strings.TrimRight(config.AppConfig.FrontendURL, "/") + "/onboarding/accept?token=" + token
-	if err := services.SendOnboardingInviteEmail(req.ContactEmail, req.DisplayName, inviteLink); err != nil {
+	if err := services.SendOnboardingInviteEmail(contactEmail, displayName, inviteLink); err != nil {
 		// Non-fatal: invite exists; link can be re-sent.
 		_ = err
 	}
@@ -372,12 +454,20 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Surface platform-admin status so the frontend can gate owner-only UI
+	// (e.g. customer onboarding). Non-fatal if the lookup fails — default false.
+	isPlatformAdmin, err := h.CP.IsPlatformAdmin(r.Context(), identity.ID)
+	if err != nil {
+		isPlatformAdmin = false
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"token":   token,
 		"user": map[string]any{
 			"id": identity.ID, "email": identity.Email,
 			"fullName": identity.FullName, "tenantId": identity.TenantID,
+			"isPlatformAdmin": isPlatformAdmin,
 		},
 	})
 }

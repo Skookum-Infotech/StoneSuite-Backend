@@ -51,6 +51,18 @@ func (c *ControlPlane) CreateTenant(ctx context.Context, slug, displayName strin
 	return scanTenant(c.pool.QueryRow(ctx, q, slug, displayName, isPlatformOwner))
 }
 
+// SetTenantMetadata stores free-form onboarding metadata (company details,
+// addresses, contacts) as JSONB on the tenant row. metadataJSON must be a
+// valid JSON object string; pass "{}" to clear.
+func (c *ControlPlane) SetTenantMetadata(ctx context.Context, id, metadataJSON string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE tenants SET metadata = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+		id, metadataJSON); err != nil {
+		return fmt.Errorf("set tenant metadata: %w", err)
+	}
+	return nil
+}
+
 // SetTenantProvisioned marks a tenant active with its database routing info.
 func (c *ControlPlane) SetTenantProvisioned(ctx context.Context, id, dbName, dbConnRef string, schemaVersion int) error {
 	_, err := c.pool.Exec(ctx, `

@@ -211,6 +211,60 @@ func (c *ControlPlane) MarkInviteAccepted(ctx context.Context, id string) error 
 	return nil
 }
 
+// ListInvitesByTenant returns a tenant's invites, newest first.
+func (c *ControlPlane) ListInvitesByTenant(ctx context.Context, tenantID string) ([]Invite, error) {
+	rows, err := c.pool.Query(ctx, `
+		SELECT id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at
+		FROM tenant_invites WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list invites by tenant: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Invite
+	for rows.Next() {
+		var inv Invite
+		if err := rows.Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
+			&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan invite: %w", err)
+		}
+		out = append(out, inv)
+	}
+	return out, rows.Err()
+}
+
+// LatestInviteForTenant returns the most recent invite for a tenant, or nil if
+// none exists (without treating "none" as an error).
+func (c *ControlPlane) LatestInviteForTenant(ctx context.Context, tenantID string) (*Invite, error) {
+	invites, err := c.ListInvitesByTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if len(invites) == 0 {
+		return nil, nil
+	}
+	return &invites[0], nil
+}
+
+// RefreshInvite re-issues an existing invite with a fresh token + expiry and
+// resets it to pending (the "resend / retry" path). updated_at/sent_at bump.
+func (c *ControlPlane) RefreshInvite(ctx context.Context, id, token string, expiresAt time.Time) (*Invite, error) {
+	var inv Invite
+	err := c.pool.QueryRow(ctx, `
+		UPDATE tenant_invites
+		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL,
+		    sent_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at`,
+		id, token, expiresAt,
+	).Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
+		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("refresh invite: %w", err)
+	}
+	return &inv, nil
+}
+
 // LogPlatformAudit records a cross-tenant platform action.
 func (c *ControlPlane) LogPlatformAudit(ctx context.Context, actorID, actorEmail, tenantID, action, detailsJSON string) error {
 	var tID any

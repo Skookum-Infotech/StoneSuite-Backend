@@ -55,6 +55,20 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// inviteExpiry returns the expiry instant for an invite. Defaults to 72h
+// (matching the legacy onboarding default) when hours <= 0.
+func inviteExpiry(hours int) time.Time {
+	if hours <= 0 {
+		hours = 72
+	}
+	return time.Now().Add(time.Duration(hours) * time.Hour)
+}
+
+// inviteLink builds the public acceptance URL for an invite token.
+func inviteLink(token string) string {
+	return strings.TrimRight(config.AppConfig.FrontendURL, "/") + "/onboarding/accept?token=" + token
+}
+
 func generateTenantJWT(identityID, email, tenantID string, d time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"id":        identityID,
@@ -90,6 +104,9 @@ type createTenantRequest struct {
 	Slug         string `json:"slug"`
 	DisplayName  string `json:"displayName"`
 	ContactEmail string `json:"contactEmail"`
+
+	// Invite expiry in hours (default 72). Mirrors dev's configurable expiry.
+	ExpiresInHours int `json:"expiresInHours"`
 
 	// Rich company profile (stored as metadata).
 	CompanyName  string `json:"companyName"`
@@ -204,13 +221,14 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to generate invite token.")
 		return
 	}
-	if _, err := h.CP.CreateInvite(r.Context(), tenant.ID, contactEmail, token, time.Now().Add(7*24*time.Hour)); err != nil {
+	invite, err := h.CP.CreateInvite(r.Context(), tenant.ID, contactEmail, token, inviteExpiry(req.ExpiresInHours))
+	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to create invite.")
 		return
 	}
 
-	inviteLink := strings.TrimRight(config.AppConfig.FrontendURL, "/") + "/onboarding/accept?token=" + token
-	if err := services.SendOnboardingInviteEmail(contactEmail, displayName, inviteLink); err != nil {
+	link := inviteLink(token)
+	if err := services.SendOnboardingInviteEmail(contactEmail, displayName, link); err != nil {
 		// Non-fatal: invite exists; link can be re-sent.
 		_ = err
 	}
@@ -220,7 +238,8 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		"success":    true,
 		"tenantId":   tenant.ID,
 		"slug":       tenant.Slug,
-		"inviteLink": inviteLink,
+		"inviteLink": link,
+		"expiresAt":  invite.ExpiresAt,
 	})
 }
 
@@ -249,12 +268,8 @@ func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 }
 
 // TenantLifecycle handles /api/platform/tenants/{id}/{action} where action is
-// suspend | restore | delete | force-delete. Platform-admin only.
+// suspend | restore | delete | force-delete | invites. Platform-admin only.
 func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
 	admin, ok := h.requirePlatformAdmin(r)
 	if !ok {
 		fail(w, http.StatusForbidden, "Platform admin privileges required.")
@@ -268,6 +283,17 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, action := parts[0], parts[1]
+
+	// Invite management (list + resend) lives under the tenant resource.
+	if action == "invites" {
+		h.tenantInvites(w, r, admin, id)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
 
 	var err error
 	switch action {
@@ -291,6 +317,105 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, id, "tenant."+action, "{}")
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Tenant " + action + " applied."})
+}
+
+// inviteView is the JSON shape returned for invites (token is the "invite key").
+func inviteView(inv tenancy.Invite) map[string]any {
+	return map[string]any{
+		"id":           inv.ID,
+		"contactEmail": inv.ContactEmail,
+		"token":        inv.Token,
+		"status":       inv.Status,
+		"expiresAt":    inv.ExpiresAt,
+		"acceptedAt":   inv.AcceptedAt,
+		"createdAt":    inv.CreatedAt,
+		"expired":      inv.Status == "pending" && time.Now().After(inv.ExpiresAt),
+		"inviteLink":   inviteLink(inv.Token),
+	}
+}
+
+type resendInviteRequest struct {
+	ContactEmail   string `json:"contactEmail"`
+	ExpiresInHours int    `json:"expiresInHours"`
+}
+
+// tenantInvites handles GET (list) and POST (resend/retry) for a tenant's
+// invites. POST re-issues the latest invite with a fresh token + expiry and
+// re-sends the email; if no invite exists yet it creates one.
+func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin middleware.UserContextPayload, tenantID string) {
+	switch r.Method {
+	case http.MethodGet:
+		invites, err := h.CP.ListInvitesByTenant(r.Context(), tenantID)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load invites.")
+			return
+		}
+		out := make([]map[string]any, 0, len(invites))
+		for _, inv := range invites {
+			out = append(out, inviteView(inv))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "invites": out})
+
+	case http.MethodPost:
+		tenant, err := h.CP.TenantByID(r.Context(), tenantID)
+		if err != nil {
+			fail(w, http.StatusNotFound, "Tenant not found.")
+			return
+		}
+
+		var req resendInviteRequest
+		_ = json.NewDecoder(r.Body).Decode(&req) // body is optional
+
+		token, err := randomToken()
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to generate invite token.")
+			return
+		}
+		expiresAt := inviteExpiry(req.ExpiresInHours)
+
+		// Re-issue the latest invite, or create one if none exists.
+		latest, err := h.CP.LatestInviteForTenant(r.Context(), tenantID)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load invites.")
+			return
+		}
+
+		contactEmail := strings.TrimSpace(req.ContactEmail)
+		if contactEmail == "" && latest != nil {
+			contactEmail = latest.ContactEmail
+		}
+		if contactEmail == "" {
+			fail(w, http.StatusBadRequest, "A contact email is required to send an invite.")
+			return
+		}
+
+		var invite *tenancy.Invite
+		if latest != nil {
+			invite, err = h.CP.RefreshInvite(r.Context(), latest.ID, token, expiresAt)
+		} else {
+			invite, err = h.CP.CreateInvite(r.Context(), tenantID, contactEmail, token, expiresAt)
+		}
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to issue invite.")
+			return
+		}
+
+		// Email is best-effort: the invite (key + link) is valid regardless, so
+		// the owner can always copy the link if delivery is unavailable (e.g. no
+		// SMTP configured in dev). Surface the outcome via emailSent.
+		link := inviteLink(token)
+		emailSent := services.SendOnboardingInviteEmail(contactEmail, tenant.DisplayName, link) == nil
+		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}")
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":   true,
+			"invite":    inviteView(*invite),
+			"emailSent": emailSent,
+		})
+
+	default:
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
 }
 
 // ---- onboarding: accept invite ---------------------------------------------

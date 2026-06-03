@@ -11,6 +11,7 @@ import (
 	"stonesuite-backend/database"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/workflow"
 )
 
 // Job describes a tenant to provision plus the first user (the accepting
@@ -123,6 +124,11 @@ func (p *Provisioner) provision(ctx context.Context, j Job) error {
 
 	// Seed RBAC: super_admin system role + grant it to the first user (idempotent).
 	if err := authz.SeedTenantRBAC(ctx, pool, firstUserID); err != nil {
+		return err
+	}
+
+	// Seed default workflows (lead/prospect/customer) — idempotent.
+	if err := workflow.SeedDefaultWorkflows(ctx, pool); err != nil {
 		return err
 	}
 

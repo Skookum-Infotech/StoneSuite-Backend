@@ -194,6 +194,24 @@ func main() {
 		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))
 		mux.Handle("/api/tenant/roles/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Role))))
 		mux.Handle("/api/tenant/users/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.UserRoles))))
+
+		// Tenant-scoped workflow engine + records (Phase 3). Uses method+wildcard
+		// routing; each handler enforces its own catalog permission. tenantChain
+		// applies RequireAuth -> tenancy resolver before the handler.
+		wf := controllers.NewWorkflowOps()
+		tenantChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(resolver.Middleware(h))
+		}
+		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))
+		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
+		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
+		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
+		mux.Handle("DELETE /api/tenant/workflows/{id}/fields/{fieldId}", tenantChain(wf.DeleteField))
+		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
+		mux.Handle("POST /api/tenant/workflows/{id}/records", tenantChain(wf.CreateRecord))
+		mux.Handle("GET /api/tenant/records/{id}", tenantChain(wf.GetRecord))
+		mux.Handle("PATCH /api/tenant/records/{id}", tenantChain(wf.UpdateRecord))
+		mux.Handle("POST /api/tenant/records/{id}/transition", tenantChain(wf.TransitionRecord))
 	}
 
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger

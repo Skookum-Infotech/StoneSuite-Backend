@@ -187,6 +187,14 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}", tenantChain(wf.GetRecord))
 		mux.Handle("PATCH /api/tenant/records/{id}", tenantChain(wf.UpdateRecord))
 		mux.Handle("POST /api/tenant/records/{id}/transition", tenantChain(wf.TransitionRecord))
+
+		// Dedicated CRM prospects table (migration 000004).
+		ps := controllers.NewProspectOps()
+		mux.Handle("GET /api/tenant/prospects", tenantChain(ps.ListProspects))
+		mux.Handle("POST /api/tenant/prospects", tenantChain(ps.CreateProspect))
+		mux.Handle("GET /api/tenant/prospects/{id}", tenantChain(ps.GetProspect))
+		mux.Handle("PATCH /api/tenant/prospects/{id}", tenantChain(ps.UpdateProspect))
+		mux.Handle("DELETE /api/tenant/prospects/{id}", tenantChain(ps.DeleteProspect))
 	}
 
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger

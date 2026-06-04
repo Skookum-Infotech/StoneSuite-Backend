@@ -174,6 +174,34 @@ func (c *ControlPlane) AnyIdentityForTenant(ctx context.Context, tenantID string
 	return scanIdentity(c.pool.QueryRow(ctx, q, tenantID))
 }
 
+// SetIdentityPasswordSetupToken stores a one-time token + expiry an onboarded
+// customer uses to set their initial password (reuses the password-reset cols).
+func (c *ControlPlane) SetIdentityPasswordSetupToken(ctx context.Context, identityID, token string, expiry time.Time) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE identities SET password_reset_token = $2, password_reset_expiry = $3, updated_at = NOW() WHERE id = $1`,
+		identityID, token, expiry); err != nil {
+		return fmt.Errorf("set password setup token: %w", err)
+	}
+	return nil
+}
+
+// IdentityByPasswordToken loads an identity by its (unexpired) setup/reset token.
+func (c *ControlPlane) IdentityByPasswordToken(ctx context.Context, token string) (*Identity, error) {
+	q := "SELECT " + identityColumns + " FROM identities WHERE password_reset_token = $1 AND password_reset_expiry > NOW()"
+	return scanIdentity(c.pool.QueryRow(ctx, q, token))
+}
+
+// SetIdentityPassword sets the password hash and clears the setup/reset token.
+func (c *ControlPlane) SetIdentityPassword(ctx context.Context, identityID, passwordHash string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE identities SET password_hash = $2, password_reset_token = NULL, password_reset_expiry = NULL,
+		 email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
+		identityID, passwordHash); err != nil {
+		return fmt.Errorf("set identity password: %w", err)
+	}
+	return nil
+}
+
 // ----- Invite writes/reads ---------------------------------------------------
 
 // CreateInvite inserts a pending invite for a tenant.

@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/joho/godotenv"
 )
@@ -20,6 +21,8 @@ type Config struct {
 	DBName                 string
 	CorsOrigin             string
 	FrontendURL            string
+	// InviteExpiryHours is the default lifetime of an onboarding invite link.
+	InviteExpiryHours int
 	// Multi-tenant control plane
 	ControlPlaneDBURL string // full DSN to the shared control-plane database
 	// Neon provisioning (used when creating per-tenant databases)
@@ -66,6 +69,7 @@ func Load() {
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
 		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
+		InviteExpiryHours:      getEnvInt("INVITE_EXPIRY_HOURS", 24),
 		// Multi-tenant control plane + provisioning
 		ControlPlaneDBURL:   getEnv("CONTROL_PLANE_DB_URL", ""),
 		NeonAPIKey:          getEnv("NEON_API_KEY", ""),
@@ -92,6 +96,16 @@ func Load() {
 func getEnv(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
+	}
+	return defaultValue
+}
+
+// getEnvInt reads an integer env var, falling back to defaultValue when unset or invalid.
+func getEnvInt(key string, defaultValue int) int {
+	if value, exists := os.LookupEnv(key); exists {
+		if n, err := strconv.Atoi(value); err == nil {
+			return n
+		}
 	}
 	return defaultValue
 }

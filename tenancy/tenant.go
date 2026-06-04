@@ -8,9 +8,11 @@ import "time"
 // Tenant status values (control-plane tenants.status).
 const (
 	StatusInvited      = "invited"
+	StatusSubmitted    = "submitted" // customer filled the onboarding form; awaiting approval
 	StatusProvisioning = "provisioning"
 	StatusActive       = "active"
 	StatusSuspended    = "suspended"
+	StatusRejected     = "rejected" // onboarding application declined by the platform owner
 	StatusDeleted      = "deleted"
 )
 
@@ -36,6 +38,10 @@ type Tenant struct {
 
 	SchemaVersion   int
 	MigrationStatus string
+
+	// Metadata holds the onboarding submission (company profile, contacts, and
+	// any dynamic custom fields) as a JSON object string.
+	Metadata string
 
 	DeletedAt       *time.Time
 	HardDeleteAfter *time.Time

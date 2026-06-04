@@ -26,13 +26,14 @@ const tenantDeleteGraceDays = 30
 // TenantOps groups the multi-tenant platform/onboarding/auth handlers. Deps are
 // injected (no global state) so this is testable and wired once in main.
 type TenantOps struct {
-	CP   *tenancy.ControlPlane
-	Prov *provisioning.Provisioner
+	CP     *tenancy.ControlPlane
+	Prov   *provisioning.Provisioner
+	Router *tenancy.Router // resolves tenant DB pools (used to reach the owner workspace)
 }
 
 // NewTenantOps constructs the handler group.
-func NewTenantOps(cp *tenancy.ControlPlane, prov *provisioning.Provisioner) *TenantOps {
-	return &TenantOps{CP: cp, Prov: prov}
+func NewTenantOps(cp *tenancy.ControlPlane, prov *provisioning.Provisioner, router *tenancy.Router) *TenantOps {
+	return &TenantOps{CP: cp, Prov: prov, Router: router}
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -55,19 +56,25 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// inviteExpiry returns the expiry instant for an invite. Defaults to 72h
-// (matching the legacy onboarding default) when hours <= 0.
+// inviteExpiry returns the expiry instant for an invite. Defaults to the
+// configured INVITE_EXPIRY_HOURS (24h) when hours <= 0.
 func inviteExpiry(hours int) time.Time {
 	if hours <= 0 {
-		hours = 72
+		hours = config.AppConfig.InviteExpiryHours
+	}
+	if hours <= 0 {
+		hours = 24
 	}
 	return time.Now().Add(time.Duration(hours) * time.Hour)
 }
 
-// inviteLink builds the public acceptance URL for an invite token.
-func inviteLink(token string) string {
-	return strings.TrimRight(config.AppConfig.FrontendURL, "/") + "/onboarding/accept?token=" + token
-}
+func frontendBase() string { return strings.TrimRight(config.AppConfig.FrontendURL, "/") }
+
+// applyLink is the public URL where an invited customer fills the onboarding form.
+func applyLink(token string) string { return frontendBase() + "/onboarding/apply?token=" + token }
+
+// setupLink is the public URL where an onboarded customer sets their password.
+func setupLink(token string) string { return frontendBase() + "/onboarding/set-password?token=" + token }
 
 func generateTenantJWT(identityID, email, tenantID string, d time.Duration) (string, error) {
 	claims := jwt.MapClaims{
@@ -96,40 +103,11 @@ func (h *TenantOps) requirePlatformAdmin(r *http.Request) (middleware.UserContex
 
 // ---- platform admin: tenants -----------------------------------------------
 
-// createTenantRequest carries the rich customer-onboarding form. Only a few
-// fields drive provisioning (slug/displayName/contactEmail); everything else is
-// captured as tenant metadata. slug is optional — derived from companyName when
-// omitted. displayName falls back to companyName, contactEmail to superAdminEmail.
+// createTenantRequest carries the owner-filled onboarding form as a flat map of
+// Customer-workflow field keys (snake_case), e.g. company_name, super_admin_email.
+// This path skips approval and provisions immediately.
 type createTenantRequest struct {
-	Slug         string `json:"slug"`
-	DisplayName  string `json:"displayName"`
-	ContactEmail string `json:"contactEmail"`
-
-	// Invite expiry in hours (default 72). Mirrors dev's configurable expiry.
-	ExpiresInHours int `json:"expiresInHours"`
-
-	// Rich company profile (stored as metadata).
-	CompanyName  string `json:"companyName"`
-	LegalName    string `json:"legalName"`
-	Industry     string `json:"industry"`
-	Website      string `json:"website"`
-	Country      string `json:"country"`
-	Currency     string `json:"currency"`
-	Timezone     string `json:"timezone"`
-	TaxID        string `json:"taxId"`
-
-	BillingAddress  string `json:"billingAddress"`
-	ShippingAddress string `json:"shippingAddress"`
-	ReturnAddress   string `json:"returnAddress"`
-
-	SuperAdminName     string `json:"superAdminName"`
-	SuperAdminEmail    string `json:"superAdminEmail"`
-	SuperAdminPhone    string `json:"superAdminPhone"`
-	SuperAdminJobTitle string `json:"superAdminJobTitle"`
-
-	FinanceName  string `json:"financeName"`
-	FinanceEmail string `json:"financeEmail"`
-	FinancePhone string `json:"financePhone"`
+	FormData map[string]any `json:"formData"`
 }
 
 // slugify converts a company name into a DNS/db-safe slug: lowercase, runs of
@@ -154,7 +132,19 @@ func slugify(s string) string {
 	return out
 }
 
-// CreateTenant creates a tenant and sends an onboarding invite. Platform-admin only.
+// formStr reads a trimmed string value from a flat form-data map.
+func formStr(m map[string]any, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
+// CreateTenant onboards a customer directly from the owner-filled form: it
+// creates the tenant, stores the submission, and provisions immediately
+// (no approval step). Platform-admin only.
 func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -167,52 +157,87 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createTenantRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.FormData == nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
 
-	// Derive the provisioning essentials from the rich form when not given.
-	displayName := strings.TrimSpace(req.DisplayName)
-	if displayName == "" {
-		displayName = strings.TrimSpace(req.CompanyName)
-	}
-	contactEmail := strings.TrimSpace(req.ContactEmail)
-	if contactEmail == "" {
-		contactEmail = strings.TrimSpace(req.SuperAdminEmail)
-	}
-	slug := slugify(req.Slug)
-	if slug == "" {
-		slug = slugify(displayName)
-	}
-	if slug == "" || displayName == "" || contactEmail == "" {
-		fail(w, http.StatusBadRequest, "A company name and a super-admin (contact) email are required.")
+	companyName := formStr(req.FormData, "company_name")
+	superAdminEmail := formStr(req.FormData, "super_admin_email")
+	slug := slugify(companyName)
+	if slug == "" || superAdminEmail == "" {
+		fail(w, http.StatusBadRequest, "A company name and a super-admin email are required.")
 		return
 	}
 
-	tenant, err := h.CP.CreateTenant(r.Context(), slug, displayName, false)
+	tenant, err := h.CP.CreateTenant(r.Context(), slug, companyName, false)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to create tenant (slug may be taken).")
 		return
 	}
-
-	// Persist the rich company profile as tenant metadata (best-effort).
-	metadata := map[string]any{
-		"companyName": req.CompanyName, "legalName": req.LegalName,
-		"industry": req.Industry, "website": req.Website,
-		"country": req.Country, "currency": req.Currency,
-		"timezone": req.Timezone, "taxId": req.TaxID,
-		"billingAddress": req.BillingAddress, "shippingAddress": req.ShippingAddress,
-		"returnAddress": req.ReturnAddress,
-		"superAdmin": map[string]string{
-			"name": req.SuperAdminName, "email": req.SuperAdminEmail,
-			"phone": req.SuperAdminPhone, "jobTitle": req.SuperAdminJobTitle,
-		},
-		"finance": map[string]string{
-			"name": req.FinanceName, "email": req.FinanceEmail, "phone": req.FinancePhone,
-		},
+	if md, mErr := json.Marshal(req.FormData); mErr == nil {
+		_ = h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md))
 	}
-	if md, mErr := json.Marshal(metadata); mErr == nil {
+	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.created", "{}")
+
+	// Provision now + email the customer their password-setup link.
+	setupLink, err := h.finalizeOnboarding(r.Context(), tenant, req.FormData)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant created but onboarding finalize failed: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"success":          true,
+		"tenantId":         tenant.ID,
+		"slug":             tenant.Slug,
+		"passwordSetupLink": setupLink,
+	})
+}
+
+// InviteCustomer creates a tenant shell + invite and emails the customer a link
+// to fill the onboarding form themselves (the approval path). Platform-admin only.
+func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	admin, ok := h.requirePlatformAdmin(r)
+	if !ok {
+		fail(w, http.StatusForbidden, "Platform admin privileges required.")
+		return
+	}
+
+	var req struct {
+		CompanyName    string `json:"companyName"`
+		RecipientName  string `json:"recipientName"`
+		ContactEmail   string `json:"contactEmail"`
+		ExpiresInHours int    `json:"expiresInHours"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	req.CompanyName = strings.TrimSpace(req.CompanyName)
+	req.ContactEmail = strings.TrimSpace(req.ContactEmail)
+	slug := slugify(req.CompanyName)
+	if slug == "" || req.ContactEmail == "" {
+		fail(w, http.StatusBadRequest, "A company name and a contact email are required.")
+		return
+	}
+
+	tenant, err := h.CP.CreateTenant(r.Context(), slug, req.CompanyName, false)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to create tenant (slug may be taken).")
+		return
+	}
+	// Seed minimal metadata so the customer's form is pre-filled.
+	seed := map[string]any{
+		"company_name":     req.CompanyName,
+		"super_admin_name": req.RecipientName,
+		"super_admin_email": req.ContactEmail,
+	}
+	if md, mErr := json.Marshal(seed); mErr == nil {
 		_ = h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md))
 	}
 
@@ -221,18 +246,15 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to generate invite token.")
 		return
 	}
-	invite, err := h.CP.CreateInvite(r.Context(), tenant.ID, contactEmail, token, inviteExpiry(req.ExpiresInHours))
+	invite, err := h.CP.CreateInvite(r.Context(), tenant.ID, req.ContactEmail, token, inviteExpiry(req.ExpiresInHours))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to create invite.")
 		return
 	}
 
-	link := inviteLink(token)
-	if err := services.SendOnboardingInviteEmail(contactEmail, displayName, link); err != nil {
-		// Non-fatal: invite exists; link can be re-sent.
-		_ = err
-	}
-	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.created", "{}")
+	link := applyLink(token)
+	emailSent := services.SendOnboardingInviteEmail(req.ContactEmail, req.RecipientName, link) == nil
+	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.invited", "{}")
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"success":    true,
@@ -240,6 +262,7 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		"slug":       tenant.Slug,
 		"inviteLink": link,
 		"expiresAt":  invite.ExpiresAt,
+		"emailSent":  emailSent,
 	})
 }
 
@@ -257,11 +280,16 @@ func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(tenants))
 	for i := range tenants {
 		t := tenants[i]
+		meta := json.RawMessage(t.Metadata)
+		if len(meta) == 0 {
+			meta = json.RawMessage("{}")
+		}
 		out = append(out, map[string]any{
 			"id": t.ID, "slug": t.Slug, "displayName": t.DisplayName,
 			"status": t.Status, "migrationStatus": t.MigrationStatus,
 			"dbName": t.DBName, "createdAt": t.CreatedAt,
 			"hardDeleteAfter": t.HardDeleteAfter,
+			"metadata":        meta,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tenants": out})
@@ -292,6 +320,12 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Onboarding approval lives under the tenant resource too.
+	if action == "approve" || action == "reject" {
+		h.reviewOnboarding(w, r, admin, id, action)
 		return
 	}
 
@@ -330,7 +364,7 @@ func inviteView(inv tenancy.Invite) map[string]any {
 		"acceptedAt":   inv.AcceptedAt,
 		"createdAt":    inv.CreatedAt,
 		"expired":      inv.Status == "pending" && time.Now().After(inv.ExpiresAt),
-		"inviteLink":   inviteLink(inv.Token),
+		"inviteLink":   applyLink(inv.Token),
 	}
 }
 
@@ -403,7 +437,7 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		// Email is best-effort: the invite (key + link) is valid regardless, so
 		// the owner can always copy the link if delivery is unavailable (e.g. no
 		// SMTP configured in dev). Surface the outcome via emailSent.
-		link := inviteLink(token)
+		link := applyLink(token)
 		emailSent := services.SendOnboardingInviteEmail(contactEmail, tenant.DisplayName, link) == nil
 		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}")
 
@@ -416,110 +450,6 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 	default:
 		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
-}
-
-// ---- onboarding: accept invite ---------------------------------------------
-
-// GetInvite returns invite details for the accept screen.
-// Path: /api/onboarding/tenant-invite/{token}
-func (h *TenantOps) GetInvite(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimPrefix(r.URL.Path, "/api/onboarding/tenant-invite/")
-	if token == "" {
-		fail(w, http.StatusBadRequest, "Missing invite token.")
-		return
-	}
-	inv, err := h.CP.InviteByToken(r.Context(), token)
-	if errors.Is(err, tenancy.ErrInviteNotFound) {
-		fail(w, http.StatusNotFound, "Invite not found.")
-		return
-	}
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load invite.")
-		return
-	}
-	tenant, err := h.CP.TenantByID(r.Context(), inv.TenantID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load tenant.")
-		return
-	}
-	valid := inv.Status == "pending" && time.Now().Before(inv.ExpiresAt)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "valid": valid, "status": inv.Status,
-		"contactEmail": inv.ContactEmail, "tenantName": tenant.DisplayName,
-	})
-}
-
-type acceptInviteRequest struct {
-	Token    string `json:"token"`
-	FullName string `json:"fullName"`
-	Password string `json:"password"`
-}
-
-// AcceptInvite creates the accepting identity and enqueues provisioning.
-// Path: POST /api/onboarding/tenant-accept
-func (h *TenantOps) AcceptInvite(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-	var req acceptInviteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	if req.Token == "" || req.FullName == "" || len(req.Password) < 8 {
-		fail(w, http.StatusBadRequest, "token, fullName and a password (min 8 chars) are required.")
-		return
-	}
-
-	inv, err := h.CP.InviteByToken(r.Context(), req.Token)
-	if errors.Is(err, tenancy.ErrInviteNotFound) {
-		fail(w, http.StatusNotFound, "Invite not found.")
-		return
-	}
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load invite.")
-		return
-	}
-	if inv.Status != "pending" || time.Now().After(inv.ExpiresAt) {
-		fail(w, http.StatusBadRequest, "This invite is no longer valid.")
-		return
-	}
-
-	tenant, err := h.CP.TenantByID(r.Context(), inv.TenantID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load tenant.")
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to hash password.")
-		return
-	}
-	identity, err := h.CP.CreateIdentity(r.Context(), inv.TenantID, inv.ContactEmail, string(hash), req.FullName, true)
-	if err != nil {
-		fail(w, http.StatusConflict, "An account for this email may already exist.")
-		return
-	}
-	if err := h.CP.MarkInviteAccepted(r.Context(), inv.ID); err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to update invite.")
-		return
-	}
-
-	h.Prov.Enqueue(provisioning.Job{
-		TenantID:   tenant.ID,
-		Slug:       tenant.Slug,
-		IdentityID: identity.ID,
-		Email:      identity.Email,
-		FullName:   identity.FullName,
-	})
-
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"success": true,
-		"message": "Account created. Your workspace is being set up.",
-		"status":  "provisioning",
-	})
 }
 
 // ---- auth: tenant login -----------------------------------------------------

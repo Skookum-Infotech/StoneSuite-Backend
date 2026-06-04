@@ -70,7 +70,7 @@ func main() {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
 
-		tenantOps = controllers.NewTenantOps(cp, provisioner)
+		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {
 		log.Fatalf("CRITICAL ERROR: CONTROL_PLANE_DB_URL is required (the legacy single-tenant backend has been removed).")
@@ -102,12 +102,18 @@ func main() {
 
 	// Multi-tenant routes (the control plane is always configured at this point).
 	if tenantOps != nil {
-		// Public: tenant-scoped login + onboarding.
+		// Public: tenant-scoped login.
 		mux.HandleFunc("/api/auth/tenant-login", tenantOps.TenantLogin)
-		mux.HandleFunc("/api/onboarding/tenant-invite/", tenantOps.GetInvite)
-		mux.HandleFunc("/api/onboarding/tenant-accept", tenantOps.AcceptInvite)
+
+		// Public: self-service onboarding (fill form → approval → set password).
+		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
+		mux.HandleFunc("/api/onboarding/apply/", tenantOps.GetApply) // GET /{token}
+		mux.HandleFunc("/api/onboarding/apply", tenantOps.SubmitApply)
+		mux.HandleFunc("/api/onboarding/set-password/", tenantOps.GetSetPassword) // GET /{token}
+		mux.HandleFunc("/api/onboarding/set-password", tenantOps.SetPassword)
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
+		mux.Handle("/api/platform/invites", middleware.RequireAuth(http.HandlerFunc(tenantOps.InviteCustomer)))
 		mux.Handle("/api/platform/tenants", middleware.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case http.MethodGet:

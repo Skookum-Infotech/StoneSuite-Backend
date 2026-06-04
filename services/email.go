@@ -49,6 +49,29 @@ func SendOnboardingInviteEmail(recipientEmail, recipientName, inviteLink string)
 	return sendEmail(recipientEmail, subject, body)
 }
 
+// SendPasswordSetupEmail sends the "set your password" email after a customer's
+// onboarding application is approved (or they are onboarded directly).
+func SendPasswordSetupEmail(recipientEmail, recipientName, setupLink string) error {
+	subject := "Set up your StoneSuite account"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>Your StoneSuite workspace is ready</h2>
+			<p>Hello %s,</p>
+			<p>Your onboarding has been approved and your workspace is being set up.</p>
+			<p>Set your password to finish activating your account:</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Set Password</a></p>
+			<p>If the button does not work, copy and paste this link into your browser:</p>
+			<p>%s</p>
+			<p>This link is time-limited for security.</p>
+			<p>Best regards,<br>StoneSuite Team</p>
+		</body>
+		</html>
+	`, recipientName, setupLink, setupLink)
+
+	return sendEmail(recipientEmail, subject, body)
+}
+
 // sendEmail is a helper function to send emails
 func sendEmail(to, subject, body string) error {
 	es := InitEmailService()

@@ -91,8 +91,28 @@ var defaultWorkflows = []seedWorkflow{
 			{from: "onboarding", to: "active", name: "Activate"},
 			{from: "active", to: "churned", name: "Mark Churned"},
 		},
+		// The Customer workflow doubles as the onboarding record: these keys mirror
+		// the onboarding form so the public form, customer records, and the owner's
+		// Customer workflow stay in sync. The owner can add more fields in Config.
 		fields: []seedField{
-			{key: "account_email", label: "Account Email", dataType: TypeEmail, required: true},
+			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
+			{key: "legal_name", label: "Legal Name", dataType: TypeString},
+			{key: "industry", label: "Industry", dataType: TypeString},
+			{key: "website", label: "Website", dataType: TypeString},
+			{key: "country", label: "Country", dataType: TypeString},
+			{key: "currency", label: "Currency", dataType: TypeString},
+			{key: "timezone", label: "Timezone", dataType: TypeString},
+			{key: "tax_id", label: "Tax / VAT ID", dataType: TypeString},
+			{key: "billing_address", label: "Billing Address", dataType: TypeString},
+			{key: "shipping_address", label: "Shipping Address", dataType: TypeString},
+			{key: "return_address", label: "Return Address", dataType: TypeString},
+			{key: "super_admin_name", label: "Super Admin Name", dataType: TypeString},
+			{key: "super_admin_email", label: "Super Admin Email", dataType: TypeEmail, required: true},
+			{key: "super_admin_phone", label: "Super Admin Phone", dataType: TypeString},
+			{key: "super_admin_job_title", label: "Super Admin Job Title", dataType: TypeString},
+			{key: "finance_name", label: "Finance Contact Name", dataType: TypeString},
+			{key: "finance_email", label: "Finance Contact Email", dataType: TypeEmail},
+			{key: "finance_phone", label: "Finance Contact Phone", dataType: TypeString},
 		},
 	},
 }

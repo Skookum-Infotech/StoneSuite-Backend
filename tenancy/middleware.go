@@ -96,6 +96,10 @@ func tenantUnservableMessage(t *Tenant) string {
 		return "This workspace is suspended."
 	case t.Status == StatusDeleted:
 		return "This workspace has been deleted."
+	case t.Status == StatusRejected:
+		return "This onboarding application was not approved."
+	case t.Status == StatusInvited, t.Status == StatusSubmitted:
+		return "This workspace has not been activated yet."
 	case t.MigrationStatus == MigrationFailed:
 		return "This workspace is temporarily unavailable (maintenance)."
 	case t.Status == StatusProvisioning, t.DBName == "":

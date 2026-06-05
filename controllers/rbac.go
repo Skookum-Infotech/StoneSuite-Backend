@@ -251,6 +251,31 @@ func (h *RBACOps) UserRoles(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// MyPermissions returns every effective grant the calling user holds in the
+// resolved tenant. Used by the frontend to drive role-based sidebar visibility.
+// GET /api/tenant/users/me/permissions
+func (h *RBACOps) MyPermissions(w http.ResponseWriter, r *http.Request) {
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return
+	}
+	pool, err := tenancy.PoolFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+	grants, err := authz.EffectiveGrants(r.Context(), pool, payload.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load permissions.")
+		return
+	}
+	if grants == nil {
+		grants = []authz.Grant{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grants": grants})
+}
+
 type roleRequest struct {
 	Key         string        `json:"key"`
 	Name        string        `json:"name"`

@@ -174,6 +174,8 @@ func main() {
 		mux.Handle("/api/tenant/permissions/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Catalog))))
 		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))
 		mux.Handle("/api/tenant/roles/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Role))))
+		// More specific than /api/tenant/users/ — must be registered first.
+		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
 		mux.Handle("/api/tenant/users/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.UserRoles))))
 
 		// Tenant-scoped workflow engine + records (Phase 3). Uses method+wildcard

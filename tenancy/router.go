@@ -51,6 +51,7 @@ func (r *Router) PoolFor(ctx context.Context, t *Tenant) (*pgxpool.Pool, error) 
 	r.mu.RLock()
 	if p, ok := r.pools[t.ID]; ok {
 		r.mu.RUnlock()
+		fmt.Printf("[POOL DEBUG] Cache HIT for tenant %s (ID: %s)\n", t.Slug, t.ID)
 		return p, nil
 	}
 	r.mu.RUnlock()
@@ -59,24 +60,37 @@ func (r *Router) PoolFor(ctx context.Context, t *Tenant) (*pgxpool.Pool, error) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if p, ok := r.pools[t.ID]; ok {
+		fmt.Printf("[POOL DEBUG] Cache HIT after acquire lock for tenant %s\n", t.Slug)
 		return p, nil
 	}
 
+	fmt.Printf("[POOL DEBUG] Opening pool for tenant %s (ID: %s, DBName: %s)\n", t.Slug, t.ID, t.DBName)
+	fmt.Printf("[POOL DEBUG] DBConnectionRef (first 50 chars): %.50s...\n", t.DBConnectionRef)
+
 	dsn, err := r.resolve(ctx, t)
 	if err != nil {
+		fmt.Printf("[POOL DEBUG] ERROR resolving DSN: %v\n", err)
 		return nil, fmt.Errorf("resolve dsn for tenant %s: %w", t.Slug, err)
 	}
+	fmt.Printf("[POOL DEBUG] Resolved DSN (first 50 chars): %.50s...\n", dsn)
+
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
+		fmt.Printf("[POOL DEBUG] ERROR parsing DSN: %v\n", err)
 		return nil, fmt.Errorf("parse dsn for tenant %s: %w", t.Slug, err)
 	}
+	fmt.Printf("[POOL DEBUG] DSN parsed successfully\n")
+
 	cfg.MaxConns = r.maxConns
 	cfg.MaxConnLifetime = time.Hour
 
+	fmt.Printf("[POOL DEBUG] Creating connection pool with max conns: %d\n", r.maxConns)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
+		fmt.Printf("[POOL DEBUG] ERROR creating pool: %v (type: %T)\n", err, err)
 		return nil, fmt.Errorf("open pool for tenant %s: %w", t.Slug, err)
 	}
+	fmt.Printf("[POOL DEBUG] Pool created successfully for tenant %s\n", t.Slug)
 	r.pools[t.ID] = pool
 	return pool, nil
 }

@@ -54,18 +54,31 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 
 // Decrypt reverses Encrypt.
 func (c *Cipher) Decrypt(b64 string) (string, error) {
+	// DEBUG: log ciphertext length
+	fmt.Printf("[DECRYPT DEBUG] Input ciphertext length: %d chars\n", len(b64))
+
 	raw, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {
+		fmt.Printf("[DECRYPT DEBUG] base64 decode failed: %v\n", err)
 		return "", fmt.Errorf("decode ciphertext: %w", err)
 	}
+	fmt.Printf("[DECRYPT DEBUG] Decoded %d bytes\n", len(raw))
+
 	ns := c.aead.NonceSize()
+	fmt.Printf("[DECRYPT DEBUG] Nonce size: %d, raw size: %d\n", ns, len(raw))
+
 	if len(raw) < ns {
+		fmt.Printf("[DECRYPT DEBUG] ERROR: ciphertext too short\n")
 		return "", errors.New("ciphertext too short")
 	}
 	nonce, ct := raw[:ns], raw[ns:]
+	fmt.Printf("[DECRYPT DEBUG] Attempting GCM decryption with %d bytes ciphertext\n", len(ct))
+
 	pt, err := c.aead.Open(nil, nonce, ct, nil)
 	if err != nil {
+		fmt.Printf("[DECRYPT DEBUG] GCM Open failed: %v (type: %T)\n", err, err)
 		return "", fmt.Errorf("decrypt: %w", err)
 	}
+	fmt.Printf("[DECRYPT DEBUG] Successfully decrypted to plaintext (length: %d)\n", len(pt))
 	return string(pt), nil
 }

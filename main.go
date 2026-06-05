@@ -49,13 +49,18 @@ func main() {
 		var cipher *secret.Cipher
 		var dsnResolver tenancy.DSNResolver
 		if config.AppConfig.SecretEncryptionKey != "" {
+			log.Println("[MAIN DEBUG] SECRET_ENCRYPTION_KEY is set, creating cipher...")
 			cipher, err = secret.New(config.AppConfig.SecretEncryptionKey)
 			if err != nil {
 				log.Fatalf("CRITICAL ERROR: invalid SECRET_ENCRYPTION_KEY: %v", err)
 			}
+			log.Println("[MAIN DEBUG] Cipher created successfully")
 			dsnResolver = func(_ context.Context, t *tenancy.Tenant) (string, error) {
+				fmt.Printf("[MAIN DEBUG] Resolving DSN for tenant %s (slug: %s)\n", t.ID, t.Slug)
 				return cipher.Decrypt(t.DBConnectionRef)
 			}
+		} else {
+			log.Println("[MAIN DEBUG] SECRET_ENCRYPTION_KEY not set, using PlainDSNResolver")
 		}
 		tenantRouter := tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
 		resolver = tenancy.NewResolver(cp, tenantRouter)

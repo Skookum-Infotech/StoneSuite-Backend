@@ -11,6 +11,7 @@ import (
 
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
+	"stonesuite-backend/database"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
@@ -66,6 +67,11 @@ func main() {
 			// by hand), provision it now so platform admins get a working
 			// workspace (workflows/roles) like any tenant.
 			ensureOwnerWorkspace(context.Background(), cp, provisioner)
+
+			// Fan-out migrations: apply any new tenant migrations (e.g. 000004
+			// prospects, 000005 leads) to all already-provisioned tenant DBs.
+			// Idempotent — skips tenants already at the latest version.
+			go migrateAllTenants(context.Background(), cp, tenantRouter)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -195,6 +201,14 @@ func main() {
 		mux.Handle("GET /api/tenant/prospects/{id}", tenantChain(ps.GetProspect))
 		mux.Handle("PATCH /api/tenant/prospects/{id}", tenantChain(ps.UpdateProspect))
 		mux.Handle("DELETE /api/tenant/prospects/{id}", tenantChain(ps.DeleteProspect))
+
+		// Dedicated CRM leads table (migration 000005).
+		ls := controllers.NewLeadOps()
+		mux.Handle("GET /api/tenant/leads", tenantChain(ls.ListLeads))
+		mux.Handle("POST /api/tenant/leads", tenantChain(ls.CreateLead))
+		mux.Handle("GET /api/tenant/leads/{id}", tenantChain(ls.GetLead))
+		mux.Handle("PATCH /api/tenant/leads/{id}", tenantChain(ls.UpdateLead))
+		mux.Handle("DELETE /api/tenant/leads/{id}", tenantChain(ls.DeleteLead))
 	}
 
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger
@@ -250,6 +264,45 @@ func main() {
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("CRITICAL SERVER FAILURE: %v", err)
+	}
+}
+
+// migrateAllTenants runs ApplyTenantMigrations on every provisioned tenant DB.
+// Called in a goroutine on startup so new migrations (e.g. prospects, leads)
+// are applied to existing tenant DBs without manual intervention.
+func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
+	tenants, err := cp.ListTenants(ctx)
+	if err != nil {
+		log.Printf("migrate-all: failed to list tenants: %v", err)
+		return
+	}
+	latest, err := database.LatestTenantSchemaVersion()
+	if err != nil {
+		log.Printf("migrate-all: failed to read latest migration version: %v", err)
+		return
+	}
+	for _, t := range tenants {
+		if !t.Servable() {
+			continue
+		}
+		if t.SchemaVersion >= latest {
+			continue // already current
+		}
+		pool, err := router.PoolFor(ctx, &t)
+		if err != nil {
+			log.Printf("migrate-all: tenant %s: pool error: %v", t.Slug, err)
+			continue
+		}
+		ver, err := database.ApplyTenantMigrations(ctx, pool)
+		if err != nil {
+			log.Printf("migrate-all: tenant %s: migration failed: %v", t.Slug, err)
+			continue
+		}
+		if err := cp.SetTenantSchemaVersion(ctx, t.ID, ver); err != nil {
+			log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
+		} else {
+			log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
+		}
 	}
 }
 

@@ -76,6 +76,16 @@ func (c *ControlPlane) SetTenantProvisioned(ctx context.Context, id, dbName, dbC
 	return nil
 }
 
+// SetTenantSchemaVersion updates the tracked schema version after a migration fan-out.
+func (c *ControlPlane) SetTenantSchemaVersion(ctx context.Context, id string, version int) error {
+	_, err := c.pool.Exec(ctx,
+		`UPDATE tenants SET schema_version = $2, updated_at = NOW() WHERE id = $1`, id, version)
+	if err != nil {
+		return fmt.Errorf("set tenant schema version: %w", err)
+	}
+	return nil
+}
+
 // SetTenantStatus updates only the lifecycle status.
 func (c *ControlPlane) SetTenantStatus(ctx context.Context, id, status string) error {
 	if _, err := c.pool.Exec(ctx,

@@ -179,7 +179,21 @@ func FromMap(ownerUserID string, m map[string]any) Prospect {
 		Timezone:          strVal(m, "timezone"),
 		DateFormat:        strVal(m, "date_format"),
 		ReceiveNewsletter: boolVal(m, "receive_newsletter"),
+		CustomFields:      mapAnyVal(m, "customFields"),
 	}
+}
+
+// mapAnyVal reads a map[string]any from a form-data map (for custom_fields).
+func mapAnyVal(m map[string]any, key string) map[string]any {
+	v, ok := m[key]
+	if !ok {
+		return map[string]any{}
+	}
+	mv, ok := v.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return mv
 }
 
 // ----- DB column list --------------------------------------------------------
@@ -210,6 +224,7 @@ const selectCols = `
 	edoc_enabled, edoc_format, edoc_email,
 	custom_field_1, custom_field_2, custom_notes,
 	language, timezone, date_format, receive_newsletter,
+	custom_fields,
 	created_at, updated_at`
 
 // scanner is satisfied by both pgx.Row and pgx.Rows, letting scanRow work
@@ -247,6 +262,7 @@ func scanRow(row scanner) (*Prospect, error) {
 		&p.EdocEnabled, &p.EdocFormat, &p.EdocEmail,
 		&p.CustomField1, &p.CustomField2, &p.CustomNotes,
 		&p.Language, &p.Timezone, &p.DateFormat, &p.ReceiveNewsletter,
+		&p.CustomFields,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
@@ -328,7 +344,8 @@ func Create(ctx context.Context, q Querier, p Prospect) (*Prospect, error) {
 			suretax_customer_number, tax_exempt, exemption_certificate,
 			edoc_enabled, edoc_format, edoc_email,
 			custom_field_1, custom_field_2, custom_notes,
-			language, timezone, date_format, receive_newsletter
+			language, timezone, date_format, receive_newsletter,
+			custom_fields
 		) VALUES (
 			$1,
 			$2,$3,$4,$5,$6,$7,
@@ -352,7 +369,8 @@ func Create(ctx context.Context, q Querier, p Prospect) (*Prospect, error) {
 			$64,$65,$66,
 			$67,$68,$69,
 			$70,$71,$72,
-			$73,$74,$75,$76
+			$73,$74,$75,$76,
+			$77
 		) RETURNING `+selectCols,
 		ownerArg(p.OwnerUserID),
 		p.CustomForm, p.Status, p.Comments, p.CustomerID, p.CustomerIDAuto, p.ParentCompany,
@@ -377,6 +395,7 @@ func Create(ctx context.Context, q Querier, p Prospect) (*Prospect, error) {
 		p.EdocEnabled, p.EdocFormat, p.EdocEmail,
 		p.CustomField1, p.CustomField2, p.CustomNotes,
 		p.Language, p.Timezone, p.DateFormat, p.ReceiveNewsletter,
+		p.CustomFields,
 	)
 	created, err := scanRow(row)
 	if err != nil {
@@ -412,6 +431,7 @@ func Update(ctx context.Context, q Querier, id string, p Prospect) (*Prospect, e
 			edoc_enabled=$67, edoc_format=$68, edoc_email=$69,
 			custom_field_1=$70, custom_field_2=$71, custom_notes=$72,
 			language=$73, timezone=$74, date_format=$75, receive_newsletter=$76,
+			custom_fields=$77,
 			updated_at=NOW()
 		WHERE id=$1
 		RETURNING `+selectCols,
@@ -439,6 +459,7 @@ func Update(ctx context.Context, q Querier, id string, p Prospect) (*Prospect, e
 		p.EdocEnabled, p.EdocFormat, p.EdocEmail,
 		p.CustomField1, p.CustomField2, p.CustomNotes,
 		p.Language, p.Timezone, p.DateFormat, p.ReceiveNewsletter,
+		p.CustomFields,
 	)
 	updated, err := scanRow(row)
 	if errors.Is(err, pgx.ErrNoRows) {

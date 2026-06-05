@@ -121,6 +121,9 @@ type Prospect struct {
 	DateFormat        string `json:"date_format"`
 	ReceiveNewsletter bool   `json:"receive_newsletter"`
 
+	// Dynamic custom fields (from workflow_field_definitions for the prospect workflow).
+	CustomFields map[string]any `json:"customFields,omitempty"`
+
 	// Meta
 	OwnerUserID string    `json:"owner_user_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`

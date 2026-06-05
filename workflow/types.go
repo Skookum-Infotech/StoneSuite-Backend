@@ -11,10 +11,8 @@ package workflow
 import "time"
 
 // MaxCustomFields caps how many custom field definitions a workflow may have.
-// The Customer/onboarding workflow alone seeds ~18 base keys (mirroring the
-// onboarding form) and must stay extensible, so the cap is generous while still
-// bounding JSONB growth.
-const MaxCustomFields = 50
+// 15 is the enforced limit; it matches the UI cap and keeps JSONB growth bounded.
+const MaxCustomFields = 15
 
 // DataType is the type of a custom field value.
 type DataType string

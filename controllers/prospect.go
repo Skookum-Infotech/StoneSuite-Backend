@@ -13,9 +13,8 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
-// ProspectOps handles all /api/tenant/prospects routes. Authorization reuses
-// the record resource (create/read/update/delete), which the seeded
-// super_admin wildcard grants automatically.
+// ProspectOps handles all /api/tenant/prospects routes. Authorization uses the
+// prospect resource so it can be granted independently of leads.
 type ProspectOps struct{}
 
 // NewProspectOps constructs the handler group.
@@ -34,7 +33,7 @@ func authProspect(w http.ResponseWriter, r *http.Request, action authz.Action) (
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return nil, "", false
 	}
-	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceRecord, action)
+	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceProspect, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", false

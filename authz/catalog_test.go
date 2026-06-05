@@ -21,9 +21,15 @@ func TestIsValidPermission(t *testing.T) {
 		a    Action
 		want bool
 	}{
-		{"valid catalog entry", ResourceRecord, ActionTransition, true},
+		{"valid record transition", ResourceRecord, ActionTransition, true},
+		{"valid lead read", ResourceLead, ActionRead, true},
+		{"valid lead transition", ResourceLead, ActionTransition, true},
+		{"valid prospect read", ResourceProspect, ActionRead, true},
+		{"valid prospect delete", ResourceProspect, ActionDelete, true},
 		{"valid configure", ResourceRole, ActionConfigure, true},
 		{"resource exists but action not paired", ResourceSSOConfig, ActionTransition, false},
+		{"lead does not have configure action", ResourceLead, ActionConfigure, false},
+		{"prospect does not have configure action", ResourceProspect, ActionConfigure, false},
 		{"unknown resource", Resource("ghost"), ActionRead, false},
 		{"unknown action", ResourceRecord, Action("haunt"), false},
 		{"wildcards rejected for role editing", ResourceAny, ActionAny, false},

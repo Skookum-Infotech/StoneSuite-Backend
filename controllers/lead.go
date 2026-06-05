@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// LeadOps handles all /api/tenant/leads routes. Authorization reuses the
-// record resource so the seeded super_admin wildcard grants access automatically.
+// LeadOps handles all /api/tenant/leads routes. Authorization uses the
+// lead resource so it can be granted independently of prospects.
 type LeadOps struct{}
 
 // NewLeadOps constructs the handler group.
@@ -32,7 +32,7 @@ func authLead(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgx
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return nil, "", false
 	}
-	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceRecord, action)
+	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceLead, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", false

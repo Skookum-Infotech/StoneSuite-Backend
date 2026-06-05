@@ -20,7 +20,9 @@ type Scope string
 
 const (
 	ResourceWorkflow       Resource = "workflow"        // workflow definitions
-	ResourceRecord         Resource = "record"          // workflow records (leads/prospects/...)
+	ResourceRecord         Resource = "record"          // generic workflow engine records
+	ResourceLead           Resource = "lead"            // CRM leads
+	ResourceProspect       Resource = "prospect"        // CRM prospects
 	ResourceUser           Resource = "user"            // tenant users
 	ResourceRole           Resource = "role"            // roles & permissions
 	ResourceTeam           Resource = "team"            // teams & membership
@@ -68,6 +70,18 @@ var catalog = []Permission{
 	{ResourceRecord, ActionUpdate},
 	{ResourceRecord, ActionDelete},
 	{ResourceRecord, ActionTransition},
+
+	{ResourceLead, ActionCreate},
+	{ResourceLead, ActionRead},
+	{ResourceLead, ActionUpdate},
+	{ResourceLead, ActionDelete},
+	{ResourceLead, ActionTransition},
+
+	{ResourceProspect, ActionCreate},
+	{ResourceProspect, ActionRead},
+	{ResourceProspect, ActionUpdate},
+	{ResourceProspect, ActionDelete},
+	{ResourceProspect, ActionTransition},
 
 	{ResourceUser, ActionCreate},
 	{ResourceUser, ActionRead},

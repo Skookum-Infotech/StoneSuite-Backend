@@ -36,6 +36,14 @@ func main() {
 			log.Fatalf("CRITICAL ERROR: Failed to initialize control plane: %v", err)
 		}
 
+		// Auto-apply control-plane migrations on every startup (idempotent).
+		// This creates tenants/identities/invites/etc. tables on a fresh Neon DB
+		// and applies any new migrations on subsequent deploys.
+		if err := database.ApplyControlPlaneMigrations(context.Background(), cp.Pool()); err != nil {
+			log.Fatalf("CRITICAL ERROR: control-plane migrations failed: %v", err)
+		}
+		log.Println("Control-plane migrations: ok")
+
 		// Secret cipher (optional): when configured, tenant DSNs are encrypted
 		// at rest and decrypted on use; otherwise DSNs are stored in plaintext (dev).
 		var cipher *secret.Cipher
@@ -117,6 +125,9 @@ func main() {
 		mux.HandleFunc("/api/onboarding/apply", tenantOps.SubmitApply)
 		mux.HandleFunc("/api/onboarding/set-password/", tenantOps.GetSetPassword) // GET /{token}
 		mux.HandleFunc("/api/onboarding/set-password", tenantOps.SetPassword)
+
+		// One-shot bootstrap (no auth — only works when no owner exists yet).
+		mux.HandleFunc("/api/platform/bootstrap", tenantOps.Bootstrap)
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
 		mux.Handle("/api/platform/invites", middleware.RequireAuth(http.HandlerFunc(tenantOps.InviteCustomer)))

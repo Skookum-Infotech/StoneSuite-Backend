@@ -526,3 +526,91 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 }
+
+// ---- one-shot platform bootstrap -------------------------------------------
+
+type bootstrapRequest struct {
+	CompanyName string `json:"companyName"`
+	Slug        string `json:"slug"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	FullName    string `json:"fullName"`
+}
+
+// Bootstrap seeds the platform-owner tenant and its first admin identity.
+// Only works when NO platform owner exists — returns 409 on any subsequent
+// call, making it a safe one-shot operation. No auth required (there is no
+// admin yet when this is first called).
+// Path: POST /api/platform/bootstrap
+func (h *TenantOps) Bootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Idempotency guard: refuse if an owner already exists.
+	existing, err := h.CP.PlatformOwnerTenant(r.Context())
+	if err == nil && existing != nil {
+		fail(w, http.StatusConflict, "Platform owner already bootstrapped.")
+		return
+	}
+
+	var req bootstrapRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if req.Email == "" || req.Password == "" || req.CompanyName == "" {
+		fail(w, http.StatusBadRequest, "companyName, email, and password are required.")
+		return
+	}
+	if req.Slug == "" {
+		req.Slug = strings.ToLower(strings.ReplaceAll(req.CompanyName, " ", "-"))
+	}
+	if req.FullName == "" {
+		req.FullName = req.Email
+	}
+
+	// 1. Create platform-owner tenant (isPlatformOwner=true).
+	tenant, err := h.CP.CreateTenant(r.Context(), req.Slug, req.CompanyName, true)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to create owner tenant: "+err.Error())
+		return
+	}
+
+	// 2. Hash password and create admin identity.
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to hash password.")
+		return
+	}
+	identity, err := h.CP.CreateIdentity(r.Context(), tenant.ID, req.Email, string(hash), req.FullName, true)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to create admin identity: "+err.Error())
+		return
+	}
+
+	// 3. Mark as platform admin.
+	if err := h.CP.AddPlatformAdmin(r.Context(), identity.ID); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to grant platform-admin role: "+err.Error())
+		return
+	}
+
+	// 4. Enqueue workspace provisioning (creates the tenant DB with seeded workflows/roles).
+	if h.Prov != nil {
+		h.Prov.Enqueue(provisioning.Job{
+			TenantID:   tenant.ID,
+			Slug:       tenant.Slug,
+			IdentityID: identity.ID,
+			Email:      identity.Email,
+			FullName:   identity.FullName,
+		})
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"success":  true,
+		"message":  "Platform owner bootstrapped. Workspace provisioning has started.",
+		"tenantId": tenant.ID,
+		"email":    identity.Email,
+	})
+}

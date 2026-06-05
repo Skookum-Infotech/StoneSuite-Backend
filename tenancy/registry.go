@@ -328,6 +328,16 @@ func (c *ControlPlane) LogPlatformAudit(ctx context.Context, actorID, actorEmail
 	return nil
 }
 
+// AddPlatformAdmin grants platform-level powers to an identity (idempotent).
+func (c *ControlPlane) AddPlatformAdmin(ctx context.Context, identityID string) error {
+	_, err := c.pool.Exec(ctx,
+		`INSERT INTO platform_admins (identity_id) VALUES ($1) ON CONFLICT DO NOTHING`, identityID)
+	if err != nil {
+		return fmt.Errorf("add platform admin: %w", err)
+	}
+	return nil
+}
+
 // IsPlatformAdmin reports whether an identity has platform-level powers.
 func (c *ControlPlane) IsPlatformAdmin(ctx context.Context, identityID string) (bool, error) {
 	if identityID == "" {

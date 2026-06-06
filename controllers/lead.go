@@ -20,37 +20,56 @@ type LeadOps struct{}
 // NewLeadOps constructs the handler group.
 func NewLeadOps() *LeadOps { return &LeadOps{} }
 
-// authLead resolves JWT + tenant pool + RBAC. Returns pool, identityID, ok.
-func authLead(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
+// authLead resolves JWT + tenant pool + RBAC. Returns pool, identityID, the
+// broadest granted scope (all|team|own), and ok.
+func authLead(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceLead, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if !decision.Allowed {
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" leads.")
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return pool, payload.ID, true
+	return pool, payload.ID, decision.Scope, true
 }
 
-// ListLeads GET /api/tenant/leads
+// leadCallerScope resolves the caller's tenant user id and team ids for
+// team/own scope filtering. For "all" scope it returns empties (no filtering).
+func leadCallerScope(r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope) (string, []string) {
+	if scope == authz.ScopeAll {
+		return "", nil
+	}
+	userID, err := lead.UserIDByIdentity(r.Context(), pool, identityID)
+	if err != nil {
+		return "", nil
+	}
+	if scope == authz.ScopeTeam {
+		teams, _ := lead.TeamIDsForUser(r.Context(), pool, userID)
+		return userID, teams
+	}
+	return userID, nil
+}
+
+// ListLeads GET /api/tenant/leads — scope-filtered by the caller's grant.
 func (h *LeadOps) ListLeads(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := authLead(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := authLead(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
-	leads, err := lead.List(r.Context(), pool)
+	callerUserID, teamIDs := leadCallerScope(r, pool, identityID, scope)
+	leads, err := lead.List(r.Context(), pool, string(scope), callerUserID, teamIDs)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to list leads.")
 		return
@@ -58,12 +77,12 @@ func (h *LeadOps) ListLeads(w http.ResponseWriter, r *http.Request) {
 	if leads == nil {
 		leads = []lead.Lead{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "leads": leads})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "scope": scope, "leads": leads})
 }
 
 // CreateLead POST /api/tenant/leads
 func (h *LeadOps) CreateLead(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := authLead(w, r, authz.ActionCreate)
+	pool, identityID, _, ok := authLead(w, r, authz.ActionCreate)
 	if !ok {
 		return
 	}
@@ -86,7 +105,7 @@ func (h *LeadOps) CreateLead(w http.ResponseWriter, r *http.Request) {
 
 // GetLead GET /api/tenant/leads/{id}
 func (h *LeadOps) GetLead(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := authLead(w, r, authz.ActionRead)
+	pool, _, _, ok := authLead(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -104,7 +123,7 @@ func (h *LeadOps) GetLead(w http.ResponseWriter, r *http.Request) {
 
 // UpdateLead PATCH /api/tenant/leads/{id}
 func (h *LeadOps) UpdateLead(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := authLead(w, r, authz.ActionUpdate)
+	pool, identityID, _, ok := authLead(w, r, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -130,7 +149,7 @@ func (h *LeadOps) UpdateLead(w http.ResponseWriter, r *http.Request) {
 
 // DeleteLead DELETE /api/tenant/leads/{id}
 func (h *LeadOps) DeleteLead(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := authLead(w, r, authz.ActionDelete)
+	pool, _, _, ok := authLead(w, r, authz.ActionDelete)
 	if !ok {
 		return
 	}

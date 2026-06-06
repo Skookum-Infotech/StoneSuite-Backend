@@ -46,39 +46,27 @@ func (rs *Resolver) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// DEBUG: Log tenant resolution
-		println("[MIDDLEWARE DEBUG] Resolving tenant ID:", payload.TenantID)
-
 		tenant, err := rs.cp.TenantByID(r.Context(), payload.TenantID)
 		if errors.Is(err, ErrTenantNotFound) {
-			println("[MIDDLEWARE DEBUG] Tenant not found for ID:", payload.TenantID)
 			writeErr(w, http.StatusForbidden, "Tenant not found.")
 			return
 		}
 		if err != nil {
-			println("[MIDDLEWARE DEBUG] Error looking up tenant:", err)
 			writeErr(w, http.StatusInternalServerError, "Failed to resolve tenant.")
 			return
 		}
 
-		// DEBUG: Log tenant details
-		println("[MIDDLEWARE DEBUG] Tenant found:", tenant.Slug, "Status:", tenant.Status, "DBName:", tenant.DBName)
-
 		if !tenant.Servable() {
-			println("[MIDDLEWARE DEBUG] Tenant not servable, message:", tenantUnservableMessage(tenant))
 			writeErr(w, http.StatusForbidden, tenantUnservableMessage(tenant))
 			return
 		}
 
-		println("[MIDDLEWARE DEBUG] Getting pool for tenant:", tenant.Slug)
 		pool, err := rs.router.PoolFor(r.Context(), tenant)
 		if err != nil {
-			println("[MIDDLEWARE DEBUG] Failed to get pool:", err)
 			writeErr(w, http.StatusInternalServerError, "Failed to connect to tenant database.")
 			return
 		}
 
-		println("[MIDDLEWARE DEBUG] Pool obtained successfully for tenant:", tenant.Slug)
 		ctx := context.WithValue(r.Context(), tenantCtxKey, tenant)
 		ctx = context.WithValue(ctx, tenantPoolCtxKey, pool)
 		next.ServeHTTP(w, r.WithContext(ctx))

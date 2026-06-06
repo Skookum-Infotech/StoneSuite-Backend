@@ -20,8 +20,11 @@ import (
 )
 
 func main() {
-	// 1. Load Configurations
+	// 1. Load Configurations and fail fast on insecure/invalid config.
 	config.Load()
+	if err := config.AppConfig.Validate(); err != nil {
+		log.Fatalf("CRITICAL ERROR: %v", err)
+	}
 
 	// 2. Initialize the multi-tenant control plane (required).
 	// When CONTROL_PLANE_DB_URL is set, requests can be resolved to a tenant and
@@ -49,18 +52,16 @@ func main() {
 		var cipher *secret.Cipher
 		var dsnResolver tenancy.DSNResolver
 		if config.AppConfig.SecretEncryptionKey != "" {
-			log.Println("[MAIN DEBUG] SECRET_ENCRYPTION_KEY is set, creating cipher...")
 			cipher, err = secret.New(config.AppConfig.SecretEncryptionKey)
 			if err != nil {
 				log.Fatalf("CRITICAL ERROR: invalid SECRET_ENCRYPTION_KEY: %v", err)
 			}
-			log.Println("[MAIN DEBUG] Cipher created successfully")
 			dsnResolver = func(_ context.Context, t *tenancy.Tenant) (string, error) {
-				fmt.Printf("[MAIN DEBUG] Resolving DSN for tenant %s (slug: %s)\n", t.ID, t.Slug)
 				return cipher.Decrypt(t.DBConnectionRef)
 			}
+			log.Println("Tenant DSN encryption: enabled.")
 		} else {
-			log.Println("[MAIN DEBUG] SECRET_ENCRYPTION_KEY not set, using PlainDSNResolver")
+			log.Println("Tenant DSN encryption: disabled (plaintext DSNs — development only).")
 		}
 		tenantRouter := tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
 		resolver = tenancy.NewResolver(cp, tenantRouter)

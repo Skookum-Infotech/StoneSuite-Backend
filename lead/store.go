@@ -156,9 +156,27 @@ func scanLead(row pgx.Row) (*Lead, error) {
 	return &l, err
 }
 
-// List returns all leads in the tenant DB.
-func List(ctx context.Context, pool *pgxpool.Pool) ([]Lead, error) {
-	rows, err := pool.Query(ctx, `SELECT `+leadCols+` FROM leads ORDER BY created_at DESC`)
+// List returns leads in the tenant DB, filtered by the caller's RBAC scope:
+//   - "all":  every lead
+//   - "team": leads the caller owns OR assigned to one of the caller's teams
+//   - "own":  leads the caller owns
+func List(ctx context.Context, pool *pgxpool.Pool, scope, callerUserID string, teamIDs []string) ([]Lead, error) {
+	var (
+		rows pgx.Rows
+		err  error
+		base = `SELECT ` + leadCols + ` FROM leads`
+	)
+	switch scope {
+	case "all":
+		rows, err = pool.Query(ctx, base+` ORDER BY created_at DESC`)
+	case "team":
+		rows, err = pool.Query(ctx, base+`
+			WHERE owner_user_id = $1 OR team_id = ANY($2) ORDER BY created_at DESC`,
+			nullIfEmpty(callerUserID), teamIDs)
+	default: // own (most restrictive)
+		rows, err = pool.Query(ctx, base+`
+			WHERE owner_user_id = $1 ORDER BY created_at DESC`, nullIfEmpty(callerUserID))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
@@ -172,6 +190,33 @@ func List(ctx context.Context, pool *pgxpool.Pool) ([]Lead, error) {
 		out = append(out, *l)
 	}
 	return out, rows.Err()
+}
+
+// TeamIDsForUser lists the team ids a tenant user belongs to.
+func TeamIDsForUser(ctx context.Context, pool *pgxpool.Pool, userID string) ([]string, error) {
+	rows, err := pool.Query(ctx, `SELECT team_id FROM team_members WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("teams for user: %w", err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan team id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// nullIfEmpty returns nil for an empty string so it compares as SQL NULL
+// (an empty owner filter then matches nothing rather than erroring on UUID cast).
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // Get returns one lead by id.

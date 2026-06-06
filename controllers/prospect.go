@@ -20,38 +20,57 @@ type ProspectOps struct{}
 // NewProspectOps constructs the handler group.
 func NewProspectOps() *ProspectOps { return &ProspectOps{} }
 
-// authProspect resolves JWT identity + tenant pool + RBAC in one call.
-// Returns pool, identityID, ok. On failure it writes a response and ok=false.
-func authProspect(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
+// authProspect resolves JWT identity + tenant pool + RBAC in one call. Returns
+// pool, identityID, the broadest granted scope (all|team|own), and ok. On
+// failure it writes a response and ok=false.
+func authProspect(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceProspect, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if !decision.Allowed {
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" prospects.")
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return pool, payload.ID, true
+	return pool, payload.ID, decision.Scope, true
 }
 
-// ListProspects GET /api/tenant/prospects
+// prospectCallerScope resolves the caller's tenant user id and team ids for
+// team/own scope filtering. For "all" scope it returns empties (no filtering).
+func prospectCallerScope(r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope) (string, []string) {
+	if scope == authz.ScopeAll {
+		return "", nil
+	}
+	userID, err := prospect.UserIDByIdentity(r.Context(), pool, identityID)
+	if err != nil {
+		return "", nil
+	}
+	if scope == authz.ScopeTeam {
+		teams, _ := prospect.TeamIDsForUser(r.Context(), pool, userID)
+		return userID, teams
+	}
+	return userID, nil
+}
+
+// ListProspects GET /api/tenant/prospects — scope-filtered by the caller's grant.
 func (h *ProspectOps) ListProspects(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := authProspect(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := authProspect(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
-	prospects, err := prospect.List(r.Context(), pool)
+	callerUserID, teamIDs := prospectCallerScope(r, pool, identityID, scope)
+	prospects, err := prospect.List(r.Context(), pool, string(scope), callerUserID, teamIDs)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to list prospects.")
 		return
@@ -59,12 +78,12 @@ func (h *ProspectOps) ListProspects(w http.ResponseWriter, r *http.Request) {
 	if prospects == nil {
 		prospects = []prospect.Prospect{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "prospects": prospects})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "scope": scope, "prospects": prospects})
 }
 
 // CreateProspect POST /api/tenant/prospects
 func (h *ProspectOps) CreateProspect(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := authProspect(w, r, authz.ActionCreate)
+	pool, identityID, _, ok := authProspect(w, r, authz.ActionCreate)
 	if !ok {
 		return
 	}
@@ -92,7 +111,7 @@ func (h *ProspectOps) CreateProspect(w http.ResponseWriter, r *http.Request) {
 
 // GetProspect GET /api/tenant/prospects/{id}
 func (h *ProspectOps) GetProspect(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := authProspect(w, r, authz.ActionRead)
+	pool, _, _, ok := authProspect(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -110,7 +129,7 @@ func (h *ProspectOps) GetProspect(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProspect PATCH /api/tenant/prospects/{id}
 func (h *ProspectOps) UpdateProspect(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := authProspect(w, r, authz.ActionUpdate)
+	pool, identityID, _, ok := authProspect(w, r, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -136,7 +155,7 @@ func (h *ProspectOps) UpdateProspect(w http.ResponseWriter, r *http.Request) {
 
 // DeleteProspect DELETE /api/tenant/prospects/{id}
 func (h *ProspectOps) DeleteProspect(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := authProspect(w, r, authz.ActionDelete)
+	pool, _, _, ok := authProspect(w, r, authz.ActionDelete)
 	if !ok {
 		return
 	}

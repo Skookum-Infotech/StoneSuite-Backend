@@ -1,15 +1,21 @@
 package config
 
 import (
+	"encoding/base64"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
+	// Environment is "development" (default) or "production". Controls fail-fast
+	// validation of security-critical secrets (see Validate).
+	Environment            string
 	Port                   string
 	JWTSecret              string
 	JWTExpiresIn           string
@@ -63,8 +69,11 @@ func Load() {
 	}
 
 	AppConfig = Config{
+		Environment:            getEnv("APP_ENV", "development"),
 		Port:                   getEnv("PORT", "8080"),
-		JWTSecret:              getEnv("JWT_SECRET", "stone_suite_go_backend_default_secret_key_change_me_in_prod"),
+		// No default: an empty JWT secret is rejected by Validate(). A baked-in
+		// default would let anyone forge tokens if the env var were ever unset.
+		JWTSecret:              getEnv("JWT_SECRET", ""),
 		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "24h"),
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
@@ -91,6 +100,42 @@ func Load() {
 		SenderEmail:    getEnv("SENDER_EMAIL", ""),
 		SenderPassword: getEnv("SENDER_PASSWORD", ""),
 	}
+}
+
+// IsProduction reports whether the app is running in production mode (APP_ENV=production).
+func (c Config) IsProduction() bool {
+	return strings.EqualFold(c.Environment, "production")
+}
+
+// Validate checks security-critical configuration and returns an error describing
+// every problem found. Call it immediately after Load and fail fast on error.
+func (c Config) Validate() error {
+	var problems []string
+
+	// JWT secret is mandatory everywhere — without it tokens are unsigned/forgeable.
+	if c.JWTSecret == "" {
+		problems = append(problems, "JWT_SECRET is required (generate with: openssl rand -base64 48)")
+	}
+
+	// Secret encryption key: optional in dev (DSNs stored plaintext), mandatory in
+	// production. When set, it must base64-decode to exactly 16/24/32 bytes.
+	if c.SecretEncryptionKey == "" {
+		if c.IsProduction() {
+			problems = append(problems, "SECRET_ENCRYPTION_KEY is required in production (base64 of 32 random bytes: openssl rand -base64 32)")
+		}
+	} else {
+		key, err := base64.StdEncoding.DecodeString(c.SecretEncryptionKey)
+		if err != nil {
+			problems = append(problems, "SECRET_ENCRYPTION_KEY is not valid base64")
+		} else if n := len(key); n != 16 && n != 24 && n != 32 {
+			problems = append(problems, fmt.Sprintf("SECRET_ENCRYPTION_KEY decodes to %d bytes, expected 16/24/32 (use: openssl rand -base64 32)", n))
+		}
+	}
+
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid configuration: %s", strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {

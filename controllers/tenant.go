@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -253,7 +254,11 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := applyLink(token)
-	emailSent := services.SendOnboardingInviteEmail(req.ContactEmail, req.RecipientName, link) == nil
+	emailErr := services.SendOnboardingInviteEmail(req.ContactEmail, req.RecipientName, link)
+	if emailErr != nil {
+		log.Printf("WARNING: invite email to %s failed: %v", req.ContactEmail, emailErr)
+	}
+	emailSent := emailErr == nil
 	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.invited", "{}")
 
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -438,7 +443,11 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		// the owner can always copy the link if delivery is unavailable (e.g. no
 		// SMTP configured in dev). Surface the outcome via emailSent.
 		link := applyLink(token)
-		emailSent := services.SendOnboardingInviteEmail(contactEmail, tenant.DisplayName, link) == nil
+		emailErr := services.SendOnboardingInviteEmail(contactEmail, tenant.DisplayName, link)
+		if emailErr != nil {
+			log.Printf("WARNING: resend invite email to %s failed: %v", contactEmail, emailErr)
+		}
+		emailSent := emailErr == nil
 		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}")
 
 		writeJSON(w, http.StatusOK, map[string]any{

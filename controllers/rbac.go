@@ -10,6 +10,7 @@ import (
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/userstore"
 )
 
 // RBACOps groups the tenant-scoped role/permission management handlers. All
@@ -240,7 +241,28 @@ func (h *RBACOps) UserRoles(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "Expected /api/tenant/users/{userId}/roles/{roleId}.")
 			return
 		}
-		if err := authz.UnassignRole(r.Context(), pool, userID, parts[2]); err != nil {
+		roleID := parts[2]
+		// Guard: cannot revoke super_admin if the target user is the last active one.
+		role, err := authz.GetRole(r.Context(), pool, roleID)
+		if err != nil && !errors.Is(err, authz.ErrRoleNotFound) {
+			fail(w, http.StatusInternalServerError, "Failed to load role.")
+			return
+		}
+		if err == nil && role.Key == authz.RoleSuperAdmin {
+			count, cErr := userstore.CountActiveSuperAdmins(r.Context(), pool)
+			if cErr != nil {
+				fail(w, http.StatusInternalServerError, "Failed to check admin count.")
+				return
+			}
+			if count <= 1 {
+				isSA, _ := userstore.IsSuperAdmin(r.Context(), pool, userID)
+				if isSA {
+					fail(w, http.StatusConflict, "Cannot remove the last super admin role. Assign it to another user first.")
+					return
+				}
+			}
+		}
+		if err := authz.UnassignRole(r.Context(), pool, userID, roleID); err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to unassign role.")
 			return
 		}

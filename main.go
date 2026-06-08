@@ -32,6 +32,7 @@ func main() {
 	// unchanged so existing functionality is not disrupted during the migration.
 	var resolver *tenancy.Resolver
 	var tenantOps *controllers.TenantOps
+	var userOps *controllers.UserOps
 	var provisioner *provisioning.Provisioner
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		cp, err := tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
@@ -91,6 +92,7 @@ func main() {
 		}
 
 		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter)
+		userOps = controllers.NewUserOps(cp, tenantRouter)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {
 		log.Fatalf("CRITICAL ERROR: CONTROL_PLANE_DB_URL is required (the legacy single-tenant backend has been removed).")
@@ -184,6 +186,11 @@ func main() {
 		})
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(resolver.Middleware(tenantMe)))
 
+		// tenantChain applies RequireAuth → tenancy resolver before every handler.
+		tenantChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(resolver.Middleware(h))
+		}
+
 		// Tenant-scoped RBAC management (role editor API). Each handler runs
 		// after RequireAuth + the tenancy resolver, then enforces the relevant
 		// catalog permission (role:read / role:configure) per method.
@@ -191,17 +198,31 @@ func main() {
 		mux.Handle("/api/tenant/permissions/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Catalog))))
 		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))
 		mux.Handle("/api/tenant/roles/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Role))))
-		// More specific than /api/tenant/users/ — must be registered first.
+
+		// Tenant-scoped user management. Method+path patterns are more specific
+		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
+		mux.Handle("GET /api/tenant/users", tenantChain(userOps.ListUsers))
+		mux.Handle("POST /api/tenant/users/invite", tenantChain(userOps.InviteUser))
+		mux.Handle("GET /api/tenant/users/{id}", tenantChain(userOps.GetUser))
+		mux.Handle("PATCH /api/tenant/users/{id}", tenantChain(userOps.UpdateUser))
+		mux.Handle("DELETE /api/tenant/users/{id}", tenantChain(userOps.DeactivateUser))
+
+		// Role assignment/revocation (existing, kept as catch-all for /users/{id}/roles paths).
 		mux.Handle("/api/tenant/users/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.UserRoles))))
 
-		// Tenant-scoped workflow engine + records (Phase 3). Uses method+wildcard
-		// routing; each handler enforces its own catalog permission. tenantChain
-		// applies RequireAuth -> tenancy resolver before the handler.
+		// Workspace invite management.
+		mux.Handle("GET /api/tenant/invites", tenantChain(userOps.ListInvites))
+		mux.Handle("POST /api/tenant/invites/{id}/resend", tenantChain(userOps.ResendInvite))
+		mux.Handle("DELETE /api/tenant/invites/{id}", tenantChain(userOps.RevokeInvite))
+
+		// Public: accept workspace user invite (no auth required).
+		// /accept is registered first so it is not consumed by the token catch-all.
+		mux.HandleFunc("POST /api/onboarding/user-invite/accept", userOps.AcceptUserInvite)
+		mux.HandleFunc("GET /api/onboarding/user-invite/{token}", userOps.GetUserInvite)
+
+		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
-		tenantChain := func(h http.HandlerFunc) http.Handler {
-			return middleware.RequireAuth(resolver.Middleware(h))
-		}
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))

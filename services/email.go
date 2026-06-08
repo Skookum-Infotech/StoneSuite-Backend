@@ -72,6 +72,35 @@ func SendPasswordSetupEmail(recipientEmail, recipientName, setupLink string) err
 	return sendEmail(recipientEmail, subject, body)
 }
 
+// SendUserInviteEmail sends an email to a colleague invited to join a tenant workspace.
+func SendUserInviteEmail(recipientEmail, recipientName, workspaceName, inviteLink string) error {
+	subject := "You've been invited to " + workspaceName
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>You're invited to join %s</h2>
+			<p>Hello%s,</p>
+			<p>A colleague has invited you to join the <strong>%s</strong> workspace on StoneSuite.</p>
+			<p>Click the link below to accept your invitation and set your password:</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Accept Invitation</a></p>
+			<p>If the button does not work, copy and paste this link into your browser:</p>
+			<p>%s</p>
+			<p>This invitation expires in 48 hours. If you did not expect this email, you can safely ignore it.</p>
+			<p>Best regards,<br>StoneSuite Team</p>
+		</body>
+		</html>
+	`, workspaceName, nameClause(recipientName), workspaceName, inviteLink, inviteLink)
+	return sendEmail(recipientEmail, subject, body)
+}
+
+// nameClause formats " {name}" with a leading space, or "" when name is blank.
+func nameClause(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " " + name
+}
+
 // sendEmail is a helper function to send emails
 func sendEmail(to, subject, body string) error {
 	es := InitEmailService()

@@ -23,6 +23,7 @@ const (
 	ResourceRecord         Resource = "record"          // generic workflow engine records
 	ResourceLead           Resource = "lead"            // CRM leads
 	ResourceProspect       Resource = "prospect"        // CRM prospects
+	ResourceCustomer       Resource = "customer"        // CRM customers
 	ResourceUser           Resource = "user"            // tenant users
 	ResourceRole           Resource = "role"            // roles & permissions
 	ResourceTeam           Resource = "team"            // teams & membership
@@ -82,6 +83,12 @@ var catalog = []Permission{
 	{ResourceProspect, ActionUpdate},
 	{ResourceProspect, ActionDelete},
 	{ResourceProspect, ActionTransition},
+
+	{ResourceCustomer, ActionCreate},
+	{ResourceCustomer, ActionRead},
+	{ResourceCustomer, ActionUpdate},
+	{ResourceCustomer, ActionDelete},
+	{ResourceCustomer, ActionTransition},
 
 	{ResourceUser, ActionCreate},
 	{ResourceUser, ActionRead},

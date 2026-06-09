@@ -65,6 +65,19 @@ func unmetRequiredFields(g Guard, rec *Record) []string {
 // initial state, and writes a creation history row — atomically.
 func (e *Engine) CreateRecord(ctx context.Context, pool Beginner, def *Definition,
 	ownerUserID, teamID string, core, custom map[string]any) (*Record, error) {
+	return e.createRecord(ctx, pool, def, ownerUserID, teamID, "", core, custom)
+}
+
+// ConvertRecord creates a new record in def starting at its initial state,
+// linked to parentRecordID as its lineage source (e.g. lead → prospect).
+func (e *Engine) ConvertRecord(ctx context.Context, pool Beginner, def *Definition,
+	ownerUserID, teamID, parentRecordID string, core, custom map[string]any) (*Record, error) {
+	return e.createRecord(ctx, pool, def, ownerUserID, teamID, parentRecordID, core, custom)
+}
+
+// createRecord is the shared implementation behind CreateRecord and ConvertRecord.
+func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definition,
+	ownerUserID, teamID, parentRecordID string, core, custom map[string]any) (*Record, error) {
 
 	if !def.Workflow.Enabled {
 		return nil, TransitionError{Reason: "workflow is disabled"}
@@ -95,10 +108,10 @@ func (e *Engine) CreateRecord(ctx context.Context, pool Beginner, def *Definitio
 	var id string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO workflow_records
-			(workflow_id, current_state_id, owner_user_id, team_id, core_fields, custom_fields)
-		VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb) RETURNING id`,
+			(workflow_id, current_state_id, owner_user_id, team_id, parent_record_id, core_fields, custom_fields)
+		VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) RETURNING id`,
 		def.Workflow.ID, init.ID, nullIfEmpty(ownerUserID), nullIfEmpty(teamID),
-		coreRaw, customRaw).Scan(&id); err != nil {
+		nullIfEmpty(parentRecordID), coreRaw, customRaw).Scan(&id); err != nil {
 		return nil, fmt.Errorf("insert record: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

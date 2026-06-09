@@ -26,9 +26,10 @@ type Beginner interface {
 
 // Sentinel errors.
 var (
-	ErrWorkflowNotFound = errors.New("workflow not found")
-	ErrRecordNotFound   = errors.New("record not found")
-	ErrFieldCap         = fmt.Errorf("a workflow may have at most %d custom fields", MaxCustomFields)
+	ErrWorkflowNotFound   = errors.New("workflow not found")
+	ErrRecordNotFound     = errors.New("record not found")
+	ErrFieldCap           = fmt.Errorf("a workflow may have at most %d custom fields", MaxCustomFields)
+	ErrDisableDependency  = errors.New("workflow has upstream dependency")
 )
 
 // ----- workflows -------------------------------------------------------------
@@ -36,8 +37,8 @@ var (
 // ListWorkflows returns all workflows (config view).
 func ListWorkflows(ctx context.Context, q Querier) ([]Workflow, error) {
 	rows, err := q.Query(ctx, `
-		SELECT id, key, name, description, enabled, is_default
-		FROM workflows ORDER BY is_default DESC, name`)
+		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		FROM workflows ORDER BY pipeline_order, is_default DESC, name`)
 	if err != nil {
 		return nil, fmt.Errorf("list workflows: %w", err)
 	}
@@ -45,7 +46,7 @@ func ListWorkflows(ctx context.Context, q Querier) ([]Workflow, error) {
 	var out []Workflow
 	for rows.Next() {
 		var w Workflow
-		if err := rows.Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault); err != nil {
+		if err := rows.Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault, &w.PipelineOrder); err != nil {
 			return nil, fmt.Errorf("scan workflow: %w", err)
 		}
 		out = append(out, w)
@@ -53,8 +54,32 @@ func ListWorkflows(ctx context.Context, q Querier) ([]Workflow, error) {
 	return out, rows.Err()
 }
 
+// GetWorkflowByKey loads a workflow by its key (case-insensitive).
+func GetWorkflowByKey(ctx context.Context, q Querier, key string) (*Workflow, error) {
+	var w Workflow
+	err := q.QueryRow(ctx, `
+		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		FROM workflows WHERE LOWER(key) = LOWER($1)`, key).
+		Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault, &w.PipelineOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWorkflowNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get workflow by key: %w", err)
+	}
+	return &w, nil
+}
+
 // SetWorkflowEnabled toggles a workflow on/off.
+// When disabling, enforces the CRM pipeline dependency: a workflow with
+// pipeline_order N cannot be disabled while any workflow with pipeline_order
+// < N (and > 0) is still enabled — the upstream must be disabled first.
 func SetWorkflowEnabled(ctx context.Context, q Querier, id string, enabled bool) error {
+	if !enabled {
+		if err := checkDisableDependency(ctx, q, id); err != nil {
+			return err
+		}
+	}
 	tag, err := q.Exec(ctx,
 		`UPDATE workflows SET enabled = $2, updated_at = NOW() WHERE id = $1`, id, enabled)
 	if err != nil {
@@ -66,15 +91,60 @@ func SetWorkflowEnabled(ctx context.Context, q Querier, id string, enabled bool)
 	return nil
 }
 
+// checkDisableDependency returns ErrDisableDependency (wrapping a descriptive
+// message) when disabling workflow `id` would break the CRM pipeline chain.
+// Only applies to workflows with pipeline_order > 1.
+func checkDisableDependency(ctx context.Context, q Querier, id string) error {
+	var thisOrder int
+	var thisName string
+	err := q.QueryRow(ctx,
+		`SELECT pipeline_order, name FROM workflows WHERE id = $1`, id).
+		Scan(&thisOrder, &thisName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrWorkflowNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check dependency: %w", err)
+	}
+	// Non-CRM workflows (order 0) have no dependency constraints.
+	if thisOrder <= 1 {
+		return nil
+	}
+	// Look for any enabled workflow upstream in the chain.
+	rows, err := q.Query(ctx, `
+		SELECT name FROM workflows
+		WHERE pipeline_order > 0 AND pipeline_order < $1 AND enabled = TRUE`, thisOrder)
+	if err != nil {
+		return fmt.Errorf("query upstream workflows: %w", err)
+	}
+	defer rows.Close()
+	var upstreams []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan upstream: %w", err)
+		}
+		upstreams = append(upstreams, name)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(upstreams) > 0 {
+		return fmt.Errorf("%w: cannot disable %q while %v is still enabled — disable the upstream workflow(s) first",
+			ErrDisableDependency, thisName, upstreams)
+	}
+	return nil
+}
+
 // LoadDefinition loads a full workflow definition by id (workflow + states +
 // transitions + field definitions).
 func LoadDefinition(ctx context.Context, q Querier, workflowID string) (*Definition, error) {
 	var d Definition
 	err := q.QueryRow(ctx, `
-		SELECT id, key, name, description, enabled, is_default
+		SELECT id, key, name, description, enabled, is_default, pipeline_order
 		FROM workflows WHERE id = $1`, workflowID).
 		Scan(&d.Workflow.ID, &d.Workflow.Key, &d.Workflow.Name, &d.Workflow.Description,
-			&d.Workflow.Enabled, &d.Workflow.IsDefault)
+			&d.Workflow.Enabled, &d.Workflow.IsDefault, &d.Workflow.PipelineOrder)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrWorkflowNotFound
 	}
@@ -242,9 +312,9 @@ func DeleteField(ctx context.Context, q Querier, workflowID, fieldID string) err
 
 func scanRecord(row pgx.Row) (*Record, error) {
 	var r Record
-	var owner, team *string
+	var owner, team, parent *string
 	var coreRaw, customRaw []byte
-	err := row.Scan(&r.ID, &r.WorkflowID, &r.CurrentStateID, &owner, &team,
+	err := row.Scan(&r.ID, &r.WorkflowID, &r.CurrentStateID, &owner, &team, &parent,
 		&coreRaw, &customRaw, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRecordNotFound
@@ -258,6 +328,9 @@ func scanRecord(row pgx.Row) (*Record, error) {
 	if team != nil {
 		r.TeamID = *team
 	}
+	if parent != nil {
+		r.ParentRecordID = *parent
+	}
 	r.CoreFields = map[string]any{}
 	r.CustomFields = map[string]any{}
 	if len(coreRaw) > 0 {
@@ -270,7 +343,7 @@ func scanRecord(row pgx.Row) (*Record, error) {
 }
 
 const recordColumns = `id, workflow_id,
-	COALESCE(current_state_id::text, ''), owner_user_id, team_id,
+	COALESCE(current_state_id::text, ''), owner_user_id, team_id, parent_record_id,
 	core_fields, custom_fields, created_at, updated_at`
 
 // GetRecord loads a single record by id.
@@ -360,6 +433,100 @@ func TeamIDsForUser(ctx context.Context, q Querier, userID string) ([]string, er
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// UpdateRecordAllFields replaces both core_fields and custom_fields on a record.
+// Pass nil for either map to leave it unchanged.
+func UpdateRecordAllFields(ctx context.Context, q Querier, id string, core, custom map[string]any) error {
+	coreRaw, _ := json.Marshal(core)
+	customRaw, _ := json.Marshal(custom)
+	tag, err := q.Exec(ctx,
+		`UPDATE workflow_records
+		    SET core_fields = $2::jsonb, custom_fields = $3::jsonb, updated_at = NOW()
+		  WHERE id = $1`,
+		id, coreRaw, customRaw)
+	if err != nil {
+		return fmt.Errorf("update record fields: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrRecordNotFound
+	}
+	return nil
+}
+
+// DeleteRecord permanently removes a workflow record and its history.
+func DeleteRecord(ctx context.Context, q Querier, id string) error {
+	tag, err := q.Exec(ctx, `DELETE FROM workflow_records WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete record: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrRecordNotFound
+	}
+	return nil
+}
+
+// ListCRMStatuses returns all states from the three CRM workflows (lead/prospect/
+// customer) ordered by pipeline_order and sort_order, ready for a combined
+// status dropdown. Each entry carries the prefixed label (e.g. "LEAD-New").
+func ListCRMStatuses(ctx context.Context, q Querier) ([]StatusInfo, error) {
+	rows, err := q.Query(ctx, `
+		SELECT ws.id, ws.key, ws.name, ws.is_initial, ws.is_terminal, ws.sort_order, ws.color,
+		       wf.key, wf.name, wf.pipeline_order
+		  FROM workflow_states ws
+		  JOIN workflows wf ON wf.id = ws.workflow_id
+		 WHERE wf.pipeline_order > 0
+		 ORDER BY wf.pipeline_order, ws.sort_order, ws.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list crm statuses: %w", err)
+	}
+	defer rows.Close()
+	var out []StatusInfo
+	for rows.Next() {
+		var si StatusInfo
+		var pipelineOrder int
+		if err := rows.Scan(&si.StateID, &si.StateKey, &si.StatusLabel,
+			&si.IsInitial, &si.IsTerminal, &si.SortOrder, &si.Color,
+			&si.WorkflowKey, &si.WorkflowName, &pipelineOrder); err != nil {
+			return nil, fmt.Errorf("scan status: %w", err)
+		}
+		out = append(out, si)
+	}
+	if out == nil {
+		out = []StatusInfo{}
+	}
+	return out, rows.Err()
+}
+
+// AvailableTransitions returns the states reachable from the record's current
+// state via defined transitions. Used to populate edit/transition dropdowns.
+func AvailableTransitions(ctx context.Context, q Querier, rec *Record) ([]StatusInfo, error) {
+	rows, err := q.Query(ctx, `
+		SELECT ws.id, ws.key, ws.name, ws.is_initial, ws.is_terminal, ws.sort_order, ws.color,
+		       wf.key, wf.name
+		  FROM workflow_transitions wt
+		  JOIN workflow_states ws ON ws.id = wt.to_state_id
+		  JOIN workflows wf ON wf.id = wt.workflow_id
+		 WHERE wt.workflow_id = $1 AND wt.from_state_id = $2
+		 ORDER BY wt.sort_order, ws.name`, rec.WorkflowID, rec.CurrentStateID)
+	if err != nil {
+		return nil, fmt.Errorf("available transitions: %w", err)
+	}
+	defer rows.Close()
+	var out []StatusInfo
+	for rows.Next() {
+		var si StatusInfo
+		if err := rows.Scan(&si.StateID, &si.StateKey, &si.StatusLabel,
+			&si.IsInitial, &si.IsTerminal, &si.SortOrder, &si.Color,
+			&si.WorkflowKey, &si.WorkflowName); err != nil {
+			return nil, fmt.Errorf("scan transition state: %w", err)
+		}
+		out = append(out, si)
+	}
+	if out == nil {
+		out = []StatusInfo{}
+	}
+	return out, rows.Err()
 }
 
 func nullIfEmpty(s string) any {

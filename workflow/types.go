@@ -39,12 +39,13 @@ const (
 
 // Workflow is a state machine definition.
 type Workflow struct {
-	ID          string `json:"id"`
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
-	IsDefault   bool   `json:"isDefault"`
+	ID            string `json:"id"`
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Enabled       bool   `json:"enabled"`
+	IsDefault     bool   `json:"isDefault"`
+	PipelineOrder int    `json:"pipelineOrder"` // 0 = unordered; 1=Lead,2=Prospect,3=Customer
 }
 
 // State is a node in a workflow.
@@ -111,10 +112,24 @@ type Record struct {
 	CurrentStateID string         `json:"currentStateId"`
 	OwnerUserID    string         `json:"ownerUserId,omitempty"`
 	TeamID         string         `json:"teamId,omitempty"`
+	ParentRecordID string         `json:"parentRecordId,omitempty"`
 	CoreFields     map[string]any `json:"coreFields"`
 	CustomFields   map[string]any `json:"customFields"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
+}
+
+// StatusInfo represents a workflow state as a selectable status option.
+type StatusInfo struct {
+	StateID      string `json:"stateId"`
+	StateKey     string `json:"stateKey"`
+	StatusLabel  string `json:"statusLabel"` // e.g. "LEAD-New"
+	WorkflowKey  string `json:"workflowKey"`
+	WorkflowName string `json:"workflowName"`
+	IsInitial    bool   `json:"isInitial"`
+	IsTerminal   bool   `json:"isTerminal"`
+	SortOrder    int    `json:"sortOrder"`
+	Color        string `json:"color"`
 }
 
 // initialState returns the workflow's initial state, or false if none is set.

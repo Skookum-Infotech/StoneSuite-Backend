@@ -29,71 +29,92 @@ type seedField struct {
 
 type seedWorkflow struct {
 	key, name, description string
+	pipelineOrder          int // 0=unordered; 1=Lead, 2=Prospect, 3=Customer
 	states                 []seedState
 	transitions            []seedTransition
 	fields                 []seedField
 }
 
-// defaultWorkflows are the Lead/Prospect/Customer pipelines every new tenant
-// gets. They are ordinary rows: a tenant can disable them or add custom fields.
+// defaultWorkflows are the Lead/Prospect/Customer CRM pipelines seeded for
+// every new tenant. pipeline_order encodes the CRM dependency chain used to
+// enforce disable rules (upstream must be disabled before downstream).
 var defaultWorkflows = []seedWorkflow{
 	{
 		key: "lead", name: "Lead", description: "Inbound leads pipeline.",
+		pipelineOrder: 1,
 		states: []seedState{
-			{key: "new", name: "New", initial: true, order: 0, color: "#64748b"},
-			{key: "contacted", name: "Contacted", order: 1, color: "#3b82f6"},
-			{key: "qualified", name: "Qualified", order: 2, color: "#8b5cf6"},
-			{key: "converted", name: "Converted", terminal: true, order: 3, color: "#22c55e"},
-			{key: "disqualified", name: "Disqualified", terminal: true, order: 4, color: "#ef4444"},
+			{key: "lead_new", name: "LEAD-New", initial: true, order: 0, color: "#64748b"},
+			{key: "lead_in_progress", name: "LEAD-In Progress", order: 1, color: "#3b82f6"},
+			{key: "lead_qualified", name: "LEAD-Qualified", order: 2, color: "#8b5cf6"},
+			{key: "lead_unqualified", name: "LEAD-UnQualified", terminal: true, order: 3, color: "#ef4444"},
+			{key: "lead_converted", name: "LEAD-Converted", terminal: true, order: 4, color: "#22c55e"},
+			{key: "lead_dead", name: "LEAD-Dead", terminal: true, order: 5, color: "#6b7280"},
 		},
 		transitions: []seedTransition{
-			{from: "new", to: "contacted", name: "Contact"},
-			{from: "contacted", to: "qualified", name: "Qualify", requiredFields: []string{"phone"}},
-			{from: "qualified", to: "converted", name: "Convert"},
-			{from: "new", to: "disqualified", name: "Disqualify"},
-			{from: "contacted", to: "disqualified", name: "Disqualify"},
+			{from: "lead_new", to: "lead_in_progress", name: "Start Progress"},
+			{from: "lead_new", to: "lead_unqualified", name: "Disqualify"},
+			{from: "lead_in_progress", to: "lead_qualified", name: "Qualify"},
+			{from: "lead_in_progress", to: "lead_unqualified", name: "Disqualify"},
+			{from: "lead_in_progress", to: "lead_dead", name: "Mark Dead"},
+			{from: "lead_qualified", to: "lead_converted", name: "Convert"},
+			{from: "lead_qualified", to: "lead_dead", name: "Mark Dead"},
 		},
 		fields: []seedField{
-			{key: "source", label: "Source", dataType: TypeEnum, options: []string{"web", "referral", "event", "cold"}},
+			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
+			{key: "email", label: "Email", dataType: TypeEmail, required: true},
 			{key: "phone", label: "Phone", dataType: TypeString},
+			{key: "source", label: "Source", dataType: TypeEnum,
+				options: []string{"web", "referral", "event", "cold_call", "partner"}},
 			{key: "estimated_value", label: "Estimated Value", dataType: TypeNumber},
 		},
 	},
 	{
 		key: "prospect", name: "Prospect", description: "Active sales opportunities.",
+		pipelineOrder: 2,
 		states: []seedState{
-			{key: "new", name: "New", initial: true, order: 0, color: "#64748b"},
-			{key: "proposal_sent", name: "Proposal Sent", order: 1, color: "#3b82f6"},
-			{key: "negotiation", name: "Negotiation", order: 2, color: "#f59e0b"},
-			{key: "won", name: "Won", terminal: true, order: 3, color: "#22c55e"},
-			{key: "lost", name: "Lost", terminal: true, order: 4, color: "#ef4444"},
+			{key: "prospect_in_discussion", name: "PROSPECT-In Discussion", initial: true, order: 0, color: "#64748b"},
+			{key: "prospect_identified_dms", name: "PROSPECT-Identified Decision Makers", order: 1, color: "#3b82f6"},
+			{key: "prospect_qualified", name: "PROSPECT-Qualified", order: 2, color: "#8b5cf6"},
+			{key: "prospect_proposal", name: "PROSPECT-Proposal", order: 3, color: "#f59e0b"},
+			{key: "prospect_in_negotiation", name: "PROSPECT-In Negotiation", order: 4, color: "#f97316"},
+			{key: "prospect_purchasing", name: "PROSPECT-Purchasing", order: 5, color: "#a855f7"},
+			{key: "prospect_closed_lost", name: "PROSPECT-Closed Lost", terminal: true, order: 6, color: "#ef4444"},
 		},
 		transitions: []seedTransition{
-			{from: "new", to: "proposal_sent", name: "Send Proposal"},
-			{from: "proposal_sent", to: "negotiation", name: "Begin Negotiation"},
-			{from: "negotiation", to: "won", name: "Mark Won"},
-			{from: "proposal_sent", to: "lost", name: "Mark Lost"},
-			{from: "negotiation", to: "lost", name: "Mark Lost"},
+			{from: "prospect_in_discussion", to: "prospect_identified_dms", name: "Identify Decision Makers"},
+			{from: "prospect_in_discussion", to: "prospect_closed_lost", name: "Close Lost"},
+			{from: "prospect_identified_dms", to: "prospect_qualified", name: "Qualify"},
+			{from: "prospect_identified_dms", to: "prospect_closed_lost", name: "Close Lost"},
+			{from: "prospect_qualified", to: "prospect_proposal", name: "Send Proposal"},
+			{from: "prospect_qualified", to: "prospect_closed_lost", name: "Close Lost"},
+			{from: "prospect_proposal", to: "prospect_in_negotiation", name: "Begin Negotiation"},
+			{from: "prospect_proposal", to: "prospect_closed_lost", name: "Close Lost"},
+			{from: "prospect_in_negotiation", to: "prospect_purchasing", name: "Move to Purchase"},
+			{from: "prospect_in_negotiation", to: "prospect_closed_lost", name: "Close Lost"},
 		},
 		fields: []seedField{
+			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
+			{key: "email", label: "Email", dataType: TypeEmail, required: true},
+			{key: "phone", label: "Phone", dataType: TypeString},
 			{key: "deal_size", label: "Deal Size", dataType: TypeNumber},
 			{key: "close_date", label: "Expected Close Date", dataType: TypeDate},
 		},
 	},
 	{
 		key: "customer", name: "Customer", description: "Customer lifecycle.",
+		pipelineOrder: 3,
 		states: []seedState{
-			{key: "onboarding", name: "Onboarding", initial: true, order: 0, color: "#3b82f6"},
-			{key: "active", name: "Active", order: 1, color: "#22c55e"},
-			{key: "churned", name: "Churned", terminal: true, order: 2, color: "#ef4444"},
+			{key: "customer_closed_won", name: "CUSTOMER-Closed Won", initial: true, order: 0, color: "#22c55e"},
+			{key: "customer_renewal", name: "CUSTOMER-Renewal", order: 1, color: "#3b82f6"},
+			{key: "customer_closed_lost", name: "CUSTOMER-Closed Lost", terminal: true, order: 2, color: "#ef4444"},
 		},
 		transitions: []seedTransition{
-			{from: "onboarding", to: "active", name: "Activate"},
-			{from: "active", to: "churned", name: "Mark Churned"},
+			{from: "customer_closed_won", to: "customer_renewal", name: "Up for Renewal"},
+			{from: "customer_closed_won", to: "customer_closed_lost", name: "Mark Lost"},
+			{from: "customer_renewal", to: "customer_closed_won", name: "Renew"},
+			{from: "customer_renewal", to: "customer_closed_lost", name: "Mark Lost"},
 		},
-		// The Customer workflow doubles as the onboarding record: these keys mirror
-		// the onboarding form so the public form, customer records, and the owner's
-		// Customer workflow stay in sync. The owner can add more fields in Config.
+		// Core customer fields (mirror onboarding form).
 		fields: []seedField{
 			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
 			{key: "legal_name", label: "Legal Name", dataType: TypeString},
@@ -105,14 +126,9 @@ var defaultWorkflows = []seedWorkflow{
 			{key: "tax_id", label: "Tax / VAT ID", dataType: TypeString},
 			{key: "billing_address", label: "Billing Address", dataType: TypeString},
 			{key: "shipping_address", label: "Shipping Address", dataType: TypeString},
-			{key: "return_address", label: "Return Address", dataType: TypeString},
 			{key: "super_admin_name", label: "Super Admin Name", dataType: TypeString},
 			{key: "super_admin_email", label: "Super Admin Email", dataType: TypeEmail, required: true},
 			{key: "super_admin_phone", label: "Super Admin Phone", dataType: TypeString},
-			{key: "super_admin_job_title", label: "Super Admin Job Title", dataType: TypeString},
-			{key: "finance_name", label: "Finance Contact Name", dataType: TypeString},
-			{key: "finance_email", label: "Finance Contact Email", dataType: TypeEmail},
-			{key: "finance_phone", label: "Finance Contact Phone", dataType: TypeString},
 		},
 	},
 }
@@ -138,9 +154,9 @@ func seedOne(ctx context.Context, q Querier, sw seedWorkflow) error {
 
 	var workflowID string
 	if err := q.QueryRow(ctx, `
-		INSERT INTO workflows (key, name, description, enabled, is_default)
-		VALUES ($1, $2, $3, TRUE, TRUE) RETURNING id`,
-		sw.key, sw.name, sw.description).Scan(&workflowID); err != nil {
+		INSERT INTO workflows (key, name, description, enabled, is_default, pipeline_order)
+		VALUES ($1, $2, $3, TRUE, TRUE, $4) RETURNING id`,
+		sw.key, sw.name, sw.description, sw.pipelineOrder).Scan(&workflowID); err != nil {
 		return fmt.Errorf("insert workflow: %w", err)
 	}
 

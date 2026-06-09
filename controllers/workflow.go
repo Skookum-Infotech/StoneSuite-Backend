@@ -102,6 +102,10 @@ func (h *WorkflowOps) SetWorkflowEnabled(w http.ResponseWriter, r *http.Request)
 			fail(w, http.StatusNotFound, "Workflow not found.")
 			return
 		}
+		if errors.Is(err, workflow.ErrDisableDependency) {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
 		fail(w, http.StatusInternalServerError, "Failed to update workflow.")
 		return
 	}

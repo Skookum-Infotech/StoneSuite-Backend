@@ -234,7 +234,23 @@ func main() {
 		mux.Handle("PATCH /api/tenant/records/{id}", tenantChain(wf.UpdateRecord))
 		mux.Handle("POST /api/tenant/records/{id}/transition", tenantChain(wf.TransitionRecord))
 
-		// Dedicated CRM prospects table (migration 000004).
+		// Unified CRM: lead, prospect, customer all backed by workflow_records.
+		crm := controllers.NewCRMOps()
+		// Status / dropdown endpoints.
+		mux.Handle("GET /api/tenant/crm/statuses", tenantChain(crm.AllStatuses))
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", tenantChain(crm.WorkflowStatuses))
+		// Per-workflow list + create.
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records", tenantChain(crm.ListRecords))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records", tenantChain(crm.CreateRecord))
+		// Single-record CRUD and state machine.
+		mux.Handle("GET /api/tenant/crm/records/{id}", tenantChain(crm.GetRecord))
+		mux.Handle("PATCH /api/tenant/crm/records/{id}", tenantChain(crm.UpdateRecord))
+		mux.Handle("DELETE /api/tenant/crm/records/{id}", tenantChain(crm.DeleteRecord))
+		mux.Handle("GET /api/tenant/crm/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
+		mux.Handle("POST /api/tenant/crm/records/{id}/transition", tenantChain(crm.TransitionRecord))
+		mux.Handle("POST /api/tenant/crm/records/{id}/convert", tenantChain(crm.ConvertRecord))
+
+		// Legacy CRM routes kept for backward compatibility (deprecated).
 		ps := controllers.NewProspectOps()
 		mux.Handle("GET /api/tenant/prospects", tenantChain(ps.ListProspects))
 		mux.Handle("POST /api/tenant/prospects", tenantChain(ps.CreateProspect))
@@ -242,7 +258,6 @@ func main() {
 		mux.Handle("PATCH /api/tenant/prospects/{id}", tenantChain(ps.UpdateProspect))
 		mux.Handle("DELETE /api/tenant/prospects/{id}", tenantChain(ps.DeleteProspect))
 
-		// Dedicated CRM leads table (migration 000005).
 		ls := controllers.NewLeadOps()
 		mux.Handle("GET /api/tenant/leads", tenantChain(ls.ListLeads))
 		mux.Handle("POST /api/tenant/leads", tenantChain(ls.CreateLead))

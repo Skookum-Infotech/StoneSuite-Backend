@@ -127,6 +127,11 @@ func main() {
 		// Public: tenant-scoped login.
 		mux.HandleFunc("/api/auth/tenant-login", tenantOps.TenantLogin)
 
+		// Public: password-reset flow (forgot → validate token → set new password).
+		mux.HandleFunc("/api/auth/forgot-password", tenantOps.ForgotPassword)
+		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
+		mux.HandleFunc("/api/auth/reset-password", tenantOps.ResetPassword)
+
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
 		mux.HandleFunc("/api/onboarding/apply/", tenantOps.GetApply) // GET /{token}

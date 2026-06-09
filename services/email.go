@@ -101,7 +101,7 @@ func nameClause(name string) string {
 	return " " + name
 }
 
-// SendPasswordResetEmail sends a password-reset link to the given address.
+// SendPasswordResetEmail sends a password-reset link to an existing account holder.
 func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) error {
 	subject := "Reset your StoneSuite password"
 	body := fmt.Sprintf(`
@@ -110,16 +110,15 @@ func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) err
 			<h2>Reset your password</h2>
 			<p>Hello%s,</p>
 			<p>We received a request to reset the password for your StoneSuite account.</p>
-			<p>Click the button below to choose a new password:</p>
-			<p><a href="%s" style="background-color: #d97706; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
+			<p>Click the link below to choose a new password (expires in 1 hour):</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
 			<p>If the button does not work, copy and paste this link into your browser:</p>
 			<p>%s</p>
-			<p>This link expires in 24 hours. If you did not request a password reset, you can safely ignore this email — your password will not change.</p>
+			<p>If you did not request a password reset, you can safely ignore this email — your password will not change.</p>
 			<p>Best regards,<br>StoneSuite Team</p>
 		</body>
 		</html>
 	`, nameClause(recipientName), resetLink, resetLink)
-
 	return sendEmail(recipientEmail, subject, body)
 }
 

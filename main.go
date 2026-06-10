@@ -245,13 +245,15 @@ func main() {
 		// Per-workflow list + create.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records", tenantChain(crm.ListRecords))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records", tenantChain(crm.CreateRecord))
-		// Single-record CRUD and state machine (record lookup derives workflow key).
-		mux.Handle("GET /api/tenant/crm/records/{id}", tenantChain(crm.GetRecord))
-		mux.Handle("PATCH /api/tenant/crm/records/{id}", tenantChain(crm.UpdateRecord))
-		mux.Handle("DELETE /api/tenant/crm/records/{id}", tenantChain(crm.DeleteRecord))
-		mux.Handle("GET /api/tenant/crm/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
-		mux.Handle("POST /api/tenant/crm/records/{id}/transition", tenantChain(crm.TransitionRecord))
-		mux.Handle("POST /api/tenant/crm/records/{id}/convert", tenantChain(crm.ConvertRecord))
+		// Single-record CRUD and state machine. workflowKey is accepted but ignored
+		// by the handlers — they load the record by id and derive the workflow.
+		// Using /{workflowKey}/records/{id} avoids ambiguity with /{workflowKey}/statuses.
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}", tenantChain(crm.GetRecord))
+		mux.Handle("PATCH /api/tenant/crm/{workflowKey}/records/{id}", tenantChain(crm.UpdateRecord))
+		mux.Handle("DELETE /api/tenant/crm/{workflowKey}/records/{id}", tenantChain(crm.DeleteRecord))
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/transition", tenantChain(crm.TransitionRecord))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
 
 		// Legacy CRM routes kept for backward compatibility (deprecated).
 		ps := controllers.NewProspectOps()

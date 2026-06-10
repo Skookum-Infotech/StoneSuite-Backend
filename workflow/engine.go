@@ -65,19 +65,22 @@ func unmetRequiredFields(g Guard, rec *Record) []string {
 // initial state, and writes a creation history row — atomically.
 func (e *Engine) CreateRecord(ctx context.Context, pool Beginner, def *Definition,
 	ownerUserID, teamID string, core, custom map[string]any) (*Record, error) {
-	return e.createRecord(ctx, pool, def, ownerUserID, teamID, "", core, custom)
+	return e.createRecord(ctx, pool, def, ownerUserID, teamID, "", core, custom, false)
 }
 
 // ConvertRecord creates a new record in def starting at its initial state,
 // linked to parentRecordID as its lineage source (e.g. lead → prospect).
+// Required-field validation is skipped so the target record can be created with
+// only the fields the source provides; the user fills in the rest via edit.
 func (e *Engine) ConvertRecord(ctx context.Context, pool Beginner, def *Definition,
 	ownerUserID, teamID, parentRecordID string, core, custom map[string]any) (*Record, error) {
-	return e.createRecord(ctx, pool, def, ownerUserID, teamID, parentRecordID, core, custom)
+	return e.createRecord(ctx, pool, def, ownerUserID, teamID, parentRecordID, core, custom, true)
 }
 
 // createRecord is the shared implementation behind CreateRecord and ConvertRecord.
+// skipRequired suppresses required-field enforcement (used for conversions).
 func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definition,
-	ownerUserID, teamID, parentRecordID string, core, custom map[string]any) (*Record, error) {
+	ownerUserID, teamID, parentRecordID string, core, custom map[string]any, skipRequired bool) (*Record, error) {
 
 	if !def.Workflow.Enabled {
 		return nil, TransitionError{Reason: "workflow is disabled"}
@@ -88,8 +91,14 @@ func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definitio
 	if core == nil {
 		core = map[string]any{}
 	}
-	if err := ValidateCustomFields(def.Fields, custom); err != nil {
-		return nil, err
+	var validateErr error
+	if skipRequired {
+		validateErr = ValidateCustomFieldsPartial(def.Fields, custom)
+	} else {
+		validateErr = ValidateCustomFields(def.Fields, custom)
+	}
+	if validateErr != nil {
+		return nil, validateErr
 	}
 	init, ok := def.initialState()
 	if !ok {

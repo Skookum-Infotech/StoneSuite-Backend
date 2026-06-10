@@ -314,7 +314,7 @@ func scanRecord(row pgx.Row) (*Record, error) {
 	var r Record
 	var owner, team, parent *string
 	var coreRaw, customRaw []byte
-	err := row.Scan(&r.ID, &r.WorkflowID, &r.CurrentStateID, &owner, &team, &parent,
+	err := row.Scan(&r.ID, &r.WorkflowID, &r.RecordNumber, &r.CurrentStateID, &owner, &team, &parent,
 		&coreRaw, &customRaw, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRecordNotFound
@@ -342,7 +342,7 @@ func scanRecord(row pgx.Row) (*Record, error) {
 	return &r, nil
 }
 
-const recordColumns = `id, workflow_id,
+const recordColumns = `id, workflow_id, COALESCE(record_number, ''),
 	COALESCE(current_state_id::text, ''), owner_user_id, team_id, parent_record_id,
 	core_fields, custom_fields, created_at, updated_at`
 

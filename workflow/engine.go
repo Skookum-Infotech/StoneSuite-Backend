@@ -105,12 +105,17 @@ func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definitio
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	recordNumber, err := generateRecordNumber(ctx, tx, def.Workflow.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	var id string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO workflow_records
-			(workflow_id, current_state_id, owner_user_id, team_id, parent_record_id, core_fields, custom_fields)
-		VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) RETURNING id`,
-		def.Workflow.ID, init.ID, nullIfEmpty(ownerUserID), nullIfEmpty(teamID),
+			(workflow_id, record_number, current_state_id, owner_user_id, team_id, parent_record_id, core_fields, custom_fields)
+		VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb) RETURNING id`,
+		def.Workflow.ID, nullIfEmpty(recordNumber), init.ID, nullIfEmpty(ownerUserID), nullIfEmpty(teamID),
 		nullIfEmpty(parentRecordID), coreRaw, customRaw).Scan(&id); err != nil {
 		return nil, fmt.Errorf("insert record: %w", err)
 	}

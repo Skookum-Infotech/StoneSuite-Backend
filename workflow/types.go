@@ -109,6 +109,7 @@ type Definition struct {
 type Record struct {
 	ID             string         `json:"id"`
 	WorkflowID     string         `json:"workflowId"`
+	RecordNumber   string         `json:"recordNumber,omitempty"`
 	CurrentStateID string         `json:"currentStateId"`
 	OwnerUserID    string         `json:"ownerUserId,omitempty"`
 	TeamID         string         `json:"teamId,omitempty"`

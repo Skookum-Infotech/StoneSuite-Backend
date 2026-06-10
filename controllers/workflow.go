@@ -112,6 +112,67 @@ func (h *WorkflowOps) SetWorkflowEnabled(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Workflow updated."})
 }
 
+// ---- record numbering --------------------------------------------------------
+
+// GetNumberingConfig GET /api/tenant/workflows/{id}/numbering
+func (h *WorkflowOps) GetNumberingConfig(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionRead)
+	if !ok {
+		return
+	}
+	cfg, err := workflow.GetNumberingConfig(r.Context(), pool, r.PathValue("id"))
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		fail(w, http.StatusNotFound, "Workflow not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load numbering config.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "numbering": cfg})
+}
+
+// SetNumberingConfig PUT /api/tenant/workflows/{id}/numbering
+func (h *WorkflowOps) SetNumberingConfig(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionConfigure)
+	if !ok {
+		return
+	}
+	var req struct {
+		Enabled    bool   `json:"enabled"`
+		Prefix     string `json:"prefix"`
+		Suffix     string `json:"suffix"`
+		MinDigits  int    `json:"minDigits"`
+		NextNumber int64  `json:"nextNumber"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	cfg := workflow.NumberingConfig{
+		WorkflowID: r.PathValue("id"),
+		Enabled:    req.Enabled,
+		Prefix:     req.Prefix,
+		Suffix:     req.Suffix,
+		MinDigits:  req.MinDigits,
+		NextNumber: req.NextNumber,
+	}
+	if err := workflow.UpsertNumberingConfig(r.Context(), pool, cfg); err != nil {
+		if errors.Is(err, workflow.ErrWorkflowNotFound) {
+			fail(w, http.StatusNotFound, "Workflow not found.")
+			return
+		}
+		var ve workflow.ValidationErrors
+		if errors.As(err, &ve) {
+			fail(w, http.StatusBadRequest, ve.Error())
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to save numbering config.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "numbering": cfg})
+}
+
 // ---- custom field definitions ----------------------------------------------
 
 // CreateField POST /api/tenant/workflows/{id}/fields

@@ -236,6 +236,8 @@ func main() {
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
 		mux.Handle("DELETE /api/tenant/workflows/{id}/fields/{fieldId}", tenantChain(wf.DeleteField))
+		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
+		mux.Handle("PUT /api/tenant/workflows/{id}/numbering", tenantChain(wf.SetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records", tenantChain(wf.CreateRecord))
 		mux.Handle("GET /api/tenant/records/{id}", tenantChain(wf.GetRecord))

@@ -77,6 +77,9 @@ func applyLink(token string) string { return frontendBase() + "/onboarding/apply
 // setupLink is the public URL where an onboarded customer sets their password.
 func setupLink(token string) string { return frontendBase() + "/onboarding/set-password?token=" + token }
 
+// resetLink is the public URL where any user resets a forgotten password.
+func resetLink(token string) string { return frontendBase() + "/reset-password?token=" + token }
+
 func generateTenantJWT(identityID, email, tenantID string, d time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"id":        identityID,
@@ -533,6 +536,136 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 			"fullName": identity.FullName, "tenantId": identity.TenantID,
 			"isPlatformAdmin": isPlatformAdmin,
 		},
+	})
+}
+
+// ---- forgot / reset password ------------------------------------------------
+
+// ForgotPassword POST /api/auth/forgot-password
+// Generates a one-hour reset token and emails it to the address on file.
+// Always returns HTTP 200 — never reveals whether the email exists.
+func (h *TenantOps) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed.")
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+
+	// Timing-safe: always return 200 whether or not the email exists.
+	const successMsg = "If that email is registered, a reset link has been sent."
+
+	identity, err := h.CP.IdentityByEmail(r.Context(), req.Email)
+	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": successMsg})
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to process request.")
+		return
+	}
+
+	// SSO-only accounts have no password — nothing to reset.
+	if identity.PasswordHash == "" && identity.SSOProvider != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": successMsg})
+		return
+	}
+
+	token, err := randomToken()
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to generate reset token.")
+		return
+	}
+	if err := h.CP.SetIdentityPasswordSetupToken(r.Context(), identity.ID, token, time.Now().Add(time.Hour)); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to initiate password reset.")
+		return
+	}
+
+	link := resetLink(token)
+	if err := services.SendPasswordResetEmail(identity.Email, identity.FullName, link); err != nil {
+		log.Printf("password reset email to %s failed (token still valid): %v", identity.Email, err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": successMsg})
+}
+
+// ValidateResetToken GET /api/auth/reset-password/{token}
+// Returns whether the token is valid and the email it belongs to.
+// Used by the frontend to decide whether to show the form or an error state.
+func (h *TenantOps) ValidateResetToken(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		fail(w, http.StatusBadRequest, "Missing reset token.")
+		return
+	}
+	identity, err := h.CP.IdentityByPasswordToken(r.Context(), token)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"valid":   false,
+			"message": "This reset link is invalid or has expired.",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"valid":    true,
+		"email":    identity.Email,
+		"fullName": identity.FullName,
+	})
+}
+
+// ResetPassword POST /api/auth/reset-password
+// Consumes the reset token and sets the new password. Token is nulled on success.
+func (h *TenantOps) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed.")
+		return
+	}
+	var req struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if req.Token == "" {
+		fail(w, http.StatusBadRequest, "token is required.")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		fail(w, http.StatusBadRequest, "Password must be at least 8 characters.")
+		return
+	}
+
+	identity, err := h.CP.IdentityByPasswordToken(r.Context(), req.Token)
+	if err != nil {
+		fail(w, http.StatusBadRequest, "This reset link is invalid or has expired.")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 10)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to hash password.")
+		return
+	}
+	// SetIdentityPassword NULLs the token — single-use enforced at the DB level.
+	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(hash)); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to update password.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Password updated. You can now sign in.",
+		"email":   identity.Email,
 	})
 }
 

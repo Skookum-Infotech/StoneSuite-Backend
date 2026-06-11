@@ -455,9 +455,37 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 			core[k] = v
 		}
 	}
+
+	// Seed target custom fields from the source record's core and custom fields,
+	// but only for keys that are defined in the target workflow. This allows
+	// values like company_name (stored in core_fields on the source) to satisfy
+	// required field_definitions on the target without the UI having to re-send them.
+	custom := req.CustomFields
+	if custom == nil {
+		custom = map[string]any{}
+	}
+	targetFieldSet := make(map[string]struct{}, len(targetDef.Fields))
+	for _, f := range targetDef.Fields {
+		targetFieldSet[f.Key] = struct{}{}
+	}
+	for k, v := range sourceRec.CustomFields {
+		if _, inTarget := targetFieldSet[k]; inTarget {
+			if _, exists := custom[k]; !exists {
+				custom[k] = v
+			}
+		}
+	}
+	for k, v := range sourceRec.CoreFields {
+		if _, inTarget := targetFieldSet[k]; inTarget {
+			if _, exists := custom[k]; !exists {
+				custom[k] = v
+			}
+		}
+	}
+
 	owner, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
 	newRec, err := h.engine.ConvertRecord(r.Context(), pool, targetDef,
-		owner, req.TeamID, sourceRec.ID, core, req.CustomFields)
+		owner, req.TeamID, sourceRec.ID, core, custom)
 	if err != nil {
 		if isWorkflowClientErr(err) {
 			fail(w, http.StatusBadRequest, err.Error())

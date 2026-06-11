@@ -130,11 +130,6 @@ func main() {
 		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
 		mux.HandleFunc("POST /api/auth/reset-password", tenantOps.ResetPassword)
 
-		// Public: password-reset flow (forgot → validate token → set new password).
-		mux.HandleFunc("/api/auth/forgot-password", tenantOps.ForgotPassword)
-		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
-		mux.HandleFunc("/api/auth/reset-password", tenantOps.ResetPassword)
-
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
 		mux.HandleFunc("/api/onboarding/apply/", tenantOps.GetApply) // GET /{token}
@@ -252,13 +247,15 @@ func main() {
 		// Per-workflow list + create.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records", tenantChain(crm.ListRecords))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records", tenantChain(crm.CreateRecord))
-		// Single-record CRUD and state machine.
-		mux.Handle("GET /api/tenant/crm/records/{id}", tenantChain(crm.GetRecord))
-		mux.Handle("PATCH /api/tenant/crm/records/{id}", tenantChain(crm.UpdateRecord))
-		mux.Handle("DELETE /api/tenant/crm/records/{id}", tenantChain(crm.DeleteRecord))
-		mux.Handle("GET /api/tenant/crm/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
-		mux.Handle("POST /api/tenant/crm/records/{id}/transition", tenantChain(crm.TransitionRecord))
-		mux.Handle("POST /api/tenant/crm/records/{id}/convert", tenantChain(crm.ConvertRecord))
+		// Single-record CRUD and state machine. workflowKey is accepted but ignored
+		// by the handlers — they load the record by id and derive the workflow.
+		// Using /{workflowKey}/records/{id} avoids ambiguity with /{workflowKey}/statuses.
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}", tenantChain(crm.GetRecord))
+		mux.Handle("PATCH /api/tenant/crm/{workflowKey}/records/{id}", tenantChain(crm.UpdateRecord))
+		mux.Handle("DELETE /api/tenant/crm/{workflowKey}/records/{id}", tenantChain(crm.DeleteRecord))
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/transition", tenantChain(crm.TransitionRecord))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
 
 		// Legacy CRM routes kept for backward compatibility (deprecated).
 		ps := controllers.NewProspectOps()

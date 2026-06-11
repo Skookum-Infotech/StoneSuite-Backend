@@ -183,6 +183,40 @@ func isDate(s string) bool {
 	return false
 }
 
+// ValidateCustomFieldsPartial validates type/format for any values that are
+// present but does NOT enforce required fields. Used during record conversions
+// where the caller seeds what it can from the source record; fields the source
+// didn't have can be filled in afterward via the edit form.
+func ValidateCustomFieldsPartial(defs []FieldDefinition, values map[string]any) error {
+	defByKey := make(map[string]FieldDefinition, len(defs))
+	for _, d := range defs {
+		defByKey[d.Key] = d
+	}
+
+	var errs ValidationErrors
+
+	for k := range values {
+		if _, ok := defByKey[k]; !ok {
+			errs = append(errs, ValidationError{Field: k, Message: "unknown field"})
+		}
+	}
+
+	for _, d := range defs {
+		v, present := values[d.Key]
+		if !present || isEmpty(v) {
+			continue // skip required check — caller is responsible for filling later
+		}
+		if err := validateValue(d, v); err != nil {
+			errs = append(errs, ValidationError{Field: d.Key, Message: err.Error()})
+		}
+	}
+
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
+}
+
 // ValidateFieldDefinition checks a definition itself is well-formed before save.
 func ValidateFieldDefinition(d FieldDefinition) error {
 	if strings.TrimSpace(d.Key) == "" {

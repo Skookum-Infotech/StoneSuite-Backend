@@ -46,6 +46,38 @@ func resourceForKey(key string) authz.Resource {
 		return authz.ResourceProspect
 	case "customer":
 		return authz.ResourceCustomer
+	case "estimate":
+		return authz.ResourceEstimate
+	case "quote":
+		return authz.ResourceQuote
+	case "sales_order":
+		return authz.ResourceSalesOrder
+	case "installation":
+		return authz.ResourceInstallation
+	case "invoice":
+		return authz.ResourceInvoice
+	case "payment":
+		return authz.ResourcePayment
+	case "credit_memo":
+		return authz.ResourceCreditMemo
+	case "refund":
+		return authz.ResourceRefund
+	case "vendor":
+		return authz.ResourceVendor
+	case "requisition":
+		return authz.ResourceRequisition
+	case "purchase_order":
+		return authz.ResourcePurchaseOrder
+	case "item_receipt":
+		return authz.ResourceItemReceipt
+	case "vendor_bill":
+		return authz.ResourceVendorBill
+	case "vendor_payment":
+		return authz.ResourceVendorPayment
+	case "vendor_credit":
+		return authz.ResourceVendorCredit
+	case "expense":
+		return authz.ResourceExpense
 	default:
 		return authz.ResourceRecord
 	}

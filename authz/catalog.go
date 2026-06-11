@@ -31,6 +31,26 @@ const (
 	ResourceSSOConfig      Resource = "sso_config"      // per-tenant SSO settings
 	ResourceAudit          Resource = "audit"           // audit log
 
+	// Sales module resources
+	ResourceEstimate     Resource = "estimate"
+	ResourceQuote        Resource = "quote"
+	ResourceSalesOrder   Resource = "sales_order"
+	ResourceInstallation Resource = "installation"
+	ResourceInvoice      Resource = "invoice"
+	ResourcePayment      Resource = "payment"
+	ResourceCreditMemo   Resource = "credit_memo"
+	ResourceRefund       Resource = "refund"
+
+	// Purchases module resources
+	ResourceVendor        Resource = "vendor"
+	ResourceRequisition   Resource = "requisition"
+	ResourcePurchaseOrder Resource = "purchase_order"
+	ResourceItemReceipt   Resource = "item_receipt"
+	ResourceVendorBill    Resource = "vendor_bill"
+	ResourceVendorPayment Resource = "vendor_payment"
+	ResourceVendorCredit  Resource = "vendor_credit"
+	ResourceExpense       Resource = "expense"
+
 	// ResourceAny is the wildcard resource. Granting it matches every resource;
 	// it is how the seeded super_admin role is expressed as a single row.
 	ResourceAny Resource = "*"
@@ -89,6 +109,102 @@ var catalog = []Permission{
 	{ResourceCustomer, ActionUpdate},
 	{ResourceCustomer, ActionDelete},
 	{ResourceCustomer, ActionTransition},
+
+	{ResourceEstimate, ActionCreate},
+	{ResourceEstimate, ActionRead},
+	{ResourceEstimate, ActionUpdate},
+	{ResourceEstimate, ActionDelete},
+	{ResourceEstimate, ActionTransition},
+
+	{ResourceQuote, ActionCreate},
+	{ResourceQuote, ActionRead},
+	{ResourceQuote, ActionUpdate},
+	{ResourceQuote, ActionDelete},
+	{ResourceQuote, ActionTransition},
+
+	{ResourceSalesOrder, ActionCreate},
+	{ResourceSalesOrder, ActionRead},
+	{ResourceSalesOrder, ActionUpdate},
+	{ResourceSalesOrder, ActionDelete},
+	{ResourceSalesOrder, ActionTransition},
+
+	{ResourceInstallation, ActionCreate},
+	{ResourceInstallation, ActionRead},
+	{ResourceInstallation, ActionUpdate},
+	{ResourceInstallation, ActionDelete},
+	{ResourceInstallation, ActionTransition},
+
+	{ResourceInvoice, ActionCreate},
+	{ResourceInvoice, ActionRead},
+	{ResourceInvoice, ActionUpdate},
+	{ResourceInvoice, ActionDelete},
+	{ResourceInvoice, ActionTransition},
+
+	{ResourcePayment, ActionCreate},
+	{ResourcePayment, ActionRead},
+	{ResourcePayment, ActionUpdate},
+	{ResourcePayment, ActionDelete},
+	{ResourcePayment, ActionTransition},
+
+	{ResourceCreditMemo, ActionCreate},
+	{ResourceCreditMemo, ActionRead},
+	{ResourceCreditMemo, ActionUpdate},
+	{ResourceCreditMemo, ActionDelete},
+	{ResourceCreditMemo, ActionTransition},
+
+	{ResourceRefund, ActionCreate},
+	{ResourceRefund, ActionRead},
+	{ResourceRefund, ActionUpdate},
+	{ResourceRefund, ActionDelete},
+	{ResourceRefund, ActionTransition},
+
+	{ResourceVendor, ActionCreate},
+	{ResourceVendor, ActionRead},
+	{ResourceVendor, ActionUpdate},
+	{ResourceVendor, ActionDelete},
+	{ResourceVendor, ActionTransition},
+
+	{ResourceRequisition, ActionCreate},
+	{ResourceRequisition, ActionRead},
+	{ResourceRequisition, ActionUpdate},
+	{ResourceRequisition, ActionDelete},
+	{ResourceRequisition, ActionTransition},
+
+	{ResourcePurchaseOrder, ActionCreate},
+	{ResourcePurchaseOrder, ActionRead},
+	{ResourcePurchaseOrder, ActionUpdate},
+	{ResourcePurchaseOrder, ActionDelete},
+	{ResourcePurchaseOrder, ActionTransition},
+
+	{ResourceItemReceipt, ActionCreate},
+	{ResourceItemReceipt, ActionRead},
+	{ResourceItemReceipt, ActionUpdate},
+	{ResourceItemReceipt, ActionDelete},
+	{ResourceItemReceipt, ActionTransition},
+
+	{ResourceVendorBill, ActionCreate},
+	{ResourceVendorBill, ActionRead},
+	{ResourceVendorBill, ActionUpdate},
+	{ResourceVendorBill, ActionDelete},
+	{ResourceVendorBill, ActionTransition},
+
+	{ResourceVendorPayment, ActionCreate},
+	{ResourceVendorPayment, ActionRead},
+	{ResourceVendorPayment, ActionUpdate},
+	{ResourceVendorPayment, ActionDelete},
+	{ResourceVendorPayment, ActionTransition},
+
+	{ResourceVendorCredit, ActionCreate},
+	{ResourceVendorCredit, ActionRead},
+	{ResourceVendorCredit, ActionUpdate},
+	{ResourceVendorCredit, ActionDelete},
+	{ResourceVendorCredit, ActionTransition},
+
+	{ResourceExpense, ActionCreate},
+	{ResourceExpense, ActionRead},
+	{ResourceExpense, ActionUpdate},
+	{ResourceExpense, ActionDelete},
+	{ResourceExpense, ActionTransition},
 
 	{ResourceUser, ActionCreate},
 	{ResourceUser, ActionRead},

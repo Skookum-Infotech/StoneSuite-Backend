@@ -192,11 +192,17 @@ func main() {
 				UserCount    int    `json:"userCount"`
 			}{true, tenant.ID, tenant.Slug, tenant.DisplayName, tenant.DBName, userCount})
 		})
-		mux.Handle("/api/tenant/me", middleware.RequireAuth(resolver.Middleware(tenantMe)))
+		// Per-tenant rate limit: 20 req/sec sustained, bursts up to 40, before
+		// any tenant DB work happens (ADR-3). Platform-admin/legacy requests
+		// (no tenant_id) pass through unlimited.
+		tenantRateLimiter := middleware.NewRateLimiter(20, 40)
 
-		// tenantChain applies RequireAuth → tenancy resolver before every handler.
+		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
+
+		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
+		// resolver before every handler.
 		tenantChain := func(h http.HandlerFunc) http.Handler {
-			return middleware.RequireAuth(resolver.Middleware(h))
+			return middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(h)))
 		}
 
 		// Tenant-scoped RBAC management (role editor API). Each handler runs

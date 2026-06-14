@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/cache"
 )
 
 // Querier is the subset of pgx behavior reads/writes need (consumer-side
@@ -88,6 +91,7 @@ func SetWorkflowEnabled(ctx context.Context, q Querier, id string, enabled bool)
 	if tag.RowsAffected() == 0 {
 		return ErrWorkflowNotFound
 	}
+	invalidateDefinition(q, id)
 	return nil
 }
 
@@ -136,9 +140,46 @@ func checkDisableDependency(ctx context.Context, q Querier, id string) error {
 	return nil
 }
 
+// defCacheKey identifies a cached Definition by tenant pool + workflow id.
+type defCacheKey struct {
+	pool       *pgxpool.Pool
+	workflowID string
+}
+
+// definitionCache holds recently-loaded Definitions (states/transitions/field
+// defs change rarely but are read on nearly every workflow/CRM request).
+// Entries are invalidated on SetWorkflowEnabled/CreateField/DeleteField.
+var definitionCache = cache.New[defCacheKey, *Definition](30 * time.Second)
+
+// invalidateDefinition drops the cached Definition for workflowID, if q is a
+// tenant pool (transactions don't populate the cache, so nothing to do).
+func invalidateDefinition(q Querier, workflowID string) {
+	if pool, ok := q.(*pgxpool.Pool); ok {
+		definitionCache.Delete(defCacheKey{pool: pool, workflowID: workflowID})
+	}
+}
+
 // LoadDefinition loads a full workflow definition by id (workflow + states +
-// transitions + field definitions).
+// transitions + field definitions). Results are cached briefly per tenant
+// pool (ADR-3); callers passing a *pgxpool.Pool benefit from the cache,
+// callers inside a transaction (pgx.Tx) always read through.
 func LoadDefinition(ctx context.Context, q Querier, workflowID string) (*Definition, error) {
+	if pool, ok := q.(*pgxpool.Pool); ok {
+		key := defCacheKey{pool: pool, workflowID: workflowID}
+		if d, ok := definitionCache.Get(key); ok {
+			return d, nil
+		}
+		d, err := loadDefinition(ctx, q, workflowID)
+		if err != nil {
+			return nil, err
+		}
+		definitionCache.Set(key, d)
+		return d, nil
+	}
+	return loadDefinition(ctx, q, workflowID)
+}
+
+func loadDefinition(ctx context.Context, q Querier, workflowID string) (*Definition, error) {
 	var d Definition
 	err := q.QueryRow(ctx, `
 		SELECT id, key, name, description, enabled, is_default, pipeline_order
@@ -292,6 +333,7 @@ func CreateField(ctx context.Context, q Querier, f FieldDefinition) (string, err
 	if err != nil {
 		return "", fmt.Errorf("create field (key may be taken): %w", err)
 	}
+	invalidateDefinition(q, f.WorkflowID)
 	return id, nil
 }
 
@@ -305,6 +347,7 @@ func DeleteField(ctx context.Context, q Querier, workflowID, fieldID string) err
 	if tag.RowsAffected() == 0 {
 		return errors.New("field not found")
 	}
+	invalidateDefinition(q, workflowID)
 	return nil
 }
 

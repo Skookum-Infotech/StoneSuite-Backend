@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/cache"
 )
 
 // Querier is the subset of pgx behavior the store needs. Defined here (consumer
@@ -39,9 +42,47 @@ type Role struct {
 
 // ----- effective permissions (for the enforcer) -----------------------------
 
+// grantsCacheKey identifies cached effective grants by tenant pool + identity.
+type grantsCacheKey struct {
+	pool       *pgxpool.Pool
+	identityID string
+}
+
+// grantsCache holds recently-resolved effective grants (role_permissions
+// rarely change but are checked on nearly every request). Entries are
+// invalidated tenant-wide on any role/assignment write.
+var grantsCache = cache.New[grantsCacheKey, []Grant](30 * time.Second)
+
+// invalidateGrants drops all cached grants for q's tenant pool, if q is a
+// tenant pool (transactions don't populate the cache, so nothing to do).
+func invalidateGrants(q Querier) {
+	if pool, ok := q.(*pgxpool.Pool); ok {
+		grantsCache.DeleteFunc(func(k grantsCacheKey) bool { return k.pool == pool })
+	}
+}
+
 // EffectiveGrants returns every grant the given control-plane identity has in
 // this tenant, resolved through users -> user_roles -> role_permissions.
+// Results are cached briefly per tenant pool (ADR-3); callers passing a
+// *pgxpool.Pool benefit from the cache, callers inside a transaction (pgx.Tx)
+// always read through.
 func EffectiveGrants(ctx context.Context, q Querier, identityID string) ([]Grant, error) {
+	if pool, ok := q.(*pgxpool.Pool); ok {
+		key := grantsCacheKey{pool: pool, identityID: identityID}
+		if g, ok := grantsCache.Get(key); ok {
+			return g, nil
+		}
+		g, err := loadEffectiveGrants(ctx, q, identityID)
+		if err != nil {
+			return nil, err
+		}
+		grantsCache.Set(key, g)
+		return g, nil
+	}
+	return loadEffectiveGrants(ctx, q, identityID)
+}
+
+func loadEffectiveGrants(ctx context.Context, q Querier, identityID string) ([]Grant, error) {
 	rows, err := q.Query(ctx, `
 		SELECT rp.resource, rp.action, rp.scope
 		FROM users u
@@ -153,6 +194,7 @@ func CreateRole(ctx context.Context, q Querier, key, name, description string, p
 	if err := replacePermissions(ctx, q, id, perms); err != nil {
 		return "", err
 	}
+	invalidateGrants(q)
 	return id, nil
 }
 
@@ -172,7 +214,11 @@ func UpdateRole(ctx context.Context, q Querier, id, name, description string, pe
 	if tag.RowsAffected() == 0 {
 		return ErrRoleNotFound
 	}
-	return replacePermissions(ctx, q, id, perms)
+	if err := replacePermissions(ctx, q, id, perms); err != nil {
+		return err
+	}
+	invalidateGrants(q)
+	return nil
 }
 
 // DeleteRole removes a custom role. System roles cannot be deleted.
@@ -184,6 +230,7 @@ func DeleteRole(ctx context.Context, q Querier, id string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrRoleNotFound // either absent or a protected system role
 	}
+	invalidateGrants(q)
 	return nil
 }
 
@@ -226,6 +273,7 @@ func AssignRole(ctx context.Context, q Querier, userID, roleID string) error {
 	if err != nil {
 		return fmt.Errorf("assign role: %w", err)
 	}
+	invalidateGrants(q)
 	return nil
 }
 
@@ -235,6 +283,7 @@ func UnassignRole(ctx context.Context, q Querier, userID, roleID string) error {
 		`DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2`, userID, roleID); err != nil {
 		return fmt.Errorf("unassign role: %w", err)
 	}
+	invalidateGrants(q)
 	return nil
 }
 

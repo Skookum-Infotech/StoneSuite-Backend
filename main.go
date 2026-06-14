@@ -12,6 +12,7 @@ import (
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
+	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
@@ -67,15 +68,19 @@ func main() {
 		tenantRouter := tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
 		resolver = tenancy.NewResolver(cp, tenantRouter)
 
+		// Durable job queue (async_jobs table): backs tenant provisioning and
+		// future long-running work (e.g. workflow transition actions).
+		jobQueue := jobqueue.New(cp.Pool())
+
 		// Provisioner (optional): requires an admin DSN to create tenant databases.
 		if config.AppConfig.ProvisionAdminDBURL != "" {
 			provider, perr := provisioning.NewSQLProvider(config.AppConfig.ProvisionAdminDBURL)
 			if perr != nil {
 				log.Fatalf("CRITICAL ERROR: invalid PROVISION_ADMIN_DB_URL: %v", perr)
 			}
-			provisioner = provisioning.New(cp, provider, cipher)
+			provisioner = provisioning.New(cp, provider, cipher, jobQueue)
 			provisioner.Start(2)
-			log.Println("Tenant provisioner started (2 workers).")
+			log.Println("Tenant provisioner started (2 workers, durable queue).")
 
 			// Self-heal: the platform owner is a first-class tenant too. If its
 			// workspace database was never provisioned (e.g. the owner was seeded
@@ -91,7 +96,7 @@ func main() {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
 
-		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter)
+		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue)
 		userOps = controllers.NewUserOps(cp, tenantRouter)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {

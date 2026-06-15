@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"stonesuite-backend/config"
+	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
@@ -30,11 +31,12 @@ type TenantOps struct {
 	CP     *tenancy.ControlPlane
 	Prov   *provisioning.Provisioner
 	Router *tenancy.Router // resolves tenant DB pools (used to reach the owner workspace)
+	Jobs   *jobqueue.Queue // durable async job queue (provisioning, etc.)
 }
 
 // NewTenantOps constructs the handler group.
-func NewTenantOps(cp *tenancy.ControlPlane, prov *provisioning.Provisioner, router *tenancy.Router) *TenantOps {
-	return &TenantOps{CP: cp, Prov: prov, Router: router}
+func NewTenantOps(cp *tenancy.ControlPlane, prov *provisioning.Provisioner, router *tenancy.Router, jobs *jobqueue.Queue) *TenantOps {
+	return &TenantOps{CP: cp, Prov: prov, Router: router, Jobs: jobs}
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -314,7 +316,7 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 
 	rest := strings.TrimPrefix(r.URL.Path, "/api/platform/tenants/")
 	parts := strings.Split(rest, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		fail(w, http.StatusBadRequest, "Expected /api/platform/tenants/{id}/{action}.")
 		return
 	}
@@ -323,6 +325,17 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 	// Invite management (list + resend) lives under the tenant resource.
 	if action == "invites" {
 		h.tenantInvites(w, r, admin, id)
+		return
+	}
+
+	// Async job status/retry (provisioning, etc.) lives under the tenant resource.
+	if action == "jobs" {
+		h.tenantJobs(w, r, admin, id, parts[2:])
+		return
+	}
+
+	if len(parts) != 2 {
+		fail(w, http.StatusBadRequest, "Expected /api/platform/tenants/{id}/{action}.")
 		return
 	}
 
@@ -359,6 +372,71 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, id, "tenant."+action, "{}")
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Tenant " + action + " applied."})
+}
+
+// jobView is the JSON shape returned for an async_jobs row.
+func jobView(j jobqueue.Job) map[string]any {
+	view := map[string]any{
+		"id":          j.ID,
+		"jobType":     j.JobType,
+		"status":      j.Status,
+		"attempts":    j.Attempts,
+		"maxAttempts": j.MaxAttempts,
+		"createdAt":   j.CreatedAt,
+		"updatedAt":   j.UpdatedAt,
+	}
+	if j.LastError != nil {
+		view["lastError"] = *j.LastError
+	}
+	if len(j.Progress) > 0 {
+		view["progress"] = json.RawMessage(j.Progress)
+	}
+	return view
+}
+
+// tenantJobs handles GET /api/platform/tenants/{id}/jobs (list recent async
+// jobs for the tenant — e.g. provisioning status) and
+// POST /api/platform/tenants/{id}/jobs/{jobId}/retry (requeue a failed/dead
+// job). Lets platform admins see and recover from partial provisioning
+// failures without a server restart.
+func (h *TenantOps) tenantJobs(w http.ResponseWriter, r *http.Request, admin middleware.UserContextPayload, tenantID string, rest []string) {
+	if h.Jobs == nil {
+		fail(w, http.StatusServiceUnavailable, "Job queue not available.")
+		return
+	}
+
+	switch {
+	case len(rest) == 0:
+		if r.Method != http.MethodGet {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		jobs, err := h.Jobs.ListForTenant(r.Context(), tenantID, 20)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to list jobs.")
+			return
+		}
+		out := make([]map[string]any, 0, len(jobs))
+		for _, j := range jobs {
+			out = append(out, jobView(j))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "jobs": out})
+
+	case len(rest) == 2 && rest[1] == "retry":
+		if r.Method != http.MethodPost {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		if err := h.Jobs.Retry(r.Context(), rest[0]); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "job.retry", "{}")
+		writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Job requeued."})
+
+	default:
+		fail(w, http.StatusBadRequest, "Expected /api/platform/tenants/{id}/jobs[/{jobId}/retry].")
+	}
 }
 
 // inviteView is the JSON shape returned for invites (token is the "invite key").

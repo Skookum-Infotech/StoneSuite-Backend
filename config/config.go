@@ -52,6 +52,13 @@ type Config struct {
 	SMTPPort       string
 	SenderEmail    string
 	SenderPassword string
+	// Cloudflare R2 object storage (for record attachments).
+	// R2AccountID and R2Bucket are non-secret; R2AccessKeyID and
+	// R2SecretAccessKey are secrets — set via fly secrets set.
+	R2AccountID       string
+	R2Bucket          string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
 }
 
 var AppConfig Config
@@ -99,6 +106,11 @@ func Load() {
 		SMTPPort:       getEnv("SMTP_PORT", "587"),
 		SenderEmail:    getEnv("SENDER_EMAIL", ""),
 		SenderPassword: getEnv("SENDER_PASSWORD", ""),
+		// Cloudflare R2
+		R2AccountID:       getEnv("R2_ACCOUNT_ID", ""),
+		R2Bucket:          getEnv("R2_BUCKET", ""),
+		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 	}
 }
 

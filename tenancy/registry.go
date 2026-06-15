@@ -87,6 +87,17 @@ func (c *ControlPlane) SetTenantSchemaVersion(ctx context.Context, id string, ve
 	return nil
 }
 
+// SetTenantDesignVersion switches a tenant's CRM data design (DesignV1/DesignV2).
+// Both schemas coexist in the tenant database, so this is a behavior flag flip
+// with no data migration.
+func (c *ControlPlane) SetTenantDesignVersion(ctx context.Context, id, version string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE tenants SET design_version = $2, updated_at = NOW() WHERE id = $1`, id, version); err != nil {
+		return fmt.Errorf("set tenant design version: %w", err)
+	}
+	return nil
+}
+
 // SetTenantStatus updates only the lifecycle status.
 func (c *ControlPlane) SetTenantStatus(ctx context.Context, id, status string) error {
 	if _, err := c.pool.Exec(ctx,

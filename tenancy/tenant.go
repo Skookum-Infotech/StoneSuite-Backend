@@ -23,6 +23,13 @@ const (
 	MigrationFailed  = "failed"
 )
 
+// Database design versions (control-plane tenants.design_version). Selects
+// which CRM data design serves a tenant's requests; see crmstore.For.
+const (
+	DesignV1 = "v1" // JSONB workflow_records engine (original)
+	DesignV2 = "v2" // relational lkp_* + crm_record design
+)
+
 // Tenant is the control-plane view of a customer organization, including the
 // routing info needed to reach its isolated database.
 type Tenant struct {
@@ -38,6 +45,9 @@ type Tenant struct {
 
 	SchemaVersion   int
 	MigrationStatus string
+
+	// DesignVersion selects the CRM data design (DesignV1 / DesignV2).
+	DesignVersion string
 
 	// Metadata holds the onboarding submission (company profile, contacts, and
 	// any dynamic custom fields) as a JSON object string.

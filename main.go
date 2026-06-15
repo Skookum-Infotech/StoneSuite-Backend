@@ -34,6 +34,7 @@ func main() {
 	var resolver *tenancy.Resolver
 	var tenantOps *controllers.TenantOps
 	var userOps *controllers.UserOps
+	var crmAdminOps *controllers.CRMAdminOps
 	var provisioner *provisioning.Provisioner
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		cp, err := tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
@@ -98,6 +99,7 @@ func main() {
 
 		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue)
 		userOps = controllers.NewUserOps(cp, tenantRouter)
+		crmAdminOps = controllers.NewCRMAdminOps(cp)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {
 		log.Fatalf("CRITICAL ERROR: CONTROL_PLANE_DB_URL is required (the legacy single-tenant backend has been removed).")
@@ -252,6 +254,9 @@ func main() {
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
 		crm := controllers.NewCRMOps()
+		// Reference data for the unified CRM core-field selects (design-agnostic).
+		crmLookups := controllers.NewCRMLookups()
+		mux.Handle("GET /api/tenant/crm/lookups", tenantChain(crmLookups.GetLookups))
 		// Status / dropdown endpoints.
 		mux.Handle("GET /api/tenant/crm/statuses", tenantChain(crm.AllStatuses))
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", tenantChain(crm.WorkflowStatuses))
@@ -267,21 +272,15 @@ func main() {
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/transition", tenantChain(crm.TransitionRecord))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
+		// Approval: sign off a Closed-Won customer (v2 design).
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/approve", tenantChain(crm.ApproveRecord))
 
-		// Legacy CRM routes kept for backward compatibility (deprecated).
-		ps := controllers.NewProspectOps()
-		mux.Handle("GET /api/tenant/prospects", tenantChain(ps.ListProspects))
-		mux.Handle("POST /api/tenant/prospects", tenantChain(ps.CreateProspect))
-		mux.Handle("GET /api/tenant/prospects/{id}", tenantChain(ps.GetProspect))
-		mux.Handle("PATCH /api/tenant/prospects/{id}", tenantChain(ps.UpdateProspect))
-		mux.Handle("DELETE /api/tenant/prospects/{id}", tenantChain(ps.DeleteProspect))
-
-		ls := controllers.NewLeadOps()
-		mux.Handle("GET /api/tenant/leads", tenantChain(ls.ListLeads))
-		mux.Handle("POST /api/tenant/leads", tenantChain(ls.CreateLead))
-		mux.Handle("GET /api/tenant/leads/{id}", tenantChain(ls.GetLead))
-		mux.Handle("PATCH /api/tenant/leads/{id}", tenantChain(ls.UpdateLead))
-		mux.Handle("DELETE /api/tenant/leads/{id}", tenantChain(ls.DeleteLead))
+		// CRM admin: switch the tenant's database design, and configure approvers.
+		mux.Handle("GET /api/tenant/admin/design-version", tenantChain(crmAdminOps.GetDesignVersion))
+		mux.Handle("POST /api/tenant/admin/design-version", tenantChain(crmAdminOps.SetDesignVersion))
+		mux.Handle("GET /api/tenant/config/approvers", tenantChain(crmAdminOps.ListApprovers))
+		mux.Handle("POST /api/tenant/config/approvers", tenantChain(crmAdminOps.CreateApprover))
+		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
 	}
 
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger

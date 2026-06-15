@@ -12,6 +12,7 @@ import (
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
+	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
@@ -67,15 +68,19 @@ func main() {
 		tenantRouter := tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
 		resolver = tenancy.NewResolver(cp, tenantRouter)
 
+		// Durable job queue (async_jobs table): backs tenant provisioning and
+		// future long-running work (e.g. workflow transition actions).
+		jobQueue := jobqueue.New(cp.Pool())
+
 		// Provisioner (optional): requires an admin DSN to create tenant databases.
 		if config.AppConfig.ProvisionAdminDBURL != "" {
 			provider, perr := provisioning.NewSQLProvider(config.AppConfig.ProvisionAdminDBURL)
 			if perr != nil {
 				log.Fatalf("CRITICAL ERROR: invalid PROVISION_ADMIN_DB_URL: %v", perr)
 			}
-			provisioner = provisioning.New(cp, provider, cipher)
+			provisioner = provisioning.New(cp, provider, cipher, jobQueue)
 			provisioner.Start(2)
-			log.Println("Tenant provisioner started (2 workers).")
+			log.Println("Tenant provisioner started (2 workers, durable queue).")
 
 			// Self-heal: the platform owner is a first-class tenant too. If its
 			// workspace database was never provisioned (e.g. the owner was seeded
@@ -91,7 +96,7 @@ func main() {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
 
-		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter)
+		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue)
 		userOps = controllers.NewUserOps(cp, tenantRouter)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {
@@ -187,11 +192,17 @@ func main() {
 				UserCount    int    `json:"userCount"`
 			}{true, tenant.ID, tenant.Slug, tenant.DisplayName, tenant.DBName, userCount})
 		})
-		mux.Handle("/api/tenant/me", middleware.RequireAuth(resolver.Middleware(tenantMe)))
+		// Per-tenant rate limit: 20 req/sec sustained, bursts up to 40, before
+		// any tenant DB work happens (ADR-3). Platform-admin/legacy requests
+		// (no tenant_id) pass through unlimited.
+		tenantRateLimiter := middleware.NewRateLimiter(20, 40)
 
-		// tenantChain applies RequireAuth → tenancy resolver before every handler.
+		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
+
+		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
+		// resolver before every handler.
 		tenantChain := func(h http.HandlerFunc) http.Handler {
-			return middleware.RequireAuth(resolver.Middleware(h))
+			return middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(h)))
 		}
 
 		// Tenant-scoped RBAC management (role editor API). Each handler runs

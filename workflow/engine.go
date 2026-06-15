@@ -147,17 +147,31 @@ func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definitio
 func (e *Engine) Apply(ctx context.Context, pool Beginner, def *Definition,
 	rec *Record, toStateID, actorUserID string) (*Record, error) {
 
-	t, err := e.ValidateTransition(def, rec, toStateID)
-	if err != nil {
-		return nil, err
-	}
-	snapshot, _ := json.Marshal(rec.CustomFields)
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin apply: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the record row for the rest of this transaction so concurrent
+	// transitions on the same record serialize instead of racing on the
+	// current_state_id snapshot taken before this call (ADR-2).
+	var currentStateID string
+	if err := tx.QueryRow(ctx,
+		`SELECT current_state_id FROM workflow_records WHERE id = $1 FOR UPDATE`,
+		rec.ID).Scan(&currentStateID); err != nil {
+		return nil, fmt.Errorf("lock record: %w", err)
+	}
+
+	// Re-validate against the authoritative state: it may have changed since
+	// rec was loaded if another transition committed in the meantime.
+	fresh := *rec
+	fresh.CurrentStateID = currentStateID
+	t, err := e.ValidateTransition(def, &fresh, toStateID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, _ := json.Marshal(rec.CustomFields)
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE workflow_records SET current_state_id = $2, updated_at = NOW() WHERE id = $1`,
@@ -168,7 +182,7 @@ func (e *Engine) Apply(ctx context.Context, pool Beginner, def *Definition,
 		INSERT INTO workflow_record_history
 			(record_id, from_state_id, to_state_id, actor_user_id, transition_id, snapshot)
 		VALUES ($1,$2,$3,$4,$5,$6::jsonb)`,
-		rec.ID, rec.CurrentStateID, toStateID, nullIfEmpty(actorUserID), t.ID, snapshot); err != nil {
+		rec.ID, currentStateID, toStateID, nullIfEmpty(actorUserID), t.ID, snapshot); err != nil {
 		return nil, fmt.Errorf("insert transition history: %w", err)
 	}
 

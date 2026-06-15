@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,12 +96,14 @@ func (h *CRMOps) authCRM(w http.ResponseWriter, r *http.Request,
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
+		log.Printf("crm: authCRM(%s): pool error: %v", workflowKey, err)
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return nil, "", "", false
 	}
 	resource := resourceForKey(workflowKey)
 	decision, err := authz.Check(r.Context(), pool, payload.ID, resource, action)
 	if err != nil {
+		log.Printf("crm: authCRM(%s): permission check error: %v", workflowKey, err)
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false
 	}
@@ -233,12 +236,14 @@ func (h *CRMOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		log.Printf("crm: ListRecords: GetWorkflowByKey(%s): %v", key, err)
 		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
 		return
 	}
 	callerUserID, teamIDs := crmCallerScope(r, pool, identityID, scope)
 	records, err := workflow.ListRecords(r.Context(), pool, wf.ID, string(scope), callerUserID, teamIDs)
 	if err != nil {
+		log.Printf("crm: ListRecords(%s, workflowId=%s, scope=%s): %v", key, wf.ID, scope, err)
 		fail(w, http.StatusInternalServerError, "Failed to list records.")
 		return
 	}

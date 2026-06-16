@@ -275,6 +275,7 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to create record.")
 		return
 	}
+	auditCRM(r, pool, identityID, "create", key, rec.ID, nil, rec)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "record": rec})
 }
 
@@ -301,7 +302,8 @@ type crmUpdateRequest struct {
 
 // UpdateRecord PATCH /api/tenant/crm/records/{id}
 func (h *CRMOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, _, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionUpdate)
+	id := r.PathValue("id")
+	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -310,23 +312,29 @@ func (h *CRMOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	if err := st.UpdateRecord(r.Context(), pool, r.PathValue("id"), req.CoreFields, req.CustomFields); err != nil {
+	before, _ := st.GetRecord(r.Context(), pool, id)
+	if err := st.UpdateRecord(r.Context(), pool, id, req.CoreFields, req.CustomFields); err != nil {
 		crmFail(w, err, "Failed to update record.")
 		return
 	}
+	after, _ := st.GetRecord(r.Context(), pool, id)
+	auditCRM(r, pool, identityID, "update", key, id, before, after)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Record updated."})
 }
 
 // DeleteRecord DELETE /api/tenant/crm/records/{id}
 func (h *CRMOps) DeleteRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, _, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionDelete)
+	id := r.PathValue("id")
+	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionDelete)
 	if !ok {
 		return
 	}
-	if err := st.DeleteRecord(r.Context(), pool, r.PathValue("id")); err != nil {
+	before, _ := st.GetRecord(r.Context(), pool, id)
+	if err := st.DeleteRecord(r.Context(), pool, id); err != nil {
 		crmFail(w, err, "Failed to delete record.")
 		return
 	}
+	auditCRM(r, pool, identityID, "delete", key, id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Record deleted."})
 }
 
@@ -353,7 +361,8 @@ func (h *CRMOps) AvailableTransitions(w http.ResponseWriter, r *http.Request) {
 
 // TransitionRecord POST /api/tenant/crm/records/{id}/transition  body {"toStateId":"..."}
 func (h *CRMOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, identityID, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionTransition)
+	id := r.PathValue("id")
+	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionTransition)
 	if !ok {
 		return
 	}
@@ -364,11 +373,12 @@ func (h *CRMOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "toStateId is required.")
 		return
 	}
-	updated, err := st.TransitionRecord(r.Context(), pool, r.PathValue("id"), req.ToStateID, identityID)
+	updated, err := st.TransitionRecord(r.Context(), pool, id, req.ToStateID, identityID)
 	if err != nil {
 		crmFail(w, err, "Failed to apply transition.")
 		return
 	}
+	auditCRM(r, pool, identityID, "transition", key, id, nil, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": updated})
 }
 
@@ -398,6 +408,7 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to convert record.")
 		return
 	}
+	auditCRM(r, pool, identityID, "convert", req.TargetWorkflowKey, newRec.ID, nil, newRec)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"success":        true,
 		"record":         newRec,
@@ -411,11 +422,12 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 // Approves a Closed-Won customer if the caller is a configured approver. Only
 // supported on the v2 design; v1 returns 400 (not supported).
 func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, identityID, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionUpdate)
+	id := r.PathValue("id")
+	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	rec, err := st.Approve(r.Context(), pool, r.PathValue("id"), identityID)
+	rec, err := st.Approve(r.Context(), pool, id, identityID)
 	if errors.Is(err, crmstore.ErrNotSupported) {
 		fail(w, http.StatusBadRequest, "Approval is not available for this workspace's design.")
 		return
@@ -424,5 +436,6 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to approve record.")
 		return
 	}
+	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }

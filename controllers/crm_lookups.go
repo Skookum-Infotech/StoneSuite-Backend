@@ -12,9 +12,9 @@ import (
 
 // CRMLookups serves the read-only lkp_* reference tables that back the
 // unified CRM core-field selects (customer type, AR status, payment terms,
-// currency, country, state, lead source, contact method). The same 11
-// lkp_* tables exist for every tenant regardless of design_version, so this
-// endpoint is design-agnostic.
+// currency, country, state, lead source, contact method, price level). The
+// same 12 lkp_* tables exist for every tenant regardless of design_version,
+// so this endpoint is design-agnostic.
 //
 // Routes:
 //
@@ -98,6 +98,13 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load contact methods.")
 		return
 	}
+	priceLevels, err := queryLookupItems(ctx, pool,
+		`SELECT price_level_id, price_level_code, price_level_name FROM lkp_price_level
+		 WHERE price_level_is_active AND price_level_deleted_at IS NULL ORDER BY price_level_id`)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load price levels.")
+		return
+	}
 	states, err := queryStateLookupItems(ctx, pool)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load states.")
@@ -115,6 +122,7 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 			"states":         states,
 			"leadSources":    leadSources,
 			"contactMethods": contactMethods,
+			"priceLevels":    priceLevels,
 		},
 	})
 }

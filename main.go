@@ -295,6 +295,8 @@ func main() {
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
 		// Approval: sign off a Closed-Won customer (v2 design).
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/approve", tenantChain(crm.ApproveRecord))
+		// Per-record audit trail.
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/audit", tenantChain(crm.RecordAudit))
 
 		// CRM admin: switch the tenant's database design, and configure approvers.
 		mux.Handle("GET /api/tenant/admin/design-version", tenantChain(crmAdminOps.GetDesignVersion))
@@ -395,6 +397,11 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 			log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
 		} else {
 			log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
+		}
+		if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
+			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
+		} else if len(empty) > 0 {
+			log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
 		}
 	}
 }

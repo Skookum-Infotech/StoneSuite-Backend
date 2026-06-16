@@ -17,6 +17,7 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/secret"
+	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 )
 
@@ -251,6 +252,26 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}", tenantChain(wf.GetRecord))
 		mux.Handle("PATCH /api/tenant/records/{id}", tenantChain(wf.UpdateRecord))
 		mux.Handle("POST /api/tenant/records/{id}/transition", tenantChain(wf.TransitionRecord))
+
+		// Record attachments (Cloudflare R2). r2Client is nil when R2 env vars are
+		// absent — presign/download endpoints return 503; list/metadata still work.
+		r2Client, r2Err := storage.New(config.AppConfig)
+		if r2Err != nil {
+			log.Printf("WARNING: R2 storage client failed to initialise: %v", r2Err)
+		}
+		if r2Client != nil {
+			log.Println("R2 storage: configured.")
+		} else {
+			log.Println("R2 storage: not configured (attachment upload/download endpoints will return 503).")
+		}
+		attachOps := controllers.NewAttachmentOps(r2Client)
+		// presign-batch must be registered before the bare /attachments routes so
+		// the more-specific pattern wins in Go's http.ServeMux.
+		mux.Handle("POST /api/tenant/records/{id}/attachments/presign-batch", tenantChain(attachOps.PresignBatch))
+		mux.Handle("POST /api/tenant/records/{id}/attachments", tenantChain(attachOps.ConfirmAttachments))
+		mux.Handle("GET /api/tenant/records/{id}/attachments", tenantChain(attachOps.ListAttachments))
+		mux.Handle("GET /api/tenant/records/{id}/attachments/{attachmentId}/download", tenantChain(attachOps.DownloadAttachment))
+		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
 		crm := controllers.NewCRMOps()

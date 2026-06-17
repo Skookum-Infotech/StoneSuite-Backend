@@ -137,6 +137,7 @@ func main() {
 	if tenantOps != nil {
 		// Public: tenant-scoped login + password recovery.
 		mux.HandleFunc("/api/auth/tenant-login", tenantOps.TenantLogin)
+		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
 		mux.HandleFunc("POST /api/auth/forgot-password", tenantOps.ForgotPassword)
 		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
 		mux.HandleFunc("POST /api/auth/reset-password", tenantOps.ResetPassword)

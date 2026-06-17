@@ -606,6 +606,20 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		isPlatformAdmin = false
 	}
 
+	// Set the JWT as an httpOnly cookie so it survives page refreshes without
+	// being accessible to JavaScript (XSS protection). The Authorization header
+	// interceptor in the frontend Axios client serves as a fallback for the
+	// in-memory token that exists immediately after login.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   config.AppConfig.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(d.Seconds()),
+	})
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"token":   token,
@@ -615,6 +629,20 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 			"isPlatformAdmin": isPlatformAdmin,
 		},
 	})
+}
+
+// Logout clears the auth_token httpOnly cookie. Path: POST /api/auth/logout
+func (h *TenantOps) Logout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   config.AppConfig.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 // ---- forgot / reset password ------------------------------------------------

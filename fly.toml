@@ -6,6 +6,9 @@ primary_region = "iad"
 
 [env]
   PORT                = "8080"
+  # IMPORTANT: CORS_ORIGIN and FRONTEND_URL must match the exact origin of the deployed
+  # frontend (including protocol and port). Verify this matches the Cloudflare Pages URL
+  # before deploying. A mismatch will block all browser API calls with CORS 403 errors.
   CORS_ORIGIN         = "https://dev.stonesuite.app"
   FRONTEND_URL        = "https://dev.stonesuite.app"
   SMTP_PORT           = "587"

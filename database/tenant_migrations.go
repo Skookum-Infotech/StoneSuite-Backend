@@ -79,6 +79,13 @@ func ApplyTenantMigrations(ctx context.Context, pool *pgxpool.Pool) (int, error)
 		return 0, fmt.Errorf("ensure schema_version table: %w", err)
 	}
 
+	// Acquire advisory lock to prevent concurrent migration runs.
+	// Lock key 7369746573756974 is "stonesuite" in ASCII decimal (arbitrary stable constant).
+	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(7369746573756974)`); err != nil {
+		return 0, fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+	defer pool.Exec(ctx, `SELECT pg_advisory_unlock(7369746573756974)`) //nolint:errcheck
+
 	var current int
 	if err := pool.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&current); err != nil {
 		return 0, fmt.Errorf("read current schema version: %w", err)

@@ -104,15 +104,15 @@ func (q *Queue) Enqueue(ctx context.Context, jobType string, tenantID string, pa
 func (q *Queue) ClaimNext(ctx context.Context, jobTypes []string) (*Job, error) {
 	row := q.pool.QueryRow(ctx, `
 		UPDATE async_jobs
-		SET status = '`+StatusRunning+`', attempts = attempts + 1, updated_at = NOW()
+		SET status = $2, attempts = attempts + 1, updated_at = NOW()
 		WHERE id = (
 			SELECT id FROM async_jobs
-			WHERE status = '`+StatusPending+`' AND job_type = ANY($1)
+			WHERE status = $3 AND job_type = ANY($1)
 			ORDER BY created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		)
-		RETURNING `+jobColumns, jobTypes)
+		RETURNING `+jobColumns, jobTypes, StatusRunning, StatusPending)
 
 	j, err := scanJob(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -127,8 +127,8 @@ func (q *Queue) ClaimNext(ctx context.Context, jobTypes []string) (*Job, error) 
 // MarkSucceeded marks a job as completed successfully.
 func (q *Queue) MarkSucceeded(ctx context.Context, id string) error {
 	if _, err := q.pool.Exec(ctx,
-		`UPDATE async_jobs SET status = '`+StatusSucceeded+`', last_error = NULL, updated_at = NOW() WHERE id = $1`,
-		id); err != nil {
+		`UPDATE async_jobs SET status = $2, last_error = NULL, updated_at = NOW() WHERE id = $1`,
+		id, StatusSucceeded); err != nil {
 		return fmt.Errorf("mark job %s succeeded: %w", id, err)
 	}
 	return nil
@@ -140,11 +140,11 @@ func (q *Queue) MarkSucceeded(ctx context.Context, id string) error {
 func (q *Queue) MarkFailed(ctx context.Context, id string, errMsg string) error {
 	if _, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
-		SET status = CASE WHEN attempts >= max_attempts THEN '`+StatusDead+`' ELSE '`+StatusPending+`' END,
+		SET status = CASE WHEN attempts >= max_attempts THEN $3 ELSE $4 END,
 		    last_error = $2,
 		    updated_at = NOW()
 		WHERE id = $1`,
-		id, errMsg); err != nil {
+		id, errMsg, StatusDead, StatusPending); err != nil {
 		return fmt.Errorf("mark job %s failed: %w", id, err)
 	}
 	return nil
@@ -172,9 +172,9 @@ func (q *Queue) RequeueStale(ctx context.Context, staleAfter time.Duration) (int
 	threshold := time.Now().Add(-staleAfter)
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
-		SET status = '`+StatusPending+`', updated_at = NOW()
-		WHERE status = '`+StatusRunning+`' AND updated_at < $1`,
-		threshold)
+		SET status = $2, updated_at = NOW()
+		WHERE status = $3 AND updated_at < $1`,
+		threshold, StatusPending, StatusRunning)
 	if err != nil {
 		return 0, fmt.Errorf("requeue stale jobs: %w", err)
 	}
@@ -186,9 +186,9 @@ func (q *Queue) RequeueStale(ctx context.Context, staleAfter time.Duration) (int
 func (q *Queue) Retry(ctx context.Context, id string) error {
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
-		SET status = '`+StatusPending+`', attempts = 0, last_error = NULL, updated_at = NOW()
-		WHERE id = $1 AND status IN ('`+StatusFailed+`', '`+StatusDead+`')`,
-		id)
+		SET status = $2, attempts = 0, last_error = NULL, updated_at = NOW()
+		WHERE id = $1 AND status = ANY($3)`,
+		id, StatusPending, []string{StatusFailed, StatusDead})
 	if err != nil {
 		return fmt.Errorf("retry job %s: %w", id, err)
 	}

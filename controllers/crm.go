@@ -312,7 +312,10 @@ func (h *CRMOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	before, _ := st.GetRecord(r.Context(), pool, id)
+	before, err := st.GetRecord(r.Context(), pool, id)
+	if err != nil {
+		log.Printf("warn: could not fetch record for audit pre-image: %v", err)
+	}
 	if err := st.UpdateRecord(r.Context(), pool, id, req.CoreFields, req.CustomFields); err != nil {
 		crmFail(w, err, "Failed to update record.")
 		return

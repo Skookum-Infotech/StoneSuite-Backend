@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"stonesuite-backend/config"
@@ -163,6 +166,10 @@ func main() {
 		mux.Handle("/api/platform/tenants/", middleware.RequireAuth(http.HandlerFunc(tenantOps.TenantLifecycle)))
 	}
 
+	// Graceful shutdown context: SIGTERM or Ctrl-C cancels this context.
+	// All background goroutines (rate-limiter eviction, etc.) use it for exit.
+	shutdownCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
 	// Tenant-scoped demo route: JWT -> tenant resolution -> per-tenant DB query.
 	if resolver != nil {
 		tenantMe := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +205,9 @@ func main() {
 		// Per-tenant rate limit: 20 req/sec sustained, bursts up to 40, before
 		// any tenant DB work happens (ADR-3). Platform-admin/legacy requests
 		// (no tenant_id) pass through unlimited.
-		tenantRateLimiter := middleware.NewRateLimiter(20, 40)
+		// shutdownCtx is defined below; the rate limiter's eviction goroutine
+		// exits when the server shuts down.
+		tenantRateLimiter := middleware.NewRateLimiter(shutdownCtx, 20, 40)
 
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
 
@@ -357,9 +366,27 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("CRITICAL SERVER FAILURE: %v", err)
+	// Run the server in a goroutine so we can block on the shutdown signal below.
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("CRITICAL SERVER FAILURE: %v", err)
+		}
+	}()
+
+	// Block until SIGTERM or Ctrl-C is received.
+	<-shutdownCtx.Done()
+	stopSignal() // release signal resources
+
+	log.Println("Shutting down: draining in-flight requests (up to 10s)...")
+	if provisioner != nil {
+		provisioner.Stop()
 	}
+	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutCtx); err != nil {
+		log.Printf("Server shutdown error: %v", err)
+	}
+	log.Println("Server stopped.")
 }
 
 // migrateAllTenants runs ApplyTenantMigrations on every provisioned tenant DB.

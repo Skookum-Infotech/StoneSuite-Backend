@@ -34,8 +34,26 @@ func RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		// Extract the JWT from the Authorization: Bearer header first.
+		// If the header is absent, fall back to the httpOnly auth_token cookie
+		// so clients that store the token in a cookie (safer against XSS) are
+		// also supported. Both paths share the same validation logic below.
+		var tokenString string
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(models.APIResponse{
+					Success: false,
+					Message: "Access denied. Authorization format must be: Bearer <token>",
+				})
+				return
+			}
+			tokenString = parts[1]
+		} else if cookie, err := r.Cookie("auth_token"); err == nil && cookie.Value != "" {
+			tokenString = cookie.Value
+		} else {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{
 				Success: false,
@@ -43,18 +61,6 @@ func RequireAuth(next http.Handler) http.Handler {
 			})
 			return
 		}
-
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(models.APIResponse{
-				Success: false,
-				Message: "Access denied. Authorization format must be: Bearer <token>",
-			})
-			return
-		}
-
-		tokenString := parts[1]
 
 		// Parse and verify token
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {

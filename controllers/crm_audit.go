@@ -27,10 +27,17 @@ var appVersion = func() string {
 // X-Forwarded-For / X-Real-IP before falling back to the socket address.
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+		candidate := strings.TrimSpace(strings.Split(xff, ",")[0])
+		if net.ParseIP(candidate) != nil {
+			return candidate
+		}
+		// Malformed X-Forwarded-For value — fall through to RemoteAddr.
 	}
 	if xr := r.Header.Get("X-Real-IP"); xr != "" {
-		return strings.TrimSpace(xr)
+		candidate := strings.TrimSpace(xr)
+		if net.ParseIP(candidate) != nil {
+			return candidate
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host

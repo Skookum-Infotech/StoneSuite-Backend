@@ -543,7 +543,7 @@ func (s *relationalStore) DeleteRecord(ctx context.Context, pool *pgxpool.Pool, 
 }
 
 func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Pool, id, toStatusID, actorIdentityID string) (*workflow.Record, error) {
-	_, curTypeCode, _, err := s.recordKeyInfo(ctx, pool, id)
+	internalID, curTypeCode, _, err := s.recordKeyInfo(ctx, pool, id)
 	if err != nil {
 		return nil, err
 	}
@@ -575,6 +575,16 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 		id, targetTypeID, statusID)
 	if err != nil {
 		return nil, fmt.Errorf("transition customer record: %w", err)
+	}
+	// When the record moves to a new stage, regenerate the document number so
+	// its prefix matches the new stage (e.g. LEAD-000042 → PROS-000042).
+	// This is best-effort: the record is already moved, so we do not surface
+	// any error from this secondary update.
+	if targetTypeCode != curTypeCode {
+		newDocNum := fmt.Sprintf("%s-%06d", targetTypeCode, internalID)
+		_, _ = pool.Exec(ctx,
+			`UPDATE customer SET customer_doc_num = $1 WHERE customer_uuid = $2`,
+			newDocNum, id)
 	}
 	action := "transition"
 	if targetTypeCode != curTypeCode {

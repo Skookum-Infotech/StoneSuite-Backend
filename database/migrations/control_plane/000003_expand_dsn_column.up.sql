@@ -8,5 +8,14 @@
 -- TEXT removes the bound with no practical downside.
 -- =====================================================================
 
-ALTER TABLE tenants
-    ALTER COLUMN db_connection_ref TYPE TEXT;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'tenants'
+      AND column_name = 'db_connection_ref'
+      AND data_type != 'text'
+  ) THEN
+    ALTER TABLE tenants ALTER COLUMN db_connection_ref TYPE TEXT;
+  END IF;
+END $$;

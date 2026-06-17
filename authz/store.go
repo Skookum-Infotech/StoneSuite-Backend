@@ -180,10 +180,34 @@ func GetRole(ctx context.Context, q Querier, id string) (*Role, error) {
 }
 
 // CreateRole inserts a custom (non-system) role and its validated permissions.
+// The INSERT and permission writes are wrapped in a transaction so a crash
+// mid-insert never leaves a role with no permissions.
 func CreateRole(ctx context.Context, q Querier, key, name, description string, perms []Grant) (string, error) {
 	if err := validateGrants(perms); err != nil {
 		return "", err
 	}
+	pool, ok := q.(*pgxpool.Pool)
+	if !ok {
+		// q is already a transaction — just write directly.
+		return createRoleInTx(ctx, q, key, name, description, perms)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("create role: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	id, err := createRoleInTx(ctx, tx, key, name, description, perms)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("create role: commit: %w", err)
+	}
+	invalidateGrants(q)
+	return id, nil
+}
+
+func createRoleInTx(ctx context.Context, q Querier, key, name, description string, perms []Grant) (string, error) {
 	var id string
 	err := q.QueryRow(ctx, `
 		INSERT INTO roles (key, name, description, is_system)
@@ -194,17 +218,39 @@ func CreateRole(ctx context.Context, q Querier, key, name, description string, p
 	if err := replacePermissions(ctx, q, id, perms); err != nil {
 		return "", err
 	}
-	invalidateGrants(q)
 	return id, nil
 }
 
 // UpdateRole updates a role's name/description and replaces its permissions.
 // System roles' permissions are immutable (their key/name may be edited only
 // via migrations); callers must guard with IsSystem before calling for those.
+// The UPDATE and permission replacement are wrapped in a transaction so a crash
+// mid-update never leaves the role with a partial permission set.
 func UpdateRole(ctx context.Context, q Querier, id, name, description string, perms []Grant) error {
 	if err := validateGrants(perms); err != nil {
 		return err
 	}
+	pool, ok := q.(*pgxpool.Pool)
+	if !ok {
+		// q is already a transaction — write directly.
+		return updateRoleInTx(ctx, q, id, name, description, perms)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("update role: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := updateRoleInTx(ctx, tx, id, name, description, perms); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("update role: commit: %w", err)
+	}
+	invalidateGrants(q)
+	return nil
+}
+
+func updateRoleInTx(ctx context.Context, q Querier, id, name, description string, perms []Grant) error {
 	tag, err := q.Exec(ctx,
 		`UPDATE roles SET name = $2, description = $3, updated_at = NOW() WHERE id = $1`,
 		id, name, description)
@@ -217,7 +263,6 @@ func UpdateRole(ctx context.Context, q Querier, id, name, description string, pe
 	if err := replacePermissions(ctx, q, id, perms); err != nil {
 		return err
 	}
-	invalidateGrants(q)
 	return nil
 }
 

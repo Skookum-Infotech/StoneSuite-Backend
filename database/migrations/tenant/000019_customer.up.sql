@@ -1,5 +1,5 @@
 -- =====================================================================
--- Tenant migration 018: customer — the single CRM master table (v2).
+-- Tenant migration 019: customer — the single CRM master table (v2).
 -- Source of truth: StonSuite_DBSchema.xlsx (Customer sheet), ADR-002.
 --
 -- One physical table holds Lead, Prospect and Customer records, distinguished

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -27,13 +28,47 @@ type RateLimiter struct {
 	burst   float64 // max tokens a tenant can accumulate (burst capacity)
 }
 
+// cleanupInterval is how often the idle-bucket eviction goroutine runs.
+const cleanupInterval = 5 * time.Minute
+
 // NewRateLimiter builds a RateLimiter allowing each tenant up to `rate`
-// requests/sec sustained, with bursts up to `burst` requests.
-func NewRateLimiter(rate, burst float64) *RateLimiter {
-	return &RateLimiter{
+// requests/sec sustained, with bursts up to `burst` requests. The ctx
+// controls the lifetime of the background eviction goroutine — pass a context
+// derived from the server's shutdown context so the goroutine exits cleanly.
+func NewRateLimiter(ctx context.Context, rate, burst float64) *RateLimiter {
+	rl := &RateLimiter{
 		buckets: make(map[string]*tenantBucket),
 		rate:    rate,
 		burst:   burst,
+	}
+	go rl.evictIdle(ctx)
+	return rl
+}
+
+// evictIdle runs on a ticker and removes buckets that have been idle long
+// enough to be fully refilled — i.e. buckets that consume no memory value.
+// A bucket is considered idle when its lastFill is older than burst/rate
+// seconds (the time it takes to refill from zero to burst capacity).
+func (rl *RateLimiter) evictIdle(ctx context.Context) {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.mu.Lock()
+			idleThreshold := time.Duration(rl.burst/rl.rate) * time.Second
+			cutoff := time.Now().Add(-idleThreshold)
+			for id, b := range rl.buckets {
+				b.mu.Lock()
+				if b.lastFill.Before(cutoff) {
+					delete(rl.buckets, id)
+				}
+				b.mu.Unlock()
+			}
+			rl.mu.Unlock()
+		}
 	}
 }
 

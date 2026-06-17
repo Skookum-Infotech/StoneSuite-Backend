@@ -62,6 +62,13 @@ func ApplyControlPlaneMigrations(ctx context.Context, pool *pgxpool.Pool) error 
 		return fmt.Errorf("ensure cp_schema_version table: %w", err)
 	}
 
+	// Acquire advisory lock to prevent concurrent migration runs.
+	// Lock key 7369746573756943 is "stonesuite-cp" derived constant (arbitrary stable value).
+	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(7369746573756943)`); err != nil {
+		return fmt.Errorf("acquire migration advisory lock: %w", err)
+	}
+	defer pool.Exec(ctx, `SELECT pg_advisory_unlock(7369746573756943)`) //nolint:errcheck
+
 	var current int
 	if err := pool.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0) FROM cp_schema_version").Scan(&current); err != nil {
 		return fmt.Errorf("read current cp schema version: %w", err)

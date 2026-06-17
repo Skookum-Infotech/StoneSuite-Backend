@@ -124,29 +124,20 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load CRM statuses.")
 		return
 	}
-	customerStatuses, err := queryLookupItems(ctx, pool,
-		`SELECT record_status_id, record_status_code, record_status_name FROM lkp_record_status
-		 WHERE record_status_is_active AND record_status_deleted_at IS NULL ORDER BY record_status_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load customer statuses.")
-		return
-	}
-
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"lookups": map[string]any{
-			"customerTypes":    customerTypes,
-			"arStatuses":       arStatuses,
-			"paymentTerms":     paymentTerms,
-			"currencies":       currencies,
-			"countries":        countries,
-			"states":           states,
-			"leadSources":      leadSources,
-			"contactMethods":   contactMethods,
+			"customerTypes":  customerTypes,
+			"arStatuses":     arStatuses,
+			"paymentTerms":   paymentTerms,
+			"currencies":     currencies,
+			"countries":      countries,
+			"states":         states,
+			"leadSources":    leadSources,
+			"contactMethods": contactMethods,
 			"priceLevels":    priceLevels,
-			"recordTypes":      recordTypes,
-			"crmStatuses":      crmStatuses,
-			"customerStatuses": customerStatuses,
+			"recordTypes":    recordTypes,
+			"crmStatuses":    crmStatuses,
 		},
 	})
 }

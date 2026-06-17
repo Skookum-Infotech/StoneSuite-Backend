@@ -56,7 +56,7 @@ func (c *ControlPlane) Close() {
 const tenantColumns = `
 	id, slug, display_name, status, is_platform_owner,
 	COALESCE(db_name, ''), COALESCE(db_connection_ref, ''), region,
-	schema_version, migration_status, COALESCE(design_version, 'v1'),
+	schema_version, migration_status, COALESCE(design_version, 'v2'),
 	deleted_at, hard_delete_after, created_at, updated_at,
 	COALESCE(metadata::text, '{}')`
 

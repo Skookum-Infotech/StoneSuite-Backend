@@ -124,20 +124,48 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load CRM statuses.")
 		return
 	}
+	// Employees: maps employee_id (integer FK) to display name, used for the
+	// Sales Rep field and any other employee FK selects.
+	employees, err := queryLookupItems(ctx, pool,
+		`SELECT e.employee_id, '', COALESCE(NULLIF(u.full_name,''), u.email)
+		 FROM employee e
+		 JOIN users u ON u.id = e.employee_user_id
+		 WHERE e.employee_deleted_at IS NULL AND u.status = 'active'
+		 ORDER BY COALESCE(NULLIF(u.full_name,''), u.email)`)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load employees.")
+		return
+	}
+	// Parent customers: used for the Parent Customer (customer_parent_company) FK
+	// select, which stores the integer customer_id of the owning company record.
+	parentCustomers, err := queryLookupItems(ctx, pool,
+		`SELECT c.customer_id, COALESCE(c.customer_doc_num,''), c.customer_name
+		 FROM customer c
+		 JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
+		 WHERE rt.record_type_code IN ('LEAD','PROS','CUST')
+		   AND c.customer_deleted_at IS NULL
+		   AND c.customer_name IS NOT NULL
+		 ORDER BY c.customer_name`)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load parent customers.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"lookups": map[string]any{
-			"customerTypes":  customerTypes,
-			"arStatuses":     arStatuses,
-			"paymentTerms":   paymentTerms,
-			"currencies":     currencies,
-			"countries":      countries,
-			"states":         states,
-			"leadSources":    leadSources,
-			"contactMethods": contactMethods,
-			"priceLevels":    priceLevels,
-			"recordTypes":    recordTypes,
-			"crmStatuses":    crmStatuses,
+			"customerTypes":   customerTypes,
+			"arStatuses":      arStatuses,
+			"paymentTerms":    paymentTerms,
+			"currencies":      currencies,
+			"countries":       countries,
+			"states":          states,
+			"leadSources":     leadSources,
+			"contactMethods":  contactMethods,
+			"priceLevels":     priceLevels,
+			"recordTypes":     recordTypes,
+			"crmStatuses":     crmStatuses,
+			"employees":       employees,
+			"parentCustomers": parentCustomers,
 		},
 	})
 }

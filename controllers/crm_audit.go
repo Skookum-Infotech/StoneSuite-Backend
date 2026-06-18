@@ -67,9 +67,22 @@ func auditCRM(r *http.Request, pool *pgxpool.Pool, identityID, action, resource,
 	ctx := r.Context()
 	actorUserID, _ := workflow.UserIDByIdentity(ctx, pool, identityID)
 	if err := workflow.LogAuditFull(ctx, pool, actorUserID, action, resource, recordID, "customer",
-		recordSnapshot(oldRec), recordSnapshot(newRec),
+		recordSnapshot(oldRec), recordSnapshot(newRec), nil,
 		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
 		log.Printf("crm: audit %s %s/%s: %v", action, resource, recordID, err)
+	}
+}
+
+// auditCRMDelete is the delete-specific variant that stores the user-supplied
+// reason in the details JSONB alongside the before-snapshot.
+func auditCRMDelete(r *http.Request, pool *pgxpool.Pool, identityID, resource, recordID, reason string, oldRec *workflow.Record) {
+	ctx := r.Context()
+	actorUserID, _ := workflow.UserIDByIdentity(ctx, pool, identityID)
+	meta := map[string]any{"reason": reason}
+	if err := workflow.LogAuditFull(ctx, pool, actorUserID, "delete", resource, recordID, "customer",
+		recordSnapshot(oldRec), nil, meta,
+		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
+		log.Printf("crm: audit delete %s/%s: %v", resource, recordID, err)
 	}
 }
 

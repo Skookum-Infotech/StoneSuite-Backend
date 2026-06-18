@@ -14,11 +14,13 @@ import (
 //
 // oldVal/newVal are marshalled to JSONB (nil → SQL NULL). ipAddress is cast to
 // INET; an empty string stores NULL. tableName names the mutated table (e.g.
-// "customer") so the trail is filterable per entity.
+// "customer") so the trail is filterable per entity. extraMeta keys are merged
+// into the details JSONB alongside "new" (e.g. {"reason": "..."} for deletes).
 func LogAuditFull(
 	ctx context.Context, q Querier,
 	actorUserID, action, resource, resourceID, tableName string,
 	oldVal, newVal map[string]any,
+	extraMeta map[string]any,
 	ipAddress, sessionID, appVersion string,
 ) error {
 	var oldRaw, newRaw any
@@ -30,7 +32,11 @@ func LogAuditFull(
 		b, _ := json.Marshal(newVal)
 		newRaw = b
 	}
-	details, _ := json.Marshal(map[string]any{"new": newVal})
+	detailsMap := map[string]any{"new": newVal}
+	for k, v := range extraMeta {
+		detailsMap[k] = v
+	}
+	details, _ := json.Marshal(detailsMap)
 	_, err := q.Exec(ctx, `
 		INSERT INTO audit_logs (
 			actor_user_id, action, resource, resource_id, details,

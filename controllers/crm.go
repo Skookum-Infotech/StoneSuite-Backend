@@ -332,12 +332,17 @@ func (h *CRMOps) DeleteRecord(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
 	before, _ := st.GetRecord(r.Context(), pool, id)
 	if err := st.DeleteRecord(r.Context(), pool, id); err != nil {
 		crmFail(w, err, "Failed to delete record.")
 		return
 	}
-	auditCRM(r, pool, identityID, "delete", key, id, before, nil)
+	auditCRMDelete(r, pool, identityID, key, id, body.Reason, before)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Record deleted."})
 }
 

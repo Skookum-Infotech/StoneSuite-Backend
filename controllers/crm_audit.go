@@ -88,14 +88,14 @@ func auditCRMDelete(r *http.Request, pool *pgxpool.Pool, identityID, resource, r
 
 // auditEntry is one row of a record's audit trail in API form.
 type auditEntry struct {
-	Action      string         `json:"action"`
-	Resource    string         `json:"resource"`
-	ActorUserID string         `json:"actorUserId"`
-	IPAddress   string         `json:"ipAddress"`
-	AppVersion  string         `json:"appVersion"`
-	OldValue    map[string]any `json:"oldValue,omitempty"`
-	NewValue    map[string]any `json:"newValue,omitempty"`
-	At          time.Time      `json:"at"`
+	Action    string         `json:"action"`
+	Resource  string         `json:"resource"`
+	ActorName string         `json:"actorName"`
+	IPAddress string         `json:"ipAddress"`
+	AppVersion string        `json:"appVersion"`
+	OldValue  map[string]any `json:"oldValue,omitempty"`
+	NewValue  map[string]any `json:"newValue,omitempty"`
+	At        time.Time      `json:"at"`
 }
 
 // RecordAudit GET /api/tenant/crm/{workflowKey}/records/{id}/audit
@@ -107,12 +107,14 @@ func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := pool.Query(r.Context(), `
-		SELECT action, resource, COALESCE(actor_user_id::text,''),
-		       COALESCE(host(ip_address),''), COALESCE(app_version,''),
-		       old_value, new_value, created_at
-		FROM audit_logs
-		WHERE resource_id = $1
-		ORDER BY created_at DESC
+		SELECT al.action, al.resource,
+		       COALESCE(u.full_name, u.email, ''),
+		       COALESCE(host(al.ip_address),''), COALESCE(al.app_version,''),
+		       al.old_value, al.new_value, al.created_at
+		FROM audit_logs al
+		LEFT JOIN users u ON u.id = al.actor_user_id
+		WHERE al.resource_id = $1
+		ORDER BY al.created_at DESC
 		LIMIT 200`, id)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load audit trail.")
@@ -125,7 +127,7 @@ func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
 			e              auditEntry
 			oldRaw, newRaw []byte
 		)
-		if err := rows.Scan(&e.Action, &e.Resource, &e.ActorUserID,
+		if err := rows.Scan(&e.Action, &e.Resource, &e.ActorName,
 			&e.IPAddress, &e.AppVersion, &oldRaw, &newRaw, &e.At); err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to read audit trail.")
 			return

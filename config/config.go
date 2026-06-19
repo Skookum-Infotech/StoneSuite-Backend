@@ -18,8 +18,9 @@ type Config struct {
 	Environment            string
 	Port                   string
 	JWTSecret              string
-	JWTExpiresIn           string
-	JWTRememberMeExpiresIn string
+	JWTExpiresIn             string
+	JWTRememberMeExpiresIn   string
+	RefreshTokenExpiresIn    string
 	DBHost                 string
 	DBPort                 string
 	DBUser                 string
@@ -48,6 +49,7 @@ type Config struct {
 	CognitoDomain       string
 	CognitoRedirectURI  string
 	// Email Configuration
+	ResendAPIKey   string // optional: if set, all email goes through Resend API
 	SMTPHost       string
 	SMTPPort       string
 	SenderEmail    string
@@ -81,8 +83,9 @@ func Load() {
 		// No default: an empty JWT secret is rejected by Validate(). A baked-in
 		// default would let anyone forge tokens if the env var were ever unset.
 		JWTSecret:              getEnv("JWT_SECRET", ""),
-		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "24h"),
+		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "1h"),
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
+		RefreshTokenExpiresIn:  getEnv("REFRESH_TOKEN_EXPIRES_IN", "24h"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
 		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
 		InviteExpiryHours:      getEnvInt("INVITE_EXPIRY_HOURS", 24),
@@ -102,6 +105,7 @@ func Load() {
 		CognitoDomain:       getEnv("COGNITO_DOMAIN", ""),
 		CognitoRedirectURI:  getEnv("COGNITO_REDIRECT_URI", "http://localhost:8080/api/auth/cognito/callback"),
 		// Email Configuration
+		ResendAPIKey:   getEnv("RESEND_API_KEY", ""),
 		SMTPHost:       getEnv("SMTP_HOST", ""),
 		SMTPPort:       getEnv("SMTP_PORT", "587"),
 		SenderEmail:    getEnv("SENDER_EMAIL", ""),

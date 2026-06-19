@@ -74,12 +74,15 @@ var allowedExt = map[string]string{
 
 // ---- authorisation ----------------------------------------------------------
 
-// attachAuth is the RBAC gate for attachment handlers. It reuses the same
-// JWT + tenancy + authz.Check flow as WorkflowOps.authorize, narrowed to the
-// record resource. Returns pool, scope, identityID, ok.
+// attachAuth is the RBAC gate for attachment handlers.
+// Attachments sit on top of CRM records, so we accept any equivalent CRM
+// permission: record:action OR lead:action OR prospect:action OR customer:action.
+// This allows roles that have specific CRM grants (e.g. lead:read) without
+// the generic record:* resource to still access attachments on those records.
+// Returns pool, scope, identityID, ok.
 func (h *AttachmentOps) attachAuth(
 	w http.ResponseWriter, r *http.Request,
-	resource authz.Resource, action authz.Action,
+	_ authz.Resource, action authz.Action,
 ) (*pgxpool.Pool, authz.Scope, string, bool) {
 
 	payload, err := middleware.GetUserFromContext(r.Context())
@@ -92,17 +95,30 @@ func (h *AttachmentOps) attachAuth(
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return nil, "", "", false
 	}
-	decision, err := authz.Check(r.Context(), pool, payload.ID, resource, action)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Permission check failed.")
+
+	// Accept any of: record, lead, prospect, customer for the requested action.
+	crmResources := []authz.Resource{
+		authz.ResourceRecord,
+		authz.ResourceLead,
+		authz.ResourceProspect,
+		authz.ResourceCustomer,
+	}
+	var best authz.Decision
+	for _, res := range crmResources {
+		d, checkErr := authz.Check(r.Context(), pool, payload.ID, res, action)
+		if checkErr != nil {
+			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			return nil, "", "", false
+		}
+		if d.Allowed && !best.Allowed {
+			best = d
+		}
+	}
+	if !best.Allowed {
+		fail(w, http.StatusForbidden, "You do not have permission to access attachments.")
 		return nil, "", "", false
 	}
-	if !decision.Allowed {
-		fail(w, http.StatusForbidden,
-			"You do not have permission to "+string(action)+" "+string(resource)+".")
-		return nil, "", "", false
-	}
-	return pool, decision.Scope, payload.ID, true
+	return pool, best.Scope, payload.ID, true
 }
 
 // ---- POST /api/tenant/records/{id}/attachments/presign-batch ----------------
@@ -150,21 +166,14 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify record exists in this tenant's DB.
-	rec, err := workflow.GetRecord(r.Context(), pool, recordID)
+	// Resolve the record — works for both v1 (workflow_records) and v2 (customer table).
+	workflowKey, err := workflow.RecordKeyForAttachment(r.Context(), pool, recordID)
 	if errors.Is(err, workflow.ErrRecordNotFound) {
 		fail(w, http.StatusNotFound, "Record not found.")
 		return
 	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load record.")
-		return
-	}
-
-	// Load workflow to get its key (part of the storage key path).
-	def, err := workflow.LoadDefinition(r.Context(), pool, rec.WorkflowID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
 		return
 	}
 
@@ -209,7 +218,7 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		storageKey := workflow.GenerateStorageKey(
-			tenant.Slug, def.Workflow.Key, recordID, attachUUID, safe,
+			tenant.Slug, workflowKey, recordID, attachUUID, safe,
 		)
 		uploadURL, pErr := h.r2.PresignPut(r.Context(), storageKey, f.ContentType, presignPutTTL)
 		if pErr != nil {
@@ -266,7 +275,7 @@ func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Verify record belongs to this tenant.
-	exists, err := workflow.RecordExistsInTenant(r.Context(), pool, recordID)
+	exists, err := workflow.RecordExistsAnywhere(r.Context(), pool, recordID)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to verify record.")
 		return
@@ -347,7 +356,7 @@ func (h *AttachmentOps) ListAttachments(w http.ResponseWriter, r *http.Request) 
 	recordID := r.PathValue("id")
 
 	// Verify record belongs to this tenant DB before listing.
-	exists, err := workflow.RecordExistsInTenant(r.Context(), pool, recordID)
+	exists, err := workflow.RecordExistsAnywhere(r.Context(), pool, recordID)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to verify record.")
 		return

@@ -1,31 +1,17 @@
 package services
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"net/smtp"
 	"strings"
 
 	"stonesuite-backend/config"
 )
-
-// EmailService handles email sending
-type EmailService struct {
-	SMTPHost       string
-	SMTPPort       string
-	SenderEmail    string
-	SenderPassword string
-}
-
-// InitEmailService creates a new email service instance
-func InitEmailService() *EmailService {
-	return &EmailService{
-		SMTPHost:       config.AppConfig.SMTPHost,
-		SMTPPort:       config.AppConfig.SMTPPort,
-		SenderEmail:    config.AppConfig.SenderEmail,
-		SenderPassword: config.AppConfig.SenderPassword,
-	}
-}
 
 // SendOnboardingInviteEmail sends an invitation email for customer onboarding.
 func SendOnboardingInviteEmail(recipientEmail, recipientName, inviteLink string) error {
@@ -45,7 +31,6 @@ func SendOnboardingInviteEmail(recipientEmail, recipientName, inviteLink string)
 		</body>
 		</html>
 	`, recipientName, inviteLink, inviteLink)
-
 	return sendEmail(recipientEmail, subject, body)
 }
 
@@ -68,7 +53,6 @@ func SendPasswordSetupEmail(recipientEmail, recipientName, setupLink string) err
 		</body>
 		</html>
 	`, recipientName, setupLink, setupLink)
-
 	return sendEmail(recipientEmail, subject, body)
 }
 
@@ -93,14 +77,6 @@ func SendUserInviteEmail(recipientEmail, recipientName, workspaceName, inviteLin
 	return sendEmail(recipientEmail, subject, body)
 }
 
-// nameClause formats " {name}" with a leading space, or "" when name is blank.
-func nameClause(name string) string {
-	if name == "" {
-		return ""
-	}
-	return " " + name
-}
-
 // SendPasswordResetEmail sends a password-reset link to an existing account holder.
 func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) error {
 	subject := "Reset your StoneSuite password"
@@ -122,31 +98,88 @@ func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) err
 	return sendEmail(recipientEmail, subject, body)
 }
 
-// sendEmail is a helper function to send emails
-func sendEmail(to, subject, body string) error {
-	es := InitEmailService()
+// nameClause formats " {name}" with a leading space, or "" when name is blank.
+func nameClause(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " " + name
+}
 
-	// Check if SMTP credentials are configured
-	if es.SMTPHost == "" || es.SenderEmail == "" {
-		log.Printf("WARNING: Email service not configured. Skipping email to %s", to)
-		return nil // Don't fail if email is not configured
+// sendEmail routes through the first available provider:
+//  1. Resend API  — when RESEND_API_KEY is set
+//  2. SMTP        — when SMTP_HOST + SENDER_EMAIL are set
+//  3. No-op       — logs that no provider is configured, returns nil (non-fatal)
+func sendEmail(to, subject, body string) error {
+	cfg := config.AppConfig
+
+	if cfg.ResendAPIKey != "" {
+		return sendViaResend(cfg.ResendAPIKey, cfg.SenderEmail, to, subject, body)
+	}
+	if cfg.SMTPHost != "" && cfg.SenderEmail != "" {
+		return sendViaSMTP(cfg, to, subject, body)
 	}
 
-	// Create email message
-	auth := smtp.PlainAuth("", es.SenderEmail, es.SenderPassword, es.SMTPHost)
-	to_list := strings.Split(to, ",")
+	log.Printf("INFO: no email provider configured (set RESEND_API_KEY or SMTP_HOST+SENDER_EMAIL) — skipping email to %s", to)
+	return nil
+}
 
-	headers := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n",
-		es.SenderEmail, to, subject)
+// sendViaResend delivers the email through the Resend HTTP API.
+// Docs: https://resend.com/docs/api-reference/emails/send-email
+func sendViaResend(apiKey, from, to, subject, html string) error {
+	if from == "" {
+		from = "noreply@stonesuite.app"
+	}
+	payload, err := json.Marshal(map[string]any{
+		"from":    from,
+		"to":      []string{to},
+		"subject": subject,
+		"html":    html,
+	})
+	if err != nil {
+		return fmt.Errorf("resend: marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("resend: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("resend: send to %s: %w", to, err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("ERROR: Resend API to %s returned HTTP %d: %s", to, resp.StatusCode, respBody)
+		return fmt.Errorf("resend: HTTP %d for %s: %s", resp.StatusCode, to, respBody)
+	}
+
+	log.Printf("Email sent via Resend to %s", to)
+	return nil
+}
+
+// sendViaSMTP delivers the email through the configured SMTP server.
+func sendViaSMTP(cfg config.Config, to, subject, body string) error {
+	auth := smtp.PlainAuth("", cfg.SenderEmail, cfg.SenderPassword, cfg.SMTPHost)
+	toList := strings.Split(to, ",")
+
+	headers := fmt.Sprintf(
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n",
+		cfg.SenderEmail, to, subject,
+	)
 	message := []byte(headers + "\r\n" + body)
 
-	// Send email
-	addr := fmt.Sprintf("%s:%s", es.SMTPHost, es.SMTPPort)
-	if err := smtp.SendMail(addr, auth, es.SenderEmail, to_list, message); err != nil {
+	addr := fmt.Sprintf("%s:%s", cfg.SMTPHost, cfg.SMTPPort)
+	if err := smtp.SendMail(addr, auth, cfg.SenderEmail, toList, message); err != nil {
 		log.Printf("ERROR: smtp.SendMail to %s via %s failed: %v", to, addr, err)
 		return fmt.Errorf("send email to %s: %w", to, err)
 	}
 
-	log.Printf("Email sent successfully to %s", to)
+	log.Printf("Email sent via SMTP to %s", to)
 	return nil
 }

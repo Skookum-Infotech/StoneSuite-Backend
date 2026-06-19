@@ -18,6 +18,7 @@ import (
 	"stonesuite-backend/userstore"
 )
 
+
 // userInviteExpiry is the TTL for workspace user invitations.
 const userInviteExpiry = 48 * time.Hour
 
@@ -317,6 +318,15 @@ func (h *UserOps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to update user.")
 		return
 	}
+
+	// When suspending, revoke all active refresh tokens so the user is forced
+	// to re-authenticate and the status check at login blocks them immediately.
+	if req.Status == "suspended" || req.Status == "disabled" {
+		if rErr := h.CP.RevokeAllRefreshTokens(r.Context(), u.IdentityID); rErr != nil {
+			log.Printf("warn: suspend user %s: revoke refresh tokens: %v", id, rErr)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})
 }
 

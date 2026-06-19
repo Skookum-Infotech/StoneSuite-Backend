@@ -1,14 +1,18 @@
 package controllers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -20,6 +24,7 @@ import (
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/userstore"
 )
 
 // inviteGraceDefault is how long a soft-deleted tenant survives before hard delete.
@@ -72,6 +77,12 @@ func inviteExpiry(hours int) time.Time {
 }
 
 func frontendBase() string { return strings.TrimRight(config.AppConfig.FrontendURL, "/") }
+
+// isUniqueViolation reports whether err is a PostgreSQL unique-constraint violation (code 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // applyLink is the public URL where an invited customer fills the onboarding form.
 func applyLink(token string) string { return frontendBase() + "/onboarding/apply?token=" + token }
@@ -178,7 +189,11 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := h.CP.CreateTenant(r.Context(), slug, companyName, false)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to create tenant (slug may be taken).")
+		if isUniqueViolation(err) {
+			fail(w, http.StatusConflict, fmt.Sprintf("A tenant named %q already exists. Use a different company name.", companyName))
+		} else {
+			fail(w, http.StatusInternalServerError, "Failed to create tenant.")
+		}
 		return
 	}
 	if md, mErr := json.Marshal(req.FormData); mErr == nil {
@@ -234,7 +249,11 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := h.CP.CreateTenant(r.Context(), slug, req.CompanyName, false)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to create tenant (slug may be taken).")
+		if isUniqueViolation(err) {
+			fail(w, http.StatusConflict, fmt.Sprintf("A tenant named %q already exists. Use a different company name.", req.CompanyName))
+		} else {
+			fail(w, http.StatusInternalServerError, "Failed to create tenant.")
+		}
 		return
 	}
 	// Seed minimal metadata so the customer's form is pre-filled.
@@ -585,13 +604,32 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dur := config.AppConfig.JWTExpiresIn
-	if req.RememberMe {
-		dur = config.AppConfig.JWTRememberMeExpiresIn
+	// Check the user's workspace status — suspended/disabled accounts must not
+	// be able to log in even though their control-plane identity still exists.
+	if identity.TenantID != "" {
+		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
+			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
+					if u.Status == "suspended" {
+						fail(w, http.StatusForbidden, "Your account has been suspended. Contact your workspace administrator.")
+						return
+					}
+					if u.Status == "disabled" {
+						fail(w, http.StatusForbidden, "Your account has been deactivated.")
+						return
+					}
+				}
+			}
+		}
 	}
-	d, err := time.ParseDuration(dur)
+
+	accessDur := config.AppConfig.JWTExpiresIn
+	if req.RememberMe {
+		accessDur = config.AppConfig.JWTRememberMeExpiresIn
+	}
+	d, err := time.ParseDuration(accessDur)
 	if err != nil {
-		d = 24 * time.Hour
+		d = time.Hour
 	}
 	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, d)
 	if err != nil {
@@ -606,10 +644,20 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		isPlatformAdmin = false
 	}
 
+	// Issue refresh token (DB-backed, rotated on every use).
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID)
+	if err != nil {
+		// Non-fatal: session still works without a refresh token; user will
+		// just need to re-login when the access token expires.
+		log.Printf("warn: failed to issue refresh token for identity %s: %v", identity.ID, err)
+		refreshRaw = ""
+	}
+
 	// Set the JWT as an httpOnly cookie so it survives page refreshes without
 	// being accessible to JavaScript (XSS protection). The Authorization header
 	// interceptor in the frontend Axios client serves as a fallback for the
 	// in-memory token that exists immediately after login.
+	accessExpiry := time.Now().Add(d)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "auth_token",
 		Value:    token,
@@ -619,10 +667,22 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(d.Seconds()),
 	})
+	if refreshRaw != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    refreshRaw,
+			Path:     "/api/auth",
+			HttpOnly: true,
+			Secure:   config.AppConfig.IsProduction(),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
+		})
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"token":   token,
+		"success":   true,
+		"token":     token,
+		"expiresAt": accessExpiry.UnixMilli(),
 		"user": map[string]any{
 			"id": identity.ID, "email": identity.Email,
 			"fullName": identity.FullName, "tenantId": identity.TenantID,
@@ -631,18 +691,158 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Logout clears the auth_token httpOnly cookie. Path: POST /api/auth/logout
+// Logout clears both auth cookies and revokes the refresh token. Path: POST /api/auth/logout
 func (h *TenantOps) Logout(w http.ResponseWriter, r *http.Request) {
+	// Revoke the refresh token in the DB so it cannot be reused after logout.
+	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
+		hash := tenancy.HashRefreshToken(cookie.Value)
+		if err := h.CP.RevokeRefreshToken(r.Context(), hash); err != nil {
+			// Non-fatal — the cookie will expire on its own.
+			log.Printf("warn: logout: revoke refresh token: %v", err)
+		}
+	}
+	clearAuthCookies(w)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// RefreshSession issues a new access + refresh token pair given a valid refresh
+// token cookie. The old refresh token is revoked (rotation). Path: POST /api/auth/refresh
+func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("refresh_token")
+	if err != nil || cookie.Value == "" {
+		fail(w, http.StatusUnauthorized, "No refresh token.")
+		return
+	}
+
+	hash := tenancy.HashRefreshToken(cookie.Value)
+	rec, err := h.CP.RefreshTokenByHash(r.Context(), hash)
+	if errors.Is(err, tenancy.ErrRefreshTokenReused) {
+		// Possible token theft — revoke all tokens for this identity as a
+		// precaution (if we can identify which identity owns it).
+		log.Printf("warn: refresh token reuse detected (hash prefix %.8s)", hash)
+		clearAuthCookies(w)
+		fail(w, http.StatusUnauthorized, "Session invalid. Please sign in again.")
+		return
+	}
+	if err != nil {
+		clearAuthCookies(w)
+		fail(w, http.StatusUnauthorized, "Refresh token expired. Please sign in again.")
+		return
+	}
+
+	// Revoke the consumed token before issuing the new pair (rotation).
+	if err := h.CP.RevokeRefreshToken(r.Context(), hash); err != nil {
+		log.Printf("warn: refresh rotation: revoke old token: %v", err)
+	}
+
+	// Load the identity to rebuild the JWT claims.
+	identity, err := h.CP.IdentityByID(r.Context(), rec.IdentityID)
+	if err != nil {
+		clearAuthCookies(w)
+		fail(w, http.StatusUnauthorized, "Identity not found. Please sign in again.")
+		return
+	}
+
+	// Reject suspended/disabled users — their refresh tokens must not extend sessions.
+	if identity.TenantID != "" {
+		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
+			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
+					if u.Status == "suspended" || u.Status == "disabled" {
+						clearAuthCookies(w)
+						fail(w, http.StatusForbidden, "Account suspended. Please contact your administrator.")
+						return
+					}
+				}
+			}
+		}
+	}
+
+	// Mint a new access token.
+	d, err := time.ParseDuration(config.AppConfig.JWTExpiresIn)
+	if err != nil {
+		d = time.Hour
+	}
+	newToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, d)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to sign token.")
+		return
+	}
+
+	// Issue a brand-new refresh token (rotation).
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID)
+	if err != nil {
+		log.Printf("warn: refresh rotation: issue new refresh token: %v", err)
+		refreshRaw = ""
+	}
+
+	accessExpiry := time.Now().Add(d)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "auth_token",
-		Value:    "",
+		Value:    newToken,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   config.AppConfig.IsProduction(),
 		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(d.Seconds()),
+	})
+	if refreshRaw != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    refreshRaw,
+			Path:     "/api/auth",
+			HttpOnly: true,
+			Secure:   config.AppConfig.IsProduction(),
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":   true,
+		"token":     newToken,
+		"expiresAt": accessExpiry.UnixMilli(),
+	})
+}
+
+// issueRefreshToken generates a random raw token, hashes it, persists it, and
+// returns the raw value (for the cookie) plus the expiry time.
+func issueRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, identityID string) (string, time.Time, error) {
+	raw, err := randomToken()
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("generate refresh token: %w", err)
+	}
+	rd, err := time.ParseDuration(config.AppConfig.RefreshTokenExpiresIn)
+	if err != nil {
+		rd = 24 * time.Hour
+	}
+	expiry := time.Now().Add(rd)
+	hash := tenancy.HashRefreshToken(raw)
+	if err := cp.CreateRefreshToken(ctx, identityID, hash, expiry); err != nil {
+		return "", time.Time{}, err
+	}
+	return raw, expiry, nil
+}
+
+// clearAuthCookies sets MaxAge=-1 on both auth cookies to force browser deletion.
+func clearAuthCookies(w http.ResponseWriter) {
+	for _, name := range []string{"auth_token", "refresh_token"} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   -1,
+		})
+	}
+	// refresh_token uses path=/api/auth — clear that too.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/api/auth",
+		HttpOnly: true,
 		MaxAge:   -1,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 // ---- forgot / reset password ------------------------------------------------

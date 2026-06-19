@@ -194,6 +194,12 @@ func (c *ControlPlane) IdentityByEmail(ctx context.Context, email string) (*Iden
 	return scanIdentity(c.pool.QueryRow(ctx, q, email))
 }
 
+// IdentityByID loads an identity by its UUID.
+func (c *ControlPlane) IdentityByID(ctx context.Context, id string) (*Identity, error) {
+	q := "SELECT " + identityColumns + " FROM identities WHERE id = $1"
+	return scanIdentity(c.pool.QueryRow(ctx, q, id))
+}
+
 // AnyIdentityForTenant returns the earliest-created identity for a tenant. Used
 // to pick the first user to seed when provisioning the platform-owner workspace.
 func (c *ControlPlane) AnyIdentityForTenant(ctx context.Context, tenantID string) (*Identity, error) {

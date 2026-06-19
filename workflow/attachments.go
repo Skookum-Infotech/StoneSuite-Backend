@@ -96,15 +96,75 @@ func RecordExistsInTenant(ctx context.Context, q Querier, recordID string) (bool
 	return exists, nil
 }
 
+// crmTypeToWorkflowKey maps lkp_record_type.record_type_code values (used by the
+// v2 relational CRM design) to canonical workflow key strings for storage paths.
+var crmTypeToWorkflowKey = map[string]string{
+	"LEAD": "lead",
+	"PROS": "prospect",
+	"CUST": "customer",
+}
+
+// RecordKeyForAttachment resolves the workflow key (e.g. "lead") and confirms
+// that the given UUID identifies a real record in this tenant's database.
+// It checks workflow_records first (v1 design) then the customer table (v2).
+// Returns ErrRecordNotFound when neither table has a matching row.
+func RecordKeyForAttachment(ctx context.Context, q Querier, recordID string) (workflowKey string, err error) {
+	// v1: workflow_records JOIN workflows
+	err = q.QueryRow(ctx, `
+		SELECT w.key FROM workflow_records wr
+		JOIN workflows w ON w.id = wr.workflow_id
+		WHERE wr.id = $1::uuid`, recordID).Scan(&workflowKey)
+	if err == nil {
+		return workflowKey, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("lookup record workflow key: %w", err)
+	}
+
+	// v2: customer table with record_type lookup
+	var typeCode string
+	err = q.QueryRow(ctx, `
+		SELECT rt.record_type_code
+		FROM customer c
+		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
+		WHERE c.customer_uuid = $1::uuid AND c.customer_deleted_at IS NULL`,
+		recordID).Scan(&typeCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrRecordNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup crm record type: %w", err)
+	}
+
+	if key, ok := crmTypeToWorkflowKey[typeCode]; ok {
+		return key, nil
+	}
+	// Non-CRM record type (sales order, invoice, etc.) — use generic bucket.
+	return strings.ToLower(typeCode), nil
+}
+
+// RecordExistsAnywhere checks both workflow_records (v1) and the customer table
+// (v2 relational design) to confirm a record UUID belongs to this tenant.
+func RecordExistsAnywhere(ctx context.Context, q Querier, recordID string) (bool, error) {
+	_, err := RecordKeyForAttachment(ctx, q, recordID)
+	if errors.Is(err, ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CurrentAttachmentBytes returns the sum of size_bytes for all non-infected
 // attachments on a record — used to enforce the per-record cumulative cap.
 func CurrentAttachmentBytes(ctx context.Context, q Querier, recordID string) (int64, error) {
 	var total int64
 	err := q.QueryRow(ctx,
 		`SELECT COALESCE(SUM(size_bytes),0) FROM workflow_record_attachments
-		 WHERE record_id = $1 AND status != 'infected'`, recordID).Scan(&total)
+		 WHERE record_id = $1::uuid AND status != 'infected'`, recordID).Scan(&total)
 	if err != nil {
-		return 0, fmt.Errorf("sum attachment bytes: %w", err)
+		return 0, fmt.Errorf("sum attachment bytes (record=%s): %w", recordID, err)
 	}
 	return total, nil
 }

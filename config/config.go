@@ -86,7 +86,7 @@ func Load() {
 		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "1h"),
 		JWTRememberMeExpiresIn: getEnv("JWT_REMEMBER_ME_EXPIRES_IN", "720h"),
 		RefreshTokenExpiresIn:  getEnv("REFRESH_TOKEN_EXPIRES_IN", "24h"),
-		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173"),
+		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176"),
 		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
 		InviteExpiryHours:      getEnvInt("INVITE_EXPIRY_HOURS", 24),
 		// Multi-tenant control plane + provisioning

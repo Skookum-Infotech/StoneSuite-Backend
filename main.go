@@ -317,13 +317,24 @@ func main() {
 		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
 	}
 
+	// Build the CORS allowlist once from the comma-separated CORS_ORIGIN value.
+	allowedOrigins := make(map[string]bool)
+	for _, o := range strings.Split(config.AppConfig.CorsOrigin, ",") {
+		if trimmed := strings.TrimSpace(o); trimmed != "" {
+			allowedOrigins[trimmed] = true
+		}
+	}
+
 	// 4. Global Middleware: CORS Policy Wrapper + Request Logger
 	globalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Log Request
 		log.Printf("[%s] %s %s", time.Now().Format(time.RFC3339), r.Method, r.URL.Path)
 
-		// Inject CORS Headers
-		w.Header().Set("Access-Control-Allow-Origin", config.AppConfig.CorsOrigin)
+		// Inject CORS Headers — echo the request origin only if it is in the allowlist.
+		if origin := r.Header.Get("Origin"); allowedOrigins[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")

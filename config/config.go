@@ -54,13 +54,28 @@ type Config struct {
 	SMTPPort       string
 	SenderEmail    string
 	SenderPassword string
+	// Platform owner seeding: when set and no owner exists on startup, the backend
+	// auto-creates the owner tenant and prints a one-time setup token to stdout.
+	// Read the token from `fly logs`, then POST to /api/platform/activate.
+	// These vars are only consumed once — remove from secrets after first boot.
+	PlatformAdminEmail   string
+	PlatformAdminSlug    string
+	PlatformAdminCompany string
+
 	// Cloudflare R2 object storage (for record attachments).
-	// R2AccountID and R2Bucket are non-secret; R2AccessKeyID and
-	// R2SecretAccessKey are secrets — set via fly secrets set.
-	R2AccountID       string
-	R2Bucket          string
-	R2AccessKeyID     string
-	R2SecretAccessKey string
+	// Every tenant has its own isolated R2 bucket (ss-{slug}) provisioned at
+	// onboarding. There is no shared/fallback bucket.
+	//
+	// CloudflareAccountID is the single account-ID used for both the S3-compatible
+	// R2 endpoint ({id}.r2.cloudflarestorage.com) and the Cloudflare management
+	// API (bucket creation, CORS). Set once via CLOUDFLARE_ACCOUNT_ID.
+	//
+	// CloudflareAPIToken requires "Account:R2:Edit" permission and is needed only
+	// for bucket provisioning — omit to disable automatic bucket creation.
+	CloudflareAccountID string
+	CloudflareAPIToken  string
+	R2AccessKeyID       string
+	R2SecretAccessKey   string
 }
 
 var AppConfig Config
@@ -110,11 +125,15 @@ func Load() {
 		SMTPPort:       getEnv("SMTP_PORT", "587"),
 		SenderEmail:    getEnv("SENDER_EMAIL", ""),
 		SenderPassword: getEnv("SENDER_PASSWORD", ""),
-		// Cloudflare R2
-		R2AccountID:       getEnv("R2_ACCOUNT_ID", ""),
-		R2Bucket:          getEnv("R2_BUCKET", ""),
-		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
-		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
+		// Platform owner seeding
+		PlatformAdminEmail:   getEnv("PLATFORM_ADMIN_EMAIL", ""),
+		PlatformAdminSlug:    getEnv("PLATFORM_ADMIN_SLUG", ""),
+		PlatformAdminCompany: getEnv("PLATFORM_ADMIN_COMPANY", ""),
+		// Cloudflare R2 — single account ID for both S3 API and management API
+		CloudflareAccountID: getEnv("CLOUDFLARE_ACCOUNT_ID", ""),
+		CloudflareAPIToken:  getEnv("CLOUDFLARE_API_TOKEN", ""),
+		R2AccessKeyID:       getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey:   getEnv("R2_SECRET_ACCESS_KEY", ""),
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"stonesuite-backend/database"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/secret"
+	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
 )
@@ -49,11 +50,16 @@ type Provisioner struct {
 	cipher   *secret.Cipher // optional; when nil, DSNs are stored in plaintext (dev)
 	queue    *jobqueue.Queue
 
+	// cf handles per-tenant R2 bucket creation. nil = no Cloudflare API token
+	// configured; bucket step is skipped and tenant falls back to shared bucket.
+	cf             *storage.CFClient
+	corsOrigins    []string // CORS origins to allow on new tenant buckets
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-// New builds a Provisioner. cipher may be nil for local/dev.
+// New builds a Provisioner. cipher and cf may be nil for local/dev.
 func New(cp *tenancy.ControlPlane, provider DBProvider, cipher *secret.Cipher, queue *jobqueue.Queue) *Provisioner {
 	return &Provisioner{
 		cp:       cp,
@@ -61,6 +67,14 @@ func New(cp *tenancy.ControlPlane, provider DBProvider, cipher *secret.Cipher, q
 		cipher:   cipher,
 		queue:    queue,
 	}
+}
+
+// WithCFClient attaches a Cloudflare management API client and the allowed
+// CORS origins to use when creating per-tenant R2 buckets. Call before Start.
+func (p *Provisioner) WithCFClient(cf *storage.CFClient, corsOrigins []string) *Provisioner {
+	p.cf = cf
+	p.corsOrigins = corsOrigins
+	return p
 }
 
 // Start launches the given number of worker goroutines plus a stale-job
@@ -225,6 +239,29 @@ func (p *Provisioner) provision(ctx context.Context, jobID string, j Job) error 
 	_ = p.queue.UpdateProgress(ctx, jobID, map[string]string{"step": "seed_workflows"})
 	if err := workflow.SeedDefaultWorkflows(ctx, pool); err != nil {
 		return err
+	}
+
+	// Provision a dedicated Cloudflare R2 bucket for this tenant (idempotent).
+	// Skip when the Cloudflare client is not configured; the tenant will fall
+	// back to the shared global R2_BUCKET at upload time.
+	_ = p.queue.UpdateProgress(ctx, jobID, map[string]string{"step": "r2_bucket"})
+	if p.cf.IsConfigured() {
+		bucket := storage.BucketName(j.Slug)
+		if err := p.cf.CreateBucket(ctx, bucket); err != nil {
+			log.Printf("provisioning: create r2 bucket for %s: %v (non-fatal, using shared bucket)", j.Slug, err)
+		} else {
+			origins := p.corsOrigins
+			if len(origins) == 0 {
+				origins = []string{"http://localhost:5173"}
+			}
+			if err := p.cf.SetBucketCORS(ctx, bucket, origins); err != nil {
+				log.Printf("provisioning: set cors on r2 bucket %s: %v (non-fatal)", bucket, err)
+			}
+			if err := p.cp.SetTenantR2Bucket(ctx, j.TenantID, bucket); err != nil {
+				return fmt.Errorf("store r2 bucket name: %w", err)
+			}
+			log.Printf("provisioning: r2 bucket %s created for tenant %s", bucket, j.Slug)
+		}
 	}
 
 	// Store the connection reference (encrypted when a cipher is configured).

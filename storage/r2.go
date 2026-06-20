@@ -36,7 +36,7 @@ const (
 // ErrStorageNotConfigured is returned when R2 credentials are absent.
 // Attachment presign/download endpoints return HTTP 503 in this case;
 // the binary still starts cleanly for development environments.
-var ErrStorageNotConfigured = errors.New("R2 storage not configured (set R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY)")
+var ErrStorageNotConfigured = errors.New("R2 storage not configured (set CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY)")
 
 // Client holds the R2 credentials and bucket name. A nil Client is valid
 // and returns ErrStorageNotConfigured on every call — callers should treat
@@ -49,31 +49,45 @@ type Client struct {
 }
 
 // New builds a Client from the application config. Returns (nil, nil) when
-// any required R2 field is blank — the binary should start normally and
-// return 503 on attachment endpoints that require R2.
+// any required credential is blank — the binary starts normally and returns
+// 503 on attachment endpoints. No default bucket is set; callers must use
+// WithBucket to address the per-tenant bucket on every request.
 func New(cfg config.Config) (*Client, error) {
-	if cfg.R2AccountID == "" || cfg.R2Bucket == "" ||
-		cfg.R2AccessKeyID == "" || cfg.R2SecretAccessKey == "" {
+	if cfg.CloudflareAccountID == "" || cfg.R2AccessKeyID == "" || cfg.R2SecretAccessKey == "" {
 		return nil, nil
 	}
 	return &Client{
-		bucket:    cfg.R2Bucket,
 		accessKey: cfg.R2AccessKeyID,
 		secretKey: cfg.R2SecretAccessKey,
-		host:      cfg.R2AccountID + ".r2.cloudflarestorage.com",
+		host:      cfg.CloudflareAccountID + ".r2.cloudflarestorage.com",
 	}, nil
 }
 
 // IsConfigured reports whether the client has valid credentials.
 func (c *Client) IsConfigured() bool { return c != nil }
 
+// WithBucket returns a shallow copy of the client pointed at the given tenant
+// bucket. Returns nil when either the client or bucket is nil/empty — a nil
+// return is treated by callers as "not configured" and surfaces as HTTP 503,
+// preventing silent fallback to a wrong bucket.
+func (c *Client) WithBucket(bucket string) *Client {
+	if c == nil || bucket == "" {
+		return nil
+	}
+	cp := *c
+	cp.bucket = bucket
+	return &cp
+}
+
 // PresignPut returns a presigned PUT URL that the browser can use to upload
-// directly to R2. TTL is typically 5 minutes.
-func (c *Client) PresignPut(_ context.Context, key, _ string, ttl time.Duration) (string, error) {
+// directly to R2. The contentType is included in the signed headers so R2
+// validates that the browser uploads exactly the declared MIME type.
+// TTL is typically 5 minutes.
+func (c *Client) PresignPut(_ context.Context, key, contentType string, ttl time.Duration) (string, error) {
 	if c == nil {
 		return "", ErrStorageNotConfigured
 	}
-	return c.presignURL("PUT", key, nil, ttl)
+	return c.presignURL("PUT", key, contentType, nil, ttl)
 }
 
 // PresignGet returns a presigned GET URL with response-content-disposition=attachment
@@ -86,7 +100,7 @@ func (c *Client) PresignGet(_ context.Context, key string, ttl time.Duration) (s
 	}
 	extra := url.Values{}
 	extra.Set("response-content-disposition", "attachment")
-	return c.presignURL("GET", key, extra, ttl)
+	return c.presignURL("GET", key, "", extra, ttl)
 }
 
 // Delete removes an object from R2. Returns nil when the object does not
@@ -103,7 +117,9 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 
 // presignURL constructs a presigned AWS SigV4 URL using path-style R2 access.
 // Path style: https://{accountID}.r2.cloudflarestorage.com/{bucket}/{key}
-func (c *Client) presignURL(method, key string, extraQuery url.Values, ttl time.Duration) (string, error) {
+// contentType, when non-empty, is added to the signed headers so R2 validates
+// that the browser uploads the declared MIME type (PUT only). For GET pass "".
+func (c *Client) presignURL(method, key, contentType string, extraQuery url.Values, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	dateStamp := now.Format("20060102")
 	amzDate := now.Format("20060102T150405Z")
@@ -119,15 +135,27 @@ func (c *Client) presignURL(method, key string, extraQuery url.Values, ttl time.
 	q.Set("X-Amz-Credential", c.accessKey+"/"+credScope)
 	q.Set("X-Amz-Date", amzDate)
 	q.Set("X-Amz-Expires", fmt.Sprintf("%d", int(ttl.Seconds())))
-	q.Set("X-Amz-SignedHeaders", "host")
+
+	// Include Content-Type in signed headers when provided (PUT uploads).
+	// This binds the presigned URL to the exact MIME type declared during presigning,
+	// preventing a browser from uploading a different file type with the same URL.
+	var signedHdrNames string
+	var canonHeaders string
+	if contentType != "" {
+		signedHdrNames = "content-type;host"
+		canonHeaders = "content-type:" + contentType + "\n" + "host:" + c.host + "\n"
+	} else {
+		signedHdrNames = "host"
+		canonHeaders = "host:" + c.host + "\n"
+	}
+	q.Set("X-Amz-SignedHeaders", signedHdrNames)
 
 	// Canonical request.
 	canonURI := "/" + awsEncodeSegment(c.bucket) + "/" + encodeKeyPath(key)
 	canonQS := canonicalQueryString(q)
-	canonHeaders := "host:" + c.host + "\n"
 
 	canonReq := strings.Join([]string{
-		method, canonURI, canonQS, canonHeaders, "host", "UNSIGNED-PAYLOAD",
+		method, canonURI, canonQS, canonHeaders, signedHdrNames, "UNSIGNED-PAYLOAD",
 	}, "\n")
 
 	// String to sign.

@@ -18,15 +18,14 @@ primary_region = "iad"
   # Secrets (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) must be set via:
   #   fly secrets set R2_ACCESS_KEY_ID=<key> R2_SECRET_ACCESS_KEY=<secret>
   #
-  # R2_ACCOUNT_ID  = "your-cf-account-id"   # found in Cloudflare dashboard → R2
-  # R2_BUCKET      = "stonesuite-attachments"
-  #
-  # R2 Bucket CORS (configure in Cloudflare Dashboard → R2 → <bucket> → Settings → CORS):
-  # Allow origins: https://dev.stonesuite.app (CORS_ORIGIN / FRONTEND_URL above).
-  # Allow methods: PUT, GET
-  # Allow headers: Content-Type
-  # Max-Age: 300
-  # This is a dashboard-only setting; it is documented here for operator reference.
+  # R2 (per-tenant isolated buckets — no shared bucket):
+  # Secrets (set via fly secrets set):
+  #   R2_ACCOUNT_ID          — Cloudflare account ID (found in R2 dashboard)
+  #   R2_ACCESS_KEY_ID       — R2 API token key ID (S3-compat credentials)
+  #   R2_SECRET_ACCESS_KEY   — R2 API token secret
+  #   CLOUDFLARE_API_TOKEN   — Cloudflare API token with Account:R2:Edit permission
+  #   CLOUDFLARE_ACCOUNT_ID  — same as R2_ACCOUNT_ID
+  # Each tenant gets an isolated bucket named ss-{slug} with CORS set from CORS_ORIGIN.
 
 [http_service]
   internal_port        = 8080

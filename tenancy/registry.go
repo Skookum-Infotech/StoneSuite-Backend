@@ -77,6 +77,17 @@ func (c *ControlPlane) SetTenantProvisioned(ctx context.Context, id, dbName, dbC
 	return nil
 }
 
+// SetTenantR2Bucket stores the name of the Cloudflare R2 bucket provisioned for
+// this tenant's file attachments. Called once at provisioning time.
+func (c *ControlPlane) SetTenantR2Bucket(ctx context.Context, id, bucket string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE tenants SET r2_bucket = $2, updated_at = NOW() WHERE id = $1`,
+		id, bucket); err != nil {
+		return fmt.Errorf("set tenant r2 bucket: %w", err)
+	}
+	return nil
+}
+
 // SetTenantSchemaVersion updates the tracked schema version after a migration fan-out.
 func (c *ControlPlane) SetTenantSchemaVersion(ctx context.Context, id string, version int) error {
 	_, err := c.pool.Exec(ctx,
@@ -218,10 +229,39 @@ func (c *ControlPlane) SetIdentityPasswordSetupToken(ctx context.Context, identi
 	return nil
 }
 
+// SetIdentitySetupTokenHash stores SHA-256(raw_token) as the activation token.
+// The raw token is printed to server stdout and never persisted in the database.
+func (c *ControlPlane) SetIdentitySetupTokenHash(ctx context.Context, identityID, tokenHash string, expiry time.Time) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE identities SET password_reset_token = $2, password_reset_expiry = $3, updated_at = NOW() WHERE id = $1`,
+		identityID, tokenHash, expiry); err != nil {
+		return fmt.Errorf("set setup token hash: %w", err)
+	}
+	return nil
+}
+
 // IdentityByPasswordToken loads an identity by its (unexpired) setup/reset token.
 func (c *ControlPlane) IdentityByPasswordToken(ctx context.Context, token string) (*Identity, error) {
 	q := "SELECT " + identityColumns + " FROM identities WHERE password_reset_token = $1 AND password_reset_expiry > NOW()"
 	return scanIdentity(c.pool.QueryRow(ctx, q, token))
+}
+
+// IdentityBySetupTokenHash loads an identity by SHA-256(raw_token) for the
+// platform activation flow. Token must not be expired.
+func (c *ControlPlane) IdentityBySetupTokenHash(ctx context.Context, tokenHash string) (*Identity, error) {
+	q := "SELECT " + identityColumns + " FROM identities WHERE password_reset_token = $1 AND password_reset_expiry > NOW()"
+	return scanIdentity(c.pool.QueryRow(ctx, q, tokenHash))
+}
+
+// ActivatePlatformOwner marks the platform-owner tenant active. Called once
+// the admin successfully activates their account via the setup token.
+func (c *ControlPlane) ActivatePlatformOwner(ctx context.Context, tenantID string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE tenants SET status = 'active', updated_at = NOW() WHERE id = $1`,
+		tenantID); err != nil {
+		return fmt.Errorf("activate platform owner: %w", err)
+	}
+	return nil
 }
 
 // SetIdentityPassword sets the password hash and clears the setup/reset token.

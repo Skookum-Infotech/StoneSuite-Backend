@@ -2,120 +2,53 @@ package database
 
 import (
 	"context"
-	"embed"
+	_ "embed"
 	"fmt"
-	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// tenantMigrationsFS embeds the per-tenant "up" migration files. They are
-// applied to each tenant's isolated database at provisioning time and by the
-// migration runner when the schema changes. We embed only .up.sql; rollbacks
-// for tenant DBs are handled by restoring/branching, not down-migrations.
+// tenantSchemaSQL is the single canonical per-tenant schema.
+// Editing the SQL file IS the migration — no numbered files, no version table.
 //
-//go:embed migrations/tenant/*.up.sql
-var tenantMigrationsFS embed.FS
+//go:embed migrations/tenant/schema.sql
+var tenantSchemaSQL string
 
-type tenantMigration struct {
-	version int
-	name    string
-	sql     string
-}
-
-// loadTenantMigrations reads embedded tenant migrations ordered by version
-// (the numeric prefix, e.g. 000001_...).
-func loadTenantMigrations() ([]tenantMigration, error) {
-	entries, err := tenantMigrationsFS.ReadDir("migrations/tenant")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded tenant migrations: %w", err)
-	}
-	var migs []tenantMigration
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".up.sql") {
-			continue
-		}
-		prefix := strings.SplitN(name, "_", 2)[0]
-		version, err := strconv.Atoi(prefix)
-		if err != nil {
-			return nil, fmt.Errorf("bad migration filename %q: %w", name, err)
-		}
-		b, err := tenantMigrationsFS.ReadFile("migrations/tenant/" + name)
-		if err != nil {
-			return nil, fmt.Errorf("read migration %q: %w", name, err)
-		}
-		migs = append(migs, tenantMigration{version: version, name: name, sql: string(b)})
-	}
-	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
-	return migs, nil
-}
-
-// LatestTenantSchemaVersion returns the highest embedded tenant migration version.
-func LatestTenantSchemaVersion() (int, error) {
-	migs, err := loadTenantMigrations()
-	if err != nil {
-		return 0, err
-	}
-	if len(migs) == 0 {
-		return 0, nil
-	}
-	return migs[len(migs)-1].version, nil
-}
-
-// ApplyTenantMigrations brings a tenant database up to the latest embedded
-// schema version. It tracks applied versions in a tenant-local schema_version
-// table and applies each pending migration inside its own transaction
-// (all-or-nothing). Returns the resulting schema version. Idempotent: running
-// it again on a current DB is a no-op.
-func ApplyTenantMigrations(ctx context.Context, pool *pgxpool.Pool) (int, error) {
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_version (
-			version    INT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`); err != nil {
-		return 0, fmt.Errorf("ensure schema_version table: %w", err)
-	}
-
-	// Acquire advisory lock to prevent concurrent migration runs.
-	// Lock key 7369746573756974 is "stonesuite" in ASCII decimal (arbitrary stable constant).
+// ApplyTenantSchema applies the full tenant schema to the given pool.
+// All statements use CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS /
+// INSERT ON CONFLICT DO NOTHING, so the call is idempotent on any DB state.
+//
+// Returns 1 (the constant "current schema version") for backward-compat with
+// callers that store a schema version on the tenant row.
+func ApplyTenantSchema(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	// Stable advisory lock constant for tenant databases.
 	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(7369746573756974)`); err != nil {
-		return 0, fmt.Errorf("acquire migration advisory lock: %w", err)
+		return 0, fmt.Errorf("acquire tenant schema lock: %w", err)
 	}
 	defer pool.Exec(ctx, `SELECT pg_advisory_unlock(7369746573756974)`) //nolint:errcheck
 
-	var current int
-	if err := pool.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&current); err != nil {
-		return 0, fmt.Errorf("read current schema version: %w", err)
-	}
-
-	migs, err := loadTenantMigrations()
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("begin tenant schema tx: %w", err)
 	}
+	if _, err := tx.Exec(ctx, tenantSchemaSQL); err != nil {
+		_ = tx.Rollback(ctx)
+		return 0, fmt.Errorf("apply tenant schema: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit tenant schema: %w", err)
+	}
+	return 1, nil
+}
 
-	for _, m := range migs {
-		if m.version <= current {
-			continue
-		}
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return current, fmt.Errorf("begin tx for migration %s: %w", m.name, err)
-		}
-		if _, err := tx.Exec(ctx, m.sql); err != nil {
-			_ = tx.Rollback(ctx)
-			return current, fmt.Errorf("apply migration %s: %w", m.name, err)
-		}
-		if _, err := tx.Exec(ctx, "INSERT INTO schema_version (version) VALUES ($1)", m.version); err != nil {
-			_ = tx.Rollback(ctx)
-			return current, fmt.Errorf("record migration %s: %w", m.name, err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return current, fmt.Errorf("commit migration %s: %w", m.name, err)
-		}
-		current = m.version
-	}
-	return current, nil
+// ApplyTenantMigrations is an alias kept for call-site compatibility.
+func ApplyTenantMigrations(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	return ApplyTenantSchema(ctx, pool)
+}
+
+// LatestTenantSchemaVersion returns 1 — the schema is now a single canonical
+// file, so there is no numeric version. Callers that compare against this
+// constant to decide whether a tenant needs updating will always get a match.
+func LatestTenantSchemaVersion() (int, error) {
+	return 1, nil
 }

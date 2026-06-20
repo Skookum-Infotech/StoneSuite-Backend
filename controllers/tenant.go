@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,6 +25,7 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/services"
+	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/userstore"
 )
@@ -33,15 +36,25 @@ const tenantDeleteGraceDays = 30
 // TenantOps groups the multi-tenant platform/onboarding/auth handlers. Deps are
 // injected (no global state) so this is testable and wired once in main.
 type TenantOps struct {
-	CP     *tenancy.ControlPlane
-	Prov   *provisioning.Provisioner
-	Router *tenancy.Router // resolves tenant DB pools (used to reach the owner workspace)
-	Jobs   *jobqueue.Queue // durable async job queue (provisioning, etc.)
+	CP          *tenancy.ControlPlane
+	Prov        *provisioning.Provisioner
+	Router      *tenancy.Router  // resolves tenant DB pools (used to reach the owner workspace)
+	Jobs        *jobqueue.Queue  // durable async job queue (provisioning, etc.)
+	CF          storage.CFClientIface
+	CORSOrigins []string
 }
 
 // NewTenantOps constructs the handler group.
 func NewTenantOps(cp *tenancy.ControlPlane, prov *provisioning.Provisioner, router *tenancy.Router, jobs *jobqueue.Queue) *TenantOps {
 	return &TenantOps{CP: cp, Prov: prov, Router: router, Jobs: jobs}
+}
+
+// WithCFClient wires the Cloudflare management client so admin endpoints can
+// perform bucket operations (e.g. re-apply CORS after a failed provisioning).
+func (h *TenantOps) WithCFClient(cf storage.CFClientIface, origins []string) *TenantOps {
+	h.CF = cf
+	h.CORSOrigins = origins
+	return h
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -975,76 +988,178 @@ func (h *TenantOps) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---- one-shot platform bootstrap -------------------------------------------
+// RepairBucketCORS POST /api/platform/tenants/{id}/repair-cors
+// Re-applies the CORS policy to the tenant's R2 bucket. Use when a bucket was
+// created before CLOUDFLARE_API_TOKEN was configured (CORS was skipped).
+// Platform-admin only.
+func (h *TenantOps) RepairBucketCORS(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requirePlatformAdmin(r); !ok {
+		fail(w, http.StatusForbidden, "Platform admin required.")
+		return
+	}
+	if h.CF == nil || !h.CF.IsConfigured() {
+		fail(w, http.StatusServiceUnavailable, "Cloudflare API not configured (set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN).")
+		return
+	}
 
-type bootstrapRequest struct {
-	CompanyName string `json:"companyName"`
-	Slug        string `json:"slug"`
-	Email       string `json:"email"`
-	Password    string `json:"password"`
-	FullName    string `json:"fullName"`
+	id := r.PathValue("id")
+	tenant, err := h.CP.TenantByID(r.Context(), id)
+	if err != nil {
+		fail(w, http.StatusNotFound, "Tenant not found.")
+		return
+	}
+	if tenant.R2Bucket == "" {
+		fail(w, http.StatusBadRequest, "Tenant has no R2 bucket assigned.")
+		return
+	}
+
+	if err := h.CF.SetBucketCORS(r.Context(), tenant.R2Bucket, h.CORSOrigins); err != nil {
+		log.Printf("repair-cors: tenant %s bucket %s: %v", tenant.Slug, tenant.R2Bucket, err)
+		fail(w, http.StatusInternalServerError, "Failed to set CORS: "+err.Error())
+		return
+	}
+
+	log.Printf("repair-cors: applied CORS to bucket %s for tenant %s", tenant.R2Bucket, tenant.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "CORS applied to bucket " + tenant.R2Bucket,
+		"bucket":  tenant.R2Bucket,
+		"origins": h.CORSOrigins,
+	})
 }
 
-// Bootstrap seeds the platform-owner tenant and its first admin identity.
-// Only works when NO platform owner exists — returns 409 on any subsequent
-// call, making it a safe one-shot operation. No auth required (there is no
-// admin yet when this is first called).
-// Path: POST /api/platform/bootstrap
-func (h *TenantOps) Bootstrap(w http.ResponseWriter, r *http.Request) {
+// ---- platform setup (log-only token, no public claiming) --------------------
+
+// activateLimiter is a sliding-window counter keyed by IP address.
+// Max 5 attempts per 15 minutes — brute-force guard for the activate endpoint.
+var (
+	activateMu       sync.Mutex
+	activateAttempts = map[string][]time.Time{}
+)
+
+const (
+	activateMaxAttempts = 5
+	activateWindow      = 15 * time.Minute
+)
+
+func activateAllowed(ip string) bool {
+	activateMu.Lock()
+	defer activateMu.Unlock()
+	cutoff := time.Now().Add(-activateWindow)
+	prev := activateAttempts[ip]
+	var kept []time.Time
+	for _, t := range prev {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= activateMaxAttempts {
+		activateAttempts[ip] = kept
+		return false
+	}
+	activateAttempts[ip] = append(kept, time.Now())
+	return true
+}
+
+// SetupStatus GET /api/platform/setup/status
+// Returns whether the platform owner has been bootstrapped and is active.
+func (h *TenantOps) SetupStatus(w http.ResponseWriter, r *http.Request) {
+	owner, err := h.CP.PlatformOwnerTenant(r.Context())
+	bootstrapped := err == nil && owner != nil && owner.Status == "active"
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"bootstrapped": bootstrapped,
+	})
+}
+
+// Activate POST /api/platform/activate
+// Consumes the one-time setup token printed to server stdout on first boot.
+// Sets the platform admin password, grants admin role, activates the owner
+// tenant, and enqueues workspace provisioning. Returns a JWT on success.
+// Rate-limited to 5 attempts per 15 minutes per IP.
+func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed.")
 		return
 	}
 
-	// Idempotency guard: refuse if an owner already exists.
-	existing, err := h.CP.PlatformOwnerTenant(r.Context())
-	if err == nil && existing != nil {
-		fail(w, http.StatusConflict, "Platform owner already bootstrapped.")
+	// 409 if already active — endpoint has no use after first activation.
+	owner, err := h.CP.PlatformOwnerTenant(r.Context())
+	if err == nil && owner != nil && owner.Status == "active" {
+		fail(w, http.StatusConflict, "Platform already activated.")
 		return
 	}
 
-	var req bootstrapRequest
+	// IP-based rate limit.
+	ip := r.RemoteAddr
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		ip = strings.SplitN(xff, ",", 2)[0]
+	}
+	ip = strings.TrimSpace(ip)
+	if !activateAllowed(ip) {
+		fail(w, http.StatusTooManyRequests, "Too many activation attempts. Try again in 15 minutes.")
+		return
+	}
+
+	var req struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+		FullName string `json:"fullName"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	if req.Email == "" || req.Password == "" || req.CompanyName == "" {
-		fail(w, http.StatusBadRequest, "companyName, email, and password are required.")
+	if req.Token == "" || req.Password == "" {
+		fail(w, http.StatusBadRequest, "token and password are required.")
 		return
 	}
-	if req.Slug == "" {
-		req.Slug = strings.ToLower(strings.ReplaceAll(req.CompanyName, " ", "-"))
-	}
-	if req.FullName == "" {
-		req.FullName = req.Email
+	if len(req.Password) < 12 {
+		fail(w, http.StatusBadRequest, "Password must be at least 12 characters.")
+		return
 	}
 
-	// 1. Create platform-owner tenant (isPlatformOwner=true).
-	tenant, err := h.CP.CreateTenant(r.Context(), req.Slug, req.CompanyName, true)
+	// Hash the incoming raw token and look up by hash — raw value never stored.
+	sum := sha256.Sum256([]byte(req.Token))
+	tokenHash := hex.EncodeToString(sum[:])
+
+	identity, err := h.CP.IdentityBySetupTokenHash(r.Context(), tokenHash)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to create owner tenant: "+err.Error())
+		fail(w, http.StatusUnauthorized, "Invalid or expired setup token.")
 		return
 	}
 
-	// 2. Hash password and create admin identity.
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	// Look up the owner tenant via the identity's tenant_id.
+	tenant, err := h.CP.TenantByID(r.Context(), identity.TenantID)
+	if err != nil || !tenant.IsPlatformOwner {
+		fail(w, http.StatusUnauthorized, "Invalid or expired setup token.")
+		return
+	}
+
+	// Set password (also clears the token column — one-shot consumed).
+	pwHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	identity, err := h.CP.CreateIdentity(r.Context(), tenant.ID, req.Email, string(hash), req.FullName, true)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to create admin identity: "+err.Error())
+	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(pwHash)); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
 	}
 
-	// 3. Mark as platform admin.
+	// Grant platform-admin role.
 	if err := h.CP.AddPlatformAdmin(r.Context(), identity.ID); err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to grant platform-admin role: "+err.Error())
+		fail(w, http.StatusInternalServerError, "Failed to grant admin role.")
 		return
 	}
 
-	// 4. Enqueue workspace provisioning (creates the tenant DB with seeded workflows/roles).
+	// Mark tenant active.
+	if err := h.CP.ActivatePlatformOwner(r.Context(), tenant.ID); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to activate platform.")
+		return
+	}
+
+	// Enqueue workspace provisioning (creates tenant DB with seeded workflows/roles).
 	if h.Prov != nil {
 		h.Prov.Enqueue(provisioning.Job{
 			TenantID:   tenant.ID,
@@ -1055,10 +1170,22 @@ func (h *TenantOps) Bootstrap(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"success":  true,
-		"message":  "Platform owner bootstrapped. Workspace provisioning has started.",
-		"tenantId": tenant.ID,
-		"email":    identity.Email,
+	// Issue access JWT so the caller is immediately logged in.
+	d, err := time.ParseDuration(config.AppConfig.JWTExpiresIn)
+	if err != nil {
+		d = time.Hour
+	}
+	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, d)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to sign token.")
+		return
+	}
+
+	log.Printf("Platform activated by %s — workspace provisioning started.", identity.Email)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Platform activated. Workspace provisioning has started.",
+		"token":   token,
+		"email":   identity.Email,
 	})
 }

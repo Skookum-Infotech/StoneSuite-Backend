@@ -43,6 +43,13 @@ func NewAttachmentOps(r2 *storage.Client) *AttachmentOps {
 	return &AttachmentOps{r2: r2}
 }
 
+// r2ForTenant returns an R2 client scoped to the tenant's dedicated bucket.
+// Returns nil (treated as "not configured" / HTTP 503) when no bucket has
+// been assigned — every tenant must have r2_bucket set via provisioning.
+func (h *AttachmentOps) r2ForTenant(tenant *tenancy.Tenant) *storage.Client {
+	return h.r2.WithBucket(tenant.R2Bucket)
+}
+
 // ---- validation constants ---------------------------------------------------
 
 const (
@@ -177,10 +184,14 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get tenant slug for the storage key prefix.
+	// Get tenant — its r2_bucket must be set (provisioned at onboarding).
 	tenant, err := tenancy.TenantFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+	if tenant.R2Bucket == "" {
+		fail(w, http.StatusServiceUnavailable, "File storage not provisioned for this tenant.")
 		return
 	}
 
@@ -220,7 +231,7 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 		storageKey := workflow.GenerateStorageKey(
 			tenant.Slug, workflowKey, recordID, attachUUID, safe,
 		)
-		uploadURL, pErr := h.r2.PresignPut(r.Context(), storageKey, f.ContentType, presignPutTTL)
+		uploadURL, pErr := h.r2ForTenant(tenant).PresignPut(r.Context(), storageKey, f.ContentType, presignPutTTL)
 		if pErr != nil {
 			fail(w, http.StatusInternalServerError, "Failed to generate upload URL.")
 			return
@@ -394,6 +405,16 @@ func (h *AttachmentOps) DownloadAttachment(w http.ResponseWriter, r *http.Reques
 	recordID := r.PathValue("id")
 	attachmentID := r.PathValue("attachmentId")
 
+	tenant, err := tenancy.TenantFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+	if tenant.R2Bucket == "" {
+		fail(w, http.StatusServiceUnavailable, "File storage not provisioned for this tenant.")
+		return
+	}
+
 	att, err := workflow.GetAttachment(r.Context(), pool, recordID, attachmentID)
 	if errors.Is(err, workflow.ErrAttachmentNotFound) {
 		fail(w, http.StatusNotFound, "Attachment not found.")
@@ -404,7 +425,7 @@ func (h *AttachmentOps) DownloadAttachment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	downloadURL, err := h.r2.PresignGet(r.Context(), att.StorageKey, presignGetTTL)
+	downloadURL, err := h.r2ForTenant(tenant).PresignGet(r.Context(), att.StorageKey, presignGetTTL)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to generate download URL.")
 		return
@@ -440,6 +461,16 @@ func (h *AttachmentOps) DeleteAttachment(w http.ResponseWriter, r *http.Request)
 	recordID := r.PathValue("id")
 	attachmentID := r.PathValue("attachmentId")
 
+	tenant, err := tenancy.TenantFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+	if tenant.R2Bucket == "" {
+		fail(w, http.StatusServiceUnavailable, "File storage not provisioned for this tenant.")
+		return
+	}
+
 	att, err := workflow.GetAttachment(r.Context(), pool, recordID, attachmentID)
 	if errors.Is(err, workflow.ErrAttachmentNotFound) {
 		fail(w, http.StatusNotFound, "Attachment not found.")
@@ -453,7 +484,7 @@ func (h *AttachmentOps) DeleteAttachment(w http.ResponseWriter, r *http.Request)
 	// Best-effort R2 object deletion. If it fails we log the storage key so
 	// an operator can clean it up manually, then remove the metadata row.
 	if h.r2.IsConfigured() {
-		if r2Err := h.r2.Delete(r.Context(), att.StorageKey); r2Err != nil {
+		if r2Err := h.r2ForTenant(tenant).Delete(r.Context(), att.StorageKey); r2Err != nil {
 			log.Printf("WARNING: R2 delete failed for key %q (attachment %s): %v — removing metadata row anyway",
 				att.StorageKey, attachmentID, r2Err)
 		}

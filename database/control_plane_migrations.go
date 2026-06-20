@@ -2,103 +2,46 @@ package database
 
 import (
 	"context"
-	"embed"
+	_ "embed"
 	"fmt"
-	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// controlPlaneMigrationsFS embeds the control-plane "up" migration files.
-// Applied once to the shared stonesuite_cp database on startup.
+// controlPlaneSchemaSQL is the single canonical control-plane schema.
+// Editing the SQL file IS the migration — no numbered files, no version table.
 //
-//go:embed migrations/control_plane/*.up.sql
-var controlPlaneMigrationsFS embed.FS
+//go:embed migrations/control_plane/schema.sql
+var controlPlaneSchemaSQL string
 
-type cpMigration struct {
-	version int
-	name    string
-	sql     string
-}
-
-func loadControlPlaneMigrations() ([]cpMigration, error) {
-	entries, err := controlPlaneMigrationsFS.ReadDir("migrations/control_plane")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded control-plane migrations: %w", err)
-	}
-	var migs []cpMigration
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".up.sql") {
-			continue
-		}
-		prefix := strings.SplitN(name, "_", 2)[0]
-		version, err := strconv.Atoi(prefix)
-		if err != nil {
-			return nil, fmt.Errorf("bad cp migration filename %q: %w", name, err)
-		}
-		b, err := controlPlaneMigrationsFS.ReadFile("migrations/control_plane/" + name)
-		if err != nil {
-			return nil, fmt.Errorf("read cp migration %q: %w", name, err)
-		}
-		migs = append(migs, cpMigration{version: version, name: name, sql: string(b)})
-	}
-	sort.Slice(migs, func(i, j int) bool { return migs[i].version < migs[j].version })
-	return migs, nil
-}
-
-// ApplyControlPlaneMigrations brings the shared control-plane database up to
-// the latest embedded schema. Tracks applied versions in a cp_schema_version
-// table and applies each pending migration inside its own transaction.
-// Idempotent: safe to call on every startup.
-func ApplyControlPlaneMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS cp_schema_version (
-			version    INT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)`); err != nil {
-		return fmt.Errorf("ensure cp_schema_version table: %w", err)
-	}
-
-	// Acquire advisory lock to prevent concurrent migration runs.
-	// Lock key 7369746573756943 is "stonesuite-cp" derived constant (arbitrary stable value).
+// ApplyControlPlaneSchema applies the full control-plane schema to the given
+// pool. All statements use CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS
+// so the call is safe on both a fresh database and one that already has tables.
+//
+// An advisory lock prevents concurrent runs across multiple app instances.
+func ApplyControlPlaneSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	// Lock key is a stable constant for this database role.
 	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(7369746573756943)`); err != nil {
-		return fmt.Errorf("acquire migration advisory lock: %w", err)
+		return fmt.Errorf("acquire control-plane schema lock: %w", err)
 	}
 	defer pool.Exec(ctx, `SELECT pg_advisory_unlock(7369746573756943)`) //nolint:errcheck
 
-	var current int
-	if err := pool.QueryRow(ctx, "SELECT COALESCE(MAX(version), 0) FROM cp_schema_version").Scan(&current); err != nil {
-		return fmt.Errorf("read current cp schema version: %w", err)
-	}
-
-	migs, err := loadControlPlaneMigrations()
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin control-plane schema tx: %w", err)
 	}
-
-	for _, m := range migs {
-		if m.version <= current {
-			continue
-		}
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin tx for cp migration %s: %w", m.name, err)
-		}
-		if _, err := tx.Exec(ctx, m.sql); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("apply cp migration %s: %w", m.name, err)
-		}
-		if _, err := tx.Exec(ctx, "INSERT INTO cp_schema_version (version) VALUES ($1)", m.version); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("record cp migration %s: %w", m.name, err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit cp migration %s: %w", m.name, err)
-		}
-		current = m.version
+	if _, err := tx.Exec(ctx, controlPlaneSchemaSQL); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("apply control-plane schema: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit control-plane schema: %w", err)
 	}
 	return nil
+}
+
+// ApplyControlPlaneMigrations is an alias kept for call-site compatibility.
+// All callers in main.go use this name; the implementation is now schema-based.
+func ApplyControlPlaneMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	return ApplyControlPlaneSchema(ctx, pool)
 }

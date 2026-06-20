@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -54,6 +57,10 @@ func main() {
 		}
 		log.Println("Control-plane migrations: ok")
 
+		// First-boot: if PLATFORM_ADMIN_EMAIL is set and no owner exists, create
+		// the owner tenant + identity and print a one-time setup token to stdout.
+		seedPlatformOwner(context.Background(), cp)
+
 		// Secret cipher (optional): when configured, tenant DSNs are encrypted
 		// at rest and decrypted on use; otherwise DSNs are stored in plaintext (dev).
 		var cipher *secret.Cipher
@@ -77,6 +84,18 @@ func main() {
 		// future long-running work (e.g. workflow transition actions).
 		jobQueue := jobqueue.New(cp.Pool())
 
+		// Cloudflare client — shared by provisioner and admin repair endpoints.
+		cfClient := storage.NewCFClient(config.AppConfig.CloudflareAccountID, config.AppConfig.CloudflareAPIToken)
+		if cfClient.IsConfigured() {
+			log.Println("R2 per-tenant buckets: Cloudflare API configured.")
+		}
+		corsOrigins := []string{}
+		for _, o := range strings.Split(config.AppConfig.CorsOrigin, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				corsOrigins = append(corsOrigins, o)
+			}
+		}
+
 		// Provisioner (optional): requires an admin DSN to create tenant databases.
 		if config.AppConfig.ProvisionAdminDBURL != "" {
 			provider, perr := provisioning.NewSQLProvider(config.AppConfig.ProvisionAdminDBURL)
@@ -84,6 +103,7 @@ func main() {
 				log.Fatalf("CRITICAL ERROR: invalid PROVISION_ADMIN_DB_URL: %v", perr)
 			}
 			provisioner = provisioning.New(cp, provider, cipher, jobQueue)
+			provisioner.WithCFClient(cfClient, corsOrigins)
 			provisioner.Start(2)
 			log.Println("Tenant provisioner started (2 workers, durable queue).")
 
@@ -101,7 +121,8 @@ func main() {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
 
-		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue)
+		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue).
+			WithCFClient(cfClient, corsOrigins)
 		userOps = controllers.NewUserOps(cp, tenantRouter)
 		crmAdminOps = controllers.NewCRMAdminOps(cp)
 		log.Println("Multi-tenant control plane initialized.")
@@ -150,10 +171,12 @@ func main() {
 		mux.HandleFunc("/api/onboarding/set-password/", tenantOps.GetSetPassword) // GET /{token}
 		mux.HandleFunc("/api/onboarding/set-password", tenantOps.SetPassword)
 
-		// One-shot bootstrap (no auth — only works when no owner exists yet).
-		mux.HandleFunc("/api/platform/bootstrap", tenantOps.Bootstrap)
+		// Platform setup: status probe + one-shot token activation (no auth).
+		mux.HandleFunc("GET /api/platform/setup/status", tenantOps.SetupStatus)
+		mux.HandleFunc("POST /api/platform/activate", tenantOps.Activate)
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
+		mux.Handle("POST /api/platform/tenants/{id}/repair-cors", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucketCORS)))
 		mux.Handle("/api/platform/invites", middleware.RequireAuth(http.HandlerFunc(tenantOps.InviteCustomer)))
 		mux.Handle("/api/platform/tenants", middleware.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
@@ -446,6 +469,106 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 	}
 }
 
+// seedPlatformOwner creates the platform-owner tenant and admin identity on
+// first boot, then prints a one-time setup token to stdout. The token must be
+// used with POST /api/platform/activate to set the admin password.
+//
+// Security model: the raw token is never stored or returned over HTTP.
+// Only its SHA-256 hash is persisted. Reading the token requires access to
+// server logs (Fly.io `fly logs`), which is the infra-level access gate.
+//
+// Idempotent: if an owner already exists, this is a silent no-op.
+func seedPlatformOwner(ctx context.Context, cp *tenancy.ControlPlane) {
+	email := config.AppConfig.PlatformAdminEmail
+	if email == "" {
+		return
+	}
+
+	// Already fully activated — nothing to do.
+	if owner, err := cp.PlatformOwnerTenant(ctx); err == nil && owner != nil {
+		if owner.Status == "active" {
+			return
+		}
+		// Owner exists but isn't activated yet (token expired or server restarted).
+		// Re-generate the setup token and print it again.
+		identity, iErr := cp.AnyIdentityForTenant(ctx, owner.ID)
+		if iErr != nil {
+			log.Printf("WARN: seedPlatformOwner: re-seed: no identity: %v", iErr)
+			return
+		}
+		printSetupToken(ctx, cp, identity.ID, identity.Email)
+		return
+	}
+
+	slug := config.AppConfig.PlatformAdminSlug
+	company := config.AppConfig.PlatformAdminCompany
+	if slug == "" {
+		slug = strings.ToLower(strings.ReplaceAll(company, " ", "-"))
+	}
+	if company == "" {
+		company = slug
+	}
+	if slug == "" {
+		log.Println("WARN: seedPlatformOwner: PLATFORM_ADMIN_SLUG or PLATFORM_ADMIN_COMPANY required")
+		return
+	}
+
+	tenant, err := cp.CreateTenant(ctx, slug, company, true)
+	if err != nil {
+		log.Printf("WARN: seedPlatformOwner: create tenant: %v", err)
+		return
+	}
+
+	identity, err := cp.CreateIdentity(ctx, tenant.ID, email, "", email, false)
+	if err != nil {
+		log.Printf("WARN: seedPlatformOwner: create identity: %v", err)
+		return
+	}
+
+	printSetupToken(ctx, cp, identity.ID, email)
+}
+
+// printSetupToken generates a fresh one-time setup token, stores its SHA-256
+// hash in the DB, and prints the raw token to stdout. Called on first boot and
+// on restart when the owner exists but hasn't been activated yet.
+func printSetupToken(ctx context.Context, cp *tenancy.ControlPlane, identityID, email string) {
+	rawBytes := make([]byte, 32)
+	if _, err := rand.Read(rawBytes); err != nil {
+		log.Printf("WARN: printSetupToken: generate token: %v", err)
+		return
+	}
+	rawToken := hex.EncodeToString(rawBytes)
+
+	sum := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(sum[:])
+	expiry := time.Now().Add(15 * time.Minute)
+	if err := cp.SetIdentitySetupTokenHash(ctx, identityID, tokenHash, expiry); err != nil {
+		log.Printf("WARN: printSetupToken: store token hash: %v", err)
+		return
+	}
+
+	log.Println()
+	log.Println("╔══════════════════════════════════════════════════════════════════╗")
+	log.Println("║          STONESUITE — FIRST-TIME PLATFORM SETUP                 ║")
+	log.Println("║                                                                  ║")
+	log.Printf("║  Admin email  : %-48s  ║\n", email)
+	log.Printf("║  Token expiry : %-48s  ║\n", expiry.UTC().Format("2006-01-02 15:04:05 UTC"))
+	log.Println("║                                                                  ║")
+	log.Println("║  curl -s -X POST http://localhost:8080/api/platform/activate \\  ║")
+	log.Println("║    -H 'Content-Type: application/json' \\                        ║")
+	log.Println("║    -d '{                                                         ║")
+	log.Printf("║       \"token\":\"%s...\",  ║\n", rawToken[:32])
+	log.Println("║       \"password\":\"<YOUR_PASSWORD>\"                              ║")
+	log.Println("║    }'                                                            ║")
+	log.Println("║                                                                  ║")
+	log.Println("║  FULL TOKEN:                                                     ║")
+	log.Printf("║  %s  ║\n", rawToken)
+	log.Println("║                                                                  ║")
+	log.Println("║  Restart the server if the token expires to get a new one.      ║")
+	log.Println("╚══════════════════════════════════════════════════════════════════╝")
+	log.Println()
+}
+
 // ensureOwnerWorkspace provisions the platform-owner tenant's database if it was
 // never set up. The owner is a first-class tenant, so its members need a real
 // workspace (seeded workflows/roles). Idempotent and non-fatal: any failure is
@@ -461,6 +584,14 @@ func ensureOwnerWorkspace(ctx context.Context, cp *tenancy.ControlPlane, p *prov
 	}
 	if owner.DBName != "" {
 		return // already provisioned
+	}
+	// Do not provision a platform-owner tenant that hasn't been activated yet.
+	// seedPlatformOwner creates the tenant in 'invited' status with no password;
+	// the admin must call POST /api/platform/activate first, which sets status=active
+	// and enqueues provisioning via the normal path.
+	if owner.Status != "active" {
+		log.Printf("owner-workspace bootstrap skipped: platform owner %q not yet activated (status=%s)", owner.Slug, owner.Status)
+		return
 	}
 	identity, err := cp.AnyIdentityForTenant(ctx, owner.ID)
 	if err != nil {

@@ -49,6 +49,11 @@ type Tenant struct {
 	// DesignVersion selects the CRM data design (DesignV1 / DesignV2).
 	DesignVersion string
 
+	// R2Bucket is the Cloudflare R2 bucket provisioned for this tenant's file
+	// attachments (ss-{slug}). Must be non-empty — attachment endpoints return
+	// 503 when this field is blank.
+	R2Bucket string
+
 	// Metadata holds the onboarding submission (company profile, contacts, and
 	// any dynamic custom fields) as a JSON object string.
 	Metadata string

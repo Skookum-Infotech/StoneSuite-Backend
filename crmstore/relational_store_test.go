@@ -146,7 +146,7 @@ func TestCustomerFieldRegistryUnique(t *testing.T) {
 		cols[f.col] = true
 	}
 	// The six built-in contact fields must stay marked always-present.
-	for _, k := range []string{"company_name", "first_name", "last_name", "email", "phone", "address"} {
+	for _, k := range []string{"customer_name", "customer_authorized_person_fname", "customer_authorized_person_lname", "customer_contact_email", "customer_primary_phonenum", "customer_addr_line1"} {
 		assert.Truef(t, cores[k], "registry missing built-in field %q", k)
 	}
 }

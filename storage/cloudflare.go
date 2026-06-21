@@ -78,12 +78,18 @@ func (c *CFClient) CreateBucket(ctx context.Context, name string) error {
 	return nil
 }
 
-// cfCORSRule mirrors the shape the Cloudflare R2 CORS API expects.
+// cfCORSAllowed is the nested allowed block in a Cloudflare R2 CORS rule.
+type cfCORSAllowed struct {
+	Origins []string `json:"origins"`
+	Methods []string `json:"methods"`
+	Headers []string `json:"headers"`
+}
+
+// cfCORSRule mirrors the shape the Cloudflare R2 management API expects.
+// NOTE: this is NOT the S3 CORS format — Cloudflare uses a different schema.
 type cfCORSRule struct {
-	AllowedOrigins []string `json:"AllowedOrigins"`
-	AllowedMethods []string `json:"AllowedMethods"`
-	AllowedHeaders []string `json:"AllowedHeaders"`
-	MaxAgeSeconds  int      `json:"MaxAgeSeconds"`
+	Allowed       cfCORSAllowed `json:"allowed"`
+	MaxAgeSeconds int           `json:"maxAgeSeconds"`
 }
 
 // SetBucketCORS configures the CORS policy on a bucket so browsers can PUT
@@ -94,20 +100,22 @@ func (c *CFClient) SetBucketCORS(ctx context.Context, bucket string, origins []s
 		return fmt.Errorf("cloudflare client not configured")
 	}
 	rules := []cfCORSRule{{
-		AllowedOrigins: origins,
-		AllowedMethods: []string{"PUT", "GET", "DELETE"},
-		AllowedHeaders: []string{
-			"Content-Type",
-			"X-Amz-Date",
-			"X-Amz-Algorithm",
-			"X-Amz-Credential",
-			"X-Amz-Signature",
-			"X-Amz-Signed-Headers",
-			"X-Amz-Expires",
+		Allowed: cfCORSAllowed{
+			Origins: origins,
+			Methods: []string{"PUT", "GET", "DELETE"},
+			Headers: []string{
+				"Content-Type",
+				"X-Amz-Date",
+				"X-Amz-Algorithm",
+				"X-Amz-Credential",
+				"X-Amz-Signature",
+				"X-Amz-Signed-Headers",
+				"X-Amz-Expires",
+			},
 		},
 		MaxAgeSeconds: 300,
 	}}
-	body, _ := json.Marshal(map[string]any{"CORSRules": rules})
+	body, _ := json.Marshal(map[string]any{"rules": rules})
 	url := fmt.Sprintf("%s/accounts/%s/r2/buckets/%s/cors", cfAPIBase, c.accountID, bucket)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
 	if err != nil {
@@ -121,10 +129,10 @@ func (c *CFClient) SetBucketCORS(ctx context.Context, bucket string, origins []s
 		return fmt.Errorf("set r2 bucket cors: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("set r2 bucket cors: HTTP %d", resp.StatusCode)
+		return fmt.Errorf("set r2 bucket cors: HTTP %d: %s", resp.StatusCode, respBody)
 	}
 	return nil
 }

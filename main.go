@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,6 +34,25 @@ func main() {
 	if err := config.AppConfig.Validate(); err != nil {
 		log.Fatalf("CRITICAL ERROR: %v", err)
 	}
+
+	// Structured JSON logging: one machine-parseable line per event, suitable
+	// for Fly.io log drains and querying/alerting. slog.Default() is used by the
+	// request logger, panic-recovery, and security-event middleware.
+	logLevel := slog.LevelInfo
+	if !config.AppConfig.IsProduction() {
+		logLevel = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
+
+	// Graceful shutdown context: SIGTERM or Ctrl-C cancels this context. All
+	// background goroutines (rate-limiter eviction, etc.) derive their lifetime
+	// from it. Created early so rate limiters built during routing can use it.
+	shutdownCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	// Auth rate limiter: per-IP brute-force guard for unauthenticated endpoints
+	// (login, password reset, activation). Token bucket: 10 immediate attempts,
+	// then refills at 1 every 5s (~12/min sustained) per client IP.
+	authRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 10)
 
 	// 2. Initialize the multi-tenant control plane (required).
 	// When CONTROL_PLANE_DB_URL is set, requests can be resolved to a tenant and
@@ -156,13 +176,15 @@ func main() {
 
 	// Multi-tenant routes (the control plane is always configured at this point).
 	if tenantOps != nil {
-		// Public: tenant-scoped login + password recovery.
-		mux.HandleFunc("/api/auth/tenant-login", tenantOps.TenantLogin)
-		mux.HandleFunc("POST /api/auth/refresh", tenantOps.RefreshSession)
+		// Public: tenant-scoped login + password recovery. All credential-checking
+		// endpoints sit behind the per-IP rate limiter to blunt brute-force and
+		// credential-stuffing attacks (no tenant id exists yet to key on).
+		mux.Handle("/api/auth/tenant-login", authRateLimiter.PerIPFunc(tenantOps.TenantLogin))
+		mux.Handle("POST /api/auth/refresh", authRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
-		mux.HandleFunc("POST /api/auth/forgot-password", tenantOps.ForgotPassword)
+		mux.Handle("POST /api/auth/forgot-password", authRateLimiter.PerIPFunc(tenantOps.ForgotPassword))
 		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
-		mux.HandleFunc("POST /api/auth/reset-password", tenantOps.ResetPassword)
+		mux.Handle("POST /api/auth/reset-password", authRateLimiter.PerIPFunc(tenantOps.ResetPassword))
 
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
@@ -173,7 +195,7 @@ func main() {
 
 		// Platform setup: status probe + one-shot token activation (no auth).
 		mux.HandleFunc("GET /api/platform/setup/status", tenantOps.SetupStatus)
-		mux.HandleFunc("POST /api/platform/activate", tenantOps.Activate)
+		mux.Handle("POST /api/platform/activate", authRateLimiter.PerIPFunc(tenantOps.Activate))
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
 		mux.Handle("POST /api/platform/tenants/{id}/repair-cors", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucketCORS)))
@@ -190,10 +212,6 @@ func main() {
 		})))
 		mux.Handle("/api/platform/tenants/", middleware.RequireAuth(http.HandlerFunc(tenantOps.TenantLifecycle)))
 	}
-
-	// Graceful shutdown context: SIGTERM or Ctrl-C cancels this context.
-	// All background goroutines (rate-limiter eviction, etc.) use it for exit.
-	shutdownCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	// Tenant-scoped demo route: JWT -> tenant resolution -> per-tenant DB query.
 	if resolver != nil {
@@ -348,11 +366,9 @@ func main() {
 		}
 	}
 
-	// 4. Global Middleware: CORS Policy Wrapper + Request Logger
-	globalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Log Request
-		log.Printf("[%s] %s %s", time.Now().Format(time.RFC3339), r.Method, r.URL.Path)
-
+	// 4. Global Middleware: CORS Policy Wrapper (request logging + panic recovery
+	// are applied as an outer chain below, so they observe every response).
+	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Inject CORS Headers — echo the request origin only if it is in the allowlist.
 		if origin := r.Header.Get("Origin"); allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -385,6 +401,12 @@ func main() {
 
 		mux.ServeHTTP(w, r)
 	})
+
+	// Outer middleware chain (outermost first): RequestLogger assigns the
+	// correlation id and logs every response; Recover turns any handler panic
+	// into a clean 500 (logged with stack) instead of crashing the VM. Recover
+	// is inside RequestLogger so panics are still logged as a 500 request line.
+	globalHandler := middleware.RequestLogger(middleware.Recover(corsHandler))
 
 	// 5. Start Server
 	port := config.AppConfig.Port

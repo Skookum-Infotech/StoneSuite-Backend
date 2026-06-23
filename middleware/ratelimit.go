@@ -3,7 +3,10 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,4 +127,60 @@ func (rl *RateLimiter) PerTenant(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// PerIP returns middleware that rate-limits requests by client IP. It is the
+// brute-force guard for UNAUTHENTICATED endpoints — login, password reset,
+// token activation — where there is no tenant id yet to key on, so a single
+// caller could otherwise hammer credential checks unthrottled.
+//
+// A throttled request is logged at WARN with the offending IP so the event is
+// observable (a sustained stream of these is a brute-force signal), then
+// rejected with 429.
+func (rl *RateLimiter) PerIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := ClientIP(r)
+		if !rl.allow(ip) {
+			slog.Warn("auth rate limit exceeded",
+				slog.String("request_id", RequestIDFromContext(r.Context())),
+				slog.String("ip", ip),
+				slog.String("path", r.URL.Path),
+			)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(models.APIResponse{
+				Success: false,
+				Message: "Too many attempts. Please wait a moment and try again.",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// PerIPFunc is the http.HandlerFunc-friendly form of PerIP, for routes
+// registered with mux.Handle that wrap a bare handler function.
+func (rl *RateLimiter) PerIPFunc(next http.HandlerFunc) http.Handler {
+	return rl.PerIP(next)
+}
+
+// ClientIP extracts the originating client IP, trusting the proxy headers set
+// by the Fly.io edge (the app only ever receives traffic via that proxy in
+// production). Preference order: Fly-Client-IP, the first X-Forwarded-For hop,
+// then the raw RemoteAddr. The port is stripped so the value is a bare IP
+// suitable as a rate-limit key and log field.
+func ClientIP(r *http.Request) string {
+	if fly := strings.TrimSpace(r.Header.Get("Fly-Client-IP")); fly != "" {
+		return fly
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// XFF is a comma-separated list; the first entry is the original client.
+		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
+			return first
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }

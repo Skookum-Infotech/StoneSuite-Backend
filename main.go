@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
 	"stonesuite-backend/jobqueue"
+	"stonesuite-backend/logship"
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
@@ -38,14 +40,29 @@ func main() {
 		log.Fatalf("CRITICAL ERROR: %v", err)
 	}
 
-	// Structured JSON logging: one machine-parseable line per event, suitable
-	// for Fly.io log drains and querying/alerting. slog.Default() is used by the
-	// request logger, panic-recovery, and security-event middleware.
+	// Graceful shutdown context: SIGTERM or Ctrl-C cancels this context. All
+	// background goroutines (rate-limiter eviction, log shipper, etc.) derive
+	// their lifetime from it. Created first so they can all share it.
+	shutdownCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	// Structured JSON logging: one machine-parseable line per event. slog.Default()
+	// is used by the request logger, panic-recovery, and security-event middleware.
 	logLevel := slog.LevelInfo
 	if !config.AppConfig.IsProduction() {
 		logLevel = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
+	// Optional log shipping (U4): when AXIOM_TOKEN+AXIOM_DATASET are set, logs go
+	// to Axiom in addition to stdout — no shipper VM, so scale-to-zero is intact.
+	var logDst io.Writer = os.Stdout
+	shipper := logship.New(config.AppConfig.AxiomToken, config.AppConfig.AxiomDataset)
+	if shipper != nil {
+		shipper.Start(shutdownCtx)
+		logDst = io.MultiWriter(os.Stdout, shipper)
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logDst, &slog.HandlerOptions{Level: logLevel})))
+	if shipper != nil {
+		slog.Info("log shipping enabled", slog.String("sink", "axiom"))
+	}
 
 	// Error tracking (optional): when SENTRY_DSN is set, panics recovered by
 	// middleware.Recover are reported to Sentry. No-op when unset.
@@ -65,11 +82,6 @@ func main() {
 	// readyCheck backs the /readyz probe. Set once the control plane is up so
 	// readiness reflects database reachability; nil means "process up" only.
 	var readyCheck func(context.Context) error
-
-	// Graceful shutdown context: SIGTERM or Ctrl-C cancels this context. All
-	// background goroutines (rate-limiter eviction, etc.) derive their lifetime
-	// from it. Created early so rate limiters built during routing can use it.
-	shutdownCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	// Auth rate limiter: per-IP brute-force guard for unauthenticated endpoints
 	// (login, password reset, activation). Token bucket: 10 immediate attempts,
@@ -489,6 +501,11 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
+	}
+	// Flush any buffered logs to Axiom before exit (worker already draining on
+	// shutdownCtx cancellation; Stop waits for its final batch).
+	if shipper != nil {
+		shipper.Stop()
 	}
 	log.Println("Server stopped.")
 }

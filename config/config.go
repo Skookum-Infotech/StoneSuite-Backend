@@ -83,6 +83,10 @@ type Config struct {
 	// MetricsToken, when set, requires `Authorization: Bearer <token>` on the
 	// /api/metrics endpoint. Leave empty to expose metrics without auth (dev).
 	MetricsToken string
+	// Axiom log shipping (U4): when both are set, structured logs are forwarded
+	// to Axiom (free tier) in addition to stdout. No shipper VM required.
+	AxiomToken   string
+	AxiomDataset string
 }
 
 var AppConfig Config
@@ -144,6 +148,8 @@ func Load() {
 		// Observability
 		SentryDSN:    getEnv("SENTRY_DSN", ""),
 		MetricsToken: getEnv("METRICS_TOKEN", ""),
+		AxiomToken:   getEnv("AXIOM_TOKEN", ""),
+		AxiomDataset: getEnv("AXIOM_DATASET", ""),
 	}
 }
 

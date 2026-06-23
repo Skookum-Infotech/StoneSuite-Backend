@@ -278,7 +278,7 @@ func (h *WorkflowOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 
 // GetRecord GET /api/tenant/records/{id}
 func (h *WorkflowOps) GetRecord(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionRead)
+	pool, scope, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -291,12 +291,15 @@ func (h *WorkflowOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load record.")
 		return
 	}
+	if !h.enforceRecordScope(w, r, pool, scope, identityID, rec, authz.ActionRead) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }
 
 // UpdateRecord PATCH /api/tenant/records/{id} — replaces custom fields (validated).
 func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionUpdate)
+	pool, scope, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -314,6 +317,9 @@ func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		return
+	}
+	if !h.enforceRecordScope(w, r, pool, scope, identityID, rec, authz.ActionUpdate) {
 		return
 	}
 	def, err := workflow.LoadDefinition(r.Context(), pool, rec.WorkflowID)
@@ -334,7 +340,7 @@ func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 
 // TransitionRecord POST /api/tenant/records/{id}/transition  body {"toStateId":"..."}
 func (h *WorkflowOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
-	pool, _, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionTransition)
+	pool, scope, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionTransition)
 	if !ok {
 		return
 	}
@@ -352,6 +358,9 @@ func (h *WorkflowOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		return
+	}
+	if !h.enforceRecordScope(w, r, pool, scope, identityID, rec, authz.ActionTransition) {
 		return
 	}
 	def, err := workflow.LoadDefinition(r.Context(), pool, rec.WorkflowID)
@@ -386,6 +395,27 @@ func (h *WorkflowOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers ----------------------------------------------------------------
+
+// enforceRecordScope is the IDOR guard for WorkflowOps single-record handlers:
+// after the resource:action permission passes, it confirms the caller's scope
+// (own/team) actually covers THIS record. Returns true to proceed; on denial it
+// has already written a 404 (not 403, to avoid id enumeration) and logged the
+// attempt, so the caller should just return.
+func (h *WorkflowOps) enforceRecordScope(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, scope authz.Scope, identityID string, rec *workflow.Record, action authz.Action) bool {
+	allowed, err := recordInScope(r.Context(), pool, scope, identityID, rec.OwnerUserID, rec.TeamID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return false
+	}
+	if !allowed {
+		logSecurityEvent(r, "idor_denied",
+			"identity", identityID, "record", rec.ID, "resource", "record",
+			"action", string(action), "scope", string(scope))
+		fail(w, http.StatusNotFound, "Record not found.")
+		return false
+	}
+	return true
+}
 
 // callerScope resolves the caller's tenant user id and team ids when needed for
 // team/own scope filtering. For "all" scope it returns empties (no filtering).

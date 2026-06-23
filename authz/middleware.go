@@ -3,6 +3,7 @@ package authz
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"stonesuite-backend/middleware"
@@ -40,6 +41,16 @@ func Require(resource Resource, action Action) func(http.Handler) http.Handler {
 				return
 			}
 			if !decision.Allowed {
+				// Alertable security event: a sustained stream of these from one
+				// identity can indicate probing or a misconfigured client.
+				slog.Warn("security event",
+					slog.String("security_event", "permission_denied"),
+					slog.String("request_id", middleware.RequestIDFromContext(r.Context())),
+					slog.String("ip", middleware.ClientIP(r)),
+					slog.String("identity", payload.ID),
+					slog.String("resource", string(resource)),
+					slog.String("action", string(action)),
+				)
 				deny(w, http.StatusForbidden, "You do not have permission to "+string(action)+" "+string(resource)+".")
 				return
 			}

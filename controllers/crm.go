@@ -163,6 +163,36 @@ func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
 			"You do not have permission to "+string(action)+" "+key+".")
 		return nil, nil, "", "", false
 	}
+
+	// Row-level (ownership) enforcement — the IDOR guard. Holding the permission
+	// is not enough when the grant is scoped to own/team: the caller may only act
+	// on records they own (or, for team scope, records on their team). Without
+	// this, an own-scoped user could read/modify any record by guessing its id.
+	if decision.Scope != authz.ScopeAll {
+		rec, gerr := st.GetRecord(r.Context(), pool, recordID)
+		if errors.Is(gerr, crmstore.ErrRecordNotFound) {
+			fail(w, http.StatusNotFound, "Record not found.")
+			return nil, nil, "", "", false
+		}
+		if gerr != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load record.")
+			return nil, nil, "", "", false
+		}
+		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, rec.OwnerUserID, rec.TeamID)
+		if aerr != nil {
+			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			return nil, nil, "", "", false
+		}
+		if !allowed {
+			logSecurityEvent(r, "idor_denied",
+				"identity", payload.ID, "record", recordID, "resource", key,
+				"action", string(action), "scope", string(decision.Scope))
+			// 404 (not 403) so callers cannot enumerate which record ids exist
+			// outside their scope.
+			fail(w, http.StatusNotFound, "Record not found.")
+			return nil, nil, "", "", false
+		}
+	}
 	return st, pool, key, payload.ID, true
 }
 

@@ -601,6 +601,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 
 	identity, err := h.CP.IdentityByEmail(r.Context(), req.Email)
 	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		logSecurityEvent(r, "login_failed", "email", req.Email, "reason", "unknown_identity")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
 	}
@@ -613,6 +614,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(identity.PasswordHash), []byte(req.Password)); err != nil {
+		logSecurityEvent(r, "login_failed", "email", req.Email, "identity", identity.ID, "reason", "bad_password")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
 	}

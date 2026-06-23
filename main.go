@@ -240,6 +240,7 @@ func main() {
 		mux.Handle("/api/auth/tenant-login", authRateLimiter.PerIPFunc(tenantOps.TenantLogin))
 		mux.Handle("POST /api/auth/refresh", authRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
+		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(http.HandlerFunc(tenantOps.ChangePassword)))
 		mux.Handle("POST /api/auth/forgot-password", authRateLimiter.PerIPFunc(tenantOps.ForgotPassword))
 		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
 		mux.Handle("POST /api/auth/reset-password", authRateLimiter.PerIPFunc(tenantOps.ResetPassword))

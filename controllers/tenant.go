@@ -706,6 +706,63 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ChangePassword updates the authenticated caller's password. Requires the
+// current password for verification. Path: POST /api/auth/change-password
+func (h *TenantOps) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		fail(w, http.StatusBadRequest, "currentPassword and newPassword are required.")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		fail(w, http.StatusBadRequest, "New password must be at least 8 characters.")
+		return
+	}
+
+	identity, err := h.CP.IdentityByID(r.Context(), payload.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load identity.")
+		return
+	}
+	if identity.PasswordHash == "" {
+		fail(w, http.StatusBadRequest, "This account uses single sign-on and has no password to change.")
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(identity.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		logSecurityEvent(r, "change_password_failed", "identity", payload.ID, "reason", "bad_current_password")
+		fail(w, http.StatusUnauthorized, "Current password is incorrect.")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 10)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to hash password.")
+		return
+	}
+	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(hash)); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to update password.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "Password updated successfully.",
+	})
+}
+
 // Logout clears both auth cookies and revokes the refresh token. Path: POST /api/auth/logout
 func (h *TenantOps) Logout(w http.ResponseWriter, r *http.Request) {
 	// Revoke the refresh token in the DB so it cannot be reused after logout.

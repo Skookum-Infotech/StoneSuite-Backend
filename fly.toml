@@ -40,11 +40,14 @@ primary_region = "iad"
     soft_limit  = 200
     hard_limit  = 250
 
+  # Liveness probe — /api/healthz returns 200 without touching the database, so
+  # a transient DB blip won't cause Fly to cycle an otherwise-healthy machine.
+  # (Readiness — /api/readyz — pings the DB and is for load-balancer/manual use.)
   [[http_service.checks]]
     grace_period = "10s"
     interval     = "15s"
     method       = "GET"
-    path         = "/api"
+    path         = "/api/healthz"
     timeout      = "5s"
 
 [[vm]]

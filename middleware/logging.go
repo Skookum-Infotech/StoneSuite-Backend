@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"stonesuite-backend/metrics"
 )
 
 // RequestIDContextKey holds the per-request correlation id injected by
@@ -91,13 +93,19 @@ func RequestLogger(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r.WithContext(ctx))
 
+		// Record Prometheus metrics from the same single point that logs the
+		// request, so counts and the log line can never disagree. The route is
+		// normalized to bound label cardinality (ids → {id}).
+		elapsed := time.Since(start)
+		metrics.Observe(r.Method, metrics.NormalizeRoute(r.URL.Path), rec.Status(), elapsed.Seconds())
+
 		attrs := []any{
 			slog.String("request_id", reqID),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", rec.Status()),
 			slog.Int("bytes", rec.bytes),
-			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
+			slog.Int64("latency_ms", elapsed.Milliseconds()),
 			slog.String("ip", ClientIP(r)),
 		}
 		// Attach auth context when present (set by RequireAuth). Unauthenticated

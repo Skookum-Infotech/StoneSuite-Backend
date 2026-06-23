@@ -76,6 +76,13 @@ type Config struct {
 	CloudflareAPIToken  string
 	R2AccessKeyID       string
 	R2SecretAccessKey   string
+
+	// Observability (all optional; each feature degrades gracefully when unset).
+	// SentryDSN enables error/panic reporting to Sentry (free tier).
+	SentryDSN string
+	// MetricsToken, when set, requires `Authorization: Bearer <token>` on the
+	// /api/metrics endpoint. Leave empty to expose metrics without auth (dev).
+	MetricsToken string
 }
 
 var AppConfig Config
@@ -134,6 +141,9 @@ func Load() {
 		CloudflareAPIToken:  getEnv("CLOUDFLARE_API_TOKEN", ""),
 		R2AccessKeyID:       getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey:   getEnv("R2_SECRET_ACCESS_KEY", ""),
+		// Observability
+		SentryDSN:    getEnv("SENTRY_DSN", ""),
+		MetricsToken: getEnv("METRICS_TOKEN", ""),
 	}
 }
 

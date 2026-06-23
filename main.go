@@ -16,10 +16,13 @@ import (
 	"syscall"
 	"time"
 
+	sentry "github.com/getsentry/sentry-go"
+
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
 	"stonesuite-backend/jobqueue"
+	"stonesuite-backend/metrics"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
@@ -43,6 +46,25 @@ func main() {
 		logLevel = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
+
+	// Error tracking (optional): when SENTRY_DSN is set, panics recovered by
+	// middleware.Recover are reported to Sentry. No-op when unset.
+	if dsn := config.AppConfig.SentryDSN; dsn != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:         dsn,
+			Environment: config.AppConfig.Environment,
+		}); err != nil {
+			slog.Warn("sentry init failed", slog.String("error", err.Error()))
+		} else {
+			slog.Info("sentry error tracking enabled")
+			// Flush buffered events on shutdown.
+			defer sentry.Flush(2 * time.Second)
+		}
+	}
+
+	// readyCheck backs the /readyz probe. Set once the control plane is up so
+	// readiness reflects database reachability; nil means "process up" only.
+	var readyCheck func(context.Context) error
 
 	// Graceful shutdown context: SIGTERM or Ctrl-C cancels this context. All
 	// background goroutines (rate-limiter eviction, etc.) derive their lifetime
@@ -68,6 +90,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("CRITICAL ERROR: Failed to initialize control plane: %v", err)
 		}
+
+		// Readiness now reflects control-plane DB reachability.
+		readyCheck = func(ctx context.Context) error { return cp.Pool().Ping(ctx) }
 
 		// Auto-apply control-plane migrations on every startup (idempotent).
 		// This creates tenants/identities/invites/etc. tables on a fresh Neon DB
@@ -173,6 +198,27 @@ func main() {
 			Version: "1.0.0",
 		})
 	})
+
+	// Observability probes (U1/U2). Liveness never touches the DB; readiness
+	// pings the control-plane pool; metrics is the Prometheus scrape target.
+	health := controllers.NewHealthOps(readyCheck)
+	mux.HandleFunc("GET /api/healthz", health.Healthz)
+	mux.HandleFunc("GET /api/readyz", health.Readyz)
+
+	// /api/metrics — Prometheus exposition. Optionally bearer-token protected
+	// (METRICS_TOKEN); Fly's built-in Prometheus scrapes this for free.
+	var metricsHandler http.Handler = metrics.Handler()
+	if tok := config.AppConfig.MetricsToken; tok != "" {
+		inner := metricsHandler
+		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+tok {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			inner.ServeHTTP(w, r)
+		})
+	}
+	mux.Handle("GET /api/metrics", metricsHandler)
 
 	// Multi-tenant routes (the control plane is always configured at this point).
 	if tenantOps != nil {
@@ -389,7 +435,7 @@ func main() {
 		// Unmatched routes under ServeMux will fall through. Let's make sure we handle a standard 404 response
 		// if the path doesn't start with registered prefixes.
 		path := r.URL.Path
-		if path != "/api" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") {
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

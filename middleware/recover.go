@@ -5,6 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"time"
+
+	sentry "github.com/getsentry/sentry-go"
 
 	"stonesuite-backend/models"
 )
@@ -40,6 +43,23 @@ func Recover(next http.Handler) http.Handler {
 				slog.Any("panic", rec),
 				slog.String("stack", string(debug.Stack())),
 			)
+
+			// Report to Sentry when configured (no-op if Init was never called,
+			// i.e. SENTRY_DSN unset). Tagged with the request id so an alert can
+			// be pivoted back to the full request log line.
+			if hub := sentry.CurrentHub(); hub.Client() != nil {
+				local := hub.Clone()
+				local.ConfigureScope(func(scope *sentry.Scope) {
+					scope.SetTag("request_id", reqID)
+					scope.SetTag("method", r.Method)
+					scope.SetTag("path", r.URL.Path)
+				})
+				local.RecoverWithContext(r.Context(), rec)
+				// Panics are rare, so a short synchronous flush is acceptable and
+				// guards against losing the event if the VM is suspended/stopped
+				// (scale-to-zero) shortly after.
+				local.Flush(2 * time.Second)
+			}
 
 			// Best-effort clean error. If the handler already started writing the
 			// response body, the status is locked in and WriteHeader is a no-op —

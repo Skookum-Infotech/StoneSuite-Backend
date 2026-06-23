@@ -30,6 +30,10 @@ primary_region = "iad"
 [http_service]
   internal_port        = 8080
   force_https          = true
+  # Scale-to-zero: the only running Machine is stopped by Fly Proxy after a
+  # period of no requests, and auto-started on the next request (~1-2s cold
+  # start — a clean process restart, so DB pools come up fresh). At idle the app
+  # costs nothing.
   auto_stop_machines   = "stop"
   auto_start_machines  = true
   min_machines_running = 0
@@ -40,15 +44,17 @@ primary_region = "iad"
     soft_limit  = 200
     hard_limit  = 250
 
-  # Liveness probe — /api/healthz returns 200 without touching the database, so
-  # a transient DB blip won't cause Fly to cycle an otherwise-healthy machine.
-  # (Readiness — /api/readyz — pings the DB and is for load-balancer/manual use.)
-  [[http_service.checks]]
-    grace_period = "10s"
-    interval     = "15s"
-    method       = "GET"
-    path         = "/api/healthz"
-    timeout      = "5s"
+  # NO periodic health check on purpose. A recurring [[http_service.checks]]
+  # ping counts as traffic and keeps the Machine awake forever, defeating
+  # scale-to-zero. Fly never auto-stops/starts based on check status anyway.
+  # Liveness/readiness are still exposed in-app (GET /api/healthz, /api/readyz)
+  # for an external uptime monitor (e.g. UptimeRobot) — point that at /api/healthz.
+  # If you ever pin a Machine always-on (min_machines_running = 1), re-add:
+  #   [[http_service.checks]]
+  #     interval = "30s"
+  #     method   = "GET"
+  #     path     = "/api/healthz"
+  #     timeout  = "5s"
 
 [[vm]]
   memory   = "256mb"

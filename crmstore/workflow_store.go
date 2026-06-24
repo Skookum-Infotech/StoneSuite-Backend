@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/query"
 	"stonesuite-backend/workflow"
 )
 
@@ -61,6 +62,23 @@ func (s *workflowStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key
 	}
 	callerUserID, teamIDs := s.scopeFilter(ctx, pool, scope, actorIdentityID)
 	return workflow.ListRecords(ctx, pool, wf.ID, scope, callerUserID, teamIDs)
+}
+
+// SearchRecords delegates to the workflow engine's scope-safe filtered list.
+func (s *workflowStore) SearchRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, req query.Request) (workflow.Page, error) {
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		return workflow.Page{}, ClientError{Msg: "Workflow not found."}
+	}
+	if err != nil {
+		return workflow.Page{}, err
+	}
+	defs, err := workflow.ListFields(ctx, pool, wf.ID)
+	if err != nil {
+		return workflow.Page{}, err
+	}
+	callerUserID, teamIDs := s.scopeFilter(ctx, pool, scope, actorIdentityID)
+	return workflow.ListRecordsFiltered(ctx, pool, wf.ID, scope, callerUserID, teamIDs, defs, req)
 }
 
 func (s *workflowStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error) {

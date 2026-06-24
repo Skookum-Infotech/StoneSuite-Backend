@@ -358,6 +358,7 @@ func main() {
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
 		mux.Handle("PUT /api/tenant/workflows/{id}/numbering", tenantChain(wf.SetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
+		mux.Handle("POST /api/tenant/workflows/{id}/records/search", tenantChain(wf.SearchRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records", tenantChain(wf.CreateRecord))
 		mux.Handle("GET /api/tenant/records/{id}", tenantChain(wf.GetRecord))
 		mux.Handle("PATCH /api/tenant/records/{id}", tenantChain(wf.UpdateRecord))
@@ -393,6 +394,7 @@ func main() {
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", tenantChain(crm.WorkflowStatuses))
 		// Per-workflow list + create.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records", tenantChain(crm.ListRecords))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/search", tenantChain(crm.SearchRecords))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records", tenantChain(crm.CreateRecord))
 		// Single-record CRUD and state machine. workflowKey is accepted but ignored
 		// by the handlers — they load the record by id and derive the workflow.

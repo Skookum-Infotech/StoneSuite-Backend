@@ -12,6 +12,7 @@ import (
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
 )
@@ -206,6 +207,11 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 	case crmstore.IsClientError(err):
 		fail(w, http.StatusBadRequest, err.Error())
 	default:
+		var ife *query.InvalidFilterError
+		if errors.As(err, &ife) {
+			fail(w, http.StatusBadRequest, ife.Error())
+			return
+		}
 		fail(w, http.StatusInternalServerError, serverMsg)
 	}
 }
@@ -269,6 +275,35 @@ func (h *CRMOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"scope":   scope,
 		"records": records,
+	})
+}
+
+// SearchRecords POST /api/tenant/crm/{workflowKey}/records/search — server-side
+// filter + sort + keyset pagination, composed onto the caller's RBAC scope.
+func (h *CRMOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("workflowKey")
+	st, pool, identityID, scope, ok := h.authCRM(w, r, key, authz.ActionRead)
+	if !ok {
+		return
+	}
+	var req query.Request
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			fail(w, http.StatusBadRequest, "Invalid request body.")
+			return
+		}
+	}
+	page, err := st.SearchRecords(r.Context(), pool, key, string(scope), identityID, req)
+	if err != nil {
+		crmFail(w, err, "Failed to search records.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"scope":      scope,
+		"records":    page.Records,
+		"nextCursor": page.NextCursor,
+		"hasMore":    page.HasMore,
 	})
 }
 

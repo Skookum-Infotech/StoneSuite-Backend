@@ -189,6 +189,14 @@ CREATE INDEX IF NOT EXISTS idx_workflow_records_owner   ON workflow_records(owne
 CREATE INDEX IF NOT EXISTS idx_workflow_records_team    ON workflow_records(team_id);
 -- GIN index keeps custom_fields filtering (custom_fields->>'key') fast.
 CREATE INDEX IF NOT EXISTS idx_workflow_records_custom_gin ON workflow_records USING GIN (custom_fields);
+-- Composite indexes backing the filter/keyset-pagination engine (query pkg):
+-- the default newest-first sort + id tiebreaker for "all" scope, and the same
+-- ordering narrowed by owner for "own"/"team" scope. These bound the candidate
+-- set so filtered lists stay fast at thousands of records per tenant.
+CREATE INDEX IF NOT EXISTS idx_workflow_records_wf_created
+    ON workflow_records(workflow_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_workflow_records_wf_owner_created
+    ON workflow_records(workflow_id, owner_user_id, created_at DESC, id);
 
 CREATE TABLE IF NOT EXISTS workflow_record_history (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

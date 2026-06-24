@@ -10,6 +10,7 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
 )
@@ -228,6 +229,51 @@ func (h *WorkflowOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "scope": scope, "records": records})
+}
+
+// SearchRecords POST /api/tenant/workflows/{id}/records/search — scope-filtered,
+// server-side filter + sort + keyset pagination. The caller's RBAC scope is
+// composed (ANDed) with the request filter, so a filter can only narrow the
+// caller's already-permitted set, never widen it.
+func (h *WorkflowOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
+	pool, scope, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionRead)
+	if !ok {
+		return
+	}
+	var req query.Request
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			fail(w, http.StatusBadRequest, "Invalid request body.")
+			return
+		}
+	}
+	def, err := workflow.LoadDefinition(r.Context(), pool, r.PathValue("id"))
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		fail(w, http.StatusNotFound, "Workflow not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		return
+	}
+	callerUserID, teamIDs := h.callerScope(r, pool, identityID, scope)
+	page, err := workflow.ListRecordsFiltered(r.Context(), pool, def.Workflow.ID, string(scope), callerUserID, teamIDs, def.Fields, req)
+	if err != nil {
+		var ife *query.InvalidFilterError
+		if errors.As(err, &ife) {
+			fail(w, http.StatusBadRequest, ife.Error())
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to search records.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"scope":      scope,
+		"records":    page.Records,
+		"nextCursor": page.NextCursor,
+		"hasMore":    page.HasMore,
+	})
 }
 
 type createRecordRequest struct {

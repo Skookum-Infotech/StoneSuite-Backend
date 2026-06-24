@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/query"
 	"stonesuite-backend/workflow"
 )
 
@@ -66,6 +67,10 @@ type Store interface {
 	KeyForRecord(ctx context.Context, pool *pgxpool.Pool, id string) (string, error)
 	// ListRecords lists records for key, filtered by RBAC scope.
 	ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) ([]workflow.Record, error)
+	// SearchRecords lists records for key with server-side filtering, sorting,
+	// and keyset pagination, all composed onto the caller's RBAC scope (a filter
+	// can only narrow the scoped set, never widen it). Returns one page + cursor.
+	SearchRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, req query.Request) (workflow.Page, error)
 	// CreateRecord creates a record in key's stage.
 	CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error)
 	// GetRecord loads a single record by its external id.

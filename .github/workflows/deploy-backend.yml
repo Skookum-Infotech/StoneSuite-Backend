@@ -1,0 +1,54 @@
+name: Deploy Backend to Fly.io
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+jobs:
+  deploy:
+    name: Test → Deploy → Verify
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    environment: Prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache-dependency-path: go.sum
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --wait-timeout 120
+
+      - name: Health check
+        run: |
+          echo "Waiting for instance to be ready..."
+          sleep 10
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://stonesuite-backend.fly.dev/api)
+          if [ "$STATUS" != "200" ]; then
+            echo "Health check failed — HTTP $STATUS. Rolling back..."
+            exit 1
+          fi
+          echo "Health check passed — HTTP $STATUS"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Rollback on failure
+        if: failure()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Deployment or health check failed. Rolling back to previous release..."
+          flyctl releases rollback --app stonesuite-backend --yes

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/config"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/tenancy"
@@ -295,7 +297,92 @@ func (h *RBACOps) MyPermissions(w http.ResponseWriter, r *http.Request) {
 	if grants == nil {
 		grants = []authz.Grant{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "grants": grants})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"grants":       grants,
+		"activeRoleId": payload.ActiveRoleID,
+	})
+}
+
+// SwitchRole sets or clears the caller's active role for this session. When a
+// roleId is set, subsequent authz checks (via authz.EffectiveGrants) consult
+// only that role's grants instead of the union of all assigned roles — a hard
+// context switch, not a UI-only filter. An empty roleId clears the active
+// role, restoring the full aggregate. POST /api/tenant/auth/switch-role
+func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return
+	}
+	pool, err := tenancy.PoolFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+
+	var req struct {
+		RoleID string `json:"roleId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+
+	activeRoleID := ""
+	if req.RoleID != "" {
+		user, err := userstore.GetUserByIdentityID(r.Context(), pool, payload.ID)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load user.")
+			return
+		}
+		held := false
+		for _, ur := range user.Roles {
+			if ur.ID == req.RoleID {
+				held = true
+				break
+			}
+		}
+		if !held {
+			fail(w, http.StatusForbidden, "You do not hold this role.")
+			return
+		}
+		activeRoleID = req.RoleID
+	}
+
+	d, err := time.ParseDuration(config.AppConfig.JWTExpiresIn)
+	if err != nil {
+		d = time.Hour
+	}
+	token, err := generateTenantJWT(payload.ID, payload.Email, payload.TenantID, activeRoleID, d)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to sign token.")
+		return
+	}
+
+	accessExpiry := time.Now().Add(d)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   config.AppConfig.IsProduction(),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(d.Seconds()),
+	})
+
+	logSecurityEvent(r, "role_switched", "identity", payload.ID, "active_role_id", activeRoleID)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"token":        token,
+		"expiresAt":    accessExpiry.UnixMilli(),
+		"activeRoleId": activeRoleID,
+	})
 }
 
 type roleRequest struct {

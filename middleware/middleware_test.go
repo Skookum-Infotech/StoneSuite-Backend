@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"stonesuite-backend/config"
 )
 
 func TestClientIP(t *testing.T) {
@@ -110,6 +113,53 @@ func TestPerIP_ThrottlesAfterBurst(t *testing.T) {
 	assert.Equal(t, http.StatusOK, call())
 	assert.Equal(t, http.StatusOK, call())
 	assert.Equal(t, http.StatusTooManyRequests, call(), "4th request from same IP should be throttled")
+}
+
+func TestRequireAuth_ExtractsActiveRoleID(t *testing.T) {
+	origSecret := config.AppConfig.JWTSecret
+	config.AppConfig.JWTSecret = "test-secret"
+	t.Cleanup(func() { config.AppConfig.JWTSecret = origSecret })
+
+	sign := func(t *testing.T, claims jwt.MapClaims) string {
+		t.Helper()
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(config.AppConfig.JWTSecret))
+		require.NoError(t, err)
+		return token
+	}
+	baseClaims := func(extra jwt.MapClaims) jwt.MapClaims {
+		c := jwt.MapClaims{
+			"id": "identity-1", "email": "user@example.com", "tenant_id": "tenant-1",
+			"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+		}
+		for k, v := range extra {
+			c[k] = v
+		}
+		return c
+	}
+
+	tests := []struct {
+		name       string
+		claims     jwt.MapClaims
+		wantActive string
+	}{
+		{"active_role_id present", baseClaims(jwt.MapClaims{"active_role_id": "role-123"}), "role-123"},
+		{"active_role_id absent", baseClaims(nil), ""},
+		{"active_role_id empty string", baseClaims(jwt.MapClaims{"active_role_id": ""}), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured UserContextPayload
+			handler := RequireAuth(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				p, err := GetUserFromContext(r.Context())
+				require.NoError(t, err)
+				captured = p
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer "+sign(t, tc.claims))
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			assert.Equal(t, tc.wantActive, captured.ActiveRoleID)
+		})
+	}
 }
 
 func TestPerIP_IndependentPerIP(t *testing.T) {

@@ -326,6 +326,9 @@ func main() {
 		mux.Handle("/api/tenant/permissions/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Catalog))))
 		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))
 		mux.Handle("/api/tenant/roles/", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Role))))
+		// Active-role context switching: sets/clears which one of the caller's
+		// assigned roles is currently enforced (see authz.EffectiveGrants).
+		mux.Handle("POST /api/tenant/auth/switch-role", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.SwitchRole))))
 
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.

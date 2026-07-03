@@ -106,13 +106,20 @@ func setupLink(token string) string { return frontendBase() + "/onboarding/set-p
 // resetLink is the public URL where any user resets a forgotten password.
 func resetLink(token string) string { return frontendBase() + "/reset-password?token=" + token }
 
-func generateTenantJWT(identityID, email, tenantID string, d time.Duration) (string, error) {
+// generateTenantJWT signs an access token for identityID. activeRoleID is
+// optional: when set (see SwitchRole), the token carries an active_role_id
+// claim that narrows authz checks to that one role; empty means all of the
+// caller's assigned roles apply, as before this claim existed.
+func generateTenantJWT(identityID, email, tenantID, activeRoleID string, d time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"id":        identityID,
 		"email":     email,
 		"tenant_id": tenantID,
 		"exp":       time.Now().Add(d).Unix(),
 		"iat":       time.Now().Unix(),
+	}
+	if activeRoleID != "" {
+		claims["active_role_id"] = activeRoleID
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(config.AppConfig.JWTSecret))
@@ -646,7 +653,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = time.Hour
 	}
-	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, d)
+	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return
@@ -835,7 +842,12 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = time.Hour
 	}
-	newToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, d)
+	// Note: refresh always drops any active-role selection from the token
+	// being refreshed — the caller has no way to pass it, and this handler
+	// only rebuilds claims from the stored identity. Callers relying on an
+	// active role must re-issue POST /api/tenant/auth/switch-role after a
+	// refresh.
+	newToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return
@@ -1234,7 +1246,7 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = time.Hour
 	}
-	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, d)
+	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return

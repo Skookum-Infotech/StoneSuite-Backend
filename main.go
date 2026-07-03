@@ -18,9 +18,13 @@ import (
 	"time"
 
 	sentry "github.com/getsentry/sentry-go"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/ai"
+	"stonesuite-backend/ai/index"
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
+	"stonesuite-backend/crmstore"
 	"stonesuite-backend/database"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/logship"
@@ -174,6 +178,13 @@ func main() {
 			// prospects, 000005 leads) to all already-provisioned tenant DBs.
 			// Idempotent — skips tenants already at the latest version.
 			go migrateAllTenants(context.Background(), cp, tenantRouter)
+
+			// RAG index workers: one per active tenant, draining rag_index_queue
+			// on a ticker so record writes become fresh vectors within seconds
+			// (see ai/index.Worker). Tied to shutdownCtx (unlike the one-shot
+			// migration above) since these are long-running loops that must stop
+			// on server shutdown.
+			go startRAGIndexing(shutdownCtx, cp, tenantRouter)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -556,6 +567,122 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
 		} else if len(empty) > 0 {
 			log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
+		}
+	}
+}
+
+// ragCRMWorkflowKeys are the CRM workflow keys wrapped by the RAG index-on-write
+// decorator (see controllers/crm.go storeFromContext). Generic custom-workflow
+// records (workflow.Engine, served by /api/tenant/workflows/...) are not yet
+// wrapped and so are not indexed or reconciled here — a known gap.
+var ragCRMWorkflowKeys = []string{"lead", "prospect", "customer"}
+
+// startRAGIndexing starts one index-drain loop and one reconciliation loop per
+// active tenant. Runs once at boot (mirroring migrateAllTenants); tenants
+// provisioned after this process started are picked up on the next restart —
+// acceptable given the scale-to-zero deploy model restarts frequently.
+func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
+	tenants, err := cp.ListTenants(ctx)
+	if err != nil {
+		log.Printf("rag-index: failed to list tenants: %v", err)
+		return
+	}
+	for _, t := range tenants {
+		if !t.Servable() {
+			continue
+		}
+		pool, err := router.PoolFor(ctx, &t)
+		if err != nil {
+			log.Printf("rag-index: tenant %s: pool error: %v", t.Slug, err)
+			continue
+		}
+		store := crmstore.For(t.DesignVersion)
+		q := index.NewQueue(pool)
+		w := index.NewWorker(
+			q,
+			crmstore.NewRAGRecordLoader(store, pool),
+			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ai.NewRagStore(pool),
+		)
+		go runTenantIndexWorker(ctx, t.Slug, w)
+		go runTenantReconciliation(ctx, t.Slug, store, pool, q)
+	}
+}
+
+// runTenantIndexWorker drains one tenant's rag_index_queue every 3s until ctx
+// is cancelled (the goroutine's explicit exit strategy).
+func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := w.DrainOnce(ctx); err != nil {
+				log.Printf("rag-index: tenant %s: drain error: %v", slug, err)
+			}
+		}
+	}
+}
+
+// runTenantReconciliation runs reconcileTenantIndex immediately and then every
+// 10 minutes until ctx is cancelled (the goroutine's explicit exit strategy).
+// It is the backstop for the small write->enqueue crash window in
+// crmstore.IndexingStore (see its doc comment).
+func runTenantReconciliation(ctx context.Context, slug string, store crmstore.Store, pool *pgxpool.Pool, q *index.Queue) {
+	reconcileTenantIndex(ctx, slug, store, pool, q)
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcileTenantIndex(ctx, slug, store, pool, q)
+		}
+	}
+}
+
+// reconcileTenantIndex enqueues an upsert for every CRM record whose
+// updated_at is newer than its rag_chunks vector (or has no chunk at all),
+// closing the gap between a write committing and its enqueue job landing.
+func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store, pool *pgxpool.Pool, q *index.Queue) {
+	rows, err := pool.Query(ctx, `SELECT source_id, updated_at FROM rag_chunks`)
+	if err != nil {
+		log.Printf("rag-reconcile: tenant %s: read rag_chunks failed: %v", slug, err)
+		return
+	}
+	indexedAt := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			rows.Close()
+			log.Printf("rag-reconcile: tenant %s: scan failed: %v", slug, err)
+			return
+		}
+		indexedAt[id] = at
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("rag-reconcile: tenant %s: rows error: %v", slug, err)
+		return
+	}
+
+	for _, key := range ragCRMWorkflowKeys {
+		recs, err := store.ListRecords(ctx, pool, key, "all", "")
+		if err != nil {
+			log.Printf("rag-reconcile: tenant %s: list %s failed: %v", slug, key, err)
+			continue
+		}
+		for _, rec := range recs {
+			if at, ok := indexedAt[rec.ID]; ok && !rec.UpdatedAt.After(at) {
+				continue // vector already current
+			}
+			if err := q.Enqueue(ctx, rec.ID, "upsert"); err != nil {
+				log.Printf("rag-reconcile: tenant %s: enqueue %s failed: %v", slug, rec.ID, err)
+			}
 		}
 	}
 }

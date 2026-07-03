@@ -13,16 +13,10 @@ type RecordLoader interface {
 	Load(ctx context.Context, sourceID string) (doc ai.RecordDoc, workflowID, ownerUserID, teamID string, err error)
 }
 
-// ChunkSink upserts/deletes a rag_chunks row. Implemented in Phase 3's store.
+// ChunkSink upserts/deletes a rag_chunks row. Implemented by ai.RagStore.
 type ChunkSink interface {
-	Upsert(ctx context.Context, c Chunk) error
+	Upsert(ctx context.Context, c ai.Chunk) error
 	Delete(ctx context.Context, sourceID string) error
-}
-
-// Chunk is one embeddable unit persisted to rag_chunks.
-type Chunk struct {
-	SourceID, WorkflowID, OwnerUserID, TeamID, Content, ContentHash string
-	Embedding                                                       []float32
 }
 
 // jobQueue is the subset of Queue the worker needs (lets tests fake it).
@@ -78,7 +72,7 @@ func (w *Worker) process(ctx context.Context, j Job) error {
 	if err != nil {
 		return err
 	}
-	return w.sink.Upsert(ctx, Chunk{
+	return w.sink.Upsert(ctx, ai.Chunk{
 		SourceID: j.SourceID, WorkflowID: wfID, OwnerUserID: owner, TeamID: team,
 		Content: content, ContentHash: hash, Embedding: vecs[0],
 	})

@@ -198,3 +198,19 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_identity ON refresh_tokens(identity_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash     ON refresh_tokens(token_hash);
+
+-- ── cp_rag_chunks ─────────────────────────────────────────────────────
+-- App-help/documentation vectors. Identical for every tenant and not
+-- anyone's private data, so it lives ONCE in the control plane and is
+-- retrieved WITHOUT any scope filter.
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS cp_rag_chunks (
+    id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    doc_key   TEXT NOT NULL,
+    section   TEXT NOT NULL,
+    content   TEXT NOT NULL,
+    embedding vector(768) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cp_rag_chunks_embedding_idx
+    ON cp_rag_chunks USING hnsw (embedding vector_cosine_ops);

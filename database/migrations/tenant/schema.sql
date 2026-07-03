@@ -2160,3 +2160,42 @@ WHERE record_status_record_type IN (
     WHERE record_type_code IN ('LEAD', 'PROS', 'CUST')
 );
 
+-- ── 000023_rag_vectors ──────────────────────────────────────────────────
+-- =====================================================================
+-- RAG assistant storage. Vectors live in the tenant DB so cross-tenant
+-- retrieval is impossible by construction. owner_user_id / team_id are
+-- denormalized onto each chunk so the RBAC scope clause can be ANDed onto
+-- the similarity search (scope can only narrow, never widen — same
+-- invariant as the Record Filter Engine).
+-- =====================================================================
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS rag_chunks (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_type   TEXT NOT NULL DEFAULT 'record',
+    source_id     UUID NOT NULL,
+    workflow_id   UUID NOT NULL,
+    owner_user_id UUID,
+    team_id       UUID,
+    content       TEXT NOT NULL,
+    content_hash  TEXT NOT NULL,
+    embedding     vector(768) NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS rag_chunks_source_idx   ON rag_chunks (source_id);
+CREATE INDEX        IF NOT EXISTS rag_chunks_scope_idx    ON rag_chunks (owner_user_id, team_id);
+CREATE INDEX        IF NOT EXISTS rag_chunks_embedding_idx
+    ON rag_chunks USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS rag_index_queue (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_id   UUID NOT NULL,
+    op          TEXT NOT NULL,                    -- 'upsert' | 'delete'
+    status      TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'done' | 'error'
+    attempts    INT  NOT NULL DEFAULT 0,
+    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS rag_index_queue_pending_idx
+    ON rag_index_queue (status) WHERE status = 'pending';
+

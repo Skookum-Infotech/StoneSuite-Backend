@@ -3,10 +3,13 @@ package tenancy
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
 )
 
 // DSNResolver turns a tenant's stored connection reference into a usable
@@ -27,10 +30,10 @@ func PlainDSNResolver(_ context.Context, t *Tenant) (string, error) {
 // use and caching it. At ~30 tenants we keep every pool warm (no eviction);
 // each pool is capped low so total connections stay bounded.
 type Router struct {
-	resolve     DSNResolver
-	maxConns    int32
-	mu          sync.RWMutex
-	pools       map[string]*pgxpool.Pool // keyed by tenant ID
+	resolve  DSNResolver
+	maxConns int32
+	mu       sync.RWMutex
+	pools    map[string]*pgxpool.Pool // keyed by tenant ID
 }
 
 // NewRouter builds a router. Pass nil resolver to use PlainDSNResolver.
@@ -74,6 +77,16 @@ func (r *Router) PoolFor(ctx context.Context, t *Tenant) (*pgxpool.Pool, error) 
 
 	cfg.MaxConns = r.maxConns
 	cfg.MaxConnLifetime = time.Hour
+	// Register the pgvector `vector` type on each new connection, for RAG
+	// queries. Tolerant: a tenant whose migrations haven't run yet (extension
+	// not installed) must not lose its whole pool over this — only its RAG
+	// queries fail, and self-heals once the migration + a fresh connection land.
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if err := pgxvec.RegisterTypes(ctx, conn); err != nil {
+			slog.Warn("pgvector type registration failed", "tenant", t.Slug, "err", err)
+		}
+		return nil
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

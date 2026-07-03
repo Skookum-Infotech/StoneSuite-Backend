@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"stonesuite-backend/cache"
+	"stonesuite-backend/middleware"
 )
 
 // Querier is the subset of pgx behavior the store needs. Defined here (consumer
@@ -42,10 +43,13 @@ type Role struct {
 
 // ----- effective permissions (for the enforcer) -----------------------------
 
-// grantsCacheKey identifies cached effective grants by tenant pool + identity.
+// grantsCacheKey identifies cached effective grants by tenant pool + identity
+// + active role (an empty activeRoleID is its own cache bucket, distinct from
+// any specific role, so switching roles never serves stale grants).
 type grantsCacheKey struct {
-	pool       *pgxpool.Pool
-	identityID string
+	pool         *pgxpool.Pool
+	identityID   string
+	activeRoleID string
 }
 
 // grantsCache holds recently-resolved effective grants (role_permissions
@@ -66,29 +70,52 @@ func invalidateGrants(q Querier) {
 // Results are cached briefly per tenant pool (ADR-3); callers passing a
 // *pgxpool.Pool benefit from the cache, callers inside a transaction (pgx.Tx)
 // always read through.
+//
+// If ctx carries a request context with an active role selected (see
+// POST /api/tenant/auth/switch-role), grants are narrowed to that one role
+// instead of the caller's full assigned set — a hard context switch, not a
+// UI filter. ctx without a request context (e.g. background jobs) behaves as
+// before: all assigned roles apply.
 func EffectiveGrants(ctx context.Context, q Querier, identityID string) ([]Grant, error) {
+	activeRoleID := activeRoleFromContext(ctx)
 	if pool, ok := q.(*pgxpool.Pool); ok {
-		key := grantsCacheKey{pool: pool, identityID: identityID}
+		key := grantsCacheKey{pool: pool, identityID: identityID, activeRoleID: activeRoleID}
 		if g, ok := grantsCache.Get(key); ok {
 			return g, nil
 		}
-		g, err := loadEffectiveGrants(ctx, q, identityID)
+		g, err := loadEffectiveGrants(ctx, q, identityID, activeRoleID)
 		if err != nil {
 			return nil, err
 		}
 		grantsCache.Set(key, g)
 		return g, nil
 	}
-	return loadEffectiveGrants(ctx, q, identityID)
+	return loadEffectiveGrants(ctx, q, identityID, activeRoleID)
 }
 
-func loadEffectiveGrants(ctx context.Context, q Querier, identityID string) ([]Grant, error) {
-	rows, err := q.Query(ctx, `
+// activeRoleFromContext returns the caller's active role id from the request
+// context, or "" if none is set (or ctx carries no request context at all).
+func activeRoleFromContext(ctx context.Context) string {
+	payload, err := middleware.GetUserFromContext(ctx)
+	if err != nil {
+		return ""
+	}
+	return payload.ActiveRoleID
+}
+
+func loadEffectiveGrants(ctx context.Context, q Querier, identityID, activeRoleID string) ([]Grant, error) {
+	query := `
 		SELECT rp.resource, rp.action, rp.scope
 		FROM users u
 		JOIN user_roles ur       ON ur.user_id = u.id
 		JOIN role_permissions rp ON rp.role_id = ur.role_id
-		WHERE u.identity_id = $1`, identityID)
+		WHERE u.identity_id = $1`
+	args := []any{identityID}
+	if activeRoleID != "" {
+		query += ` AND ur.role_id = $2`
+		args = append(args, activeRoleID)
+	}
+	rows, err := q.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("effective grants: %w", err)
 	}

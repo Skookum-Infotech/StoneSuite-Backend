@@ -1,0 +1,18 @@
+# Dependabot keeps dependencies patched — the cheapest defense against known
+# CVEs in third-party code. Grouped, weekly PRs to limit noise.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -100,3 +100,72 @@ func TestRagStoreDeleteNonexistentIsNoop(t *testing.T) {
 		t.Fatalf("deleting a nonexistent chunk must not error: %v", err)
 	}
 }
+
+// TestRagStoreSearchScopedEnforcesOwnership is the DB-backed proof behind the
+// inviolable buildScopedSearch tests: a real caller with scope=own must never
+// retrieve another user's chunk, even though it's in the same tenant DB.
+func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewRagStore(pool)
+	ctx := ctxS(t)
+
+	const userA = "aaaaaaaa-0000-0000-0000-000000000001"
+	const userB = "aaaaaaaa-0000-0000-0000-000000000002"
+	const teamX = "bbbbbbbb-0000-0000-0000-000000000001"
+
+	mustUpsert := func(sourceID, owner, team, content string) {
+		t.Helper()
+		if err := s.Upsert(ctx, Chunk{
+			SourceID: sourceID, WorkflowID: sourceID, OwnerUserID: owner, TeamID: team,
+			Content: content, ContentHash: content, Embedding: make([]float32, 768),
+		}); err != nil {
+			t.Fatalf("upsert %s: %v", sourceID, err)
+		}
+	}
+	mustUpsert("10000000-0000-0000-0000-000000000001", userA, teamX, "owned by A, in team X")
+	mustUpsert("10000000-0000-0000-0000-000000000002", userB, teamX, "owned by B, in team X")
+	mustUpsert("10000000-0000-0000-0000-000000000003", userB, "", "owned by B, no team")
+
+	qv := make([]float32, 768)
+
+	// own: A sees only A's chunk.
+	got, err := s.SearchScoped(ctx, qv, "own", userA, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].SourceID != "10000000-0000-0000-0000-000000000001" {
+		t.Fatalf("own scope for A = %+v, want exactly A's chunk", got)
+	}
+
+	// team: A (in team X) sees A's + B's team-X chunk, but not B's teamless one.
+	got, err = s.SearchScoped(ctx, qv, "team", userA, []string{teamX}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("team scope for A = %+v, want 2 (A's own + B's team-X chunk)", got)
+	}
+	for _, c := range got {
+		if c.SourceID == "10000000-0000-0000-0000-000000000003" {
+			t.Fatalf("team scope leaked B's teamless chunk: %+v", got)
+		}
+	}
+
+	// all: sees everything regardless of owner/team.
+	got, err = s.SearchScoped(ctx, qv, "all", userA, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("all scope = %d results, want 3", len(got))
+	}
+
+	// unknown/unset scope: fail closed, zero results (never falls through to all).
+	got, err = s.SearchScoped(ctx, qv, "", userA, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("unknown scope = %+v, want 0 (fail closed)", got)
+	}
+}

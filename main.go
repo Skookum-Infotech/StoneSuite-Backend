@@ -101,11 +101,13 @@ func main() {
 	var userOps *controllers.UserOps
 	var crmAdminOps *controllers.CRMAdminOps
 	var provisioner *provisioning.Provisioner
+	var cpPool *pgxpool.Pool // control-plane pool; used by AIOps for cp_rag_chunks
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		cp, err := tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
 		if err != nil {
 			log.Fatalf("CRITICAL ERROR: Failed to initialize control plane: %v", err)
 		}
+		cpPool = cp.Pool()
 
 		// Readiness now reflects control-plane DB reachability.
 		readyCheck = func(ctx context.Context) error { return cp.Pool().Ping(ctx) }
@@ -431,6 +433,17 @@ func main() {
 		mux.Handle("GET /api/tenant/config/approvers", tenantChain(crmAdminOps.ListApprovers))
 		mux.Handle("POST /api/tenant/config/approvers", tenantChain(crmAdminOps.CreateApprover))
 		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
+
+		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
+		// Embedder = self-hosted Ollama nomic-embed-text (ADR-001, pinned);
+		// LLM = Gemini free tier (swappable behind ai.LLMClient).
+		aiOps := controllers.NewAIOps(
+			cpPool,
+			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ai.NewGeminiClient(config.AppConfig.GeminiAPIKey, config.AppConfig.AIChatModel),
+		)
+		mux.Handle("POST /api/tenant/ai/ask", tenantChain(aiOps.Ask))
+		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 	}
 
 	// Build the CORS allowlist once from the comma-separated CORS_ORIGIN value.
@@ -571,12 +584,6 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 	}
 }
 
-// ragCRMWorkflowKeys are the CRM workflow keys wrapped by the RAG index-on-write
-// decorator (see controllers/crm.go storeFromContext). Generic custom-workflow
-// records (workflow.Engine, served by /api/tenant/workflows/...) are not yet
-// wrapped and so are not indexed or reconciled here — a known gap.
-var ragCRMWorkflowKeys = []string{"lead", "prospect", "customer"}
-
 // startRAGIndexing starts one index-drain loop and one reconciliation loop per
 // active tenant. Runs once at boot (mirroring migrateAllTenants); tenants
 // provisioned after this process started are picked up on the next restart —
@@ -670,7 +677,7 @@ func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store
 		return
 	}
 
-	for _, key := range ragCRMWorkflowKeys {
+	for _, key := range crmstore.CRMWorkflowKeys() {
 		recs, err := store.ListRecords(ctx, pool, key, "all", "")
 		if err != nil {
 			log.Printf("rag-reconcile: tenant %s: list %s failed: %v", slug, key, err)

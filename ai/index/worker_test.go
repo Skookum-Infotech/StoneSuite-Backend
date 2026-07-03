@@ -62,11 +62,11 @@ func (l *fakeLoader) Load(_ context.Context, _ string) (ai.RecordDoc, string, st
 }
 
 type fakeChunkSink struct {
-	upserts []Chunk
+	upserts []ai.Chunk
 	deletes []string
 }
 
-func (s *fakeChunkSink) Upsert(_ context.Context, c Chunk) error {
+func (s *fakeChunkSink) Upsert(_ context.Context, c ai.Chunk) error {
 	s.upserts = append(s.upserts, c)
 	return nil
 }

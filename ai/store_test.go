@@ -29,6 +29,19 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 
 func ctxS(t *testing.T) context.Context { t.Helper(); return context.Background() }
 
+// nonZeroVec returns a non-degenerate 768-dim vector. Cosine distance against
+// an all-zero vector is undefined (NaN), and pgvector's HNSW index silently
+// excludes NaN-distance rows from ORDER BY ... <=> ... LIMIT results — so an
+// all-zero test fixture would make every SearchScoped/Search assertion below
+// falsely see zero rows once run against the real HNSW-indexed schema.
+func nonZeroVec() []float32 {
+	v := make([]float32, 768)
+	for i := range v {
+		v[i] = 0.1
+	}
+	return v
+}
+
 func TestRagStoreUpsertInsertsThenUpdates(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewRagStore(pool)
@@ -117,7 +130,7 @@ func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
 		t.Helper()
 		if err := s.Upsert(ctx, Chunk{
 			SourceID: sourceID, WorkflowID: sourceID, OwnerUserID: owner, TeamID: team,
-			Content: content, ContentHash: content, Embedding: make([]float32, 768),
+			Content: content, ContentHash: content, Embedding: nonZeroVec(),
 		}); err != nil {
 			t.Fatalf("upsert %s: %v", sourceID, err)
 		}
@@ -126,7 +139,7 @@ func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
 	mustUpsert("10000000-0000-0000-0000-000000000002", userB, teamX, "owned by B, in team X")
 	mustUpsert("10000000-0000-0000-0000-000000000003", userB, "", "owned by B, no team")
 
-	qv := make([]float32, 768)
+	qv := nonZeroVec()
 
 	// own: A sees only A's chunk.
 	got, err := s.SearchScoped(ctx, qv, "own", userA, nil, 10)

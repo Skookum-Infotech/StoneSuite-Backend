@@ -26,6 +26,9 @@ type jobQueue interface {
 	Fail(ctx context.Context, id string) error
 }
 
+// Compile-time proof ai.RagStore satisfies ChunkSink.
+var _ ChunkSink = (*ai.RagStore)(nil)
+
 // Worker turns queued jobs into fresh vectors for ONE tenant.
 type Worker struct {
 	q      jobQueue

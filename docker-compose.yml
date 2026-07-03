@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stonesuite-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: stonesuite
+      POSTGRES_PASSWORD: stonesuite_secret
+      # Default/admin database. PROVISION_ADMIN_DB_URL below points here so the
+      # backend can CREATE DATABASE for each tenant. stonesuite_cp (control
+      # plane) is created by docker/initdb/001-create-databases.sql on first boot.
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stonesuite -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stonesuite-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Overrides for .env values that are host-specific (localhost:5433) —
+      # inside the compose network the DB is reachable at "postgres:5432".
+      CONTROL_PLANE_DB_URL: postgres://stonesuite:stonesuite_secret@postgres:5432/stonesuite_cp?sslmode=disable
+      PROVISION_ADMIN_DB_URL: postgres://stonesuite:stonesuite_secret@postgres:5432/postgres?sslmode=disable
+      # Must match the origin your frontend's `npm run dev` serves from.
+      CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176
+      FRONTEND_URL: http://localhost:5173
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  adminer:
+    image: adminer:latest
+    container_name: stonesuite-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

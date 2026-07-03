@@ -5,6 +5,12 @@ import "context"
 // scopeRank orders scopes from broadest to narrowest for "best wins" resolution.
 var scopeRank = map[Scope]int{ScopeOwn: 1, ScopeTeam: 2, ScopeAll: 3}
 
+// ScopeRank exposes scopeRank to callers that need to compare scopes granted
+// across multiple resources (e.g. the AI assistant narrowing retrieval to the
+// most restrictive scope among several CRM resources it reads). Unknown/empty
+// scopes rank 0 — narrower than any real scope.
+func ScopeRank(s Scope) int { return scopeRank[s] }
+
 // Decision is the outcome of a permission check.
 type Decision struct {
 	Allowed bool

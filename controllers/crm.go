@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/ai/index"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/middleware"
@@ -87,7 +88,9 @@ func resourceForKey(key string) authz.Resource {
 	}
 }
 
-// storeFromContext returns the CRM store for the request's tenant design version.
+// storeFromContext returns the CRM store for the request's tenant design
+// version, wrapped so every successful write enqueues a RAG index job
+// (near-real-time vector freshness; see ai/index.Queue).
 func storeFromContext(r *http.Request) (crmstore.Store, *pgxpool.Pool, error) {
 	t, err := tenancy.TenantFromContext(r.Context())
 	if err != nil {
@@ -97,7 +100,8 @@ func storeFromContext(r *http.Request) (crmstore.Store, *pgxpool.Pool, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return crmstore.For(t.DesignVersion), pool, nil
+	inner := crmstore.For(t.DesignVersion)
+	return crmstore.NewIndexingStore(inner, index.NewQueue(pool)), pool, nil
 }
 
 // authCRM resolves JWT + tenant store/pool + RBAC for a CRM request, deriving

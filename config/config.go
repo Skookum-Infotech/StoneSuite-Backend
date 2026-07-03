@@ -18,9 +18,9 @@ type Config struct {
 	Environment            string
 	Port                   string
 	JWTSecret              string
-	JWTExpiresIn             string
-	JWTRememberMeExpiresIn   string
-	RefreshTokenExpiresIn    string
+	JWTExpiresIn           string
+	JWTRememberMeExpiresIn string
+	RefreshTokenExpiresIn  string
 	DBHost                 string
 	DBPort                 string
 	DBUser                 string
@@ -87,6 +87,20 @@ type Config struct {
 	// to Axiom (free tier) in addition to stdout. No shipper VM required.
 	AxiomToken   string
 	AxiomDataset string
+
+	// AI / RAG assistant (ADR-001). Embed vs. LLM providers are split: the
+	// embedder is pinned (open-weights, self-hosted, no migration), the LLM is
+	// swappable. All optional; the assistant no-ops when unconfigured.
+	AILLMProvider   string // "gemini" (default) | "groq"
+	AIEmbedProvider string // "ollama" (default) — nomic-embed-text, self-hosted
+	GeminiAPIKey    string
+	GroqAPIKey      string
+	OllamaBaseURL   string // e.g. http://embedder:11434
+	AIChatModel     string
+	AIEmbedModel    string
+	// AIEmbedDim MUST match the vector(N) column in schema.sql. Pinned at 768
+	// (nomic-embed-text). Changing it requires re-embedding all vectors.
+	AIEmbedDim int
 }
 
 var AppConfig Config
@@ -104,8 +118,8 @@ func Load() {
 	}
 
 	AppConfig = Config{
-		Environment:            getEnv("APP_ENV", "development"),
-		Port:                   getEnv("PORT", "8080"),
+		Environment: getEnv("APP_ENV", "development"),
+		Port:        getEnv("PORT", "8080"),
 		// No default: an empty JWT secret is rejected by Validate(). A baked-in
 		// default would let anyone forge tokens if the env var were ever unset.
 		JWTSecret:              getEnv("JWT_SECRET", ""),
@@ -150,6 +164,15 @@ func Load() {
 		MetricsToken: getEnv("METRICS_TOKEN", ""),
 		AxiomToken:   getEnv("AXIOM_TOKEN", ""),
 		AxiomDataset: getEnv("AXIOM_DATASET", ""),
+		// AI / RAG assistant (ADR-001)
+		AILLMProvider:   getEnv("AI_LLM_PROVIDER", "gemini"),
+		AIEmbedProvider: getEnv("AI_EMBED_PROVIDER", "ollama"),
+		GeminiAPIKey:    getEnv("GEMINI_API_KEY", ""),
+		GroqAPIKey:      getEnv("GROQ_API_KEY", ""),
+		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		AIChatModel:     getEnv("AI_CHAT_MODEL", "gemini-1.5-flash"),
+		AIEmbedModel:    getEnv("AI_EMBED_MODEL", "nomic-embed-text"),
+		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
 	}
 }
 

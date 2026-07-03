@@ -27,6 +27,12 @@ var crmKeyToCode = map[string]string{"lead": "LEAD", "prospect": "PROS", "custom
 var crmCodeToKey = map[string]string{"LEAD": "lead", "PROS": "prospect", "CUST": "customer"}
 var crmCodeRank = map[string]int{"LEAD": 1, "PROS": 2, "CUST": 3}
 
+// CRMWorkflowKeys returns the CRM workflow keys ("lead", "prospect",
+// "customer") in stage order, for callers that need to enumerate every CRM
+// record type regardless of design version (e.g. the RAG index reconciliation
+// sweep and reindex trigger).
+func CRMWorkflowKeys() []string { return []string{"lead", "prospect", "customer"} }
+
 const closedWonCode = "CCLW" // Customer Closed Won — triggers approval
 
 // fkind is the storage kind of a customer column, controlling how it is scanned

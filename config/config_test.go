@@ -67,3 +67,51 @@ func TestIsProduction(t *testing.T) {
 		t.Error("development must not be production")
 	}
 }
+
+func TestLoadAIConfig(t *testing.T) {
+	t.Setenv("AI_LLM_PROVIDER", "gemini")
+	t.Setenv("AI_EMBED_PROVIDER", "ollama")
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	t.Setenv("AI_CHAT_MODEL", "gemini-1.5-flash")
+	t.Setenv("AI_EMBED_MODEL", "nomic-embed-text")
+	t.Setenv("AI_EMBED_DIM", "768")
+	t.Setenv("OLLAMA_BASE_URL", "http://embedder:11434")
+	// required so Load()'s downstream code paths don't panic on empty secrets
+	t.Setenv("JWT_SECRET", "x")
+
+	Load()
+
+	if AppConfig.AILLMProvider != "gemini" {
+		t.Fatalf("AILLMProvider = %q, want gemini", AppConfig.AILLMProvider)
+	}
+	if AppConfig.AIEmbedProvider != "ollama" {
+		t.Fatalf("AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
+	}
+	if AppConfig.GeminiAPIKey != "test-key" {
+		t.Fatalf("GeminiAPIKey = %q, want test-key", AppConfig.GeminiAPIKey)
+	}
+	if AppConfig.OllamaBaseURL != "http://embedder:11434" {
+		t.Fatalf("OllamaBaseURL = %q", AppConfig.OllamaBaseURL)
+	}
+	if AppConfig.AIEmbedDim != 768 {
+		t.Fatalf("AIEmbedDim = %d, want 768", AppConfig.AIEmbedDim)
+	}
+}
+
+func TestLoadAIConfigDefaults(t *testing.T) {
+	t.Setenv("JWT_SECRET", "x")
+	Load()
+	// ADR-001 defaults: embeddings self-hosted (ollama/nomic), LLM = gemini.
+	if AppConfig.AIEmbedProvider != "ollama" {
+		t.Fatalf("default AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
+	}
+	if AppConfig.AILLMProvider != "gemini" {
+		t.Fatalf("default AILLMProvider = %q, want gemini", AppConfig.AILLMProvider)
+	}
+	if AppConfig.AIEmbedModel != "nomic-embed-text" {
+		t.Fatalf("default AIEmbedModel = %q, want nomic-embed-text", AppConfig.AIEmbedModel)
+	}
+	if AppConfig.AIEmbedDim != 768 {
+		t.Fatalf("default AIEmbedDim = %d, want 768", AppConfig.AIEmbedDim)
+	}
+}

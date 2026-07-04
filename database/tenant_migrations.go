@@ -45,10 +45,3 @@ func ApplyTenantSchema(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 func ApplyTenantMigrations(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	return ApplyTenantSchema(ctx, pool)
 }
-
-// LatestTenantSchemaVersion returns 1 — the schema is now a single canonical
-// file, so there is no numeric version. Callers that compare against this
-// constant to decide whether a tenant needs updating will always get a match.
-func LatestTenantSchemaVersion() (int, error) {
-	return 1, nil
-}

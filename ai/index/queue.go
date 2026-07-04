@@ -63,11 +63,17 @@ func (q *Queue) Complete(ctx context.Context, id string) error {
 	return err
 }
 
-// Fail returns a job to pending for retry, bounded by attempts (5 tries).
+// maxAttempts bounds queue-level retries. Kept generous relative to the
+// embedder's own transport-level retries (see ai.OllamaEmbedder.postJSON) so a
+// job surviving a scale-to-zero autostart/autostop race gets enough chances
+// to land instead of going to 'error' (which is terminal — never reclaimed).
+const maxAttempts = 10
+
+// Fail returns a job to pending for retry, bounded by maxAttempts.
 func (q *Queue) Fail(ctx context.Context, id string) error {
 	_, err := q.pool.Exec(ctx, `
 		UPDATE rag_index_queue
-		SET status = CASE WHEN attempts >= 5 THEN 'error' ELSE 'pending' END
-		WHERE id=$1`, id)
+		SET status = CASE WHEN attempts >= $2 THEN 'error' ELSE 'pending' END
+		WHERE id=$1`, id, maxAttempts)
 	return err
 }

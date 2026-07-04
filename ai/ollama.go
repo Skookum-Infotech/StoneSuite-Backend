@@ -25,6 +25,7 @@ type OllamaEmbedder struct {
 	model      string
 	prefix     string
 	httpClient *http.Client
+	retryDelay time.Duration // overridable by tests; see transportRetries
 }
 
 // NewOllamaDocEmbedder builds an embedder for STORED text (search_document:).
@@ -45,6 +46,7 @@ func newOllamaEmbedder(baseURL, model, prefix string) *OllamaEmbedder {
 		model:      model,
 		prefix:     prefix,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
+		retryDelay: 2 * time.Second,
 	}
 }
 
@@ -76,6 +78,12 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 	return out, nil
 }
 
+// transportRetries bounds retries for connection-level failures only (refused/
+// reset/EOF) — the window where the self-hosted embedder box is mid
+// autostart/autostop under scale-to-zero. Application errors (non-2xx status)
+// are not retried here; those need a human, not a resend.
+const transportRetries = 2
+
 // postJSON marshals body, POSTs it, and decodes a 2xx JSON response into out.
 // Non-2xx responses become errors that include the status code.
 func (e *OllamaEmbedder) postJSON(ctx context.Context, url string, body, out any) error {
@@ -83,15 +91,25 @@ func (e *OllamaEmbedder) postJSON(ctx context.Context, url string, body, out any
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
-	if err != nil {
-		return fmt.Errorf("new request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+		if err != nil {
+			return fmt.Errorf("new request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = e.httpClient.Do(req)
+		if err == nil {
+			break
+		}
+		if attempt >= transportRetries {
+			return fmt.Errorf("do request: %w", err)
+		}
+		if sleepErr := sleepOrDone(ctx, e.retryDelay); sleepErr != nil {
+			return fmt.Errorf("do request: %w", err)
+		}
 	}
 	defer resp.Body.Close()
 
@@ -103,4 +121,17 @@ func (e *OllamaEmbedder) postJSON(ctx context.Context, url string, body, out any
 		return fmt.Errorf("decode: %w", err)
 	}
 	return nil
+}
+
+// sleepOrDone waits d unless ctx is cancelled first, in which case it returns
+// ctx.Err() immediately instead of blocking out the full delay.
+func sleepOrDone(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

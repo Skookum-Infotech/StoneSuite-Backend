@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Compile-time proof OllamaEmbedder is an Embedder.
@@ -81,5 +82,70 @@ func TestOllamaEmbedAPIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "503") {
 		t.Fatalf("error should mention status 503: %v", err)
+	}
+}
+
+// TestOllamaEmbedRetriesTransportFailure covers the scale-to-zero
+// autostart/autostop race: the embedder box can reset a connection while it's
+// mid start or stop. A transport-level failure (not an HTTP error response)
+// must be retried, not surfaced immediately.
+func TestOllamaEmbedRetriesTransportFailure(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			// Simulate a reset connection: hijack and close without a response.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("ResponseWriter does not support hijacking")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Fatalf("hijack: %v", err)
+			}
+			conn.Close()
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2}})
+	}))
+	defer srv.Close()
+
+	e := NewOllamaDocEmbedder(srv.URL, "nomic-embed-text")
+	e.retryDelay = time.Millisecond // keep the test fast
+
+	vecs, err := e.Embed(context.Background(), []string{"hello"})
+	if err != nil {
+		t.Fatalf("expected retry to recover, got: %v", err)
+	}
+	if len(vecs) != 1 || len(vecs[0]) != 2 {
+		t.Fatalf("got %v, want one 2-dim vector", vecs)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2 (one failure + one successful retry)", calls)
+	}
+}
+
+// TestOllamaEmbedGivesUpAfterTransportRetriesExhausted proves the retry loop
+// is bounded — a sustained outage must still surface an error, not retry
+// forever.
+func TestOllamaEmbedGivesUpAfterTransportRetriesExhausted(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	e := NewOllamaDocEmbedder(srv.URL, "nomic-embed-text")
+	e.retryDelay = time.Millisecond
+
+	_, err := e.Embed(context.Background(), []string{"hello"})
+	if err == nil {
+		t.Fatal("expected error after exhausting retries, got nil")
+	}
+	if calls != transportRetries+1 {
+		t.Fatalf("calls = %d, want %d (initial attempt + %d retries)", calls, transportRetries+1, transportRetries)
 	}
 }

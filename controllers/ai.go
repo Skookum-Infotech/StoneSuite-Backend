@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -128,6 +129,7 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		TeamIDs:      teamIDs,
 	})
 	if err != nil {
+		slog.Error("ai ask failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
 		fail(w, http.StatusBadGateway, "The assistant is temporarily unavailable.")
 		return
 	}

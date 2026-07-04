@@ -176,16 +176,17 @@ func main() {
 			// workspace (workflows/roles) like any tenant.
 			ensureOwnerWorkspace(context.Background(), cp, provisioner)
 
-			// Fan-out migrations: apply any new tenant migrations (e.g. 000004
-			// prospects, 000005 leads) to all already-provisioned tenant DBs.
-			// Idempotent — skips tenants already at the latest version.
-			go migrateAllTenants(context.Background(), cp, tenantRouter)
+			// Fan-out migrations: apply schema.sql to all already-provisioned
+			// tenant DBs. Idempotent (CREATE IF NOT EXISTS / ON CONFLICT DO
+			// NOTHING) so it's safe — and necessary — to re-run on every boot;
+			// run synchronously so RAG workers below never start against a
+			// tenant DB that hasn't picked up new tables yet (e.g. rag_index_queue).
+			migrateAllTenants(context.Background(), cp, tenantRouter)
 
 			// RAG index workers: one per active tenant, draining rag_index_queue
 			// on a ticker so record writes become fresh vectors within seconds
-			// (see ai/index.Worker). Tied to shutdownCtx (unlike the one-shot
-			// migration above) since these are long-running loops that must stop
-			// on server shutdown.
+			// (see ai/index.Worker). Tied to shutdownCtx since these are
+			// long-running loops that must stop on server shutdown.
 			go startRAGIndexing(shutdownCtx, cp, tenantRouter)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
@@ -545,25 +546,20 @@ func main() {
 }
 
 // migrateAllTenants runs ApplyTenantMigrations on every provisioned tenant DB.
-// Called in a goroutine on startup so new migrations (e.g. prospects, leads)
-// are applied to existing tenant DBs without manual intervention.
+// Called synchronously on startup, before RAG workers start, so schema.sql
+// (idempotent via CREATE IF NOT EXISTS / ON CONFLICT DO NOTHING) is applied
+// to existing tenant DBs on every boot without manual intervention. There is
+// no version gate: schema.sql is the single canonical source of truth and is
+// always safe to re-run.
 func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
 	tenants, err := cp.ListTenants(ctx)
 	if err != nil {
 		log.Printf("migrate-all: failed to list tenants: %v", err)
 		return
 	}
-	latest, err := database.LatestTenantSchemaVersion()
-	if err != nil {
-		log.Printf("migrate-all: failed to read latest migration version: %v", err)
-		return
-	}
 	for _, t := range tenants {
 		if !t.Servable() {
 			continue
-		}
-		if t.SchemaVersion >= latest {
-			continue // already current
 		}
 		pool, err := router.PoolFor(ctx, &t)
 		if err != nil {

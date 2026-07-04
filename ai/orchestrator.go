@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -89,5 +91,31 @@ func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, erro
 	if err != nil {
 		return AskResult{}, fmt.Errorf("llm: %w", err)
 	}
-	return AskResult{Answer: answer, Citations: cites}, nil
+	return AskResult{Answer: answer, Citations: citedOnly(cites, answer)}, nil
+}
+
+// citationMarkerRe matches the [n] source markers the system prompt
+// instructs the LLM to cite with.
+var citationMarkerRe = regexp.MustCompile(`\[(\d+)\]`)
+
+// citedOnly filters cites down to the ones the answer actually references via
+// a [n] marker (n is the 1-based position in cites), preserving cites' order.
+// Without this, the client would show every retrieved chunk as "referenced"
+// even ones the model saw but didn't use — misleading at low record counts,
+// where top-k retrieval returns the tenant's whole record set regardless of
+// relevance (see buildScopedSearch: no similarity floor).
+func citedOnly(cites []Citation, answer string) []Citation {
+	cited := make(map[int]bool)
+	for _, m := range citationMarkerRe.FindAllStringSubmatch(answer, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			cited[n] = true
+		}
+	}
+	var out []Citation
+	for i, c := range cites {
+		if cited[i+1] {
+			out = append(out, c)
+		}
+	}
+	return out
 }

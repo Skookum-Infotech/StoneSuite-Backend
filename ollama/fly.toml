@@ -11,15 +11,20 @@ primary_region = "iad"
   internal_port        = 11434
   # Internal-only service: no public IP is ever allocated for this app (see
   # deploy notes). Traffic reaches it exclusively via Fly's private network —
-  # http://stonesuite-ollama.flycast:11434 — so plain HTTP is fine here; it
-  # never leaves Fly's WireGuard mesh.
+  # http://stonesuite-ollama.internal:11434 (direct 6PN — see deploy notes for
+  # why not flycast) — so plain HTTP is fine here; it never leaves Fly's
+  # WireGuard mesh.
   force_https          = false
-  # Mirrors stonesuite-backend's scale-to-zero: Fly Proxy auto-starts this
-  # Machine (via flycast) the moment the backend calls it, and stops it again
-  # after idling — so it's only ever running while the backend is handling
-  # embed-dependent requests.
-  auto_stop_machines    = "stop"
-  auto_start_machines   = true
+  # Lifecycle is owned entirely by stonesuite-backend (see
+  # services/OllamaLifecycle + main.go), not Fly's own scaling: verified live
+  # that Fly Proxy's auto_start_machines does not reliably wake this Machine
+  # on organic flycast traffic (machine event log showed zero start attempts
+  # across multiple real /ai/ask requests). The backend starts this Machine
+  # on its own boot and stops it on its own graceful shutdown via Fly's
+  # Machines API, so Ollama is up exactly when the backend is — min_machines
+  # _running=0 so Fly never overrides that by force-restarting it.
+  auto_stop_machines    = "off"
+  auto_start_machines   = false
   min_machines_running  = 0
   processes             = ["app"]
 

@@ -49,7 +49,7 @@ func NewRagStore(pool *pgxpool.Pool) *RagStore { return &RagStore{pool: pool} }
 func (s *RagStore) Upsert(ctx context.Context, c Chunk) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO rag_chunks (source_id, workflow_id, owner_user_id, team_id, content, content_hash, embedding, updated_at)
-		VALUES ($1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, $5, $6, $7, NOW())
+		VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, $5, $6, $7, NOW())
 		ON CONFLICT (source_id) DO UPDATE SET
 			workflow_id   = EXCLUDED.workflow_id,
 			owner_user_id = EXCLUDED.owner_user_id,

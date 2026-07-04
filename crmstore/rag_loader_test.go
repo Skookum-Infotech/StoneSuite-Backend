@@ -41,9 +41,10 @@ func (f *fakeLoaderStore) AllStatuses(_ context.Context, _ *pgxpool.Pool) ([]wor
 }
 
 func TestRAGRecordLoaderLoadResolvesDocAndScope(t *testing.T) {
+	const wfUUID = "11111111-1111-1111-1111-111111111111"
 	store := &fakeLoaderStore{
 		rec: &workflow.Record{
-			ID: "rec-1", WorkflowID: "wf-1", CurrentStateID: "st-2",
+			ID: "rec-1", WorkflowID: wfUUID, CurrentStateID: "st-2",
 			OwnerUserID: "user-1", TeamID: "team-1",
 			CoreFields:   map[string]any{"company_name": "Acme"},
 			CustomFields: map[string]any{"deal_size": 5000},
@@ -66,8 +67,34 @@ func TestRAGRecordLoaderLoadResolvesDocAndScope(t *testing.T) {
 	if doc.Core["company_name"] != "Acme" || doc.Custom["deal_size"] != 5000 {
 		t.Fatalf("fields not carried through: %+v", doc)
 	}
-	if wfID != "wf-1" || owner != "user-1" || team != "team-1" {
-		t.Fatalf("scope columns = %q,%q,%q; want wf-1,user-1,team-1", wfID, owner, team)
+	if wfID != wfUUID || owner != "user-1" || team != "team-1" {
+		t.Fatalf("scope columns = %q,%q,%q; want %s,user-1,team-1", wfID, owner, team, wfUUID)
+	}
+}
+
+// TestRAGRecordLoaderLoadRejectsNonUUIDWorkflowID covers the v2 relational
+// CRM store, which reuses Record.WorkflowID for a fixed type-key string
+// (lead/prospect/customer — see crmstore/relational_store.go) rather than a
+// real workflows.id UUID like the v1 JSONB store. rag_chunks.workflow_id is a
+// UUID column, so a type-key string must never reach it — Load must fall
+// back to empty (mapped to SQL NULL by RagStore.Upsert) instead of forwarding
+// a value that would blow up the insert with SQLSTATE 22P02.
+func TestRAGRecordLoaderLoadRejectsNonUUIDWorkflowID(t *testing.T) {
+	store := &fakeLoaderStore{
+		rec: &workflow.Record{
+			ID: "rec-1", WorkflowID: "lead", CurrentStateID: "st-1",
+		},
+		key:      "lead",
+		statuses: []workflow.StatusInfo{{StateID: "st-1", StatusLabel: "New"}},
+	}
+	l := NewRAGRecordLoader(store, nil)
+
+	_, wfID, _, _, err := l.Load(ctx(t), "rec-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wfID != "" {
+		t.Fatalf("wfID = %q, want empty for a non-UUID WorkflowID", wfID)
 	}
 }
 

@@ -58,10 +58,28 @@ func TestNewRejectsBadKey(t *testing.T) {
 }
 
 func TestDecryptRejectsTampered(t *testing.T) {
-	c, _ := New(newTestKey(t))
-	ct, _ := c.Encrypt("secret")
-	// Flip a character to corrupt the ciphertext.
-	bad := "A" + ct[1:]
+	c, err := New(newTestKey(t))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ct, err := c.Encrypt("secret")
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(ct)
+	if err != nil {
+		t.Fatalf("decode ciphertext: %v", err)
+	}
+	if len(raw) == 0 {
+		t.Fatal("ciphertext unexpectedly empty")
+	}
+
+	// Deterministically corrupt one byte instead of relying on a
+	// string-level flip, which can decode to a still-valid ciphertext.
+	raw[len(raw)-1] ^= 0x01
+	bad := base64.StdEncoding.EncodeToString(raw)
+
 	if _, err := c.Decrypt(bad); err == nil {
 		t.Fatal("expected decryption of tampered ciphertext to fail")
 	}

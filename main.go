@@ -33,6 +33,7 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/secret"
+	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 )
@@ -102,6 +103,7 @@ func main() {
 	var crmAdminOps *controllers.CRMAdminOps
 	var provisioner *provisioning.Provisioner
 	var cpPool *pgxpool.Pool // control-plane pool; used by AIOps for cp_rag_chunks
+	var ollamaLifecycle *services.OllamaLifecycle
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		cp, err := tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
 		if err != nil {
@@ -182,6 +184,21 @@ func main() {
 			// run synchronously so RAG workers below never start against a
 			// tenant DB that hasn't picked up new tables yet (e.g. rag_index_queue).
 			migrateAllTenants(context.Background(), cp, tenantRouter)
+
+			// Ollama embedder box lifecycle: started here (in parallel with the
+			// rest of boot, since a cold model load takes ~10s) so it's tied to
+			// this backend process's own lifetime rather than left to Fly
+			// Proxy's flycast autostart, which was verified unreliable for this
+			// deployment (see docs/ai-assistant.md). Stopped on graceful
+			// shutdown below. Skipped entirely if unconfigured (e.g. local dev).
+			if config.AppConfig.FlyOllamaAPIToken != "" {
+				ollamaLifecycle = services.NewOllamaLifecycle(config.AppConfig.FlyOllamaAppName, config.AppConfig.FlyOllamaAPIToken)
+				go func() {
+					if err := ollamaLifecycle.StartAll(context.Background()); err != nil {
+						log.Printf("ollama-lifecycle: start failed: %v", err)
+					}
+				}()
+			}
 
 			// RAG index workers: one per active tenant, draining rag_index_queue
 			// on a ticker so record writes become fresh vectors within seconds
@@ -536,6 +553,13 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
+	}
+	// Stop the Ollama embedder box alongside this process — see the matching
+	// StartAll call above for why the backend, not Fly Proxy, owns this.
+	if ollamaLifecycle != nil {
+		if err := ollamaLifecycle.StopAll(shutCtx); err != nil {
+			log.Printf("ollama-lifecycle: stop failed: %v", err)
+		}
 	}
 	// Flush any buffered logs to Axiom before exit (worker already draining on
 	// shutdownCtx cancellation; Stop waits for its final batch).

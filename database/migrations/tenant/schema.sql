@@ -2175,7 +2175,12 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_type   TEXT NOT NULL DEFAULT 'record',
     source_id     UUID NOT NULL,
-    workflow_id   UUID NOT NULL,
+    -- Nullable: only the v1 dynamic-workflow store has a real workflows.id UUID
+    -- per record. The v2 relational CRM store has no per-record workflow UUID
+    -- (its record types are a fixed lead/prospect/customer enum, not rows in
+    -- `workflows`), and this column is otherwise unused (not part of any scope
+    -- filter) — see crmstore/rag_loader.go for the UUID-format guard.
+    workflow_id   UUID,
     owner_user_id UUID,
     team_id       UUID,
     content       TEXT NOT NULL,
@@ -2183,6 +2188,9 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     embedding     vector(768) NOT NULL,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Idempotent: relaxes the constraint for tenants provisioned before this
+-- change; a no-op on fresh databases created from the CREATE TABLE above.
+ALTER TABLE rag_chunks ALTER COLUMN workflow_id DROP NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS rag_chunks_source_idx   ON rag_chunks (source_id);
 CREATE INDEX        IF NOT EXISTS rag_chunks_scope_idx    ON rag_chunks (owner_user_id, team_id);
 CREATE INDEX        IF NOT EXISTS rag_chunks_embedding_idx

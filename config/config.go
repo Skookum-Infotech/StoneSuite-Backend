@@ -101,6 +101,13 @@ type Config struct {
 	// AIEmbedDim MUST match the vector(N) column in schema.sql. Pinned at 768
 	// (nomic-embed-text). Changing it requires re-embedding all vectors.
 	AIEmbedDim int
+	// Ollama lifecycle control: the embedder box has no reliable autostart of
+	// its own (Fly Proxy's flycast autostart was verified unreliable for this
+	// deployment), so the backend explicitly starts it on boot and stops it on
+	// shutdown via Fly's Machines API. All optional — skipped entirely if
+	// FlyOllamaAPIToken is unset (e.g. local dev, or an always-on embedder box).
+	FlyOllamaAPIToken string
+	FlyOllamaAppName  string
 }
 
 var AppConfig Config
@@ -173,6 +180,9 @@ func Load() {
 		AIChatModel:     getEnv("AI_CHAT_MODEL", "gemini-1.5-flash"),
 		AIEmbedModel:    getEnv("AI_EMBED_MODEL", "nomic-embed-text"),
 		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
+		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)
+		FlyOllamaAPIToken: getEnv("FLY_OLLAMA_API_TOKEN", ""),
+		FlyOllamaAppName:  getEnv("FLY_OLLAMA_APP_NAME", "stonesuite-ollama"),
 	}
 }
 

@@ -84,7 +84,7 @@ func TestFailReturnsToPendingUntilAttemptsExhausted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var id string
-	for i := 0; i < 5; i++ {
+	for i := 0; i < maxAttempts; i++ {
 		jobs, err := q.ClaimPending(ctx(t), 10)
 		if err != nil || len(jobs) != 1 {
 			t.Fatalf("claim attempt %d = %+v, %v", i, jobs, err)
@@ -94,7 +94,7 @@ func TestFailReturnsToPendingUntilAttemptsExhausted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// After 5 failed attempts, the job must stop being reclaimed (status='error').
+	// After maxAttempts failed attempts, the job must stop being reclaimed (status='error').
 	jobs, err := q.ClaimPending(ctx(t), 10)
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("claim after exhaustion = %+v, %v; want 0 jobs", jobs, err)

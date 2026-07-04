@@ -85,6 +85,32 @@ func TestRagStoreUpsertInsertsThenUpdates(t *testing.T) {
 	}
 }
 
+// TestRagStoreUpsertAllowsEmptyWorkflowID covers v2 relational-store records:
+// crmstore/rag_loader.go maps a non-UUID WorkflowID (that store's fixed
+// lead/prospect/customer type key) to empty string. workflow_id must accept
+// that as SQL NULL rather than failing the insert with SQLSTATE 22P02.
+func TestRagStoreUpsertAllowsEmptyWorkflowID(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewRagStore(pool)
+
+	const recID = "66666666-6666-6666-6666-666666666666"
+	c := Chunk{
+		SourceID: recID, WorkflowID: "",
+		Content: "Workflow: lead\nState: New\n", ContentHash: "hash1",
+		Embedding: make([]float32, 768),
+	}
+	if err := s.Upsert(ctxS(t), c); err != nil {
+		t.Fatalf("upsert with empty WorkflowID must succeed: %v", err)
+	}
+	var workflowID *string
+	if err := pool.QueryRow(ctxS(t), `SELECT workflow_id FROM rag_chunks WHERE source_id=$1`, recID).Scan(&workflowID); err != nil {
+		t.Fatal(err)
+	}
+	if workflowID != nil {
+		t.Fatalf("workflow_id = %v, want SQL NULL", *workflowID)
+	}
+}
+
 func TestRagStoreDeleteRemovesRow(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewRagStore(pool)

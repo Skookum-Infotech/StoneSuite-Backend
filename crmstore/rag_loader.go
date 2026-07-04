@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/ai"
@@ -41,7 +42,21 @@ func (l *RAGRecordLoader) Load(ctx context.Context, sourceID string) (ai.RecordD
 		Core:        rec.CoreFields,
 		Custom:      rec.CustomFields,
 	}
-	return doc, rec.WorkflowID, rec.OwnerUserID, rec.TeamID, nil
+	return doc, workflowUUIDOrEmpty(rec.WorkflowID), rec.OwnerUserID, rec.TeamID, nil
+}
+
+// workflowUUIDOrEmpty guards the boundary between two incompatible meanings
+// of Record.WorkflowID: the v1 JSONB store sets it to a real workflows.id
+// UUID, but the v2 relational store reuses the same field for a fixed
+// type-key string (lead/prospect/customer — see relational_store.go). Only a
+// genuine UUID may reach rag_chunks.workflow_id; anything else becomes empty
+// (RagStore.Upsert maps that to SQL NULL).
+func workflowUUIDOrEmpty(id string) string {
+	var u pgtype.UUID
+	if u.Scan(id) != nil {
+		return ""
+	}
+	return id
 }
 
 // stateName resolves a state id to its human-readable label. Best-effort: a

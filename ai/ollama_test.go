@@ -125,6 +125,45 @@ func TestOllamaEmbedRetriesTransportFailure(t *testing.T) {
 	}
 }
 
+// TestOllamaEmbedRecoversFromExtendedColdStart proves the retry budget covers
+// a slower Ollama Machine wake-up than a single failure+retry: several
+// consecutive transport failures before the machine becomes reachable must
+// still resolve successfully once it does.
+func TestOllamaEmbedRecoversFromExtendedColdStart(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls <= transportRetries {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("ResponseWriter does not support hijacking")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Fatalf("hijack: %v", err)
+			}
+			conn.Close()
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2}})
+	}))
+	defer srv.Close()
+
+	e := NewOllamaDocEmbedder(srv.URL, "nomic-embed-text")
+	e.retryDelay = time.Millisecond
+
+	vecs, err := e.Embed(context.Background(), []string{"hello"})
+	if err != nil {
+		t.Fatalf("expected the retry budget to recover from an extended cold start, got: %v", err)
+	}
+	if len(vecs) != 1 || len(vecs[0]) != 2 {
+		t.Fatalf("got %v, want one 2-dim vector", vecs)
+	}
+	if calls != transportRetries+1 {
+		t.Fatalf("calls = %d, want %d (failed on every attempt but the last)", calls, transportRetries+1)
+	}
+}
+
 // TestOllamaEmbedGivesUpAfterTransportRetriesExhausted proves the retry loop
 // is bounded — a sustained outage must still surface an error, not retry
 // forever.

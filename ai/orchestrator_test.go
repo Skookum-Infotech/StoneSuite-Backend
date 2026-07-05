@@ -103,6 +103,33 @@ func TestAskNoMarkersMeansNoCitations(t *testing.T) {
 	}
 }
 
+// TestAskGroundsUsingFullContentNotSnippet guards against regressing to
+// building the LLM's context out of Citation.Snippet, which is deliberately
+// truncated to a 240-char single-line UI preview (see ai/store.go snippet).
+// The model must see Content — the fuller, structure-preserving text — or
+// any fact past the 240th character of a chunk becomes invisible to it even
+// though it was correctly retrieved.
+func TestAskGroundsUsingFullContentNotSnippet(t *testing.T) {
+	long := strings.Repeat("line about the embedding model\n", 20) // > 240 chars
+	ret := &fakeRetriever{help: []Citation{{
+		SourceType: "help", SourceID: "Environment variables",
+		Snippet: "a short truncated preview only…",
+		Content: long,
+	}}}
+	llm := &FakeLLM{Reply: "See [1]."}
+	o := NewOrchestrator(&FakeEmbedder{Dim: 768}, ret, llm)
+
+	if _, err := o.Ask(context.Background(), AskRequest{Question: "x", Scope: "all", CallerUserID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(llm.GotMessages) != 1 {
+		t.Fatalf("want 1 message sent to the LLM, got %d", len(llm.GotMessages))
+	}
+	if !strings.Contains(llm.GotMessages[0].Content, long) {
+		t.Fatalf("LLM context must contain the full Content, not just the truncated Snippet:\n%s", llm.GotMessages[0].Content)
+	}
+}
+
 func TestAskPropagatesEmbedError(t *testing.T) {
 	o := NewOrchestrator(&FakeEmbedder{Err: errBoom}, &fakeRetriever{}, &FakeLLM{Reply: "x"})
 	if _, err := o.Ask(context.Background(), AskRequest{Question: "x", Scope: "own", CallerUserID: "u1"}); err == nil {

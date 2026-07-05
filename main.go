@@ -344,12 +344,25 @@ func main() {
 		// exits when the server shuts down.
 		tenantRateLimiter := middleware.NewRateLimiter(shutdownCtx, 20, 40)
 
+		// AI-specific rate limit: 0.5 req/sec sustained (30/min), bursts up to 5,
+		// per tenant. The generic tenantRateLimiter above is calibrated for cheap
+		// CRUD calls; every /ai/ask request costs a real embedding + LLM call, so
+		// it needs its own, much tighter budget to bound a single tenant's AI
+		// spend rather than relying on the CRUD-sized limit above.
+		aiRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.5, 5)
+
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
 
 		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
 		// resolver before every handler.
 		tenantChain := func(h http.HandlerFunc) http.Handler {
 			return middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(h)))
+		}
+
+		// aiChain layers the AI-specific rate limit on top of tenantChain's
+		// generic one, for routes that make a synchronous embedding/LLM call.
+		aiChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(aiRateLimiter.PerTenant(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
 		}
 
 		// Tenant-scoped RBAC management (role editor API). Each handler runs
@@ -468,7 +481,7 @@ func main() {
 			cp,
 			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 		)
-		mux.Handle("POST /api/tenant/ai/ask", tenantChain(aiOps.Ask))
+		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
 	}

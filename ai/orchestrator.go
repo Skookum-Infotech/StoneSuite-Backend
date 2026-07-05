@@ -84,7 +84,7 @@ func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, erro
 
 	var b strings.Builder
 	for i, c := range cites {
-		fmt.Fprintf(&b, "[%d] (%s) %s\n", i+1, c.SourceType, c.Snippet)
+		fmt.Fprintf(&b, "[%d] (%s) %s\n", i+1, c.SourceType, c.Content)
 	}
 	msg := fmt.Sprintf("Context:\n%s\nQuestion: %s", b.String(), req.Question)
 	answer, err := o.llm.Chat(ctx, systemPrompt, []Message{{Role: "user", Content: msg}})
@@ -111,7 +111,7 @@ func citedOnly(cites []Citation, answer string) []Citation {
 			cited[n] = true
 		}
 	}
-	var out []Citation
+	out := []Citation{}
 	for i, c := range cites {
 		if cited[i+1] {
 			out = append(out, c)

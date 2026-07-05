@@ -15,7 +15,10 @@ the asking user is allowed to see.
 3. A question to `POST /api/tenant/ai/ask` is embedded, then matched against
    `rag_chunks` (RBAC-scoped to the caller's `all`/`team`/`own` permission) and
    against `cp_rag_chunks` (unscoped app-help docs, shared across all tenants).
-   The LLM is instructed to answer only from that retrieved context.
+   The LLM is instructed to answer only from that retrieved context. Questions
+   over 2000 characters are rejected with `400` before embedding — well under
+   the embedder's ~512-token context window, so a long question fails fast
+   with a clear message instead of a generic error from Ollama.
 
 ## Security model
 

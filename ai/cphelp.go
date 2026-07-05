@@ -38,7 +38,7 @@ func (s *CPHelpStore) Search(ctx context.Context, queryVec []float32, k int) ([]
 		if err := rows.Scan(&section, &content); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		out = append(out, Citation{SourceType: "help", SourceID: section, Snippet: snippet(content)})
+		out = append(out, Citation{SourceType: "help", SourceID: section, Snippet: snippet(content), Content: groundingContent(content)})
 	}
 	return out, rows.Err()
 }

@@ -90,16 +90,35 @@ func (s *RagStore) SearchScoped(ctx context.Context, queryVec []float32, scope, 
 		if err := rows.Scan(&sourceID, &content); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		out = append(out, Citation{SourceType: "record", SourceID: sourceID, Snippet: snippet(content)})
+		out = append(out, Citation{SourceType: "record", SourceID: sourceID, Snippet: snippet(content), Content: groundingContent(content)})
 	}
 	return out, rows.Err()
 }
 
 // snippet trims a chunk's content to a single-line preview for citations.
+// Display only — never used to ground an LLM answer, see groundingContent.
 func snippet(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) > 240 {
 		return s[:240] + "…"
+	}
+	return s
+}
+
+// groundingLimit caps how much of a stored chunk is passed to the LLM as
+// context. Chunks already have to fit the embedder's ~512-token context
+// window to have been embedded at all (see ai/helpdocs.IngestFS), so this is
+// a generous safety net rather than the primary size control — unlike
+// snippet, which is a deliberately short one-line UI preview.
+const groundingLimit = 2000
+
+// groundingContent returns the chunk content the LLM is grounded in,
+// preserving structure (newlines, markdown tables) that snippet's
+// single-line preview intentionally discards.
+func groundingContent(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > groundingLimit {
+		return s[:groundingLimit] + "…"
 	}
 	return s
 }

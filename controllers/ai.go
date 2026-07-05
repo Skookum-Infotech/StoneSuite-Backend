@@ -79,6 +79,12 @@ type askRequestBody struct {
 	Question string `json:"question"`
 }
 
+// maxQuestionLength keeps the question comfortably under the embedder's
+// ~512-token context window (AI_EMBED_MODEL, see docs/ai-assistant.md) so a
+// long question fails fast with a clear message instead of a generic 502
+// from Ollama's "input length exceeds the context length" error.
+const maxQuestionLength = 2000
+
 // Ask handles POST /api/tenant/ai/ask. Chain: RequireAuth -> per-tenant rate
 // limit -> TenantResolver (via tenantChain in main.go). Scope is resolved
 // from the caller's roles and enforced by RagStore.SearchScoped (IDOR-safe).
@@ -106,6 +112,10 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(body.Question) == "" {
 		fail(w, http.StatusBadRequest, "question is required.")
+		return
+	}
+	if len(body.Question) > maxQuestionLength {
+		fail(w, http.StatusBadRequest, "question is too long, please shorten it.")
 		return
 	}
 

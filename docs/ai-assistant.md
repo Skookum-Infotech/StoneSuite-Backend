@@ -108,10 +108,15 @@ overloaded Ollama machine adds latency to that one request.
 
 `llama3.2:1b` was chosen to fit this box's RAM alongside the embedder — but
 it's genuinely CPU-bound work, not just a memory concern. A synchronous chat
-request has a hard ceiling: Fly's own proxy will drop the connection (client
-sees "Network Error") if the backend takes too long to respond, independent
-of anything the app does — observed in the 15-25s range in practice. Two
-levers keep a request under that ceiling:
+request has a hard ceiling: `main.go`'s `http.Server.WriteTimeout` forcibly
+closes the connection once it elapses, even if the handler is about to
+finish with a correct answer — this was long misattributed to "Fly's proxy
+dropping slow requests" (see git history), but reproduced live with
+`WriteTimeout` at 15s: the backend logged a real 200 while the client saw a
+bare connection-closed error. Now set to 90s (comfortably above
+`OllamaLLMClient`'s own 60s timeout, so that one fires first and the caller
+gets a clean JSON error instead of a dropped connection). Two levers keep a
+request comfortably under that ceiling in practice:
 
 - **Context size**: `groundingContent` (`ai/store.go`) caps how much of each
   retrieved chunk reaches the model. Keep this conservative for a CPU-bound

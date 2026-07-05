@@ -541,9 +541,19 @@ func main() {
 	fmt.Println("===============================================")
 
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      globalHandler,
-		WriteTimeout: 15 * time.Second,
+		Addr:    ":" + port,
+		Handler: globalHandler,
+		// WriteTimeout must exceed the slowest legitimate handler, not just the
+		// common case: POST /api/tenant/ai/ask runs a synchronous self-hosted
+		// LLM completion (ai.OllamaLLMClient, 60s inner client timeout) on top
+		// of embedding + retrieval. A too-short WriteTimeout forcibly closes
+		// the TCP connection once it elapses — even when the handler is about
+		// to finish with a correct answer — which looks identical to a proxy
+		// timeout from the client (silent "Network Error", no JSON body) but
+		// is actually us, not Fly's edge, hanging up on our own slow success.
+		// Set comfortably above OllamaLLMClient's timeout so that timeout
+		// fires first and the client gets a clean error response instead.
+		WriteTimeout: 90 * time.Second,
 		ReadTimeout:  15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}

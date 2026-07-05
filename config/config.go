@@ -177,7 +177,7 @@ func Load() {
 		GeminiAPIKey:    getEnv("GEMINI_API_KEY", ""),
 		GroqAPIKey:      getEnv("GROQ_API_KEY", ""),
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-		AIChatModel:     getEnv("AI_CHAT_MODEL", "gemini-1.5-flash"),
+		AIChatModel:     getEnv("AI_CHAT_MODEL", "gemini-flash-latest"),
 		AIEmbedModel:    getEnv("AI_EMBED_MODEL", "nomic-embed-text"),
 		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)

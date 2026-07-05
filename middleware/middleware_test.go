@@ -115,6 +115,51 @@ func TestPerIP_ThrottlesAfterBurst(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, call(), "4th request from same IP should be throttled")
 }
 
+// TestPerTenant_ThrottlesAfterBurst covers the token-bucket path AI-cost-
+// sensitive routes rely on (see main.go aiChain, layered on top of the
+// generic tenant rate limiter for /api/tenant/ai/ask): once burst tokens are
+// consumed, the next request for that tenant is rejected with 429 rather
+// than reaching the handler.
+func TestPerTenant_ThrottlesAfterBurst(t *testing.T) {
+	// rate 0 so the bucket never refills during the test; burst 2 means
+	// exactly 2 requests succeed, the 3rd is rejected with 429.
+	rl := NewRateLimiter(context.Background(), 0, 2)
+	handler := rl.PerTenant(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	call := func(tenantID string) int {
+		r := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask", nil)
+		ctx := context.WithValue(r.Context(), UserContextKey, UserContextPayload{TenantID: tenantID})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r.WithContext(ctx))
+		return rec.Code
+	}
+
+	assert.Equal(t, http.StatusOK, call("tenant-a"))
+	assert.Equal(t, http.StatusOK, call("tenant-a"))
+	assert.Equal(t, http.StatusTooManyRequests, call("tenant-a"), "3rd request from same tenant should be throttled")
+	// A different tenant has its own bucket and is unaffected.
+	assert.Equal(t, http.StatusOK, call("tenant-b"))
+}
+
+// TestPerTenant_NoTenantIDPassesThrough covers platform-admin/legacy requests
+// with no tenant_id in context — they must reach the handler unthrottled
+// rather than sharing (or panicking on) an empty-string bucket key.
+func TestPerTenant_NoTenantIDPassesThrough(t *testing.T) {
+	rl := NewRateLimiter(context.Background(), 0, 1)
+	handler := rl.PerTenant(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < 3; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		assert.Equal(t, http.StatusOK, rec.Code, "request %d with no tenant_id must pass through unthrottled", i+1)
+	}
+}
+
 func TestRequireAuth_ExtractsActiveRoleID(t *testing.T) {
 	origSecret := config.AppConfig.JWTSecret
 	config.AppConfig.JWTSecret = "test-secret"

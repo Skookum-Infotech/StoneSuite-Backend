@@ -9,18 +9,21 @@ func TestNewLLM_SelectsByProvider(t *testing.T) {
 	}{
 		{"gemini", "*ai.GeminiClient"},
 		{"groq", "*ai.GroqClient"},
+		{"ollama", "*ai.OllamaLLMClient"},
 		{"", "*ai.GeminiClient"},      // default
 		{"bogus", "*ai.GeminiClient"}, // unknown falls back to default
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
-			llm := NewLLM(tt.provider, "key", "model")
+			llm := NewLLM(tt.provider, "key", "model", "http://ollama:11434")
 			var got string
 			switch llm.(type) {
 			case *GeminiClient:
 				got = "*ai.GeminiClient"
 			case *GroqClient:
 				got = "*ai.GroqClient"
+			case *OllamaLLMClient:
+				got = "*ai.OllamaLLMClient"
 			default:
 				got = "unknown"
 			}

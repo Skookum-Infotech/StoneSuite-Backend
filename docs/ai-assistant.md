@@ -39,10 +39,10 @@ the asking user is allowed to see.
 | `AI_EMBED_MODEL` | No | `snowflake-arctic-embed:m` | Must stay in sync with `AI_EMBED_DIM`. Changing this requires re-embedding every existing chunk — different models are different vector spaces even at the same dimension. |
 | `AI_EMBED_DIM` | No | `768` | Must match the `vector(N)` columns in schema.sql. |
 | `OLLAMA_BASE_URL` | Yes (for embeddings to work) | `http://localhost:11434` | Points at the self-hosted embedder box — `http://stonesuite-ollama.internal:11434` in prod (see below). |
-| `AI_LLM_PROVIDER` | No | `gemini` | `gemini` or `groq`. |
-| `GEMINI_API_KEY` | If using Gemini | — | Free tier. |
-| `GROQ_API_KEY` | If using Groq | — | Free tier. |
-| `AI_CHAT_MODEL` | No | `gemini-flash-latest` | Google-maintained alias for their current recommended flash model — prefer this over pinning a dated version (e.g. `gemini-1.5-flash`), which breaks once Google retires it. Set to a Groq model name (e.g. `llama-3.1-8b-instant`) when `AI_LLM_PROVIDER=groq`. |
+| `AI_LLM_PROVIDER` | No | `gemini` | `gemini`, `groq`, or `ollama` (fully self-hosted — see "Self-hosted chat" below). |
+| `GEMINI_API_KEY` | If using Gemini | — | Free tier, but capped at 20 requests/day — exhausted quickly under heavy testing/usage, at which point every `/ai/ask` call fails with a `502` until the quota resets (midnight Pacific) or billing is enabled. |
+| `GROQ_API_KEY` | If using Groq | — | Free tier, more generous than Gemini's but still rate-limited. |
+| `AI_CHAT_MODEL` | No | `gemini-flash-latest` | Google-maintained alias for their current recommended flash model — prefer this over pinning a dated version (e.g. `gemini-1.5-flash`), which breaks once Google retires it. Set to a Groq model name (e.g. `llama-3.1-8b-instant`) when `AI_LLM_PROVIDER=groq`, or an Ollama model tag (e.g. `llama3.2:1b`) when `AI_LLM_PROVIDER=ollama`. |
 | `FLY_OLLAMA_API_TOKEN` | Prod only | — | Deploy-scoped token for the Ollama app (see lifecycle section below). Unset = lifecycle control skipped entirely. |
 | `FLY_OLLAMA_APP_NAME` | No | `stonesuite-ollama` | Which Fly app the backend starts/stops. |
 
@@ -106,6 +106,31 @@ request. `snowflake-arctic-embed:m` (~109M params) was chosen for exactly this
 reason: strong retrieval quality (MTEB-tuned) at a size that stays fast even on
 CPU-only shared infra, at the same 768 dimensions as before — a straight
 model swap, no schema migration required.
+
+## Self-hosted chat (`AI_LLM_PROVIDER=ollama`)
+
+When neither a paid Gemini tier nor a third-party Groq API key is acceptable,
+the same Ollama box can also serve chat completions — set
+`AI_LLM_PROVIDER=ollama` and `AI_CHAT_MODEL` to a pulled model tag (e.g.
+`llama3.2:1b`, the prod default in `ollama/fly.toml`). `ai.OllamaLLMClient`
+(`ai/ollama_llm.go`) talks to Ollama's `/api/chat` endpoint the same way
+`GeminiClient`/`GroqClient` talk to their APIs — no external account, no
+quota, no bill.
+
+The honest tradeoff: this runs on the same small box as the embedder
+(`ollama/fly.toml`: 2GB RAM, 1 shared CPU). A small model like `llama3.2:1b`
+is noticeably slower and a weaker instruction-follower than Gemini Flash or a
+hosted Groq model — expect it to occasionally ignore the "answer only from
+context" system prompt or cite less reliably than a larger hosted model
+would. `OLLAMA_MAX_LOADED_MODELS=2` (also in `ollama/fly.toml`) keeps both the
+embed and chat models resident at once, since every `/ai/ask` call uses both
+back to back — without it, Ollama's default eviction would swap one model out
+to load the other on nearly every request. If the box starts OOM-killing or
+responses become unacceptably slow, the fix is a bigger `[[vm]]` (more RAM),
+not more code.
+
+`ollama/entrypoint.sh` only pulls `AI_CHAT_MODEL` when it's set, so
+deployments that stay on Gemini/Groq for chat are unaffected.
 
 ## Re-ingesting app-help docs
 

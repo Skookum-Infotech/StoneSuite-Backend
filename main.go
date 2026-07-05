@@ -469,7 +469,8 @@ func main() {
 
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Embedder = self-hosted Ollama nomic-embed-text (ADR-001, pinned);
-		// LLM is swappable behind ai.LLMClient (gemini default, or groq).
+		// LLM is swappable behind ai.LLMClient (gemini default, groq, or a
+		// second self-hosted Ollama model — see ai.NewLLM).
 		llmAPIKey := config.AppConfig.GeminiAPIKey
 		if config.AppConfig.AILLMProvider == "groq" {
 			llmAPIKey = config.AppConfig.GroqAPIKey
@@ -477,7 +478,7 @@ func main() {
 		aiOps := controllers.NewAIOps(
 			cpPool,
 			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
-			ai.NewLLM(config.AppConfig.AILLMProvider, llmAPIKey, config.AppConfig.AIChatModel),
+			ai.NewLLM(config.AppConfig.AILLMProvider, llmAPIKey, config.AppConfig.AIChatModel, config.AppConfig.OllamaBaseURL),
 			cp,
 			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 		)

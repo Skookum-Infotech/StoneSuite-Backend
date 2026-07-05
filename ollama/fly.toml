@@ -6,6 +6,17 @@ primary_region = "iad"
 
 [env]
   AI_EMBED_MODEL = "snowflake-arctic-embed:m"
+  # Chat model for the fully self-hosted LLM path (AI_LLM_PROVIDER=ollama on
+  # the backend — see ai/ollama_llm.go). llama3.2:1b chosen for size: small
+  # enough (~1.3GB) to fit alongside the embedder on this box's 2GB RAM
+  # without needing a bigger (costlier) machine. Expect noticeably slower
+  # responses and weaker instruction-following than Gemini/Groq — this is the
+  # zero-external-dependency tradeoff, not a bug.
+  AI_CHAT_MODEL = "llama3.2:1b"
+  # Keep both the embed and chat models resident at once instead of evicting
+  # one to load the other on every request (Ollama's default swaps models
+  # under memory pressure) — every /ai/ask call uses both back to back.
+  OLLAMA_MAX_LOADED_MODELS = "2"
 
 [http_service]
   internal_port        = 11434

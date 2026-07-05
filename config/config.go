@@ -88,15 +88,12 @@ type Config struct {
 	AxiomToken   string
 	AxiomDataset string
 
-	// AI / RAG assistant (ADR-001). Embed vs. LLM providers are split: the
-	// embedder is pinned (open-weights, self-hosted, no migration), the LLM is
-	// swappable. All optional; the assistant no-ops when unconfigured.
-	AILLMProvider   string // "gemini" (default) | "groq"
+	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
+	// the same Ollama box — no third-party LLM account, API key, or quota.
+	// All optional; the assistant no-ops when unconfigured.
 	AIEmbedProvider string // "ollama" (default) — nomic-embed-text, self-hosted
-	GeminiAPIKey    string
-	GroqAPIKey      string
 	OllamaBaseURL   string // e.g. http://embedder:11434
-	AIChatModel     string
+	AIChatModel     string // Ollama model tag, e.g. llama3.2:1b
 	AIEmbedModel    string
 	// AIEmbedDim MUST match the vector(N) column in schema.sql. Pinned at 768
 	// (nomic-embed-text). Changing it requires re-embedding all vectors.
@@ -172,12 +169,9 @@ func Load() {
 		AxiomToken:   getEnv("AXIOM_TOKEN", ""),
 		AxiomDataset: getEnv("AXIOM_DATASET", ""),
 		// AI / RAG assistant (ADR-001)
-		AILLMProvider:   getEnv("AI_LLM_PROVIDER", "gemini"),
 		AIEmbedProvider: getEnv("AI_EMBED_PROVIDER", "ollama"),
-		GeminiAPIKey:    getEnv("GEMINI_API_KEY", ""),
-		GroqAPIKey:      getEnv("GROQ_API_KEY", ""),
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-		AIChatModel:     getEnv("AI_CHAT_MODEL", "gemini-flash-latest"),
+		AIChatModel:     getEnv("AI_CHAT_MODEL", "llama3.2:1b"),
 		AIEmbedModel:    getEnv("AI_EMBED_MODEL", "nomic-embed-text"),
 		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)

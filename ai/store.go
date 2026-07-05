@@ -106,11 +106,14 @@ func snippet(s string) string {
 }
 
 // groundingLimit caps how much of a stored chunk is passed to the LLM as
-// context. Chunks already have to fit the embedder's ~512-token context
-// window to have been embedded at all (see ai/helpdocs.IngestFS), so this is
-// a generous safety net rather than the primary size control — unlike
-// snippet, which is a deliberately short one-line UI preview.
-const groundingLimit = 2000
+// context — unlike snippet, which is a deliberately short one-line UI
+// preview. Kept well under the embedder's ~512-token ingestion ceiling
+// (chunks already have to fit that to have been embedded at all, see
+// ai/helpdocs.IngestFS) because the chat model is a small self-hosted one
+// running on a CPU-bound box (ai/ollama_llm.go): a long prompt means long
+// prefill time before generation even starts, risking Fly's own proxy
+// timeout on the request. Raise this only alongside more chat-model compute.
+const groundingLimit = 700
 
 // groundingContent returns the chunk content the LLM is grounded in,
 // preserving structure (newlines, markdown tables) that snippet's

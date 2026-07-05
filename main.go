@@ -468,17 +468,12 @@ func main() {
 		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
 
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
-		// Embedder = self-hosted Ollama nomic-embed-text (ADR-001, pinned);
-		// LLM is swappable behind ai.LLMClient (gemini default, groq, or a
-		// second self-hosted Ollama model — see ai.NewLLM).
-		llmAPIKey := config.AppConfig.GeminiAPIKey
-		if config.AppConfig.AILLMProvider == "groq" {
-			llmAPIKey = config.AppConfig.GroqAPIKey
-		}
+		// Both embeddings and chat are self-hosted on the same Ollama box
+		// (ADR-001) — no third-party LLM account, API key, or quota.
 		aiOps := controllers.NewAIOps(
 			cpPool,
 			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
-			ai.NewLLM(config.AppConfig.AILLMProvider, llmAPIKey, config.AppConfig.AIChatModel, config.AppConfig.OllamaBaseURL),
+			ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
 			cp,
 			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 		)

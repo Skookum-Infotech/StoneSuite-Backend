@@ -64,6 +64,18 @@ func NewOrchestrator(emb Embedder, ret Retriever, llm LLMClient) *Orchestrator {
 	return &Orchestrator{emb: emb, ret: ret, llm: llm}
 }
 
+// tenantRetrievalK and helpRetrievalK cap how many chunks of each kind ground
+// one answer. Kept modest (rather than wide-and-let-the-model-sort-it-out)
+// because the chat model is a small self-hosted one on a CPU-bound box (see
+// ai/ollama_llm.go): every extra citation is more prefill time before
+// generation even starts, and the top-k similarity matches are already the
+// most relevant ones — a narrower, more targeted prompt serves a small model
+// better than a wide one it's too weak to reason over quickly anyway.
+const (
+	tenantRetrievalK = 4
+	helpRetrievalK   = 2
+)
+
 // Ask embeds the question, retrieves scoped tenant chunks + app-help, and asks
 // the LLM to answer strictly from that context.
 func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, error) {
@@ -72,11 +84,11 @@ func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, erro
 		return AskResult{}, fmt.Errorf("embed question: %w", err)
 	}
 	qv := vecs[0]
-	tenantCites, err := o.ret.SearchScoped(ctx, qv, req.Scope, req.CallerUserID, req.TeamIDs, 6)
+	tenantCites, err := o.ret.SearchScoped(ctx, qv, req.Scope, req.CallerUserID, req.TeamIDs, tenantRetrievalK)
 	if err != nil {
 		return AskResult{}, fmt.Errorf("retrieve: %w", err)
 	}
-	helpCites, err := o.ret.SearchHelp(ctx, qv, 3)
+	helpCites, err := o.ret.SearchHelp(ctx, qv, helpRetrievalK)
 	if err != nil {
 		return AskResult{}, fmt.Errorf("retrieve help: %w", err)
 	}

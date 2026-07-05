@@ -11,15 +11,22 @@ import (
 )
 
 // OllamaLLMClient talks to a self-hosted Ollama instance's chat endpoint
-// (POST /api/chat) and satisfies LLMClient. Selected via
-// AI_LLM_PROVIDER=ollama — a fully self-hosted alternative to Gemini/Groq
-// with no third-party API key and no external quota, at the cost of running
-// on the same small box as the embedder (see ollama/fly.toml).
+// (POST /api/chat) and satisfies LLMClient — the only chat backend
+// StoneSuite uses: fully self-hosted, no third-party API key, no external
+// quota, at the cost of running on the same small box as the embedder (see
+// ollama/fly.toml).
 type OllamaLLMClient struct {
 	baseURL    string
 	model      string
 	httpClient *http.Client
 }
+
+// maxPredictTokens bounds how many tokens the model may generate per answer.
+// A CPU-bound box has no fast path — worst-case generation time scales
+// directly with output length, and an unbounded response risks the request
+// running past Fly's own proxy timeout regardless of how quick the model
+// starts responding. 300 tokens is plenty for a grounded, cited answer.
+const maxPredictTokens = 300
 
 // NewOllamaLLMClient builds a chat client against the given self-hosted
 // Ollama instance and model tag (e.g. "llama3.2:1b").
@@ -35,10 +42,14 @@ type ollamaChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
+type ollamaChatOptions struct {
+	NumPredict int `json:"num_predict"`
+}
 type ollamaChatReq struct {
 	Model    string              `json:"model"`
 	Messages []ollamaChatMessage `json:"messages"`
 	Stream   bool                `json:"stream"`
+	Options  ollamaChatOptions   `json:"options"`
 }
 type ollamaChatResp struct {
 	Message ollamaChatMessage `json:"message"`
@@ -55,7 +66,12 @@ func (c *OllamaLLMClient) Chat(ctx context.Context, system string, messages []Me
 	for _, m := range messages {
 		reqMessages = append(reqMessages, ollamaChatMessage{Role: m.Role, Content: m.Content})
 	}
-	body := ollamaChatReq{Model: c.model, Messages: reqMessages, Stream: false}
+	body := ollamaChatReq{
+		Model:    c.model,
+		Messages: reqMessages,
+		Stream:   false,
+		Options:  ollamaChatOptions{NumPredict: maxPredictTokens},
+	}
 	url := c.baseURL + "/api/chat"
 
 	var out ollamaChatResp

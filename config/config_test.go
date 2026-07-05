@@ -69,10 +69,8 @@ func TestIsProduction(t *testing.T) {
 }
 
 func TestLoadAIConfig(t *testing.T) {
-	t.Setenv("AI_LLM_PROVIDER", "gemini")
 	t.Setenv("AI_EMBED_PROVIDER", "ollama")
-	t.Setenv("GEMINI_API_KEY", "test-key")
-	t.Setenv("AI_CHAT_MODEL", "gemini-1.5-flash")
+	t.Setenv("AI_CHAT_MODEL", "llama3.2:1b")
 	t.Setenv("AI_EMBED_MODEL", "nomic-embed-text")
 	t.Setenv("AI_EMBED_DIM", "768")
 	t.Setenv("OLLAMA_BASE_URL", "http://embedder:11434")
@@ -81,14 +79,11 @@ func TestLoadAIConfig(t *testing.T) {
 
 	Load()
 
-	if AppConfig.AILLMProvider != "gemini" {
-		t.Fatalf("AILLMProvider = %q, want gemini", AppConfig.AILLMProvider)
-	}
 	if AppConfig.AIEmbedProvider != "ollama" {
 		t.Fatalf("AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
 	}
-	if AppConfig.GeminiAPIKey != "test-key" {
-		t.Fatalf("GeminiAPIKey = %q, want test-key", AppConfig.GeminiAPIKey)
+	if AppConfig.AIChatModel != "llama3.2:1b" {
+		t.Fatalf("AIChatModel = %q, want llama3.2:1b", AppConfig.AIChatModel)
 	}
 	if AppConfig.OllamaBaseURL != "http://embedder:11434" {
 		t.Fatalf("OllamaBaseURL = %q", AppConfig.OllamaBaseURL)
@@ -101,12 +96,12 @@ func TestLoadAIConfig(t *testing.T) {
 func TestLoadAIConfigDefaults(t *testing.T) {
 	t.Setenv("JWT_SECRET", "x")
 	Load()
-	// ADR-001 defaults: embeddings self-hosted (ollama/nomic), LLM = gemini.
+	// ADR-001 defaults: both embeddings and chat are self-hosted via Ollama.
 	if AppConfig.AIEmbedProvider != "ollama" {
 		t.Fatalf("default AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
 	}
-	if AppConfig.AILLMProvider != "gemini" {
-		t.Fatalf("default AILLMProvider = %q, want gemini", AppConfig.AILLMProvider)
+	if AppConfig.AIChatModel != "llama3.2:1b" {
+		t.Fatalf("default AIChatModel = %q, want llama3.2:1b", AppConfig.AIChatModel)
 	}
 	if AppConfig.AIEmbedModel != "nomic-embed-text" {
 		t.Fatalf("default AIEmbedModel = %q, want nomic-embed-text", AppConfig.AIEmbedModel)

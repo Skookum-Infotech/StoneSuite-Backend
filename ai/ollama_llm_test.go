@@ -81,6 +81,35 @@ func TestOllamaLLMChatEmptyResponseIsError(t *testing.T) {
 	}
 }
 
+// TestOllamaLLMChatBoundsGenerationLength guards against an unbounded
+// response on the CPU-bound self-hosted box: worst-case generation time
+// scales with output length, and an unbounded reply risks the request
+// running past Fly's own proxy timeout regardless of prompt size.
+func TestOllamaLLMChatBoundsGenerationLength(t *testing.T) {
+	var gotOptions struct {
+		NumPredict int `json:"num_predict"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Options struct {
+				NumPredict int `json:"num_predict"`
+			} `json:"options"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		gotOptions = body.Options
+		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
+	}))
+	defer srv.Close()
+
+	c := NewOllamaLLMClient(srv.URL, "llama3.2:1b")
+	if _, err := c.Chat(context.Background(), "s", []Message{{Role: "user", Content: "q"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gotOptions.NumPredict != maxPredictTokens {
+		t.Fatalf("num_predict = %d, want %d", gotOptions.NumPredict, maxPredictTokens)
+	}
+}
+
 func TestOllamaLLMChatMapsMessagesInOrder(t *testing.T) {
 	var gotRoles []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

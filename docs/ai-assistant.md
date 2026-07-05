@@ -75,7 +75,11 @@ doesn't block startup) and on its own graceful shutdown (`SIGTERM` handler).
 
 This ties Ollama's uptime to the backend's process lifetime — which, since the
 backend itself runs scale-to-zero, means Ollama is only ever running while the
-backend is. **Known limitation:** `stonesuite-backend` can scale to more than
+backend is.
+
+#### Known limitation: multi-Machine coordination
+
+`stonesuite-backend` can scale to more than
 one Machine under load; each independently calls start/stop with no
 coordination, so one Machine going idle and calling stop while a sibling
 Machine is still actively serving traffic would kill Ollama out from under it.

@@ -102,10 +102,12 @@ func main() {
 	var userOps *controllers.UserOps
 	var crmAdminOps *controllers.CRMAdminOps
 	var provisioner *provisioning.Provisioner
-	var cpPool *pgxpool.Pool // control-plane pool; used by AIOps for cp_rag_chunks
+	var cpPool *pgxpool.Pool     // control-plane pool; used by AIOps for cp_rag_chunks
+	var cp *tenancy.ControlPlane // control-plane handle; also used by AIOps for the reindex-help platform-admin check
 	var ollamaLifecycle *services.OllamaLifecycle
 	if config.AppConfig.ControlPlaneDBURL != "" {
-		cp, err := tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
+		var err error
+		cp, err = tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
 		if err != nil {
 			log.Fatalf("CRITICAL ERROR: Failed to initialize control plane: %v", err)
 		}
@@ -463,9 +465,12 @@ func main() {
 			cpPool,
 			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 			ai.NewLLM(config.AppConfig.AILLMProvider, llmAPIKey, config.AppConfig.AIChatModel),
+			cp,
+			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 		)
 		mux.Handle("POST /api/tenant/ai/ask", tenantChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
+		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
 	}
 
 	// Build the CORS allowlist once from the comma-separated CORS_ORIGIN value.

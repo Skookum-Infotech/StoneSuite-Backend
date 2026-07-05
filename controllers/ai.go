@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -9,9 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/ai"
+	"stonesuite-backend/ai/helpdocs"
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/docs"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
@@ -45,20 +48,31 @@ func narrowestScope(decisions []authz.Decision) (authz.Scope, bool) {
 	return narrowest, granted
 }
 
-// AIOps serves the tenant AI assistant: POST /api/tenant/ai/ask (RAG chat)
-// and POST /api/tenant/ai/reindex (admin: re-enqueue every CRM record).
-// queryEmbed and llm are injected so tests can substitute ai.FakeEmbedder /
-// ai.FakeLLM — no network calls in tests (see the plan's global invariants).
+// platformAdminChecker is the point-of-use interface ReindexHelp depends on
+// for its admin gate — satisfied by *tenancy.ControlPlane. Defined here so
+// the gate is testable without a real database.
+type platformAdminChecker interface {
+	IsPlatformAdmin(ctx context.Context, identityID string) (bool, error)
+}
+
+// AIOps serves the tenant AI assistant: POST /api/tenant/ai/ask (RAG chat),
+// POST /api/tenant/ai/reindex (admin: re-enqueue every CRM record), and
+// POST /api/platform/ai/reindex-help (platform admin: re-embed app-help
+// docs). queryEmbed, docEmbed, and llm are injected so tests can substitute
+// ai.FakeEmbedder / ai.FakeLLM — no network calls in tests.
 type AIOps struct {
 	cpPool     *pgxpool.Pool
 	queryEmbed ai.Embedder
+	docEmbed   ai.Embedder
 	llm        ai.LLMClient
+	cp         platformAdminChecker
 }
 
 // NewAIOps constructs the handler group. queryEmbed MUST apply the
-// search_query: prefix (see ai.NewOllamaQueryEmbedder).
-func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ai.Embedder, llm ai.LLMClient) *AIOps {
-	return &AIOps{cpPool: cpPool, queryEmbed: queryEmbed, llm: llm}
+// search_query: prefix (see ai.NewOllamaQueryEmbedder); docEmbed MUST apply
+// the search_document: prefix (see ai.NewOllamaDocEmbedder).
+func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ai.Embedder, llm ai.LLMClient, cp platformAdminChecker, docEmbed ai.Embedder) *AIOps {
+	return &AIOps{cpPool: cpPool, queryEmbed: queryEmbed, llm: llm, cp: cp, docEmbed: docEmbed}
 }
 
 type askRequestBody struct {
@@ -186,4 +200,40 @@ func (h *AIOps) Reindex(w http.ResponseWriter, r *http.Request) {
 
 	logSecurityEvent(r, "ai_reindex", "tenant_id", tenant.ID, "enqueued", enqueued)
 	writeJSON(w, http.StatusAccepted, map[string]any{"success": true, "enqueued": enqueued})
+}
+
+// ReindexHelp handles POST /api/platform/ai/reindex-help. Platform-admin
+// only. Re-embeds every docs/*.md file (compiled into the binary via
+// stonesuite-backend/docs) into cp_rag_chunks — run after editing any file
+// docs/ covers. Unlike Reindex (which enqueues CRM records for a background
+// worker), this embeds synchronously in the request: the app-help corpus is
+// small enough (today: one file) that a background queue would be pure
+// overhead.
+func (h *AIOps) ReindexHelp(w http.ResponseWriter, r *http.Request) {
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return
+	}
+	isAdmin, err := h.cp.IsPlatformAdmin(r.Context(), payload.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return
+	}
+	if !isAdmin {
+		logSecurityEvent(r, "ai_reindex_help_denied")
+		fail(w, http.StatusForbidden, "Platform admin privileges required.")
+		return
+	}
+
+	store := ai.NewCPHelpStore(h.cpPool)
+	res, err := helpdocs.IngestFS(r.Context(), h.docEmbed, store, docs.FS)
+	if err != nil {
+		slog.Error("reindex help failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
+		fail(w, http.StatusInternalServerError, "Failed to reindex app-help docs.")
+		return
+	}
+
+	logSecurityEvent(r, "ai_reindex_help", "ingested", len(res.Ingested), "failed", len(res.Failed))
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
 }

@@ -1,4 +1,7 @@
-package main
+// Package helpdocs chunks and ingests app-help markdown docs into the
+// control-plane's cp_rag_chunks table. Used by both the rag-ingest-help CLI
+// (local dev) and the POST /api/platform/ai/reindex-help handler (prod).
+package helpdocs
 
 import (
 	"regexp"

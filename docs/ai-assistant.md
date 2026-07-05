@@ -39,7 +39,7 @@ the asking user is allowed to see.
 | `AI_LLM_PROVIDER` | No | `gemini` | `gemini` or `groq`. |
 | `GEMINI_API_KEY` | If using Gemini | — | Free tier. |
 | `GROQ_API_KEY` | If using Groq | — | Free tier. |
-| `AI_CHAT_MODEL` | No | `gemini-1.5-flash` | Set to a Groq model name (e.g. `llama-3.1-8b-instant`) when `AI_LLM_PROVIDER=groq`. |
+| `AI_CHAT_MODEL` | No | `gemini-flash-latest` | Google-maintained alias for their current recommended flash model — prefer this over pinning a dated version (e.g. `gemini-1.5-flash`), which breaks once Google retires it. Set to a Groq model name (e.g. `llama-3.1-8b-instant`) when `AI_LLM_PROVIDER=groq`. |
 | `FLY_OLLAMA_API_TOKEN` | Prod only | — | Deploy-scoped token for the Ollama app (see lifecycle section below). Unset = lifecycle control skipped entirely. |
 | `FLY_OLLAMA_APP_NAME` | No | `stonesuite-ollama` | Which Fly app the backend starts/stops. |
 
@@ -75,7 +75,11 @@ doesn't block startup) and on its own graceful shutdown (`SIGTERM` handler).
 
 This ties Ollama's uptime to the backend's process lifetime — which, since the
 backend itself runs scale-to-zero, means Ollama is only ever running while the
-backend is. **Known limitation:** `stonesuite-backend` can scale to more than
+backend is.
+
+#### Known limitation: multi-Machine coordination
+
+`stonesuite-backend` can scale to more than
 one Machine under load; each independently calls start/stop with no
 coordination, so one Machine going idle and calling stop while a sibling
 Machine is still actively serving traffic would kill Ollama out from under it.

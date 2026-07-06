@@ -158,3 +158,9 @@ func TestRecordSelectColumnCount(t *testing.T) {
 	assert.Contains(t, recordSelect, "FROM customer c")
 	assert.Contains(t, recordSelect, "JOIN lkp_record_type rt")
 }
+
+func TestApprovalSentinelErrorsAreDistinct(t *testing.T) {
+	assert.NotEqual(t, ErrNotApprover.Error(), ErrAlreadyApproved.Error())
+	assert.NotEqual(t, ErrNotApprover.Error(), ErrNoApproverConfigured.Error())
+	assert.NotEqual(t, ErrAlreadyApproved.Error(), ErrNoApproverConfigured.Error())
+}

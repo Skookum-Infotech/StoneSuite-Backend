@@ -27,7 +27,12 @@ var (
 	// ErrRecordNotFound is returned when a record id matches nothing.
 	ErrRecordNotFound = errors.New("record not found")
 	// ErrNotApprover is returned when the caller is not a configured approver.
-	ErrNotApprover = errors.New("you are not a configured approver for this record")
+	ErrNotApprover = errors.New("you are not authorized to approve this document. Only the assigned approver(s) can approve it.")
+	// ErrAlreadyApproved is returned when a record has already been approved.
+	ErrAlreadyApproved = errors.New("this document has already been approved.")
+	// ErrNoApproverConfigured is returned when a record is pending approval but
+	// no active approver is configured for its record type.
+	ErrNoApproverConfigured = errors.New("no approver is configured for this workflow. Please contact your administrator.")
 )
 
 // ClientError marks a caller-fault error (maps to HTTP 400). Server faults are

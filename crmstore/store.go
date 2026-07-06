@@ -67,6 +67,10 @@ type Store interface {
 	KeyForRecord(ctx context.Context, pool *pgxpool.Pool, id string) (string, error)
 	// ListRecords lists records for key, filtered by RBAC scope.
 	ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) ([]workflow.Record, error)
+	// CountRecords returns how many records of key exist for the caller's
+	// scope — same RBAC narrowing as ListRecords, without fetching rows. Used
+	// by the AI assistant's analytical (count) question path.
+	CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error)
 	// SearchRecords lists records for key with server-side filtering, sorting,
 	// and keyset pagination, all composed onto the caller's RBAC scope (a filter
 	// can only narrow the scoped set, never widen it). Returns one page + cursor.

@@ -93,7 +93,7 @@ type Config struct {
 	// All optional; the assistant no-ops when unconfigured.
 	AIEmbedProvider string // "ollama" (default) — nomic-embed-text, self-hosted
 	OllamaBaseURL   string // e.g. http://embedder:11434
-	AIChatModel     string // Ollama model tag, e.g. llama3.2:1b
+	AIChatModel     string // Ollama model tag, e.g. llama3.2:3b
 	AIEmbedModel    string
 	// AIEmbedDim MUST match the vector(N) column in schema.sql. Pinned at 768
 	// (nomic-embed-text). Changing it requires re-embedding all vectors.
@@ -171,7 +171,7 @@ func Load() {
 		// AI / RAG assistant (ADR-001)
 		AIEmbedProvider: getEnv("AI_EMBED_PROVIDER", "ollama"),
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-		AIChatModel:     getEnv("AI_CHAT_MODEL", "llama3.2:1b"),
+		AIChatModel:     getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
 		AIEmbedModel:    getEnv("AI_EMBED_MODEL", "nomic-embed-text"),
 		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)

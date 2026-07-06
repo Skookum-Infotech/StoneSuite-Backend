@@ -129,6 +129,9 @@ func GetUserByIdentityID(ctx context.Context, q Querier, identityID string) (*Us
 	if err != nil {
 		return nil, fmt.Errorf("get user by identity: %w", err)
 	}
+	if err := attachRoles(ctx, q, &u); err != nil {
+		return nil, err
+	}
 	return &u, nil
 }
 

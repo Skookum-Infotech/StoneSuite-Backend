@@ -1,6 +1,7 @@
 package crmstore
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -163,4 +164,44 @@ func TestApprovalSentinelErrorsAreDistinct(t *testing.T) {
 	assert.NotEqual(t, ErrNotApprover.Error(), ErrAlreadyApproved.Error())
 	assert.NotEqual(t, ErrNotApprover.Error(), ErrNoApproverConfigured.Error())
 	assert.NotEqual(t, ErrAlreadyApproved.Error(), ErrNoApproverConfigured.Error())
+}
+
+func TestApprovalDecision(t *testing.T) {
+	tests := []struct {
+		name                  string
+		status                string
+		anyApproverConfigured bool
+		callerIsApprover      bool
+		wantErr               error
+		wantNil               bool
+	}{
+		{"pending, configured, caller is approver -> proceed", "pending", true, true, nil, true},
+		{"pending, configured, caller not approver -> not authorized", "pending", true, false, ErrNotApprover, false},
+		{"pending, nobody configured -> no approver configured", "pending", false, false, ErrNoApproverConfigured, false},
+		{"pending, nobody configured, but caller flag true (impossible in practice) -> still blocked", "pending", false, true, ErrNoApproverConfigured, false},
+		{"already approved -> already approved", "approved", true, true, ErrAlreadyApproved, false},
+		{"already approved, caller not approver -> still already approved", "approved", true, false, ErrAlreadyApproved, false},
+		{"not yet pending -> not pending approval", "none", true, false, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := approvalDecision(tc.status, tc.anyApproverConfigured, tc.callerIsApprover)
+			if tc.wantNil {
+				assert.NoError(t, err)
+				return
+			}
+			if tc.wantErr != nil {
+				assert.ErrorIs(t, err, tc.wantErr)
+				return
+			}
+			// "none" status case: expect a ClientError, not one of the sentinels.
+			assert.Error(t, err)
+			assert.False(t, errors.Is(err, ErrNotApprover))
+			assert.False(t, errors.Is(err, ErrAlreadyApproved))
+			assert.False(t, errors.Is(err, ErrNoApproverConfigured))
+			var ce ClientError
+			assert.True(t, errors.As(err, &ce))
+			assert.Equal(t, "This record is not pending approval.", ce.Msg)
+		})
+	}
 }

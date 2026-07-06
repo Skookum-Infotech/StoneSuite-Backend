@@ -656,6 +656,27 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	return newRec, id, nil
 }
 
+// approvalDecision is the pure branching logic behind Approve: given the
+// record's current approval status and two configuration/authorization
+// facts, it decides whether the approval may proceed. Kept side-effect-free
+// so every branch is unit-testable without a database.
+func approvalDecision(status string, anyApproverConfigured, callerIsApprover bool) error {
+	switch status {
+	case "approved":
+		return ErrAlreadyApproved
+	case "pending":
+		if !anyApproverConfigured {
+			return ErrNoApproverConfigured
+		}
+		if !callerIsApprover {
+			return ErrNotApprover
+		}
+		return nil
+	default:
+		return ClientError{Msg: "This record is not pending approval."}
+	}
+}
+
 func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error) {
 	rec, err := s.GetRecord(ctx, pool, id)
 	if err != nil {

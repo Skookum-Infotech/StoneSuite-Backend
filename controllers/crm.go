@@ -207,7 +207,11 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 	case errors.Is(err, crmstore.ErrRecordNotFound):
 		fail(w, http.StatusNotFound, "Record not found.")
 	case errors.Is(err, crmstore.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
+		fail(w, http.StatusForbidden, "You are not authorized to approve this document. Only the assigned approver(s) can approve it.")
+	case errors.Is(err, crmstore.ErrAlreadyApproved):
+		fail(w, http.StatusConflict, "This document has already been approved.")
+	case errors.Is(err, crmstore.ErrNoApproverConfigured):
+		fail(w, http.StatusConflict, "No approver is configured for this workflow. Please contact your administrator.")
 	case crmstore.IsClientError(err):
 		fail(w, http.StatusBadRequest, err.Error())
 	default:
@@ -352,16 +356,26 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 
 // GetRecord GET /api/tenant/crm/records/{id}
 func (h *CRMOps) GetRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, _, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionRead)
+	id := r.PathValue("id")
+	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
 	if !ok {
 		return
 	}
-	rec, err := st.GetRecord(r.Context(), pool, r.PathValue("id"))
+	rec, err := st.GetRecord(r.Context(), pool, id)
 	if err != nil {
 		crmFail(w, err, "Failed to load record.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
+	resp := map[string]any{"success": true, "record": rec}
+	if key == "customer" {
+		canApprove, err := st.IsApprover(r.Context(), pool, id, identityID)
+		if err != nil {
+			crmFail(w, err, "Failed to load record.")
+			return
+		}
+		resp["canApprove"] = canApprove
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type crmUpdateRequest struct {
@@ -508,6 +522,9 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, crmstore.ErrNotSupported) {
 		fail(w, http.StatusBadRequest, "Approval is not available for this workspace's design.")
 		return
+	}
+	if errors.Is(err, crmstore.ErrNotApprover) {
+		logSecurityEvent(r, "approval_denied", "identity", identityID, "record", id)
 	}
 	if err != nil {
 		crmFail(w, err, "Failed to approve record.")

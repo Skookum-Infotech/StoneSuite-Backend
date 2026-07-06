@@ -237,6 +237,12 @@ func (s *workflowStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, app
 	return nil, ErrNotSupported
 }
 
+// IsApprover is not part of the DesignV1 workflow model; always false, not an
+// error, since this is a read-only UI-affordance check, not an action.
+func (s *workflowStore) IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error) {
+	return false, nil
+}
+
 // ----- helpers ---------------------------------------------------------------
 
 func (s *workflowStore) defForKey(ctx context.Context, pool *pgxpool.Pool, key string) (*workflow.Definition, error) {

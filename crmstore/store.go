@@ -97,4 +97,8 @@ type Store interface {
 	// Approve approves a Closed-Won customer if the caller is a configured
 	// approver. DesignV1 returns ErrNotSupported.
 	Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error)
+	// IsApprover reports whether identityID is a configured approver for record
+	// id. Read-only — used to expose a canApprove flag on record reads without
+	// mutating anything. DesignV1 always returns false, nil (unsupported).
+	IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error)
 }

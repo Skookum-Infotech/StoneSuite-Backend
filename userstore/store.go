@@ -147,6 +147,9 @@ func GetUserByEmail(ctx context.Context, q Querier, email string) (*User, error)
 	if err != nil {
 		return nil, fmt.Errorf("get user by email: %w", err)
 	}
+	if err := attachRoles(ctx, q, &u); err != nil {
+		return nil, err
+	}
 	return &u, nil
 }
 

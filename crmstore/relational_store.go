@@ -656,6 +656,27 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	return newRec, id, nil
 }
 
+// approvalDecision is the pure branching logic behind Approve: given the
+// record's current approval status and two configuration/authorization
+// facts, it decides whether the approval may proceed. Kept side-effect-free
+// so every branch is unit-testable without a database.
+func approvalDecision(status string, anyApproverConfigured, callerIsApprover bool) error {
+	switch status {
+	case "approved":
+		return ErrAlreadyApproved
+	case "pending":
+		if !anyApproverConfigured {
+			return ErrNoApproverConfigured
+		}
+		if !callerIsApprover {
+			return ErrNotApprover
+		}
+		return nil
+	default:
+		return ClientError{Msg: "This record is not pending approval."}
+	}
+}
+
 func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error) {
 	rec, err := s.GetRecord(ctx, pool, id)
 	if err != nil {
@@ -664,30 +685,27 @@ func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, a
 	if rec.WorkflowID != "customer" {
 		return nil, ClientError{Msg: "Only customer records require approval."}
 	}
-	if rec.CoreFields["approval_status"] != "pending" {
-		return nil, ClientError{Msg: "This record is not pending approval."}
-	}
-	empID, found := s.employeeIDByIdentity(ctx, pool, approverIdentityID)
-	if !found {
-		return nil, ErrNotApprover
-	}
-	// The approver must be configured for CUST (optionally for this exact status).
-	var allowed bool
-	err = pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM crm_workflow_approver a
-			JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
-			JOIN customer r ON r.customer_uuid = $1
-			WHERE rt.record_type_code = 'CUST'
-			  AND a.approver_employee_id = $2 AND a.is_active
-			  AND (a.crm_status_id IS NULL OR a.crm_status_id = r.customer_crm_status)
-		)`, id, empID).Scan(&allowed)
+	status, _ := rec.CoreFields["approval_status"].(string)
+
+	anyApproverConfigured, err := s.hasAnyActiveApprover(ctx, pool, "CUST")
 	if err != nil {
-		return nil, fmt.Errorf("check approver: %w", err)
+		return nil, fmt.Errorf("check any approver configured: %w", err)
 	}
-	if !allowed {
-		return nil, ErrNotApprover
+
+	empID, found := s.employeeIDByIdentity(ctx, pool, approverIdentityID)
+	var callerIsApprover bool
+	if found {
+		callerIsApprover, err = s.isConfiguredApprover(ctx, pool, id, empID)
+		if err != nil {
+			return nil, fmt.Errorf("check configured approver: %w", err)
+		}
 	}
+
+	if err := approvalDecision(status, anyApproverConfigured, callerIsApprover); err != nil {
+		return nil, err
+	}
+
+	// Reaching this point implies found == true (empID is valid), since approvalDecision only returns nil when callerIsApprover is true, which requires found == true.
 	if _, err := pool.Exec(ctx, `
 		UPDATE customer SET
 			customer_is_approved = TRUE, customer_approval_status = 'approved',
@@ -699,6 +717,63 @@ func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, a
 	}
 	s.writeHistory(ctx, pool, id, "approve", empID)
 	return s.GetRecord(ctx, pool, id)
+}
+
+// IsApprover reports whether identityID is a configured approver for record
+// id. Unlike Approve, this never mutates state and never errors on "not an
+// approver" — it's a read-only check for the caller's UI affordances.
+func (s *relationalStore) IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error) {
+	rec, err := s.GetRecord(ctx, pool, id)
+	if err != nil {
+		return false, err
+	}
+	if rec.WorkflowID != "customer" {
+		return false, nil
+	}
+	status, _ := rec.CoreFields["approval_status"].(string)
+	if status != "pending" {
+		return false, nil
+	}
+	empID, found := s.employeeIDByIdentity(ctx, pool, identityID)
+	if !found {
+		return false, nil
+	}
+	return s.isConfiguredApprover(ctx, pool, id, empID)
+}
+
+// hasAnyActiveApprover reports whether at least one active approver is
+// configured for recordTypeCode (e.g. "CUST"), regardless of caller or status.
+func (s *relationalStore) hasAnyActiveApprover(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM crm_workflow_approver a
+			JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
+			WHERE rt.record_type_code = $1 AND a.is_active
+		)`, recordTypeCode).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check any approver: %w", err)
+	}
+	return exists, nil
+}
+
+// isConfiguredApprover reports whether empID is configured (and active) as an
+// approver for record id, at its current record type + status.
+func (s *relationalStore) isConfiguredApprover(ctx context.Context, pool *pgxpool.Pool, id string, empID int) (bool, error) {
+	var allowed bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM crm_workflow_approver a
+			JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
+			JOIN customer r ON r.customer_uuid = $1
+			WHERE rt.record_type_code = 'CUST'
+			  AND a.approver_employee_id = $2 AND a.is_active
+			  AND (a.crm_status_id IS NULL OR a.crm_status_id = r.customer_crm_status)
+		)`, id, empID).Scan(&allowed)
+	if err != nil {
+		return false, fmt.Errorf("check approver: %w", err)
+	}
+	return allowed, nil
 }
 
 // ----- helpers ---------------------------------------------------------------

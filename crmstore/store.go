@@ -27,7 +27,12 @@ var (
 	// ErrRecordNotFound is returned when a record id matches nothing.
 	ErrRecordNotFound = errors.New("record not found")
 	// ErrNotApprover is returned when the caller is not a configured approver.
-	ErrNotApprover = errors.New("you are not a configured approver for this record")
+	ErrNotApprover = errors.New("you are not authorized to approve this document. Only the assigned approver(s) can approve it.")
+	// ErrAlreadyApproved is returned when a record has already been approved.
+	ErrAlreadyApproved = errors.New("this document has already been approved.")
+	// ErrNoApproverConfigured is returned when a record is pending approval but
+	// no active approver is configured for its record type.
+	ErrNoApproverConfigured = errors.New("no approver is configured for this workflow. Please contact your administrator.")
 )
 
 // ClientError marks a caller-fault error (maps to HTTP 400). Server faults are
@@ -92,4 +97,8 @@ type Store interface {
 	// Approve approves a Closed-Won customer if the caller is a configured
 	// approver. DesignV1 returns ErrNotSupported.
 	Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error)
+	// IsApprover reports whether identityID is a configured approver for record
+	// id. Read-only — used to expose a canApprove flag on record reads without
+	// mutating anything. DesignV1 always returns false, nil (unsupported).
+	IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error)
 }

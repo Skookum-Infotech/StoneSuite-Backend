@@ -198,6 +198,18 @@ func main() {
 				go func() {
 					if err := ollamaLifecycle.StartAll(context.Background()); err != nil {
 						log.Printf("ollama-lifecycle: start failed: %v", err)
+						return
+					}
+					// Fire a throwaway embed+chat so the first REAL /ai/ask
+					// request isn't the one paying Ollama's model-load
+					// latency — StartAll only boots the Machine, models load
+					// lazily on first inference. Best-effort: a failed
+					// warmup just means the first real request pays that
+					// latency itself, same as before this existed.
+					warmupEmb := ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel)
+					warmupLLM := ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
+					if err := ai.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
+						log.Printf("ollama-lifecycle: warmup failed: %v", err)
 					}
 				}()
 			}
@@ -659,14 +671,16 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 			ai.NewRagStore(pool),
 		)
-		go runTenantIndexWorker(ctx, t.Slug, w)
+		go runTenantIndexWorker(ctx, t.Slug, w, q)
 		go runTenantReconciliation(ctx, t.Slug, store, pool, q)
 	}
 }
 
 // runTenantIndexWorker drains one tenant's rag_index_queue every 3s until ctx
-// is cancelled (the goroutine's explicit exit strategy).
-func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker) {
+// is cancelled (the goroutine's explicit exit strategy). Also publishes the
+// tenant's queue-depth/oldest-pending-age metrics each tick — piggybacking on
+// the existing cadence rather than adding a separate ticker.
+func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker, q *index.Queue) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -676,6 +690,11 @@ func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker) {
 		case <-ticker.C:
 			if _, err := w.DrainOnce(ctx); err != nil {
 				log.Printf("rag-index: tenant %s: drain error: %v", slug, err)
+			}
+			if pending, age, err := q.Stats(ctx); err != nil {
+				log.Printf("rag-index: tenant %s: stats error: %v", slug, err)
+			} else {
+				metrics.SetRAGIndexQueueStats(slug, pending, age)
 			}
 		}
 	}

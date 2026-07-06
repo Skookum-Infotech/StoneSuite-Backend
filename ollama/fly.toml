@@ -6,13 +6,14 @@ primary_region = "iad"
 
 [env]
   AI_EMBED_MODEL = "snowflake-arctic-embed:m"
-  # Chat model for the fully self-hosted LLM path (AI_LLM_PROVIDER=ollama on
-  # the backend — see ai/ollama_llm.go). llama3.2:1b chosen for size: small
-  # enough (~1.3GB) to fit alongside the embedder without needing a much
-  # bigger machine. Expect noticeably slower responses and weaker
-  # instruction-following than a large hosted model — the tradeoff for
-  # running fully self-hosted with no third-party account, key, or quota.
-  AI_CHAT_MODEL = "llama3.2:1b"
+  # Chat model for the fully self-hosted LLM path (ai/ollama_llm.go). Bumped
+  # from llama3.2:1b to :3b (~2GB) after live use showed the 1b model
+  # over-refusing and citing unreliably even when relevant context was
+  # retrieved — 3b is a meaningfully better instruction-follower and still
+  # fits this box's 4gb alongside the ~0.5GB embedder. Still noticeably
+  # slower and weaker than a large hosted model — the tradeoff for running
+  # fully self-hosted with no third-party account, key, or quota.
+  AI_CHAT_MODEL = "llama3.2:3b"
   # Keep both the embed and chat models resident at once instead of evicting
   # one to load the other on every request (Ollama's default swaps models
   # under memory pressure) — every /ai/ask call uses both back to back.

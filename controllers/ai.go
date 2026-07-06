@@ -15,6 +15,7 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/docs"
+	"stonesuite-backend/metrics"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
@@ -135,6 +136,19 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if keys, matched := classifyCountQuestion(body.Question); matched {
+		store := crmstore.For(tenant.DesignVersion)
+		res, err := countCRMRecords(r.Context(), store, pool, string(scope), payload.ID, keys)
+		if err != nil {
+			slog.Error("ai count query failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+			fail(w, http.StatusBadGateway, "The assistant is temporarily unavailable.")
+			return
+		}
+		logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
+		return
+	}
+
 	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
 	teamIDs, err := workflow.TeamIDsForUser(r.Context(), pool, callerUserID)
 	if err != nil {
@@ -145,7 +159,7 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	orch := ai.NewOrchestrator(h.queryEmbed, ai.CombinedRetriever{
 		Tenant: ai.NewRagStore(pool),
 		Help:   ai.NewCPHelpStore(h.cpPool),
-	}, h.llm)
+	}, h.llm).WithMetrics(metrics.AI{})
 	res, err := orch.Ask(r.Context(), ai.AskRequest{
 		Question:     body.Question,
 		Scope:        string(scope),

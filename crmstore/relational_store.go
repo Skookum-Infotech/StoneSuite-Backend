@@ -410,6 +410,35 @@ func (s *relationalStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, k
 	return out, rows.Err()
 }
 
+// CountRecords returns how many customer rows of key exist under scope,
+// without fetching rows. Mirrors ListRecords' WHERE/scope clauses exactly
+// (including v2's pre-existing "team" == "own" behavior) so counts stay
+// consistent with what ListRecords would return for the same scope.
+func (s *relationalStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error) {
+	code, ok := crmKeyToCode[key]
+	if !ok {
+		return 0, ClientError{Msg: "Unknown CRM workflow: " + key}
+	}
+	q := `SELECT COUNT(*)
+		FROM customer c
+		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
+		WHERE rt.record_type_code = $1 AND c.customer_deleted_at IS NULL`
+	args := []any{code}
+	if scope == "own" || scope == "team" {
+		empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
+		if !found {
+			return 0, nil
+		}
+		q += ` AND c.customer_crm_owner_user_id = $2`
+		args = append(args, empID)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count customer records: %w", err)
+	}
+	return n, nil
+}
+
 // ----- record writes ---------------------------------------------------------
 
 // insertCustomer inserts a customer row from the registry-mapped core map plus

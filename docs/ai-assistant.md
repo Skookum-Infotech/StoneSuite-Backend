@@ -20,14 +20,110 @@ the asking user is allowed to see.
    the embedder's ~512-token context window, so a long question fails fast
    with a clear message instead of a generic error from Ollama.
 
+## Retrieval: hybrid + a relevance floor
+
+Each of the two sources above (tenant records, app-help) is actually searched
+twice and the results fused:
+
+- **Vector arm** — pgvector cosine similarity (`embedding <=> $1`, HNSW index).
+  Finds conceptually related content even with no shared words.
+- **Lexical arm** — Postgres full-text search (`content_tsv`, a generated
+  `tsvector` + GIN index, `simple` config so identifiers like
+  `INC-2023-Q4-011` survive tokenization unstemmed). Finds exact terms and
+  rare tokens a 768-dim embedding can blur — record numbers, names, codes.
+
+The two ranked lists are merged with **Reciprocal Rank Fusion** (`ai/fuse.go`,
+`rrfK = 60`): a chunk ranked highly in *both* arms outranks one ranked highly
+in only one. The lexical arm degrades gracefully — a full-text query error is
+logged and retrieval falls back to vector-only rather than failing the whole
+`ask` — while the vector arm staying broken is still fatal, since it's the
+primary path.
+
+`buildScopedSearch` and `buildScopedLexicalSearch` (`ai/store.go`) share one
+`scopeClause` helper, so the RBAC scope is guaranteed identical on both arms —
+see `ai/store_scope_test.go` and the `dbtest`-tagged ownership tests in
+`ai/store_test.go`.
+
+Because top-k similarity search alone always returns k chunks regardless of
+true relevance, a **relevance floor** (`ai/orchestrator.go`,
+`relevanceFloorDistance`) drops an arm's results entirely if none of them
+clear the bar — any lexical hit (a literal term match needs no distance
+floor) or any vector hit at or under the floor — rather than grounding a
+small, weak model in noise it might hallucinate over. Applied per-source, so
+a genuinely relevant help match still grounds the answer even when nothing
+relevant was found in the tenant's own records, and vice versa.
+
+## Analytical questions: a separate, exact fast-path for pure counts
+
+RAG (retrieval over individual record chunks) fundamentally cannot answer
+"how many customers do we have" — there's no single chunk containing a count.
+Rather than let those questions reach the LLM and get an honest but
+unsatisfying refusal, `POST /api/tenant/ai/ask` classifies the question first
+(`controllers/ai_analytical.go`, `classifyCountQuestion`): a narrow
+regex/keyword match for "how many" / "count of" / "number of" / "total"
+combined with a CRM type word (lead/prospect/customer, or "record(s)"/"crm"
+for all three). A match short-circuits straight to `crmstore.Store`'s new
+`CountRecords` method — the same RBAC scope (`all`/`team`/`own`) and caller
+identity the RAG path would have used, just a `SELECT COUNT(*)` instead of
+retrieval — and returns a deterministic sentence with **zero LLM calls**: no
+generation latency, no hallucination risk, no cost.
+
+**Deliberately narrow scope**: this path answers *unfiltered totals only*. A
+question with any date/status/outcome language ("last week", "won", "closed",
+"since", etc. — see `filterHintWords`) is rejected by the classifier and falls
+through to the normal RAG path, which honestly says "I don't have that
+information" — rather than this path silently returning an unfiltered total
+mislabeled as the answer to a filtered question. Answering "which customers
+won in the last week" correctly would need a reliable status-change timestamp
+the schema doesn't have today (the customer table's `customer_approved_at` is
+Closed-Won-approval-only, not a general "when did this change status" column)
+— a real schema/product decision, not something to guess at silently.
+
+**Golden-question regression set**: `controllers/ai_golden_test.go` runs ~30
+realistic CRM questions through this same classifier and asserts the routing
+decision (analytical count vs. fall-through to RAG) on every `go test ./...`
+— a wrong routing decision here is either a silently-wrong "confidently
+exact" number or an unnecessary refusal, so it's covered as a CI regression
+gate. It deliberately only covers the classifier, which is pure and needs no
+DB/Ollama; grading live RAG answer quality (retrieval recall, citation
+correctness, refusal rate) needs a seeded tenant and a running model, which
+CI doesn't have today — `ai_refusals_total` / `ai_asks_total` (below) is the
+production substitute for that signal.
+
+## Observability
+
+`GET /api/metrics` (Prometheus) exposes AI-specific series alongside the
+generic HTTP ones, all defined in `metrics/ai.go`:
+
+- `ai_embed_duration_seconds`, `ai_llm_duration_seconds` — per-stage latency
+  histograms for one `/ai/ask` (embed step, chat-completion step).
+- `ai_llm_timeouts_total` — chat completions that failed specifically because
+  the LLM client's own deadline elapsed (`ai/ollama_llm.go`'s 60s timeout),
+  distinct from any other failure.
+- `ai_asks_total` / `ai_refusals_total` — **refusal rate** (`ai_refusals_total
+  / ai_asks_total`) is the primary answer-quality signal: the share of asks
+  where the model said "I don't have that information" instead of answering.
+  Watch this around any deploy touching retrieval, the chat model, or
+  grounding content. Counts only asks that reach a chat completion — the
+  analytical count fast-path (below) is exact and never refuses, so it's
+  intentionally excluded.
+- `rag_index_queue_pending` / `rag_index_queue_oldest_pending_age_seconds`
+  (labeled by tenant) — published every drain tick (`ai/index.Queue.Stats`,
+  `main.go`'s `runTenantIndexWorker`); a growing backlog or aging oldest-job
+  means indexing is falling behind that tenant's write volume.
+
+`ai.Orchestrator.WithMetrics` wires these in (default: a no-op sink, so
+building an `Orchestrator` without it — as every existing test does — records
+nothing and behaves exactly as before this existed).
+
 ## Security model
 
 - **Tenant isolation**: `rag_chunks` lives in each tenant's own database. Retrieval
   can never see another tenant's vectors — there is no shared record vector store.
 - **RBAC scope**: the caller's most restrictive granted scope across the CRM
-  resources (lead/prospect/customer) is ANDed onto the similarity search. An
-  unrecognized or ungranted scope returns zero results (fail closed), never a
-  wider result set.
+  resources (lead/prospect/customer) is ANDed onto both the vector and lexical
+  search (same `scopeClause`, see above). An unrecognized or ungranted scope
+  returns zero results (fail closed), never a wider result set.
 - **App-help** (`cp_rag_chunks`) has no scope clause — it's identical, non-private
   content for every tenant.
 
@@ -39,7 +135,7 @@ the asking user is allowed to see.
 | `AI_EMBED_MODEL` | No | `snowflake-arctic-embed:m` | Must stay in sync with `AI_EMBED_DIM`. Changing this requires re-embedding every existing chunk — different models are different vector spaces even at the same dimension. |
 | `AI_EMBED_DIM` | No | `768` | Must match the `vector(N)` columns in schema.sql. |
 | `OLLAMA_BASE_URL` | Yes | `http://localhost:11434` | Points at the self-hosted box serving both embeddings and chat — `http://stonesuite-ollama.internal:11434` in prod (see below). |
-| `AI_CHAT_MODEL` | No | `llama3.2:1b` | An Ollama model tag — must already be pulled on the box (see `ollama/entrypoint.sh`). |
+| `AI_CHAT_MODEL` | No | `llama3.2:3b` | An Ollama model tag — must already be pulled on the box (see `ollama/entrypoint.sh`). |
 | `FLY_OLLAMA_API_TOKEN` | Prod only | — | Deploy-scoped token for the Ollama app (see lifecycle section below). Unset = lifecycle control skipped entirely. |
 | `FLY_OLLAMA_APP_NAME` | No | `stonesuite-ollama` | Which Fly app the backend starts/stops. |
 
@@ -96,7 +192,7 @@ For local dev, provision a small box (or run Ollama directly on your machine):
 
 ```bash
 ollama pull snowflake-arctic-embed:m
-ollama pull llama3.2:1b
+ollama pull llama3.2:3b
 ```
 
 Record indexing can tolerate a cold start (it's async, off the request path —
@@ -106,8 +202,10 @@ overloaded Ollama machine adds latency to that one request.
 
 ### Chat model sizing
 
-`llama3.2:1b` was chosen to fit this box's RAM alongside the embedder — but
-it's genuinely CPU-bound work, not just a memory concern. A synchronous chat
+`llama3.2:3b` (bumped from `:1b` after live use showed the 1b model
+over-refusing — see "Retrieval: hybrid + a relevance floor" above) was chosen
+to fit this box's RAM alongside the embedder — but it's genuinely CPU-bound
+work, not just a memory concern. A synchronous chat
 request has a hard ceiling: `main.go`'s `http.Server.WriteTimeout` forcibly
 closes the connection once it elapses, even if the handler is about to
 finish with a correct answer — this was long misattributed to "Fly's proxy
@@ -128,9 +226,9 @@ request comfortably under that ceiling in practice:
 
 If responses are still too slow after tuning both, the fix is more CPU on
 `ollama/fly.toml`'s `[[vm]]` (a modest, fixed Fly infra cost — not a
-per-request API bill), not a smaller model or more retries. `llama3.2:1b` is
-also a noticeably weaker instruction-follower than a larger hosted model
-would be — expect it to occasionally cite less reliably or need a nudge.
+per-request API bill), not a smaller model or more retries. Even at `:3b`,
+this is still noticeably weaker than a larger hosted model — expect it to
+occasionally cite less reliably or need a nudge.
 `ollama/fly.toml` already runs a dedicated (`performance`) CPU core rather
 than a shared one for exactly this reason — CPU-bound inference suffers
 badly from shared-vCPU noisy-neighbor throttling.
@@ -139,6 +237,30 @@ badly from shared-vCPU noisy-neighbor throttling.
 models resident at once, since every `/ai/ask` call uses both back to back —
 without it, Ollama's default eviction would swap one model out to load the
 other on nearly every request.
+
+## Known limitations that need frontend changes
+
+Two cold-start/reliability items from the architecture review are blocked on
+the separate [StoneSuite frontend repo](https://github.com/Skookum-Infotech/StoneSuite)
+and cannot be finished from this backend alone:
+
+- **Streaming responses.** `POST /api/tenant/ai/ask` answers in one shot —
+  the client waits out the full embed + retrieval + chat-completion latency
+  (worst case, tens of seconds on a cold/CPU-bound Ollama box) before seeing
+  anything. Switching Ollama's `/api/chat` call to `stream:true` and relaying
+  tokens over SSE/chunked HTTP as they're generated would get a first token
+  back in ~1-2s and keep the connection visibly alive, which is a much more
+  robust fix for the "Network Error" cold-start UX than raising timeouts
+  further. This needs a backend streaming endpoint *and* a frontend consumer
+  for it — half the work (frontend) is out of this repo's scope.
+- **Frontend request timeout.** The backend's `http.Server.WriteTimeout` is
+  90s (see "Chat model sizing" above) specifically so a slow-but-legitimate
+  chat completion finishes with a clean JSON response instead of a dropped
+  connection. If the frontend's own HTTP client (fetch/axios) times out the
+  `/ai/ask` request before 90s, the user sees an error for a request the
+  backend actually completed successfully — the frontend's timeout for this
+  one endpoint needs to be ≥ 90s. This is a frontend-repo config change; it
+  cannot be fixed here.
 
 ## Re-ingesting app-help docs
 

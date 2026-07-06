@@ -14,9 +14,8 @@ done
 # volume or a model change).
 ollama pull "${AI_EMBED_MODEL:-snowflake-arctic-embed:m}"
 
-# Chat model is optional: only pulled when this box is also serving chat
-# completions (AI_LLM_PROVIDER=ollama on the backend, see ai/ollama_llm.go).
-# Deployments that use Gemini/Groq for chat leave AI_CHAT_MODEL unset here.
+# Chat model pull is conditional (rather than hardcoded) so a box that only
+# serves embeddings can leave AI_CHAT_MODEL unset — see ai/ollama_llm.go.
 if [ -n "$AI_CHAT_MODEL" ]; then
 	ollama pull "$AI_CHAT_MODEL"
 fi

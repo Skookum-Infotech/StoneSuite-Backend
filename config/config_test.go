@@ -100,8 +100,8 @@ func TestLoadAIConfigDefaults(t *testing.T) {
 	if AppConfig.AIEmbedProvider != "ollama" {
 		t.Fatalf("default AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
 	}
-	if AppConfig.AIChatModel != "llama3.2:1b" {
-		t.Fatalf("default AIChatModel = %q, want llama3.2:1b", AppConfig.AIChatModel)
+	if AppConfig.AIChatModel != "llama3.2:3b" {
+		t.Fatalf("default AIChatModel = %q, want llama3.2:3b", AppConfig.AIChatModel)
 	}
 	if AppConfig.AIEmbedModel != "nomic-embed-text" {
 		t.Fatalf("default AIEmbedModel = %q, want nomic-embed-text", AppConfig.AIEmbedModel)

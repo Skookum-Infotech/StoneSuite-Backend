@@ -64,6 +64,20 @@ func (s *workflowStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key
 	return workflow.ListRecords(ctx, pool, wf.ID, scope, callerUserID, teamIDs)
 }
 
+// CountRecords returns how many records of key exist under scope, without
+// fetching rows — see workflow.CountRecords.
+func (s *workflowStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error) {
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		return 0, ClientError{Msg: "Workflow not found."}
+	}
+	if err != nil {
+		return 0, err
+	}
+	callerUserID, teamIDs := s.scopeFilter(ctx, pool, scope, actorIdentityID)
+	return workflow.CountRecords(ctx, pool, wf.ID, scope, callerUserID, teamIDs)
+}
+
 // SearchRecords delegates to the workflow engine's scope-safe filtered list.
 func (s *workflowStore) SearchRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, req query.Request) (workflow.Page, error) {
 	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)

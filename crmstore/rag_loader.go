@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/ai"
+	"stonesuite-backend/workflow"
 )
 
 // RAGRecordLoader adapts a Store to ai/index.RecordLoader, resolving a
@@ -41,8 +42,36 @@ func (l *RAGRecordLoader) Load(ctx context.Context, sourceID string) (ai.RecordD
 		StateName:   l.stateName(ctx, rec.CurrentStateID),
 		Core:        rec.CoreFields,
 		Custom:      rec.CustomFields,
+		FieldLabels: l.fieldLabels(ctx, key),
 	}
 	return doc, workflowUUIDOrEmpty(rec.WorkflowID), rec.OwnerUserID, rec.TeamID, nil
+}
+
+// fieldLabels resolves key's (lead|prospect|customer) admin-defined custom
+// field labels for RenderRecord — works for both the v1 dynamic-workflow
+// store and v2 relational store, since GetWorkflowByKey resolves by the CRM
+// type key, not a per-record workflow UUID (see workflowUUIDOrEmpty).
+// Best-effort: no pool (test doubles construct a loader without one) or any
+// lookup failure (no matching workflow, no fields defined) yields a nil map,
+// so RenderRecord's humanizeKey fallback still produces a usable, if less
+// precise, label rather than failing the whole index job.
+func (l *RAGRecordLoader) fieldLabels(ctx context.Context, key string) map[string]string {
+	if l.pool == nil {
+		return nil
+	}
+	wf, err := workflow.GetWorkflowByKey(ctx, l.pool, key)
+	if err != nil {
+		return nil
+	}
+	def, err := workflow.LoadDefinition(ctx, l.pool, wf.ID)
+	if err != nil {
+		return nil
+	}
+	labels := make(map[string]string, len(def.Fields))
+	for _, f := range def.Fields {
+		labels[f.Key] = f.Label
+	}
+	return labels
 }
 
 // workflowUUIDOrEmpty guards the boundary between two incompatible meanings

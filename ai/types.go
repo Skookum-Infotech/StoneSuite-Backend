@@ -24,6 +24,14 @@ type Citation struct {
 	// so truncating the UI preview to one line can never also truncate what
 	// the model is grounded in.
 	Content string `json:"-"`
+	// Distance is the pgvector cosine distance (0 = identical, larger = less
+	// similar) from the vector-arm search that produced this citation — the
+	// relevance-floor signal (see ai/orchestrator.go hasRelevantMatch). Only
+	// meaningful when DistanceValid is true; a lexical-only match (full-text,
+	// no vector search involved) leaves both at their zero value. Internal,
+	// never serialized (json:"-").
+	Distance      float64 `json:"-"`
+	DistanceValid bool    `json:"-"`
 }
 
 // Embedder turns text into vectors. Implementations must return one vector per

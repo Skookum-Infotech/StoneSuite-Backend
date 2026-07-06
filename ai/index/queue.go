@@ -77,3 +77,17 @@ func (q *Queue) Fail(ctx context.Context, id string) error {
 		WHERE id=$1`, id, maxAttempts)
 	return err
 }
+
+// Stats reports the current pending backlog: how many jobs are pending and
+// the age in seconds of the oldest one (0 when nothing is pending) — an
+// observability signal (see metrics.SetRAGIndexQueueStats) for whether
+// indexing is falling behind, not something the drain path itself needs.
+func (q *Queue) Stats(ctx context.Context) (pending int, oldestPendingAgeSeconds float64, err error) {
+	err = q.pool.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(enqueued_at))), 0)
+		FROM rag_index_queue WHERE status = 'pending'`).Scan(&pending, &oldestPendingAgeSeconds)
+	if err != nil {
+		return 0, 0, fmt.Errorf("queue stats: %w", err)
+	}
+	return pending, oldestPendingAgeSeconds, nil
+}

@@ -84,7 +84,6 @@ type Permission struct {
 // may grant. Adding a capability is a one-line change here.
 var catalog = []Permission{
 	{ResourceWorkflow, ActionRead},
-	{ResourceWorkflow, ActionConfigure},
 
 	{ResourceRecord, ActionCreate},
 	{ResourceRecord, ActionRead},
@@ -211,8 +210,10 @@ var catalog = []Permission{
 	{ResourceUser, ActionUpdate},
 	{ResourceUser, ActionDelete},
 
+	{ResourceRole, ActionCreate},
 	{ResourceRole, ActionRead},
-	{ResourceRole, ActionConfigure},
+	{ResourceRole, ActionUpdate},
+	{ResourceRole, ActionDelete},
 
 	{ResourceTeam, ActionRead},
 	{ResourceTeam, ActionConfigure},

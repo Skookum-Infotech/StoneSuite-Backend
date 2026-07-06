@@ -379,7 +379,7 @@ func main() {
 
 		// Tenant-scoped RBAC management (role editor API). Each handler runs
 		// after RequireAuth + the tenancy resolver, then enforces the relevant
-		// catalog permission (role:read / role:configure) per method.
+		// catalog permission (role:read / role:create / role:update / role:delete) per method.
 		rbac := controllers.NewRBACOps()
 		mux.Handle("/api/tenant/permissions/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Catalog))))
 		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))

@@ -113,6 +113,81 @@ func (h *WorkflowOps) SetWorkflowEnabled(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Workflow updated."})
 }
 
+// ---- approver config ---------------------------------------------------------
+
+// GetWorkflowApprovers GET /api/tenant/workflows/{id}/approvers
+// Returns the user ids currently configured as active approvers for this
+// workflow's CRM record type (only lead/prospect/customer support approval;
+// today only "customer" Closed-Won records ever reach a pending state).
+func (h *WorkflowOps) GetWorkflowApprovers(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionRead)
+	if !ok {
+		return
+	}
+	code, err := recordTypeCodeForWorkflow(r.Context(), pool, r.PathValue("id"))
+	switch {
+	case errors.Is(err, workflow.ErrWorkflowNotFound):
+		fail(w, http.StatusNotFound, "Workflow not found.")
+		return
+	case errors.Is(err, errNotCRMWorkflow):
+		fail(w, http.StatusBadRequest, "This workflow does not support approver configuration.")
+		return
+	case err != nil:
+		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		return
+	}
+	ids, err := activeApproverUserIDs(r.Context(), pool, code)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load approvers.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": ids})
+}
+
+// SetWorkflowApprovers PATCH /api/tenant/workflows/{id}/approvers  body {"approverUserIds":["..."]}
+// Replaces the full set of active approvers for this workflow's CRM record
+// type with exactly the given users. Capped at maxApproversPerWorkflow — the
+// approval flow requires every configured approver to sign off, so an
+// unbounded pool would make a record impossible to finalize.
+func (h *WorkflowOps) SetWorkflowApprovers(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionConfigure)
+	if !ok {
+		return
+	}
+	var req struct {
+		ApproverUserIDs []string `json:"approverUserIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if len(req.ApproverUserIDs) > maxApproversPerWorkflow {
+		fail(w, http.StatusBadRequest, "Maximum of 2 approvers can be configured for this workflow.")
+		return
+	}
+	code, err := recordTypeCodeForWorkflow(r.Context(), pool, r.PathValue("id"))
+	switch {
+	case errors.Is(err, workflow.ErrWorkflowNotFound):
+		fail(w, http.StatusNotFound, "Workflow not found.")
+		return
+	case errors.Is(err, errNotCRMWorkflow):
+		fail(w, http.StatusBadRequest, "This workflow does not support approver configuration.")
+		return
+	case err != nil:
+		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		return
+	}
+	if err := replaceActiveApprovers(r.Context(), pool, code, req.ApproverUserIDs); err != nil {
+		if errors.Is(err, errUnknownApproverUser) {
+			fail(w, http.StatusBadRequest, "One or more approverUserIds do not match an active employee.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to save approvers.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": req.ApproverUserIDs})
+}
+
 // ---- record numbering --------------------------------------------------------
 
 // GetNumberingConfig GET /api/tenant/workflows/{id}/numbering

@@ -73,6 +73,22 @@ func GetWorkflowByKey(ctx context.Context, q Querier, key string) (*Workflow, er
 	return &w, nil
 }
 
+// GetWorkflowByID loads a workflow by its id.
+func GetWorkflowByID(ctx context.Context, q Querier, id string) (*Workflow, error) {
+	var w Workflow
+	err := q.QueryRow(ctx, `
+		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		FROM workflows WHERE id = $1`, id).
+		Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault, &w.PipelineOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWorkflowNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get workflow by id: %w", err)
+	}
+	return &w, nil
+}
+
 // SetWorkflowEnabled toggles a workflow on/off.
 // When disabling, enforces the CRM pipeline dependency: a workflow with
 // pipeline_order N cannot be disabled while any workflow with pipeline_order

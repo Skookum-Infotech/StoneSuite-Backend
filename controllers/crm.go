@@ -37,6 +37,7 @@ import (
 //	POST   /api/tenant/crm/records/{id}/transition          — apply a transition
 //	POST   /api/tenant/crm/records/{id}/convert             — convert to next stage
 //	POST   /api/tenant/crm/records/{id}/approve             — approve a Closed-Won customer
+//	GET    /api/tenant/crm/{workflowKey}/approvals/pending  — caller's approval queue
 type CRMOps struct{}
 
 // NewCRMOps constructs the handler group.
@@ -212,6 +213,8 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusConflict, "This document has already been approved.")
 	case errors.Is(err, crmstore.ErrNoApproverConfigured):
 		fail(w, http.StatusConflict, "No approver is configured for this workflow. Please contact your administrator.")
+	case errors.Is(err, crmstore.ErrAlreadyApprovedByYou):
+		fail(w, http.StatusConflict, "You have already approved this document. Waiting on the other assigned approver.")
 	case crmstore.IsClientError(err):
 		fail(w, http.StatusBadRequest, err.Error())
 	default:
@@ -532,4 +535,23 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
+}
+
+// PendingApprovals GET /api/tenant/crm/{workflowKey}/approvals/pending
+// Lists customer records where the caller is a configured approver who has
+// not yet approved — the caller's own approval queue. A record drops off this
+// list as soon as the caller approves it, even if it's still awaiting the
+// other assigned approver.
+func (h *CRMOps) PendingApprovals(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("workflowKey")
+	st, pool, identityID, _, ok := h.authCRM(w, r, key, authz.ActionRead)
+	if !ok {
+		return
+	}
+	records, err := st.PendingApprovals(r.Context(), pool, identityID)
+	if err != nil {
+		crmFail(w, err, "Failed to load pending approvals.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": records})
 }

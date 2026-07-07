@@ -418,6 +418,8 @@ func main() {
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
 		mux.Handle("DELETE /api/tenant/workflows/{id}/fields/{fieldId}", tenantChain(wf.DeleteField))
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
+		mux.Handle("GET /api/tenant/workflows/{id}/approvers", tenantChain(wf.GetWorkflowApprovers))
+		mux.Handle("PATCH /api/tenant/workflows/{id}/approvers", tenantChain(wf.SetWorkflowApprovers))
 		mux.Handle("PUT /api/tenant/workflows/{id}/numbering", tenantChain(wf.SetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records/search", tenantChain(wf.SearchRecords))
@@ -469,6 +471,7 @@ func main() {
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
 		// Approval: sign off a Closed-Won customer (v2 design).
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/approve", tenantChain(crm.ApproveRecord))
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/approvals/pending", tenantChain(crm.PendingApprovals))
 		// Per-record audit trail.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/audit", tenantChain(crm.RecordAudit))
 

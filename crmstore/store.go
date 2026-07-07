@@ -33,6 +33,12 @@ var (
 	// ErrNoApproverConfigured is returned when a record is pending approval but
 	// no active approver is configured for its record type.
 	ErrNoApproverConfigured = errors.New("no approver is configured for this workflow. Please contact your administrator.")
+	// ErrAlreadyApprovedByYou is returned when the caller already approved this
+	// record and it is still awaiting one or more other configured approvers.
+	ErrAlreadyApprovedByYou = errors.New("you have already approved this document. Waiting on the other assigned approver.")
+	// ErrTooManyApprovers is returned when configuring an approver would exceed
+	// the maximum of 2 active approvers for a workflow.
+	ErrTooManyApprovers = errors.New("maximum of 2 approvers can be configured for this workflow.")
 )
 
 // ClientError marks a caller-fault error (maps to HTTP 400). Server faults are
@@ -102,7 +108,12 @@ type Store interface {
 	// approver. DesignV1 returns ErrNotSupported.
 	Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error)
 	// IsApprover reports whether identityID is a configured approver for record
-	// id. Read-only — used to expose a canApprove flag on record reads without
-	// mutating anything. DesignV1 always returns false, nil (unsupported).
+	// id who has not yet approved it. Read-only — used to expose a canApprove
+	// flag on record reads without mutating anything. DesignV1 always returns
+	// false, nil (unsupported).
 	IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error)
+	// PendingApprovals lists pending customer records where actorIdentityID is
+	// a configured active approver who has not yet approved — the caller's
+	// approval queue. DesignV1 always returns an empty slice (unsupported).
+	PendingApprovals(ctx context.Context, pool *pgxpool.Pool, actorIdentityID string) ([]workflow.Record, error)
 }

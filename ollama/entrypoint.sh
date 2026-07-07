@@ -14,4 +14,10 @@ done
 # volume or a model change).
 ollama pull "${AI_EMBED_MODEL:-snowflake-arctic-embed:m}"
 
+# Chat model pull is conditional (rather than hardcoded) so a box that only
+# serves embeddings can leave AI_CHAT_MODEL unset — see ai/ollama_llm.go.
+if [ -n "$AI_CHAT_MODEL" ]; then
+	ollama pull "$AI_CHAT_MODEL"
+fi
+
 wait "$SERVE_PID"

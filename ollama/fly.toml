@@ -6,6 +6,18 @@ primary_region = "iad"
 
 [env]
   AI_EMBED_MODEL = "snowflake-arctic-embed:m"
+  # Chat model for the fully self-hosted LLM path (ai/ollama_llm.go). Bumped
+  # from llama3.2:1b to :3b (~2GB) after live use showed the 1b model
+  # over-refusing and citing unreliably even when relevant context was
+  # retrieved — 3b is a meaningfully better instruction-follower and still
+  # fits this box's 4gb alongside the ~0.5GB embedder. Still noticeably
+  # slower and weaker than a large hosted model — the tradeoff for running
+  # fully self-hosted with no third-party account, key, or quota.
+  AI_CHAT_MODEL = "llama3.2:3b"
+  # Keep both the embed and chat models resident at once instead of evicting
+  # one to load the other on every request (Ollama's default swaps models
+  # under memory pressure) — every /ai/ask call uses both back to back.
+  OLLAMA_MAX_LOADED_MODELS = "2"
 
 [http_service]
   internal_port        = 11434
@@ -33,6 +45,14 @@ primary_region = "iad"
   destination = "/root/.ollama"
 
 [[vm]]
-  memory   = "2gb"
-  cpu_kind = "shared"
+  # Bumped from shared/2gb after a live chat request took 73s and still timed
+  # out (ai/ollama_llm.go's 60s client timeout) with both models loaded.
+  # CPU-bound LLM inference suffers badly on a "shared" vCPU (noisy-neighbor
+  # throttling) — "performance" gives a dedicated core, which matters far more
+  # here than raw core count. 4gb RAM gives headroom for KV-cache during
+  # generation on top of both models' resident weights (~1.5GB). This is a
+  # fixed, modest Fly cost (still scale-to-zero — nothing while idle), not a
+  # per-request API bill.
+  memory   = "4gb"
+  cpu_kind = "performance"
   cpus     = 1

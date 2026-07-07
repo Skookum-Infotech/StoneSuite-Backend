@@ -107,3 +107,43 @@ func TestFailReturnsToPendingUntilAttemptsExhausted(t *testing.T) {
 		t.Fatalf("status = %q, want error", status)
 	}
 }
+
+func TestStatsReportsPendingCountAndOldestAge(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+
+	pending, age, err := q.Stats(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || age != 0 {
+		t.Fatalf("empty queue stats = (%d, %f), want (0, 0)", pending, age)
+	}
+
+	const recID = "44444444-4444-4444-4444-444444444444"
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	pending, age, err = q.Stats(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("pending = %d, want 1", pending)
+	}
+	if age < 0 {
+		t.Fatalf("age = %f, want >= 0", age)
+	}
+
+	// Claiming (moving to 'inflight') must remove it from the pending count.
+	if _, err := q.ClaimPending(ctx(t), 10); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err = q.Stats(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("pending after claim = %d, want 0", pending)
+	}
+}

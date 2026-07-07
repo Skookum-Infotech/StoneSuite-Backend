@@ -84,7 +84,7 @@ func (h *RBACOps) Roles(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "roles": roles})
 
 	case http.MethodPost:
-		if !h.authorize(w, r, authz.ResourceRole, authz.ActionConfigure) {
+		if !h.authorize(w, r, authz.ResourceRole, authz.ActionCreate) {
 			return
 		}
 		var req roleRequest
@@ -147,7 +147,7 @@ func (h *RBACOps) Role(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "role": role})
 
 	case http.MethodPut:
-		if !h.authorize(w, r, authz.ResourceRole, authz.ActionConfigure) {
+		if !h.authorize(w, r, authz.ResourceRole, authz.ActionUpdate) {
 			return
 		}
 		existing, err := authz.GetRole(r.Context(), pool, id)
@@ -183,7 +183,7 @@ func (h *RBACOps) Role(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Role updated."})
 
 	case http.MethodDelete:
-		if !h.authorize(w, r, authz.ResourceRole, authz.ActionConfigure) {
+		if !h.authorize(w, r, authz.ResourceRole, authz.ActionDelete) {
 			return
 		}
 		if err := authz.DeleteRole(r.Context(), pool, id); err != nil {
@@ -219,7 +219,7 @@ func (h *RBACOps) UserRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := parts[0]
 
-	if !h.authorize(w, r, authz.ResourceRole, authz.ActionConfigure) {
+	if !h.authorize(w, r, authz.ResourceRole, authz.ActionUpdate) {
 		return
 	}
 

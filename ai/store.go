@@ -9,14 +9,14 @@ import (
 	"github.com/pgvector/pgvector-go"
 )
 
-// buildScopedSearch returns the parameterized SQL + args for a scope-safe
-// similarity search over rag_chunks. $1 is ALWAYS the query vector; scope
-// params follow. The scope clause is ANDed onto the ORDER BY — it can only
-// narrow the caller's permitted rows (mirrors workflow.buildRecordQuery).
-// Never interpolate a value; only this fixed set of clause shapes is used.
-func buildScopedSearch(scope, callerUserID string, teamIDs []string, k int) (string, []any) {
-	args := []any{nil} // filled with the vector by the caller ($1)
-	where := "TRUE"
+// scopeClause returns the WHERE clause + args for a scope-safe search over
+// rag_chunks. $1 is reserved for the caller's query param (vector OR tsquery
+// text); scope params start at $2. The clause can only NARROW the caller's
+// rows (mirrors the Record Filter Engine invariant) — never interpolate a
+// value; only this fixed set of clause shapes is used.
+func scopeClause(scope, callerUserID string, teamIDs []string) (where string, args []any) {
+	args = []any{nil} // $1 reserved, filled by the caller
+	where = "TRUE"
 	switch scope {
 	case "team":
 		where = "(owner_user_id = $2 OR team_id = ANY($3))"
@@ -29,8 +29,31 @@ func buildScopedSearch(scope, callerUserID string, teamIDs []string, k int) (str
 	default:
 		where = "FALSE" // unknown scope denies everything (fail closed)
 	}
+	return where, args
+}
+
+// buildScopedSearch returns the parameterized SQL + args for a scope-safe
+// similarity search over rag_chunks. $1 is ALWAYS the query vector; scope
+// params follow. The scope clause is ANDed onto the ORDER BY — it can only
+// narrow the caller's permitted rows (mirrors workflow.buildRecordQuery).
+// Never interpolate a value; only this fixed set of clause shapes is used.
+func buildScopedSearch(scope, callerUserID string, teamIDs []string, k int) (string, []any) {
+	where, args := scopeClause(scope, callerUserID, teamIDs)
 	sql := fmt.Sprintf(
-		`SELECT source_id, content FROM rag_chunks WHERE %s ORDER BY embedding <=> $1 LIMIT %d`,
+		`SELECT source_id, content, embedding <=> $1 AS distance FROM rag_chunks WHERE %s ORDER BY distance LIMIT %d`,
+		where, k)
+	return sql, args
+}
+
+// buildScopedLexicalSearch builds a scope-safe FULL-TEXT search over rag_chunks.
+// $1 is the raw query text; websearch_to_tsquery parses it. Only rows matching
+// the tsquery are returned, ranked by ts_rank_cd (term-frequency/proximity).
+// Same scope clause as buildScopedSearch — the lexical arm can never widen the
+// caller's permitted rows.
+func buildScopedLexicalSearch(scope, callerUserID string, teamIDs []string, k int) (string, []any) {
+	where, args := scopeClause(scope, callerUserID, teamIDs)
+	sql := fmt.Sprintf(
+		`SELECT source_id, content FROM rag_chunks WHERE %s AND content_tsv @@ websearch_to_tsquery('simple', $1) ORDER BY ts_rank_cd(content_tsv, websearch_to_tsquery('simple', $1)) DESC LIMIT %d`,
 		where, k)
 	return sql, args
 }
@@ -87,19 +110,69 @@ func (s *RagStore) SearchScoped(ctx context.Context, queryVec []float32, scope, 
 	var out []Citation
 	for rows.Next() {
 		var sourceID, content string
+		var distance float64
+		if err := rows.Scan(&sourceID, &content, &distance); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, Citation{
+			SourceType: "record", SourceID: sourceID, Snippet: snippet(content), Content: groundingContent(content),
+			Distance: distance, DistanceValid: true,
+		})
+	}
+	return out, rows.Err()
+}
+
+// SearchScopedLexical returns up to k chunks whose content full-text-matches
+// queryText that the caller (granted `scope`) is permitted to read. This is
+// the keyword arm of hybrid retrieval, fused with SearchScoped's vector arm
+// via RRF (see ai/fuse.go) — it catches exact identifiers / rare tokens
+// (record numbers, names, codes) that vector similarity alone can blur.
+func (s *RagStore) SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error) {
+	sql, args := buildScopedLexicalSearch(scope, callerUserID, teamIDs, k)
+	args[0] = queryText
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("scoped lexical search: %w", err)
+	}
+	defer rows.Close()
+	var out []Citation
+	for rows.Next() {
+		var sourceID, content string
 		if err := rows.Scan(&sourceID, &content); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		out = append(out, Citation{SourceType: "record", SourceID: sourceID, Snippet: snippet(content)})
+		out = append(out, Citation{SourceType: "record", SourceID: sourceID, Snippet: snippet(content), Content: groundingContent(content)})
 	}
 	return out, rows.Err()
 }
 
 // snippet trims a chunk's content to a single-line preview for citations.
+// Display only — never used to ground an LLM answer, see groundingContent.
 func snippet(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) > 240 {
 		return s[:240] + "…"
+	}
+	return s
+}
+
+// groundingLimit caps how much of a stored chunk is passed to the LLM as
+// context — unlike snippet, which is a deliberately short one-line UI
+// preview. Kept well under the embedder's ~512-token ingestion ceiling
+// (chunks already have to fit that to have been embedded at all, see
+// ai/helpdocs.IngestFS) because the chat model is a small self-hosted one
+// running on a CPU-bound box (ai/ollama_llm.go): a long prompt means long
+// prefill time before generation even starts, risking Fly's own proxy
+// timeout on the request. Raise this only alongside more chat-model compute.
+const groundingLimit = 700
+
+// groundingContent returns the chunk content the LLM is grounded in,
+// preserving structure (newlines, markdown tables) that snippet's
+// single-line preview intentionally discards.
+func groundingContent(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > groundingLimit {
+		return s[:groundingLimit] + "…"
 	}
 	return s
 }

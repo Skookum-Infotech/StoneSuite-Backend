@@ -208,3 +208,74 @@ func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
 		t.Fatalf("unknown scope = %+v, want 0 (fail closed)", got)
 	}
 }
+
+// TestRagStoreSearchScopedLexicalEnforcesOwnership is the lexical-arm twin of
+// TestRagStoreSearchScopedEnforcesOwnership: a real caller with scope=own
+// must never retrieve another user's chunk via full-text search either, even
+// though it's in the same tenant DB. Both arms MUST share the identical scope
+// clause (scopeClause) so this security invariant holds for hybrid retrieval.
+func TestRagStoreSearchScopedLexicalEnforcesOwnership(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewRagStore(pool)
+	ctx := ctxS(t)
+
+	const userA = "aaaaaaaa-0000-0000-0000-000000000001"
+	const userB = "aaaaaaaa-0000-0000-0000-000000000002"
+	const teamX = "bbbbbbbb-0000-0000-0000-000000000001"
+
+	mustUpsert := func(sourceID, owner, team, content string) {
+		t.Helper()
+		if err := s.Upsert(ctx, Chunk{
+			SourceID: sourceID, WorkflowID: sourceID, OwnerUserID: owner, TeamID: team,
+			Content: content, ContentHash: content, Embedding: nonZeroVec(),
+		}); err != nil {
+			t.Fatalf("upsert %s: %v", sourceID, err)
+		}
+	}
+	mustUpsert("20000000-0000-0000-0000-000000000001", userA, teamX, "widget order owned by A, in team X")
+	mustUpsert("20000000-0000-0000-0000-000000000002", userB, teamX, "widget order owned by B, in team X")
+	mustUpsert("20000000-0000-0000-0000-000000000003", userB, "", "widget order owned by B, no team")
+
+	const term = "widget"
+
+	// own: A sees only A's chunk.
+	got, err := s.SearchScopedLexical(ctx, term, "own", userA, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].SourceID != "20000000-0000-0000-0000-000000000001" {
+		t.Fatalf("own scope for A = %+v, want exactly A's chunk", got)
+	}
+
+	// team: A (in team X) sees A's + B's team-X chunk, but not B's teamless one.
+	got, err = s.SearchScopedLexical(ctx, term, "team", userA, []string{teamX}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("team scope for A = %+v, want 2 (A's own + B's team-X chunk)", got)
+	}
+	for _, c := range got {
+		if c.SourceID == "20000000-0000-0000-0000-000000000003" {
+			t.Fatalf("team scope leaked B's teamless chunk: %+v", got)
+		}
+	}
+
+	// all: sees everything matching the term regardless of owner/team.
+	got, err = s.SearchScopedLexical(ctx, term, "all", userA, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("all scope = %d results, want 3", len(got))
+	}
+
+	// unknown/unset scope: fail closed, zero results (never falls through to all).
+	got, err = s.SearchScopedLexical(ctx, term, "", userA, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("unknown scope = %+v, want 0 (fail closed)", got)
+	}
+}

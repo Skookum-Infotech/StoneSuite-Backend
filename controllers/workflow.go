@@ -82,6 +82,13 @@ func (h *WorkflowOps) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
 		return
 	}
+	// Best-effort: only CRM workflows (lead/prospect/customer) have configured
+	// approvers; leave ApproverUserIds nil for anything else or on lookup error.
+	if code, cerr := recordTypeCodeForWorkflow(r.Context(), pool, def.Workflow.ID); cerr == nil {
+		if ids, aerr := activeApproverUserIDs(r.Context(), pool, code); aerr == nil {
+			def.Workflow.ApproverUserIds = ids
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "definition": def})
 }
 

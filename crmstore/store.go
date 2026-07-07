@@ -27,7 +27,12 @@ var (
 	// ErrRecordNotFound is returned when a record id matches nothing.
 	ErrRecordNotFound = errors.New("record not found")
 	// ErrNotApprover is returned when the caller is not a configured approver.
-	ErrNotApprover = errors.New("you are not a configured approver for this record")
+	ErrNotApprover = errors.New("you are not authorized to approve this document. Only the assigned approver(s) can approve it.")
+	// ErrAlreadyApproved is returned when a record has already been approved.
+	ErrAlreadyApproved = errors.New("this document has already been approved.")
+	// ErrNoApproverConfigured is returned when a record is pending approval but
+	// no active approver is configured for its record type.
+	ErrNoApproverConfigured = errors.New("no approver is configured for this workflow. Please contact your administrator.")
 )
 
 // ClientError marks a caller-fault error (maps to HTTP 400). Server faults are
@@ -67,6 +72,10 @@ type Store interface {
 	KeyForRecord(ctx context.Context, pool *pgxpool.Pool, id string) (string, error)
 	// ListRecords lists records for key, filtered by RBAC scope.
 	ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) ([]workflow.Record, error)
+	// CountRecords returns how many records of key exist for the caller's
+	// scope — same RBAC narrowing as ListRecords, without fetching rows. Used
+	// by the AI assistant's analytical (count) question path.
+	CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error)
 	// SearchRecords lists records for key with server-side filtering, sorting,
 	// and keyset pagination, all composed onto the caller's RBAC scope (a filter
 	// can only narrow the scoped set, never widen it). Returns one page + cursor.
@@ -92,4 +101,8 @@ type Store interface {
 	// Approve approves a Closed-Won customer if the caller is a configured
 	// approver. DesignV1 returns ErrNotSupported.
 	Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error)
+	// IsApprover reports whether identityID is a configured approver for record
+	// id. Read-only — used to expose a canApprove flag on record reads without
+	// mutating anything. DesignV1 always returns false, nil (unsupported).
+	IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error)
 }

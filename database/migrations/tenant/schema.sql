@@ -2196,6 +2196,16 @@ CREATE INDEX        IF NOT EXISTS rag_chunks_scope_idx    ON rag_chunks (owner_u
 CREATE INDEX        IF NOT EXISTS rag_chunks_embedding_idx
     ON rag_chunks USING hnsw (embedding vector_cosine_ops);
 
+-- Hybrid retrieval — lexical (keyword) arm beside the vector arm. A generated
+-- tsvector over content + a GIN index lets exact terms / rare tokens (record
+-- numbers, names, codes) that a 768-dim embedding blurs be matched precisely.
+-- 'simple' config (no stemming) so identifiers like INC-2023-Q4-011 survive
+-- tokenization. Idempotent + append-only: the generated STORED column is
+-- auto-populated for existing rows on ADD.
+ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector
+    GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
+CREATE INDEX IF NOT EXISTS rag_chunks_tsv_idx ON rag_chunks USING gin (content_tsv);
+
 CREATE TABLE IF NOT EXISTS rag_index_queue (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_id   UUID NOT NULL,

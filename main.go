@@ -198,6 +198,18 @@ func main() {
 				go func() {
 					if err := ollamaLifecycle.StartAll(context.Background()); err != nil {
 						log.Printf("ollama-lifecycle: start failed: %v", err)
+						return
+					}
+					// Fire a throwaway embed+chat so the first REAL /ai/ask
+					// request isn't the one paying Ollama's model-load
+					// latency — StartAll only boots the Machine, models load
+					// lazily on first inference. Best-effort: a failed
+					// warmup just means the first real request pays that
+					// latency itself, same as before this existed.
+					warmupEmb := ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel)
+					warmupLLM := ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
+					if err := ai.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
+						log.Printf("ollama-lifecycle: warmup failed: %v", err)
 					}
 				}()
 			}
@@ -344,6 +356,13 @@ func main() {
 		// exits when the server shuts down.
 		tenantRateLimiter := middleware.NewRateLimiter(shutdownCtx, 20, 40)
 
+		// AI-specific rate limit: 0.5 req/sec sustained (30/min), bursts up to 5,
+		// per tenant. The generic tenantRateLimiter above is calibrated for cheap
+		// CRUD calls; every /ai/ask request costs a real embedding + LLM call, so
+		// it needs its own, much tighter budget to bound a single tenant's AI
+		// spend rather than relying on the CRUD-sized limit above.
+		aiRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.5, 5)
+
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
 
 		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
@@ -352,9 +371,15 @@ func main() {
 			return middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(h)))
 		}
 
+		// aiChain layers the AI-specific rate limit on top of tenantChain's
+		// generic one, for routes that make a synchronous embedding/LLM call.
+		aiChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(aiRateLimiter.PerTenant(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
+		}
+
 		// Tenant-scoped RBAC management (role editor API). Each handler runs
 		// after RequireAuth + the tenancy resolver, then enforces the relevant
-		// catalog permission (role:read / role:configure) per method.
+		// catalog permission (role:read / role:create / role:update / role:delete) per method.
 		rbac := controllers.NewRBACOps()
 		mux.Handle("/api/tenant/permissions/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Catalog))))
 		mux.Handle("/api/tenant/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.Roles))))
@@ -455,20 +480,16 @@ func main() {
 		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
 
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
-		// Embedder = self-hosted Ollama nomic-embed-text (ADR-001, pinned);
-		// LLM is swappable behind ai.LLMClient (gemini default, or groq).
-		llmAPIKey := config.AppConfig.GeminiAPIKey
-		if config.AppConfig.AILLMProvider == "groq" {
-			llmAPIKey = config.AppConfig.GroqAPIKey
-		}
+		// Both embeddings and chat are self-hosted on the same Ollama box
+		// (ADR-001) — no third-party LLM account, API key, or quota.
 		aiOps := controllers.NewAIOps(
 			cpPool,
 			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
-			ai.NewLLM(config.AppConfig.AILLMProvider, llmAPIKey, config.AppConfig.AIChatModel),
+			ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
 			cp,
 			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 		)
-		mux.Handle("POST /api/tenant/ai/ask", tenantChain(aiOps.Ask))
+		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
 	}
@@ -532,9 +553,19 @@ func main() {
 	fmt.Println("===============================================")
 
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      globalHandler,
-		WriteTimeout: 15 * time.Second,
+		Addr:    ":" + port,
+		Handler: globalHandler,
+		// WriteTimeout must exceed the slowest legitimate handler, not just the
+		// common case: POST /api/tenant/ai/ask runs a synchronous self-hosted
+		// LLM completion (ai.OllamaLLMClient, 60s inner client timeout) on top
+		// of embedding + retrieval. A too-short WriteTimeout forcibly closes
+		// the TCP connection once it elapses — even when the handler is about
+		// to finish with a correct answer — which looks identical to a proxy
+		// timeout from the client (silent "Network Error", no JSON body) but
+		// is actually us, not Fly's edge, hanging up on our own slow success.
+		// Set comfortably above OllamaLLMClient's timeout so that timeout
+		// fires first and the client gets a clean error response instead.
+		WriteTimeout: 90 * time.Second,
 		ReadTimeout:  15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
@@ -640,14 +671,16 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
 			ai.NewRagStore(pool),
 		)
-		go runTenantIndexWorker(ctx, t.Slug, w)
+		go runTenantIndexWorker(ctx, t.Slug, w, q)
 		go runTenantReconciliation(ctx, t.Slug, store, pool, q)
 	}
 }
 
 // runTenantIndexWorker drains one tenant's rag_index_queue every 3s until ctx
-// is cancelled (the goroutine's explicit exit strategy).
-func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker) {
+// is cancelled (the goroutine's explicit exit strategy). Also publishes the
+// tenant's queue-depth/oldest-pending-age metrics each tick — piggybacking on
+// the existing cadence rather than adding a separate ticker.
+func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker, q *index.Queue) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -657,6 +690,11 @@ func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker) {
 		case <-ticker.C:
 			if _, err := w.DrainOnce(ctx); err != nil {
 				log.Printf("rag-index: tenant %s: drain error: %v", slug, err)
+			}
+			if pending, age, err := q.Stats(ctx); err != nil {
+				log.Printf("rag-index: tenant %s: stats error: %v", slug, err)
+			} else {
+				metrics.SetRAGIndexQueueStats(slug, pending, age)
 			}
 		}
 	}

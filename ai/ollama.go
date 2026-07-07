@@ -79,10 +79,16 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 }
 
 // transportRetries bounds retries for connection-level failures only (refused/
-// reset/EOF) — the window where the self-hosted embedder box is mid
-// autostart/autostop under scale-to-zero. Application errors (non-2xx status)
-// are not retried here; those need a human, not a resend.
-const transportRetries = 2
+// reset/EOF/DNS lookup failure) — the window where the self-hosted embedder
+// box is mid autostart/autostop under scale-to-zero. Application errors
+// (non-2xx status) are not retried here; those need a human, not a resend.
+//
+// 5 retries at retryDelay (2s) gives ~10s of budget: observed live, a fully
+// cold Ollama Machine (backend just woke from scale-to-zero, Ollama's own
+// Machine not yet DNS-reachable) can take several seconds longer to become
+// reachable than the previous 2-retry/~4s budget covered, causing the very
+// first request after an idle period to fail outright with "no such host".
+const transportRetries = 5
 
 // postJSON marshals body, POSTs it, and decodes a 2xx JSON response into out.
 // Non-2xx responses become errors that include the status code.

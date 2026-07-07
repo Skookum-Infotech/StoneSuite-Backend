@@ -430,6 +430,30 @@ func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID
 	return out, rows.Err()
 }
 
+// CountRecords returns how many records exist for a workflow under the
+// caller's scope — same RBAC narrowing as ListRecords (see its doc comment),
+// without fetching rows.
+func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string, teamIDs []string) (int, error) {
+	var (
+		n    int
+		err  error
+		base = `SELECT COUNT(*) FROM workflow_records WHERE workflow_id = $1`
+	)
+	switch scope {
+	case "all":
+		err = q.QueryRow(ctx, base, workflowID).Scan(&n)
+	case "team":
+		err = q.QueryRow(ctx, base+` AND (owner_user_id = $2 OR team_id = ANY($3))`,
+			workflowID, nullIfEmpty(callerUserID), teamIDs).Scan(&n)
+	default: // own (most restrictive)
+		err = q.QueryRow(ctx, base+` AND owner_user_id = $2`, workflowID, nullIfEmpty(callerUserID)).Scan(&n)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("count records: %w", err)
+	}
+	return n, nil
+}
+
 // UpdateRecordFields replaces a record's custom_fields (already validated).
 func UpdateRecordFields(ctx context.Context, q Querier, id string, custom map[string]any) error {
 	raw, _ := json.Marshal(custom)

@@ -260,6 +260,11 @@ func (h *CRMOps) WorkflowStatuses(w http.ResponseWriter, r *http.Request) {
 	// Include workflow metadata for the UI envelope when available (both designs
 	// keep the workflows table seeded).
 	if wf, werr := workflow.GetWorkflowByKey(r.Context(), pool, key); werr == nil {
+		if code, ok := crmstore.RecordTypeCodeForKey(key); ok {
+			if ids, aerr := activeApproverUserIDs(r.Context(), pool, code); aerr == nil {
+				wf.ApproverUserIds = ids
+			}
+		}
 		resp["workflow"] = wf
 	} else {
 		resp["workflow"] = map[string]any{"key": key}
@@ -360,7 +365,7 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 // GetRecord GET /api/tenant/crm/records/{id}
 func (h *CRMOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
+	st, pool, _, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -369,15 +374,12 @@ func (h *CRMOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to load record.")
 		return
 	}
-	resp := map[string]any{"success": true, "record": rec}
-	if key == "customer" {
-		canApprove, err := st.IsApprover(r.Context(), pool, id, identityID)
-		if err != nil {
-			crmFail(w, err, "Failed to load record.")
-			return
-		}
-		resp["canApprove"] = canApprove
+	canApprove, err := st.IsApprover(r.Context(), pool, id, identityID)
+	if err != nil {
+		crmFail(w, err, "Failed to load record.")
+		return
 	}
+	resp := map[string]any{"success": true, "record": rec, "canApprove": canApprove}
 	writeJSON(w, http.StatusOK, resp)
 }
 

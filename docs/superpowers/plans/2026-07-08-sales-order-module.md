@@ -18,6 +18,7 @@
 - **Custom fields:** ≤15 per workflow, validated against `workflow_field_definitions` via `workflow.ValidateCustomFields`/`ValidateCustomFieldsPartial`.
 - **Response envelope:** `{ "success": bool, "message"?: string, ... }` via `controllers.writeJSON`/`fail`.
 - **Conventional Commits.** New features need tests. `go build ./... && go vet ./... && go test ./...` must pass before each commit.
+- **Integration tests follow the repo convention** (see `ai/store_test.go`): a `//go:build dbtest` tag on the first line, a `TEST_DATABASE_URL` env var read via `os.Getenv`, `t.Skip(...)` when unset, run with `go test -tags dbtest ./...`. Pure-function, resolver, and handler-auth tests carry **no** build tag and run in the normal suite. Do **not** invent per-package DB env vars.
 - Spec: `docs/superpowers/specs/2026-07-08-sales-order-module-design.md` (authoritative; cite section numbers).
 
 ---
@@ -454,7 +455,7 @@ func TestItem_JSONKeys(t *testing.T) {
 
 **Files:**
 - Create: `inventory/store.go`, `inventory/resolver.go`
-- Test: `inventory/store_test.go` (integration, gated on `INVENTORY_TEST_DB_URL`)
+- Test: `inventory/store_test.go` (integration; `//go:build dbtest` + `TEST_DATABASE_URL`, per repo convention)
 
 **Interfaces:**
 - Consumes: `inventory.Item`, `inventory.CreateItemInput`; `query.Request`, `query.Build`.
@@ -463,6 +464,8 @@ func TestItem_JSONKeys(t *testing.T) {
 - [ ] **Step 1: Write the failing integration test**
 
 ```go
+//go:build dbtest
+
 // inventory/store_test.go
 package inventory
 
@@ -475,13 +478,14 @@ import (
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
-	url := os.Getenv("INVENTORY_TEST_DB_URL")
-	if url == "" {
-		t.Skip("INVENTORY_TEST_DB_URL not set")
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping DB-backed test")
 	}
-	pool, err := pgxpool.New(context.Background(), url)
+	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
-		t.Fatalf("pool: %v", err)
+		t.Fatalf("connect test db: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	return pool
@@ -501,7 +505,7 @@ func TestCreateAndGetItem(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — Run: `go test ./inventory/ -run TestCreateAndGetItem -v` → FAIL (funcs undefined; or SKIP without DB — if skipped, still implement).
+- [ ] **Step 2: Run to verify it fails** — Run: `go test -tags dbtest ./inventory/ -run TestCreateAndGetItem -v` → FAIL (funcs undefined; or SKIP without `TEST_DATABASE_URL` — if skipped, still implement).
 
 - [ ] **Step 3: Implement `inventory/store.go`**
 
@@ -552,7 +556,7 @@ var _ query.FieldResolver = resolver{}
 
 (Table alias `i` = `inventory_item`. Sorting stays on the default `created_at`/`updated_at`; `record_number` is not applicable here.)
 
-- [ ] **Step 5: Run to verify it passes** — Run: `go test ./inventory/ -v` (PASS or SKIP if no DB). Also `go build ./...`.
+- [ ] **Step 5: Run to verify it passes** — Run: `go test -tags dbtest ./inventory/ -v` (PASS, or SKIP without `TEST_DATABASE_URL`). Also `go build ./...` and `go test ./inventory/` (untagged, must still compile/pass).
 
 - [ ] **Step 6: Commit** — `git commit -m "feat(inventory): add item store (CRUD + keyset search) and field resolver"`.
 
@@ -831,7 +835,7 @@ Spec §5, §9, §11. Transactional writes; reuse `query/` for listing.
 
 **Files:**
 - Create: `salesorder/store.go`
-- Test: `salesorder/store_test.go` (integration, gated on `SALESORDER_TEST_DB_URL`)
+- Test: `salesorder/store_test.go` (integration; `//go:build dbtest` + `TEST_DATABASE_URL`, per repo convention — same `testPool` helper as `inventory/store_test.go`)
 
 **Interfaces:**
 - Consumes: `ComputeLine`, `ComputeHeader`, `FormatNumber`; `salesorder` types; `workflow.ValidateCustomFields`.
@@ -842,7 +846,7 @@ Spec §5, §9, §11. Transactional writes; reuse `query/` for listing.
 ```go
 // salesorder/store_test.go  (excerpt)
 func TestCreate_SnapshotsAndTotals(t *testing.T) {
-	pool := testPool(t) // skips without SALESORDER_TEST_DB_URL
+	pool := testPool(t) // //go:build dbtest; skips without TEST_DATABASE_URL
 	ctx := context.Background()
 	custUUID, itemUUID := seedCustomerAndItem(t, pool) // helper: inserts a customer + inventory_item, returns their UUIDs
 	in := CreateOrderInput{
@@ -868,7 +872,7 @@ func TestCreate_SnapshotsAndTotals(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run to verify it fails** — Run: `go test ./salesorder/ -run TestCreate_ -v` → FAIL/SKIP.
+- [ ] **Step 2: Run to verify it fails** — Run: `go test -tags dbtest ./salesorder/ -run TestCreate_ -v` → FAIL/SKIP.
 
 - [ ] **Step 3: Implement `Create` in `salesorder/store.go`**
 
@@ -883,7 +887,7 @@ Mirror `crmstore/relational_store.go` create+numbering. Algorithm, all inside on
 8. Insert a `sales_order_history` row: `action='create'`, `to_status_id = DRFT`, `actor_employee_id`.
 9. Commit; return the assembled `Order` (re-select or build in-memory).
 
-- [ ] **Step 4: Run to verify it passes** — Run: `go test ./salesorder/ -run TestCreate_ -v` → PASS (or SKIP without DB).
+- [ ] **Step 4: Run to verify it passes** — Run: `go test -tags dbtest ./salesorder/ -run TestCreate_ -v` → PASS (or SKIP without `TEST_DATABASE_URL`).
 
 - [ ] **Step 5: Commit** — `git commit -m "feat(salesorder): transactional create with snapshots, totals, numbering"`.
 

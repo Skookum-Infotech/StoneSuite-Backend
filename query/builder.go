@@ -69,6 +69,18 @@ func Build(req Request, r FieldResolver, startIdx int) (Built, error) {
 		preds = append(preds, sql)
 	}
 
+	// --- global search (optional) ---
+	if req.Search != "" {
+		sr, ok := r.(SearchResolver)
+		if !ok {
+			return Built{}, invalid("search", "search is not supported for this resource")
+		}
+		frag := sr.SearchPredicate(p.add(req.Search))
+		if frag != "" {
+			preds = append(preds, frag)
+		}
+	}
+
 	// --- sort (single key + id tiebreaker) ---
 	sort, err := effectiveSort(req.Sort, r)
 	if err != nil {

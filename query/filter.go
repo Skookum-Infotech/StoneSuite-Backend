@@ -80,6 +80,7 @@ type Request struct {
 	Sort    []SortKey `json:"sort"`
 	Limit   int       `json:"limit"`
 	Cursor  string    `json:"cursor"`
+	Search  string    `json:"search"` // optional global search term (see SearchResolver)
 }
 
 // InvalidFilterError signals a client mistake (unknown field, wrong operator

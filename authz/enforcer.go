@@ -49,3 +49,29 @@ func Check(ctx context.Context, q Querier, identityID string, r Resource, a Acti
 	}
 	return decide(grants, r, a), nil
 }
+
+// DecideAny resolves a set of grants against a requested action across
+// several resources, allowing if any one of them matches — for endpoints that
+// aggregate data across resource types (e.g. a combined CRM status list) so a
+// caller need only hold the permission on one of them, not all.
+func DecideAny(grants []Grant, resources []Resource, a Action) Decision {
+	best := Decision{}
+	for _, r := range resources {
+		d := decide(grants, r, a)
+		if d.Allowed && (!best.Allowed || scopeRank[d.Scope] > scopeRank[best.Scope]) {
+			best = d
+		}
+	}
+	return best
+}
+
+// CheckAny resolves whether the given identity may perform action a on any of
+// the given resources in the tenant backing q, returning the broadest granted
+// scope among them.
+func CheckAny(ctx context.Context, q Querier, identityID string, resources []Resource, a Action) (Decision, error) {
+	grants, err := EffectiveGrants(ctx, q, identityID)
+	if err != nil {
+		return Decision{}, err
+	}
+	return DecideAny(grants, resources, a), nil
+}

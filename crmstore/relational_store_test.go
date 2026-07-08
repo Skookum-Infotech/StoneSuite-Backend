@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"stonesuite-backend/workflow"
 )
 
 // TestCRMStageMappingsConsistent verifies the key/code/rank maps agree, so the
@@ -18,6 +20,26 @@ func TestCRMStageMappingsConsistent(t *testing.T) {
 	// Strict forward ordering lead < prospect < customer.
 	assert.Less(t, crmCodeRank["LEAD"], crmCodeRank["PROS"])
 	assert.Less(t, crmCodeRank["PROS"], crmCodeRank["CUST"])
+}
+
+// TestReachableCRMCodes checks which stages AvailableTransitions offers: a
+// record must be able to change status within its own stage (not just jump
+// to a later one), so the result must include the caller's own rank.
+func TestReachableCRMCodes(t *testing.T) {
+	tests := []struct {
+		name string
+		rank int
+		want []string
+	}{
+		{"lead rank reaches lead, prospect, customer", crmCodeRank["LEAD"], []string{"LEAD", "PROS", "CUST"}},
+		{"prospect rank reaches prospect, customer only", crmCodeRank["PROS"], []string{"PROS", "CUST"}},
+		{"customer rank reaches customer only", crmCodeRank["CUST"], []string{"CUST"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.ElementsMatch(t, tc.want, reachableCRMCodes(tc.rank))
+		})
+	}
 }
 
 // TestForwardOnlyRule checks the rank comparison used to reject backward moves.
@@ -40,6 +62,25 @@ func TestForwardOnlyRule(t *testing.T) {
 			forward := crmCodeRank[tc.to] >= crmCodeRank[tc.from]
 			assert.Equal(t, tc.allowed, forward)
 		})
+	}
+}
+
+// TestMarkInitialStatuses checks that only the first status per stage (i.e.
+// the one statusesForTypeCodes' SQL ORDER BY placed first for that
+// WorkflowKey — its lowest crm_status_id) is flagged initial, matching
+// resolveCreateStatus's own "lowest id wins" default-selection rule.
+func TestMarkInitialStatuses(t *testing.T) {
+	in := []workflow.StatusInfo{
+		{StateID: "1", WorkflowKey: "lead"},
+		{StateID: "2", WorkflowKey: "lead"},
+		{StateID: "3", WorkflowKey: "prospect"},
+		{StateID: "4", WorkflowKey: "prospect"},
+		{StateID: "5", WorkflowKey: "customer"},
+	}
+	out := markInitialStatuses(in)
+	want := map[string]bool{"1": true, "2": false, "3": true, "4": false, "5": true}
+	for _, s := range out {
+		assert.Equalf(t, want[s.StateID], s.IsInitial, "status %s (%s)", s.StateID, s.WorkflowKey)
 	}
 }
 

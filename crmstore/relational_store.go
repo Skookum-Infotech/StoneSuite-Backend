@@ -313,18 +313,20 @@ func (s *relationalStore) AvailableTransitions(ctx context.Context, pool *pgxpoo
 	if err != nil {
 		return nil, err
 	}
-	rank := crmCodeRank[typeCode]
-	// Forward stages; customer (max rank) shows its own statuses.
+	return s.statusesForTypeCodes(ctx, pool, reachableCRMCodes(crmCodeRank[typeCode]))
+}
+
+// reachableCRMCodes returns the record-type codes a record at the given rank
+// may transition to: its own stage (so status can change without escalating)
+// plus every later stage. Never includes earlier stages — moves are forward-only.
+func reachableCRMCodes(rank int) []string {
 	var codes []string
 	for code, r := range crmCodeRank {
-		if r > rank {
+		if r >= rank {
 			codes = append(codes, code)
 		}
 	}
-	if len(codes) == 0 {
-		codes = []string{typeCode} // customer: own statuses
-	}
-	return s.statusesForTypeCodes(ctx, pool, codes)
+	return codes
 }
 
 // statusesForTypeCodes loads lkp_crm_status rows for the given record-type codes.
@@ -355,12 +357,25 @@ func (s *relationalStore) statusesForTypeCodes(ctx context.Context, pool *pgxpoo
 			StatusLabel:  name,
 			WorkflowKey:  crmCodeToKey[tCode],
 			WorkflowName: tName,
-			IsInitial:    true,
 			IsTerminal:   strings.Contains(strings.ToLower(name), "closed"),
 			SortOrder:    id,
 		})
 	}
-	return out, rows.Err()
+	return markInitialStatuses(out), rows.Err()
+}
+
+// markInitialStatuses flags the first status per WorkflowKey as initial. It
+// relies on the caller having ordered rows by (record type, status id), the
+// same "lowest id wins" rule resolveCreateStatus uses to pick a stage's
+// default status — lkp_crm_status has no dedicated is-initial column.
+func markInitialStatuses(statuses []workflow.StatusInfo) []workflow.StatusInfo {
+	seen := map[string]bool{}
+	for i := range statuses {
+		key := statuses[i].WorkflowKey
+		statuses[i].IsInitial = !seen[key]
+		seen[key] = true
+	}
+	return statuses
 }
 
 // ----- record reads ----------------------------------------------------------

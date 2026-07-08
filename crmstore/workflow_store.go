@@ -257,6 +257,12 @@ func (s *workflowStore) IsApprover(ctx context.Context, pool *pgxpool.Pool, id, 
 	return false, nil
 }
 
+// PendingApprovals is not part of the DesignV1 workflow model; approval is
+// unsupported, so there are never any pending approvals to list.
+func (s *workflowStore) PendingApprovals(ctx context.Context, pool *pgxpool.Pool, actorIdentityID string) ([]workflow.Record, error) {
+	return []workflow.Record{}, nil
+}
+
 // ----- helpers ---------------------------------------------------------------
 
 func (s *workflowStore) defForKey(ctx context.Context, pool *pgxpool.Pool, key string) (*workflow.Definition, error) {

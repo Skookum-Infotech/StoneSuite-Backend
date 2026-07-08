@@ -1,14 +1,27 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"stonesuite-backend/authz"
+	"stonesuite-backend/crmstore"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/workflow"
 )
+
+// maxApproversPerWorkflow caps how many active approvers may be configured
+// for a given record-type/status combo — the customer Closed-Won approval
+// flow requires every configured approver to sign off, so an unbounded pool
+// would make the record impossible to finalize.
+const maxApproversPerWorkflow = 2
 
 // CRMAdminOps handles workspace-admin CRM configuration: switching the tenant's
 // database design (design_version) and managing the configurable approvers used
@@ -160,12 +173,23 @@ func (h *CRMAdminOps) CreateApprover(w http.ResponseWriter, r *http.Request) {
 		req.RecordTypeCode = "CUST"
 	}
 	pool, _ := tenancy.PoolFromContext(r.Context())
+
+	count, err := activeApproverCountForStatus(r.Context(), pool, req.RecordTypeCode, req.CrmStatusCode)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to check existing approvers.")
+		return
+	}
+	if count >= maxApproversPerWorkflow {
+		fail(w, http.StatusConflict, "Maximum of 2 approvers can be configured for this workflow.")
+		return
+	}
+
 	// Resolve the creating employee (best-effort; may be NULL).
 	var createdBy *int
 	if id := resolveEmployeeID(r, identityID); id > 0 {
 		createdBy = &id
 	}
-	_, err := pool.Exec(r.Context(), `
+	_, err = pool.Exec(r.Context(), `
 		INSERT INTO crm_workflow_approver (record_type_id, crm_status_id, approver_employee_id, created_by)
 		VALUES (
 			(SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1),
@@ -201,6 +225,30 @@ func (h *CRMAdminOps) DeleteApprover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Approver removed."})
 }
 
+// activeApproverCountForStatus counts distinct active approvers whose
+// configuration would apply to recordTypeCode + crmStatusCode: an existing
+// wildcard row (crm_status_id NULL) counts against every status, and
+// crmStatusCode == "" (the row being added is itself a wildcard) counts every
+// existing row for the record type. Mirrors the wildcard-or-exact predicate
+// relationalStore.isConfiguredApprover uses at approval time.
+func activeApproverCountForStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode, crmStatusCode string) (int, error) {
+	var count int
+	err := pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT a.approver_employee_id) FROM crm_workflow_approver a
+		JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
+		LEFT JOIN lkp_crm_status cs ON cs.crm_status_id = a.crm_status_id
+		WHERE rt.record_type_code = $1 AND a.is_active
+		  AND (
+			NULLIF($2,'') IS NULL
+			OR a.crm_status_id IS NULL
+			OR cs.crm_status_code = $2
+		  )`, recordTypeCode, crmStatusCode).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active approvers: %w", err)
+	}
+	return count, nil
+}
+
 // resolveEmployeeID best-effort maps the caller's identity to an employee_id.
 func resolveEmployeeID(r *http.Request, identityID string) int {
 	pool, err := tenancy.PoolFromContext(r.Context())
@@ -215,4 +263,95 @@ func resolveEmployeeID(r *http.Request, identityID string) int {
 		return 0
 	}
 	return id
+}
+
+// ---- workflow-scoped approver config (GET/PATCH /api/tenant/workflows/{id}/approvers) --
+
+// errNotCRMWorkflow marks a workflow with no CRM record-type mapping (only
+// lead/prospect/customer do), so it can't have configured approvers.
+var errNotCRMWorkflow = errors.New("this workflow does not support approver configuration")
+
+// errUnknownApproverUser marks an approverUserId that doesn't resolve to an
+// active employee in this tenant.
+var errUnknownApproverUser = errors.New("one or more approverUserIds do not match an active employee")
+
+// recordTypeCodeForWorkflow resolves a workflow id to its v2 record_type_code
+// (e.g. "CUST" for the customer workflow) for the approver-config endpoints,
+// which only have a workflow id, not a CRM record, to resolve from.
+func recordTypeCodeForWorkflow(ctx context.Context, pool *pgxpool.Pool, workflowID string) (string, error) {
+	wf, err := workflow.GetWorkflowByID(ctx, pool, workflowID)
+	if err != nil {
+		return "", err
+	}
+	code, ok := crmstore.RecordTypeCodeForKey(wf.Key)
+	if !ok {
+		return "", errNotCRMWorkflow
+	}
+	return code, nil
+}
+
+// activeApproverUserIDs returns the tenant user ids of every active,
+// any-status ("wildcard") approver currently configured for recordTypeCode.
+func activeApproverUserIDs(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) ([]string, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT u.id::text FROM crm_workflow_approver a
+		JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
+		JOIN employee e ON e.employee_id = a.approver_employee_id
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE rt.record_type_code = $1 AND a.crm_status_id IS NULL AND a.is_active
+		ORDER BY a.crm_workflow_approver_id`, recordTypeCode)
+	if err != nil {
+		return nil, fmt.Errorf("list approver user ids: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// replaceActiveApprovers sets the full any-status ("wildcard") active
+// approver set for recordTypeCode to exactly userIDs, replacing whatever was
+// configured before. Runs in one transaction so the swap is atomic; callers
+// must already have capped len(userIDs) at maxApproversPerWorkflow.
+func replaceActiveApprovers(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string, userIDs []string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	empIDs := make([]int, 0, len(userIDs))
+	for _, uid := range userIDs {
+		var empID int
+		if err := tx.QueryRow(ctx, `
+			SELECT e.employee_id FROM employee e
+			JOIN users u ON u.id = e.employee_user_id
+			WHERE u.id = $1 AND e.employee_deleted_at IS NULL`, uid).Scan(&empID); err != nil {
+			return errUnknownApproverUser
+		}
+		empIDs = append(empIDs, empID)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM crm_workflow_approver a
+		USING lkp_record_type rt
+		WHERE a.record_type_id = rt.record_type_id
+		  AND rt.record_type_code = $1 AND a.crm_status_id IS NULL`, recordTypeCode); err != nil {
+		return fmt.Errorf("clear existing approvers: %w", err)
+	}
+	for _, empID := range empIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO crm_workflow_approver (record_type_id, crm_status_id, approver_employee_id)
+			VALUES ((SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1), NULL, $2)`,
+			recordTypeCode, empID); err != nil {
+			return fmt.Errorf("insert approver: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
 }

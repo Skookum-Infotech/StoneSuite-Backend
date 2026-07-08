@@ -1235,6 +1235,30 @@ CREATE TABLE IF NOT EXISTS customer_history (
 CREATE INDEX IF NOT EXISTS idx_customer_history_record ON customer_history (customer_id);
 
 
+-- ── 000025_customer_approval ──────────────────────────────────────────────────
+-- =====================================================================
+-- Tenant migration 025: customer_approval — per-approver approval tracking (v2).
+--
+-- One row per (customer record, approver) who has signed off. Lets a workflow
+-- require more than one approver: customer.customer_approval_status stays
+-- 'pending' until every currently-configured active approver for the record's
+-- type/status has a row here, at which point Approve() finalizes it. The
+-- UNIQUE constraint is the DB-level guard against the same approver approving
+-- twice (customer.customer_approved_by/_at remain the single "final approver"
+-- summary columns, unchanged).
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS customer_approval (
+    customer_approval_id    SERIAL       PRIMARY KEY,
+    customer_id              INTEGER     NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    approver_employee_id     INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_customer_approval UNIQUE (customer_id, approver_employee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_approval_customer ON customer_approval (customer_id);
+
+
 -- ── 000020_audit_logs_enrich ──────────────────────────────────────────────────
 -- =====================================================================
 -- Tenant migration 020: enrich audit_logs into the unified change trail.

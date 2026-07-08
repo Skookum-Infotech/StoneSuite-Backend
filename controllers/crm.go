@@ -37,6 +37,7 @@ import (
 //	POST   /api/tenant/crm/records/{id}/transition          — apply a transition
 //	POST   /api/tenant/crm/records/{id}/convert             — convert to next stage
 //	POST   /api/tenant/crm/records/{id}/approve             — approve a Closed-Won customer
+//	GET    /api/tenant/crm/{workflowKey}/approvals/pending  — caller's approval queue
 type CRMOps struct{}
 
 // NewCRMOps constructs the handler group.
@@ -133,6 +134,40 @@ func (h *CRMOps) authCRM(w http.ResponseWriter, r *http.Request,
 	return st, pool, payload.ID, decision.Scope, true
 }
 
+// authCRMAny resolves JWT + tenant store/pool + RBAC for a CRM request that
+// aggregates data across multiple workflow keys, allowing the request through
+// if the caller holds the action on at least one of them. Used by endpoints
+// like the combined status list so a caller with only e.g. prospect:read
+// isn't blocked from data covering lead/prospect/customer together.
+func (h *CRMOps) authCRMAny(w http.ResponseWriter, r *http.Request,
+	action authz.Action, workflowKeys ...string) (crmstore.Store, *pgxpool.Pool, bool) {
+
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return nil, nil, false
+	}
+	st, pool, err := storeFromContext(r)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return nil, nil, false
+	}
+	resources := make([]authz.Resource, len(workflowKeys))
+	for i, key := range workflowKeys {
+		resources[i] = resourceForKey(key)
+	}
+	decision, err := authz.CheckAny(r.Context(), pool, payload.ID, resources, action)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return nil, nil, false
+	}
+	if !decision.Allowed {
+		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" CRM records.")
+		return nil, nil, false
+	}
+	return st, pool, true
+}
+
 // authCRMByRecordID resolves auth for record-level actions where the workflow
 // key is not in the path. It derives the key from the record, then checks RBAC.
 func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
@@ -212,6 +247,8 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusConflict, "This document has already been approved.")
 	case errors.Is(err, crmstore.ErrNoApproverConfigured):
 		fail(w, http.StatusConflict, "No approver is configured for this workflow. Please contact your administrator.")
+	case errors.Is(err, crmstore.ErrAlreadyApprovedByYou):
+		fail(w, http.StatusConflict, "You have already approved this document. Waiting on the other assigned approver.")
 	case crmstore.IsClientError(err):
 		fail(w, http.StatusBadRequest, err.Error())
 	default:
@@ -228,7 +265,7 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 
 // AllStatuses GET /api/tenant/crm/statuses
 func (h *CRMOps) AllStatuses(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, _, ok := h.authCRM(w, r, "lead", authz.ActionRead)
+	st, pool, ok := h.authCRMAny(w, r, authz.ActionRead, "lead", "prospect", "customer")
 	if !ok {
 		return
 	}
@@ -257,6 +294,11 @@ func (h *CRMOps) WorkflowStatuses(w http.ResponseWriter, r *http.Request) {
 	// Include workflow metadata for the UI envelope when available (both designs
 	// keep the workflows table seeded).
 	if wf, werr := workflow.GetWorkflowByKey(r.Context(), pool, key); werr == nil {
+		if code, ok := crmstore.RecordTypeCodeForKey(key); ok {
+			if ids, aerr := activeApproverUserIDs(r.Context(), pool, code); aerr == nil {
+				wf.ApproverUserIds = ids
+			}
+		}
 		resp["workflow"] = wf
 	} else {
 		resp["workflow"] = map[string]any{"key": key}
@@ -357,7 +399,7 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 // GetRecord GET /api/tenant/crm/records/{id}
 func (h *CRMOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
+	st, pool, _, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -366,15 +408,12 @@ func (h *CRMOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to load record.")
 		return
 	}
-	resp := map[string]any{"success": true, "record": rec}
-	if key == "customer" {
-		canApprove, err := st.IsApprover(r.Context(), pool, id, identityID)
-		if err != nil {
-			crmFail(w, err, "Failed to load record.")
-			return
-		}
-		resp["canApprove"] = canApprove
+	canApprove, err := st.IsApprover(r.Context(), pool, id, identityID)
+	if err != nil {
+		crmFail(w, err, "Failed to load record.")
+		return
 	}
+	resp := map[string]any{"success": true, "record": rec, "canApprove": canApprove}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -532,4 +571,23 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
+}
+
+// PendingApprovals GET /api/tenant/crm/{workflowKey}/approvals/pending
+// Lists customer records where the caller is a configured approver who has
+// not yet approved — the caller's own approval queue. A record drops off this
+// list as soon as the caller approves it, even if it's still awaiting the
+// other assigned approver.
+func (h *CRMOps) PendingApprovals(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("workflowKey")
+	st, pool, identityID, _, ok := h.authCRM(w, r, key, authz.ActionRead)
+	if !ok {
+		return
+	}
+	records, err := st.PendingApprovals(r.Context(), pool, identityID)
+	if err != nil {
+		crmFail(w, err, "Failed to load pending approvals.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": records})
 }

@@ -81,3 +81,73 @@ func TestDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestDecideAny(t *testing.T) {
+	tests := []struct {
+		name        string
+		grants      []Grant
+		resources   []Resource
+		action      Action
+		wantAllowed bool
+		wantScope   Scope
+	}{
+		{
+			name:        "no grants on any resource denies",
+			grants:      nil,
+			resources:   []Resource{ResourceLead, ResourceProspect, ResourceCustomer},
+			action:      ActionRead,
+			wantAllowed: false,
+		},
+		{
+			name:        "grant on only one of several resources allows",
+			grants:      []Grant{{ResourceProspect, ActionRead, ScopeOwn}},
+			resources:   []Resource{ResourceLead, ResourceProspect, ResourceCustomer},
+			action:      ActionRead,
+			wantAllowed: true,
+			wantScope:   ScopeOwn,
+		},
+		{
+			name:        "grant on unrelated resource still denies",
+			grants:      []Grant{{ResourceInvoice, ActionRead, ScopeAll}},
+			resources:   []Resource{ResourceLead, ResourceProspect, ResourceCustomer},
+			action:      ActionRead,
+			wantAllowed: false,
+		},
+		{
+			name:        "wrong action on matching resource denies",
+			grants:      []Grant{{ResourceLead, ActionDelete, ScopeAll}},
+			resources:   []Resource{ResourceLead, ResourceProspect, ResourceCustomer},
+			action:      ActionRead,
+			wantAllowed: false,
+		},
+		{
+			name: "broadest scope wins across matching resources",
+			grants: []Grant{
+				{ResourceLead, ActionRead, ScopeOwn},
+				{ResourceCustomer, ActionRead, ScopeAll},
+			},
+			resources:   []Resource{ResourceLead, ResourceProspect, ResourceCustomer},
+			action:      ActionRead,
+			wantAllowed: true,
+			wantScope:   ScopeAll,
+		},
+		{
+			name:        "empty resource list denies",
+			grants:      []Grant{{ResourceAny, ActionAny, ScopeAll}},
+			resources:   nil,
+			action:      ActionRead,
+			wantAllowed: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DecideAny(tc.grants, tc.resources, tc.action)
+			if got.Allowed != tc.wantAllowed {
+				t.Fatalf("allowed = %v, want %v", got.Allowed, tc.wantAllowed)
+			}
+			if tc.wantAllowed && got.Scope != tc.wantScope {
+				t.Fatalf("scope = %q, want %q", got.Scope, tc.wantScope)
+			}
+		})
+	}
+}

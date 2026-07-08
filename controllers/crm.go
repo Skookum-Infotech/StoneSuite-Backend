@@ -134,6 +134,40 @@ func (h *CRMOps) authCRM(w http.ResponseWriter, r *http.Request,
 	return st, pool, payload.ID, decision.Scope, true
 }
 
+// authCRMAny resolves JWT + tenant store/pool + RBAC for a CRM request that
+// aggregates data across multiple workflow keys, allowing the request through
+// if the caller holds the action on at least one of them. Used by endpoints
+// like the combined status list so a caller with only e.g. prospect:read
+// isn't blocked from data covering lead/prospect/customer together.
+func (h *CRMOps) authCRMAny(w http.ResponseWriter, r *http.Request,
+	action authz.Action, workflowKeys ...string) (crmstore.Store, *pgxpool.Pool, bool) {
+
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return nil, nil, false
+	}
+	st, pool, err := storeFromContext(r)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return nil, nil, false
+	}
+	resources := make([]authz.Resource, len(workflowKeys))
+	for i, key := range workflowKeys {
+		resources[i] = resourceForKey(key)
+	}
+	decision, err := authz.CheckAny(r.Context(), pool, payload.ID, resources, action)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return nil, nil, false
+	}
+	if !decision.Allowed {
+		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" CRM records.")
+		return nil, nil, false
+	}
+	return st, pool, true
+}
+
 // authCRMByRecordID resolves auth for record-level actions where the workflow
 // key is not in the path. It derives the key from the record, then checks RBAC.
 func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
@@ -231,7 +265,7 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 
 // AllStatuses GET /api/tenant/crm/statuses
 func (h *CRMOps) AllStatuses(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, _, ok := h.authCRM(w, r, "lead", authz.ActionRead)
+	st, pool, ok := h.authCRMAny(w, r, authz.ActionRead, "lead", "prospect", "customer")
 	if !ok {
 		return
 	}

@@ -33,7 +33,14 @@ var crmCodeRank = map[string]int{"LEAD": 1, "PROS": 2, "CUST": 3}
 // sweep and reindex trigger).
 func CRMWorkflowKeys() []string { return []string{"lead", "prospect", "customer"} }
 
-const closedWonCode = "CCLW" // Customer Closed Won — triggers approval
+// RecordTypeCodeForKey maps a CRM workflow key ("lead"|"prospect"|"customer")
+// to its v2 relational record_type_code ("LEAD"|"PROS"|"CUST"), for callers
+// (e.g. the workflow-scoped approver config endpoints) that only have the
+// workflow's key, not a record id, to resolve from.
+func RecordTypeCodeForKey(key string) (string, bool) {
+	code, ok := crmKeyToCode[key]
+	return code, ok
+}
 
 // fkind is the storage kind of a customer column, controlling how it is scanned
 // from and written to the database and represented in the CoreFields map.
@@ -306,18 +313,20 @@ func (s *relationalStore) AvailableTransitions(ctx context.Context, pool *pgxpoo
 	if err != nil {
 		return nil, err
 	}
-	rank := crmCodeRank[typeCode]
-	// Forward stages; customer (max rank) shows its own statuses.
+	return s.statusesForTypeCodes(ctx, pool, reachableCRMCodes(crmCodeRank[typeCode]))
+}
+
+// reachableCRMCodes returns the record-type codes a record at the given rank
+// may transition to: its own stage (so status can change without escalating)
+// plus every later stage. Never includes earlier stages — moves are forward-only.
+func reachableCRMCodes(rank int) []string {
 	var codes []string
 	for code, r := range crmCodeRank {
-		if r > rank {
+		if r >= rank {
 			codes = append(codes, code)
 		}
 	}
-	if len(codes) == 0 {
-		codes = []string{typeCode} // customer: own statuses
-	}
-	return s.statusesForTypeCodes(ctx, pool, codes)
+	return codes
 }
 
 // statusesForTypeCodes loads lkp_crm_status rows for the given record-type codes.
@@ -348,12 +357,25 @@ func (s *relationalStore) statusesForTypeCodes(ctx context.Context, pool *pgxpoo
 			StatusLabel:  name,
 			WorkflowKey:  crmCodeToKey[tCode],
 			WorkflowName: tName,
-			IsInitial:    true,
 			IsTerminal:   strings.Contains(strings.ToLower(name), "closed"),
 			SortOrder:    id,
 		})
 	}
-	return out, rows.Err()
+	return markInitialStatuses(out), rows.Err()
+}
+
+// markInitialStatuses flags the first status per WorkflowKey as initial. It
+// relies on the caller having ordered rows by (record type, status id), the
+// same "lowest id wins" rule resolveCreateStatus uses to pick a stage's
+// default status — lkp_crm_status has no dedicated is-initial column.
+func markInitialStatuses(statuses []workflow.StatusInfo) []workflow.StatusInfo {
+	seen := map[string]bool{}
+	for i := range statuses {
+		key := statuses[i].WorkflowKey
+		statuses[i].IsInitial = !seen[key]
+		seen[key] = true
+	}
+	return statuses
 }
 
 // ----- record reads ----------------------------------------------------------
@@ -512,9 +534,9 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 		custom = map[string]any{}
 	}
 	ownerEmp := s.ownerEmployee(ctx, pool, in.OwnerUserID, in.ActorIdentityID)
-	approvalStatus := "none"
-	if statusCode, _ := s.statusCode(ctx, pool, statusID); statusCode == closedWonCode {
-		approvalStatus = "pending"
+	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code)
+	if err != nil {
+		return nil, err
 	}
 	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, nil, core, custom)
 	if err != nil {
@@ -587,7 +609,7 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	if err != nil {
 		return nil, ClientError{Msg: "Invalid status id."}
 	}
-	targetTypeCode, statusCode, err := s.statusTypeAndCode(ctx, pool, statusID)
+	targetTypeCode, _, err := s.statusTypeAndCode(ctx, pool, statusID)
 	if err != nil {
 		return nil, err
 	}
@@ -598,19 +620,29 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	if err != nil {
 		return nil, err
 	}
-	approvalClause := ""
-	if statusCode == closedWonCode {
-		approvalClause = ", customer_approval_status = 'pending', customer_is_approved = FALSE"
+	// Every state entry re-evaluates approval against the stage being entered:
+	// if it has active approvers configured the record always lands back in
+	// "pending", so each new state requires its own fresh sign-off rather than
+	// inheriting an earlier state's approval. Stale per-approver rows from the
+	// prior state are cleared for the same reason.
+	newApprovalStatus, err := s.entryApprovalStatus(ctx, pool, targetTypeCode)
+	if err != nil {
+		return nil, err
 	}
 	_, err = pool.Exec(ctx, `
 		UPDATE customer SET
 			record_type = $2, customer_crm_status = $3,
 			customer_updated_at = NOW(),
-			customer_record_version = customer_record_version + 1`+approvalClause+`
+			customer_record_version = customer_record_version + 1,
+			customer_approval_status = $4, customer_is_approved = FALSE,
+			customer_approved_by = NULL, customer_approved_at = NULL
 		WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`,
-		id, targetTypeID, statusID)
+		id, targetTypeID, statusID, newApprovalStatus)
 	if err != nil {
 		return nil, fmt.Errorf("transition customer record: %w", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM customer_approval WHERE customer_id = $1`, internalID); err != nil {
+		return nil, fmt.Errorf("clear stale approvals: %w", err)
 	}
 	// When the record moves to a new stage, regenerate the document number so
 	// its prefix matches the new stage (e.g. LEAD-000042 → PROS-000042).
@@ -673,7 +705,11 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 		return nil, "", err
 	}
 	ownerEmp := s.employeeIDOrZero(ctx, pool, actorIdentityID)
-	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, "none", code, &parentInternalID, core, custom)
+	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code)
+	if err != nil {
+		return nil, "", err
+	}
+	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, &parentInternalID, core, custom)
 	if err != nil {
 		return nil, "", err
 	}
@@ -686,23 +722,28 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 }
 
 // approvalDecision is the pure branching logic behind Approve: given the
-// record's current approval status and two configuration/authorization
-// facts, it decides whether the approval may proceed. Kept side-effect-free
-// so every branch is unit-testable without a database.
-func approvalDecision(status string, anyApproverConfigured, callerIsApprover bool) error {
+// record's current approval status, configuration/authorization facts, and
+// the approval counts (approvalsSoFar excludes this attempt), it decides
+// whether the approval may proceed and, if so, whether it finalizes the
+// record. Kept side-effect-free so every branch is unit-testable without a
+// database.
+func approvalDecision(status string, anyApproverConfigured, callerIsApprover, callerAlreadyApproved bool, approvalsSoFar, requiredApprovals int) (finalize bool, err error) {
 	switch status {
 	case "approved":
-		return ErrAlreadyApproved
+		return false, ErrAlreadyApproved
 	case "pending":
 		if !anyApproverConfigured {
-			return ErrNoApproverConfigured
+			return false, ErrNoApproverConfigured
 		}
 		if !callerIsApprover {
-			return ErrNotApprover
+			return false, ErrNotApprover
 		}
-		return nil
+		if callerAlreadyApproved {
+			return false, ErrAlreadyApprovedByYou
+		}
+		return approvalsSoFar+1 >= requiredApprovals, nil
 	default:
-		return ClientError{Msg: "This record is not pending approval."}
+		return false, ClientError{Msg: "This record is not pending approval."}
 	}
 }
 
@@ -711,53 +752,78 @@ func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, a
 	if err != nil {
 		return nil, err
 	}
-	if rec.WorkflowID != "customer" {
-		return nil, ClientError{Msg: "Only customer records require approval."}
-	}
+	recordTypeCode := crmKeyToCode[rec.WorkflowID]
 	status, _ := rec.CoreFields["approval_status"].(string)
 
-	anyApproverConfigured, err := s.hasAnyActiveApprover(ctx, pool, "CUST")
+	anyApproverConfigured, err := s.hasAnyActiveApprover(ctx, pool, recordTypeCode)
 	if err != nil {
 		return nil, fmt.Errorf("check any approver configured: %w", err)
 	}
 
 	empID, found := s.employeeIDByIdentity(ctx, pool, approverIdentityID)
-	var callerIsApprover bool
+	var (
+		callerIsApprover, callerAlreadyApproved bool
+		approvalsSoFar, requiredApprovals       int
+	)
 	if found {
 		callerIsApprover, err = s.isConfiguredApprover(ctx, pool, id, empID)
 		if err != nil {
 			return nil, fmt.Errorf("check configured approver: %w", err)
 		}
+		if callerIsApprover {
+			callerAlreadyApproved, err = s.hasApproved(ctx, pool, id, empID)
+			if err != nil {
+				return nil, fmt.Errorf("check already approved: %w", err)
+			}
+			approvalsSoFar, err = s.approvalCount(ctx, pool, id)
+			if err != nil {
+				return nil, err
+			}
+			requiredApprovals, err = s.activeApproverCount(ctx, pool, id)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	if err := approvalDecision(status, anyApproverConfigured, callerIsApprover); err != nil {
+	finalize, err := approvalDecision(status, anyApproverConfigured, callerIsApprover, callerAlreadyApproved, approvalsSoFar, requiredApprovals)
+	if err != nil {
 		return nil, err
 	}
 
-	// Reaching this point implies found == true (empID is valid), since approvalDecision only returns nil when callerIsApprover is true, which requires found == true.
+	// Reaching this point implies found == true (empID is valid), since
+	// approvalDecision only returns nil when callerIsApprover is true, which
+	// requires found == true.
 	if _, err := pool.Exec(ctx, `
-		UPDATE customer SET
-			customer_is_approved = TRUE, customer_approval_status = 'approved',
-			customer_approved_by = $2, customer_approved_at = NOW(),
-			customer_updated_at = NOW(),
-			customer_record_version = customer_record_version + 1
-		WHERE customer_uuid = $1`, id, empID); err != nil {
-		return nil, fmt.Errorf("approve customer record: %w", err)
+		INSERT INTO customer_approval (customer_id, approver_employee_id)
+		SELECT customer_id, $2 FROM customer WHERE customer_uuid = $1
+		ON CONFLICT (customer_id, approver_employee_id) DO NOTHING`, id, empID); err != nil {
+		return nil, fmt.Errorf("record approval: %w", err)
+	}
+
+	if finalize {
+		if _, err := pool.Exec(ctx, `
+			UPDATE customer SET
+				customer_is_approved = TRUE, customer_approval_status = 'approved',
+				customer_approved_by = $2, customer_approved_at = NOW(),
+				customer_updated_at = NOW(),
+				customer_record_version = customer_record_version + 1
+			WHERE customer_uuid = $1`, id, empID); err != nil {
+			return nil, fmt.Errorf("approve customer record: %w", err)
+		}
 	}
 	s.writeHistory(ctx, pool, id, "approve", empID)
 	return s.GetRecord(ctx, pool, id)
 }
 
 // IsApprover reports whether identityID is a configured approver for record
-// id. Unlike Approve, this never mutates state and never errors on "not an
-// approver" — it's a read-only check for the caller's UI affordances.
+// id who has not yet approved it. Unlike Approve, this never mutates state
+// and never errors on "not an approver" — it's a read-only check for the
+// caller's UI affordances (also drives PendingApprovals' exclusion rule).
 func (s *relationalStore) IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error) {
 	rec, err := s.GetRecord(ctx, pool, id)
 	if err != nil {
 		return false, err
-	}
-	if rec.WorkflowID != "customer" {
-		return false, nil
 	}
 	status, _ := rec.CoreFields["approval_status"].(string)
 	if status != "pending" {
@@ -767,7 +833,66 @@ func (s *relationalStore) IsApprover(ctx context.Context, pool *pgxpool.Pool, id
 	if !found {
 		return false, nil
 	}
-	return s.isConfiguredApprover(ctx, pool, id, empID)
+	isApprover, err := s.isConfiguredApprover(ctx, pool, id, empID)
+	if err != nil || !isApprover {
+		return false, err
+	}
+	alreadyApproved, err := s.hasApproved(ctx, pool, id, empID)
+	if err != nil {
+		return false, err
+	}
+	return !alreadyApproved, nil
+}
+
+// PendingApprovals lists pending customer records where actorIdentityID is a
+// configured active approver who has not yet approved.
+func (s *relationalStore) PendingApprovals(ctx context.Context, pool *pgxpool.Pool, actorIdentityID string) ([]workflow.Record, error) {
+	empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
+	if !found {
+		return []workflow.Record{}, nil
+	}
+	rows, err := pool.Query(ctx, recordSelect+`
+		WHERE c.customer_deleted_at IS NULL
+		  AND c.customer_approval_status = 'pending'
+		  AND EXISTS (
+			SELECT 1 FROM crm_workflow_approver a
+			WHERE a.record_type_id = c.record_type AND a.approver_employee_id = $1 AND a.is_active
+			  AND (a.crm_status_id IS NULL OR a.crm_status_id = c.customer_crm_status)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM customer_approval ca
+			WHERE ca.customer_id = c.customer_id AND ca.approver_employee_id = $1
+		  )
+		ORDER BY c.customer_created_at DESC`, empID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending approvals: %w", err)
+	}
+	defer rows.Close()
+	out := []workflow.Record{}
+	for rows.Next() {
+		rec, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *rec)
+	}
+	return out, rows.Err()
+}
+
+// entryApprovalStatus returns "pending" if recordTypeCode currently has at
+// least one active approver configured (any status), else "none". Called
+// whenever a record enters a record type/stage — creation, conversion, or a
+// same- or later-stage transition — so approval is required for every state
+// once a workflow has approvers configured, not just a single hardcoded stage.
+func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) (string, error) {
+	anyApprover, err := s.hasAnyActiveApprover(ctx, pool, recordTypeCode)
+	if err != nil {
+		return "", err
+	}
+	if anyApprover {
+		return "pending", nil
+	}
+	return "none", nil
 }
 
 // hasAnyActiveApprover reports whether at least one active approver is
@@ -793,9 +918,8 @@ func (s *relationalStore) isConfiguredApprover(ctx context.Context, pool *pgxpoo
 	err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM crm_workflow_approver a
-			JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
 			JOIN customer r ON r.customer_uuid = $1
-			WHERE rt.record_type_code = 'CUST'
+			WHERE a.record_type_id = r.record_type
 			  AND a.approver_employee_id = $2 AND a.is_active
 			  AND (a.crm_status_id IS NULL OR a.crm_status_id = r.customer_crm_status)
 		)`, id, empID).Scan(&allowed)
@@ -803,6 +927,53 @@ func (s *relationalStore) isConfiguredApprover(ctx context.Context, pool *pgxpoo
 		return false, fmt.Errorf("check approver: %w", err)
 	}
 	return allowed, nil
+}
+
+// activeApproverCount reports how many distinct active approvers are
+// currently configured for record id's type + status (wildcard-or-exact,
+// same predicate as isConfiguredApprover) — the number of approvals required
+// to finalize it.
+func (s *relationalStore) activeApproverCount(ctx context.Context, pool *pgxpool.Pool, id string) (int, error) {
+	var count int
+	err := pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT a.approver_employee_id) FROM crm_workflow_approver a
+		JOIN customer r ON r.customer_uuid = $1
+		WHERE a.record_type_id = r.record_type AND a.is_active
+		  AND (a.crm_status_id IS NULL OR a.crm_status_id = r.customer_crm_status)
+	`, id).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active approvers: %w", err)
+	}
+	return count, nil
+}
+
+// approvalCount reports how many distinct approvers have already approved
+// record id.
+func (s *relationalStore) approvalCount(ctx context.Context, pool *pgxpool.Pool, id string) (int, error) {
+	var count int
+	err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM customer_approval ca
+		JOIN customer c ON c.customer_id = ca.customer_id
+		WHERE c.customer_uuid = $1`, id).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count approvals: %w", err)
+	}
+	return count, nil
+}
+
+// hasApproved reports whether empID has already approved record id.
+func (s *relationalStore) hasApproved(ctx context.Context, pool *pgxpool.Pool, id string, empID int) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM customer_approval ca
+			JOIN customer c ON c.customer_id = ca.customer_id
+			WHERE c.customer_uuid = $1 AND ca.approver_employee_id = $2
+		)`, id, empID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check already approved: %w", err)
+	}
+	return exists, nil
 }
 
 // ----- helpers ---------------------------------------------------------------
@@ -882,13 +1053,6 @@ func (s *relationalStore) statusTypeAndCode(ctx context.Context, pool *pgxpool.P
 		return "", "", fmt.Errorf("status lookup: %w", err)
 	}
 	return typeCode, code, nil
-}
-
-func (s *relationalStore) statusCode(ctx context.Context, pool *pgxpool.Pool, statusID int) (string, error) {
-	var code string
-	err := pool.QueryRow(ctx,
-		`SELECT crm_status_code FROM lkp_crm_status WHERE crm_status_id = $1`, statusID).Scan(&code)
-	return code, err
 }
 
 // validateCustom reuses the workflow field definitions for the matching CRM

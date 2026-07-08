@@ -56,3 +56,11 @@ func TestIsValidScope(t *testing.T) {
 		t.Fatal("unknown scope should be invalid")
 	}
 }
+
+func TestCatalog_InventoryItemPermissions(t *testing.T) {
+	for _, a := range []Action{ActionCreate, ActionRead, ActionUpdate, ActionDelete} {
+		if !IsValidPermission(ResourceInventoryItem, a) {
+			t.Fatalf("inventory_item:%s must be a valid permission", a)
+		}
+	}
+}

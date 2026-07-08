@@ -32,14 +32,15 @@ const (
 	ResourceAudit          Resource = "audit"           // audit log
 
 	// Sales module resources
-	ResourceEstimate     Resource = "estimate"
-	ResourceQuote        Resource = "quote"
-	ResourceSalesOrder   Resource = "sales_order"
-	ResourceInstallation Resource = "installation"
-	ResourceInvoice      Resource = "invoice"
-	ResourcePayment      Resource = "payment"
-	ResourceCreditMemo   Resource = "credit_memo"
-	ResourceRefund       Resource = "refund"
+	ResourceInventoryItem Resource = "inventory_item"
+	ResourceEstimate      Resource = "estimate"
+	ResourceQuote         Resource = "quote"
+	ResourceSalesOrder    Resource = "sales_order"
+	ResourceInstallation  Resource = "installation"
+	ResourceInvoice       Resource = "invoice"
+	ResourcePayment       Resource = "payment"
+	ResourceCreditMemo    Resource = "credit_memo"
+	ResourceRefund        Resource = "refund"
 
 	// Purchases module resources
 	ResourceVendor        Resource = "vendor"
@@ -108,6 +109,11 @@ var catalog = []Permission{
 	{ResourceCustomer, ActionUpdate},
 	{ResourceCustomer, ActionDelete},
 	{ResourceCustomer, ActionTransition},
+
+	{ResourceInventoryItem, ActionCreate},
+	{ResourceInventoryItem, ActionRead},
+	{ResourceInventoryItem, ActionUpdate},
+	{ResourceInventoryItem, ActionDelete},
 
 	{ResourceEstimate, ActionCreate},
 	{ResourceEstimate, ActionRead},

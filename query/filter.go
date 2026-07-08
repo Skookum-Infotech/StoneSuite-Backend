@@ -106,6 +106,15 @@ type FieldResolver interface {
 	Resolve(key string) (sqlExpr string, dt DataType, ok bool)
 }
 
+// SortResolver is an optional interface a FieldResolver may also implement to
+// declare additional sortable columns beyond the built-in created_at/updated_at/
+// record_number. The returned expression MUST be NOT NULL so keyset pagination
+// stays correct (the builder always appends the row id as a tiebreaker). dt is
+// used to coerce the cursor value for the keyset comparison.
+type SortResolver interface {
+	SortExpr(key string) (expr string, dt DataType, ok bool)
+}
+
 // opsByType is the whitelist of operators permitted per data type. Anything
 // not listed here is rejected for that type.
 var opsByType = map[DataType]map[Operator]bool{

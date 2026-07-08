@@ -74,7 +74,7 @@ func Build(req Request, r FieldResolver, startIdx int) (Built, error) {
 	if err != nil {
 		return Built{}, err
 	}
-	sortExpr, _, _ := r.Resolve(sort.Field)
+	sortExpr, sortDT := sortExprFor(sort.Field, r)
 	idExpr, _, ok := r.Resolve("id")
 	if !ok {
 		return Built{}, invalid("id", "resolver does not expose id")
@@ -95,7 +95,6 @@ func Build(req Request, r FieldResolver, startIdx int) (Built, error) {
 		if cur.Sort != sort.Field || cur.Dir != sort.Dir {
 			return Built{}, invalid("cursor", "cursor does not match the current sort")
 		}
-		_, sortDT, _ := r.Resolve(sort.Field)
 		keyset, err = keysetSQL(sortExpr, idExpr, sort.Dir, sortDT, cur, p)
 		if err != nil {
 			return Built{}, err
@@ -135,7 +134,7 @@ func effectiveSort(keys []SortKey, r FieldResolver) (SortKey, error) {
 		return SortKey{}, invalid("sort", "only one sort key is supported")
 	}
 	k := keys[0]
-	if !sortableFields[k.Field] {
+	if !isSortable(k.Field, r) {
 		return SortKey{}, invalid(k.Field, "field is not sortable")
 	}
 	if _, _, ok := r.Resolve(k.Field); !ok {
@@ -220,4 +219,30 @@ func cmpOp(op Operator) string {
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
+}
+
+// sortExprFor returns the ORDER BY / keyset expression + data type for a sort
+// field: from SortResolver when the resolver provides one, else from Resolve
+// (the built-in stable columns).
+func sortExprFor(field string, r FieldResolver) (string, DataType) {
+	if sr, ok := r.(SortResolver); ok {
+		if expr, dt, ok := sr.SortExpr(field); ok {
+			return expr, dt
+		}
+	}
+	expr, dt, _ := r.Resolve(field)
+	return expr, dt
+}
+
+// isSortable reports whether a field may be sorted: a built-in stable column or
+// one the resolver declares via SortResolver.
+func isSortable(field string, r FieldResolver) bool {
+	if sortableFields[field] {
+		return true
+	}
+	if sr, ok := r.(SortResolver); ok {
+		_, _, ok := sr.SortExpr(field)
+		return ok
+	}
+	return false
 }

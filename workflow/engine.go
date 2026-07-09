@@ -171,12 +171,35 @@ func (e *Engine) Apply(ctx context.Context, pool Beginner, def *Definition,
 	if err != nil {
 		return nil, err
 	}
+
+	// Approver gate: if the record's current (from) state is approval-gated and
+	// not every assigned approver has signed off, the record is locked — no
+	// outbound transition may fire. Read inside the FOR UPDATE tx so the gate is
+	// atomic with the state read above.
+	required, approved, err := approvalCounts(ctx, tx, rec.ID, currentStateID)
+	if err != nil {
+		return nil, err
+	}
+	if approvalGateLocked(required, approved) {
+		return nil, TransitionError{Reason: fmt.Sprintf(
+			"record is pending approval (%d of %d approvers signed off)", approved, required)}
+	}
+
 	snapshot, _ := json.Marshal(rec.CustomFields)
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE workflow_records SET current_state_id = $2, updated_at = NOW() WHERE id = $1`,
 		rec.ID, toStateID); err != nil {
 		return nil, fmt.Errorf("update record state: %w", err)
+	}
+
+	// Entering (or re-entering) a state starts a fresh approval cycle: drop any
+	// stale sign-offs for this record at the target state so a prior occupancy's
+	// approvals never satisfy the new one.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM workflow_record_approval WHERE record_id = $1 AND state_id = $2`,
+		rec.ID, toStateID); err != nil {
+		return nil, fmt.Errorf("reset approvals on entry: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workflow_record_history

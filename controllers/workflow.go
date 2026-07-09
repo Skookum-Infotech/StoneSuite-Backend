@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -153,9 +154,8 @@ func (h *WorkflowOps) GetWorkflowApprovers(w http.ResponseWriter, r *http.Reques
 
 // SetWorkflowApprovers PATCH /api/tenant/workflows/{id}/approvers  body {"approverUserIds":["..."]}
 // Replaces the full set of active approvers for this workflow's CRM record
-// type with exactly the given users. Capped at maxApproversPerWorkflow — the
-// approval flow requires every configured approver to sign off, so an
-// unbounded pool would make a record impossible to finalize.
+// type with exactly the given users. The backend enforces no count cap — the
+// 2-approver limit is a UI concern; the backend holds any number.
 func (h *WorkflowOps) SetWorkflowApprovers(w http.ResponseWriter, r *http.Request) {
 	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionConfigure)
 	if !ok {
@@ -166,10 +166,6 @@ func (h *WorkflowOps) SetWorkflowApprovers(w http.ResponseWriter, r *http.Reques
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	if len(req.ApproverUserIDs) > maxApproversPerWorkflow {
-		fail(w, http.StatusBadRequest, "Maximum of 2 approvers can be configured for this workflow.")
 		return
 	}
 	code, err := recordTypeCodeForWorkflow(r.Context(), pool, r.PathValue("id"))
@@ -193,6 +189,62 @@ func (h *WorkflowOps) SetWorkflowApprovers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": req.ApproverUserIDs})
+}
+
+// ---- per-state approver config (generic workflow engine) --------------------
+
+// GetStateApprovers GET /api/tenant/workflows/{id}/states/{stateId}/approvers
+// Returns the tenant user ids currently configured as active approvers for the
+// given workflow state.
+func (h *WorkflowOps) GetStateApprovers(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionRead)
+	if !ok {
+		return
+	}
+	stateID, ok := h.stateInWorkflow(w, r, pool)
+	if !ok {
+		return
+	}
+	ids, err := workflow.StateApproverUserIDs(r.Context(), pool, stateID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load approvers.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": ids})
+}
+
+// SetStateApprovers PUT /api/tenant/workflows/{id}/states/{stateId}/approvers
+// body {"approverUserIds":["..."]}
+// Replaces the state's active approver set with exactly the given users. The
+// backend enforces NO count cap — the 2-approver limit is a UI concern; the
+// backend holds any number. A state with >=1 approver becomes approval-gated.
+func (h *WorkflowOps) SetStateApprovers(w http.ResponseWriter, r *http.Request) {
+	pool, _, identityID, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionConfigure)
+	if !ok {
+		return
+	}
+	stateID, ok := h.stateInWorkflow(w, r, pool)
+	if !ok {
+		return
+	}
+	var req struct {
+		ApproverUserIDs []string `json:"approverUserIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	ids := dedupeStrings(req.ApproverUserIDs)
+	if !allActiveUsers(r.Context(), pool, ids) {
+		fail(w, http.StatusBadRequest, "One or more approverUserIds do not match an active user.")
+		return
+	}
+	createdBy, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
+	if err := workflow.ReplaceStateApprovers(r.Context(), pool, stateID, ids, createdBy); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to save approvers.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": ids})
 }
 
 // ---- record numbering --------------------------------------------------------
@@ -310,6 +362,8 @@ func (h *WorkflowOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to list records.")
 		return
 	}
+	approverUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
+	_ = workflow.AttachApprovalOverlays(r.Context(), pool, records, approverUserID)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "scope": scope, "records": records})
 }
 
@@ -349,6 +403,8 @@ func (h *WorkflowOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to search records.")
 		return
 	}
+	approverUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
+	_ = workflow.AttachApprovalOverlays(r.Context(), pool, page.Records, approverUserID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
 		"scope":      scope,
@@ -421,6 +477,10 @@ func (h *WorkflowOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.enforceRecordScope(w, r, pool, scope, identityID, rec, authz.ActionRead) {
 		return
+	}
+	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
+	if ov, oerr := workflow.ApprovalOverlay(r.Context(), pool, rec, callerUserID); oerr == nil {
+		rec.Approval = ov
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }
@@ -522,6 +582,70 @@ func (h *WorkflowOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": updated})
 }
 
+// ---- record approval --------------------------------------------------------
+
+// ApproveRecord POST /api/tenant/records/{id}/approve
+// Records the caller's sign-off on a record that is pending approval in its
+// current state. Authorization is the record:approve permission PLUS the domain
+// check that the caller is an assigned approver of the current state — the
+// owner/team IDOR scope guard is intentionally NOT applied here, because
+// approvers legitimately act on records they do not own (mirrors the CRM
+// approval posture). A non-approver is denied and the attempt is logged.
+func (h *WorkflowOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
+	pool, _, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
+	updated, err := workflow.Approve(r.Context(), pool, id, callerUserID)
+	switch {
+	case errors.Is(err, workflow.ErrNotApprover):
+		// A non-approver (or a probe for a record the caller can't approve) is
+		// answered with 404 — identical to a missing record — so record ids
+		// cannot be enumerated. This endpoint intentionally skips the owner/team
+		// scope guard, so the approver-membership check is the access boundary.
+		logSecurityEvent(r, "approval_denied", "identity", identityID, "record", id)
+		fail(w, http.StatusNotFound, "Record not found.")
+		return
+	case errors.Is(err, workflow.ErrRecordNotFound):
+		fail(w, http.StatusNotFound, "Record not found.")
+		return
+	case errors.Is(err, workflow.ErrAlreadyApproved):
+		fail(w, http.StatusConflict, workflow.ErrAlreadyApproved.Error())
+		return
+	case err != nil:
+		fail(w, http.StatusInternalServerError, "Failed to approve record.")
+		return
+	}
+	if ov, oerr := workflow.ApprovalOverlay(r.Context(), pool, updated, callerUserID); oerr == nil {
+		updated.Approval = ov
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": updated})
+}
+
+// PendingApprovalsQueue GET /api/tenant/records/approvals/pending
+// Lists records where the caller is an active approver of the record's current
+// state and has not yet signed off — the caller's approval queue. Scoped by
+// approver assignment, not owner/team.
+func (h *WorkflowOps) PendingApprovalsQueue(w http.ResponseWriter, r *http.Request) {
+	pool, _, identityID, ok := h.authorize(w, r, authz.ResourceRecord, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
+	records, err := workflow.PendingApprovals(r.Context(), pool, callerUserID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load pending approvals.")
+		return
+	}
+	if err := workflow.AttachApprovalOverlays(r.Context(), pool, records, callerUserID); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load pending approvals.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": records})
+}
+
 // ---- helpers ----------------------------------------------------------------
 
 // enforceRecordScope is the IDOR guard for WorkflowOps single-record handlers:
@@ -571,6 +695,56 @@ func isWorkflowClientErr(err error) bool {
 	}
 	var ve workflow.ValidationErrors
 	return errors.As(err, &ve)
+}
+
+// stateInWorkflow validates that the {stateId} path param is a state of the
+// {id} workflow. On failure it writes the response (404 unknown / 500 error)
+// and returns ok=false.
+func (h *WorkflowOps) stateInWorkflow(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (string, bool) {
+	workflowID := r.PathValue("id")
+	stateID := r.PathValue("stateId")
+	var exists bool
+	err := pool.QueryRow(r.Context(),
+		`SELECT EXISTS (SELECT 1 FROM workflow_states WHERE id::text = $1 AND workflow_id::text = $2)`,
+		stateID, workflowID).Scan(&exists)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load state.")
+		return "", false
+	}
+	if !exists {
+		fail(w, http.StatusNotFound, "State not found for this workflow.")
+		return "", false
+	}
+	return stateID, true
+}
+
+// allActiveUsers reports whether every id in ids resolves to an active tenant
+// user. An empty set is valid (clears the approver set). Malformed ids simply
+// fail to match, so the check returns false.
+func allActiveUsers(ctx context.Context, pool *pgxpool.Pool, ids []string) bool {
+	if len(ids) == 0 {
+		return true
+	}
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE id::text = ANY($1) AND status = 'active'`, ids).Scan(&count); err != nil {
+		return false
+	}
+	return count == len(ids)
+}
+
+// dedupeStrings returns ids with blanks and duplicates removed, order preserved.
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // splitPermission parses "resource:action" into typed values.

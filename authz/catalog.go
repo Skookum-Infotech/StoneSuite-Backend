@@ -62,6 +62,7 @@ const (
 	ActionUpdate     Action = "update"
 	ActionDelete     Action = "delete"
 	ActionTransition Action = "transition" // move a record between workflow states
+	ActionApprove    Action = "approve"    // sign off on a record pending approval
 	ActionConfigure  Action = "configure"  // edit definitions/settings
 
 	// ActionAny is the wildcard action. Granting it matches every action.
@@ -90,6 +91,7 @@ var catalog = []Permission{
 	{ResourceRecord, ActionUpdate},
 	{ResourceRecord, ActionDelete},
 	{ResourceRecord, ActionTransition},
+	{ResourceRecord, ActionApprove},
 
 	{ResourceLead, ActionCreate},
 	{ResourceLead, ActionRead},

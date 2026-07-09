@@ -2241,3 +2241,43 @@ CREATE TABLE IF NOT EXISTS rag_index_queue (
 CREATE INDEX IF NOT EXISTS rag_index_queue_pending_idx
     ON rag_index_queue (status) WHERE status = 'pending';
 
+
+-- ── 000026_workflow_state_approvals ──────────────────────────────────────────
+-- Generic per-state approver gating for the workflow engine. A workflow state
+-- is "approval-gated" simply by having >= 1 active approver row here (presence-
+-- based, mirroring the CRM crm_workflow_approver model). While a record sits in
+-- a gated state it is locked: the engine blocks every outbound transition until
+-- each active approver has a row in workflow_record_approval for that
+-- (record, state). Approval status is DERIVED from these two tables, so no
+-- approval_status column is added to workflow_records.
+
+-- workflow_state_approver — which tenant users may approve a given state.
+CREATE TABLE IF NOT EXISTS workflow_state_approver (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    state_id          UUID        NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+    approver_user_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_active         BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_by        UUID        NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_workflow_state_approver UNIQUE (state_id, approver_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wf_state_approver_state
+    ON workflow_state_approver (state_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_wf_state_approver_user
+    ON workflow_state_approver (approver_user_id) WHERE is_active;
+
+-- workflow_record_approval — one row per sign-off in the record's current
+-- pending cycle. UNIQUE(record_id, state_id, approver_user_id) is the DB guard
+-- against the same approver signing off twice; the engine deletes rows for a
+-- (record, state) when the record re-enters that state so each cycle is fresh.
+CREATE TABLE IF NOT EXISTS workflow_record_approval (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    record_id         UUID        NOT NULL REFERENCES workflow_records(id) ON DELETE CASCADE,
+    state_id          UUID        NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+    approver_user_id  UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    approved_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_workflow_record_approval UNIQUE (record_id, state_id, approver_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wf_record_approval_record
+    ON workflow_record_approval (record_id, state_id);
+

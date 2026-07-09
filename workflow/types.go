@@ -122,6 +122,10 @@ type Record struct {
 	CustomFields   map[string]any `json:"customFields"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
+	// Approval is the read-only approver-gating overlay for the record's current
+	// state. Populated by the controller layer on single-record reads and list
+	// pages; nil (omitted) when not requested or when the state has no approvers.
+	Approval *Approval `json:"approval,omitempty"`
 }
 
 // StatusInfo represents a workflow state as a selectable status option.

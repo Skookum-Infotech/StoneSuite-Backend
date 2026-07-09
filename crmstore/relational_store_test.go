@@ -202,7 +202,7 @@ func TestRecordSelectColumnCount(t *testing.T) {
 }
 
 func TestApprovalSentinelErrorsAreDistinct(t *testing.T) {
-	errs := []error{ErrNotApprover, ErrAlreadyApproved, ErrNoApproverConfigured, ErrAlreadyApprovedByYou, ErrTooManyApprovers}
+	errs := []error{ErrNotApprover, ErrAlreadyApproved, ErrNoApproverConfigured, ErrAlreadyApprovedByYou}
 	for i := range errs {
 		for j := range errs {
 			if i == j {

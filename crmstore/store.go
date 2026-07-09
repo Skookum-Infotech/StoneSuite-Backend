@@ -36,9 +36,6 @@ var (
 	// ErrAlreadyApprovedByYou is returned when the caller already approved this
 	// record and it is still awaiting one or more other configured approvers.
 	ErrAlreadyApprovedByYou = errors.New("you have already approved this document. Waiting on the other assigned approver.")
-	// ErrTooManyApprovers is returned when configuring an approver would exceed
-	// the maximum of 2 active approvers for a workflow.
-	ErrTooManyApprovers = errors.New("maximum of 2 approvers can be configured for this workflow.")
 )
 
 // ClientError marks a caller-fault error (maps to HTTP 400). Server faults are

@@ -1,0 +1,62 @@
+app            = "uat-stonesuite-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT                = "8080"
+  # IMPORTANT: CORS_ORIGIN and FRONTEND_URL must match the exact origin of the deployed
+  # frontend (including protocol and port). Verify this matches the Cloudflare Pages URL
+  # before deploying. A mismatch will block all browser API calls with CORS 403 errors.
+  CORS_ORIGIN         = "https://uat.stonesuite.app"
+  FRONTEND_URL        = "https://uat.stonesuite.app"
+  SMTP_PORT           = "587"
+  INVITE_EXPIRY_HOURS = "24"
+
+  # Cloudflare R2 — non-secret config (account ID and bucket name are not sensitive).
+  # Secrets (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) must be set via:
+  #   fly secrets set R2_ACCESS_KEY_ID=<key> R2_SECRET_ACCESS_KEY=<secret>
+  #
+  # R2 (per-tenant isolated buckets — no shared bucket):
+  # Secrets (set via fly secrets set):
+  #   R2_ACCOUNT_ID          — Cloudflare account ID (found in R2 dashboard)
+  #   R2_ACCESS_KEY_ID       — R2 API token key ID (S3-compat credentials)
+  #   R2_SECRET_ACCESS_KEY   — R2 API token secret
+  #   CLOUDFLARE_API_TOKEN   — Cloudflare API token with Account:R2:Edit permission
+  #   CLOUDFLARE_ACCOUNT_ID  — same as R2_ACCOUNT_ID
+  # Each tenant gets an isolated bucket named ss-{slug} with CORS set from CORS_ORIGIN.
+
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  # Scale-to-zero: the only running Machine is stopped by Fly Proxy after a
+  # period of no requests, and auto-started on the next request (~1-2s cold
+  # start — a clean process restart, so DB pools come up fresh). At idle the app
+  # costs nothing.
+  auto_stop_machines   = "stop"
+  auto_start_machines  = true
+  min_machines_running = 0
+  processes            = ["app"]
+
+  [http_service.concurrency]
+    type        = "requests"
+    soft_limit  = 200
+    hard_limit  = 250
+
+  # NO periodic health check on purpose. A recurring [[http_service.checks]]
+  # ping counts as traffic and keeps the Machine awake forever, defeating
+  # scale-to-zero. Fly never auto-stops/starts based on check status anyway.
+  # Liveness/readiness are still exposed in-app (GET /api/healthz, /api/readyz)
+  # for an external uptime monitor (e.g. UptimeRobot) — point that at /api/healthz.
+  # If you ever pin a Machine always-on (min_machines_running = 1), re-add:
+  #   [[http_service.checks]]
+  #     interval = "30s"
+  #     method   = "GET"
+  #     path     = "/api/healthz"
+  #     timeout  = "5s"
+
+[[vm]]
+  memory   = "256mb"
+  cpu_kind = "shared"
+  cpus     = 1

@@ -420,13 +420,17 @@ func main() {
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/approvers", tenantChain(wf.GetWorkflowApprovers))
 		mux.Handle("PATCH /api/tenant/workflows/{id}/approvers", tenantChain(wf.SetWorkflowApprovers))
+		mux.Handle("GET /api/tenant/workflows/{id}/states/{stateId}/approvers", tenantChain(wf.GetStateApprovers))
+		mux.Handle("PUT /api/tenant/workflows/{id}/states/{stateId}/approvers", tenantChain(wf.SetStateApprovers))
 		mux.Handle("PUT /api/tenant/workflows/{id}/numbering", tenantChain(wf.SetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records/search", tenantChain(wf.SearchRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records", tenantChain(wf.CreateRecord))
+		mux.Handle("GET /api/tenant/records/approvals/pending", tenantChain(wf.PendingApprovalsQueue))
 		mux.Handle("GET /api/tenant/records/{id}", tenantChain(wf.GetRecord))
 		mux.Handle("PATCH /api/tenant/records/{id}", tenantChain(wf.UpdateRecord))
 		mux.Handle("POST /api/tenant/records/{id}/transition", tenantChain(wf.TransitionRecord))
+		mux.Handle("POST /api/tenant/records/{id}/approve", tenantChain(wf.ApproveRecord))
 
 		// Record attachments (Cloudflare R2). r2Client is nil when R2 env vars are
 		// absent — presign/download endpoints return 503; list/metadata still work.

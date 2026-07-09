@@ -534,7 +534,7 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 		custom = map[string]any{}
 	}
 	ownerEmp := s.ownerEmployee(ctx, pool, in.OwnerUserID, in.ActorIdentityID)
-	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code)
+	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code, statusID)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +625,7 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	// "pending", so each new state requires its own fresh sign-off rather than
 	// inheriting an earlier state's approval. Stale per-approver rows from the
 	// prior state are cleared for the same reason.
-	newApprovalStatus, err := s.entryApprovalStatus(ctx, pool, targetTypeCode)
+	newApprovalStatus, err := s.entryApprovalStatus(ctx, pool, targetTypeCode, statusID)
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +705,7 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 		return nil, "", err
 	}
 	ownerEmp := s.employeeIDOrZero(ctx, pool, actorIdentityID)
-	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code)
+	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code, statusID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -879,13 +879,14 @@ func (s *relationalStore) PendingApprovals(ctx context.Context, pool *pgxpool.Po
 	return out, rows.Err()
 }
 
-// entryApprovalStatus returns "pending" if recordTypeCode currently has at
-// least one active approver configured (any status), else "none". Called
+// entryApprovalStatus returns "pending" if statusID currently has at least
+// one active approver configured — either scoped to that exact status or a
+// wildcard (any-status) approver for recordTypeCode — else "none". Called
 // whenever a record enters a record type/stage — creation, conversion, or a
-// same- or later-stage transition — so approval is required for every state
-// once a workflow has approvers configured, not just a single hardcoded stage.
-func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) (string, error) {
-	anyApprover, err := s.hasAnyActiveApprover(ctx, pool, recordTypeCode)
+// same- or later-stage transition — so approval is required for the specific
+// status being entered, not for every status of the record type.
+func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string, statusID int) (string, error) {
+	anyApprover, err := s.hasApproverForStatus(ctx, pool, recordTypeCode, statusID)
 	if err != nil {
 		return "", err
 	}
@@ -907,6 +908,26 @@ func (s *relationalStore) hasAnyActiveApprover(ctx context.Context, pool *pgxpoo
 		)`, recordTypeCode).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check any approver: %w", err)
+	}
+	return exists, nil
+}
+
+// hasApproverForStatus reports whether at least one active approver is
+// configured for recordTypeCode that applies to statusID — either scoped
+// exactly to that status or a wildcard (crm_status_id NULL) approver for the
+// whole record type. Same predicate as isConfiguredApprover/activeApproverCount,
+// but keyed by a status id directly rather than a record's current row.
+func (s *relationalStore) hasApproverForStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string, statusID int) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM crm_workflow_approver a
+			JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
+			WHERE rt.record_type_code = $1 AND a.is_active
+			  AND (a.crm_status_id IS NULL OR a.crm_status_id = $2)
+		)`, recordTypeCode, statusID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check approver for status: %w", err)
 	}
 	return exists, nil
 }

@@ -17,12 +17,6 @@ import (
 	"stonesuite-backend/workflow"
 )
 
-// maxApproversPerWorkflow caps how many active approvers may be configured
-// for a given record-type/status combo — the customer Closed-Won approval
-// flow requires every configured approver to sign off, so an unbounded pool
-// would make the record impossible to finalize.
-const maxApproversPerWorkflow = 2
-
 // CRMAdminOps handles workspace-admin CRM configuration: switching the tenant's
 // database design (design_version) and managing the configurable approvers used
 // by the customer Closed-Won approval flow. All endpoints require the
@@ -174,22 +168,12 @@ func (h *CRMAdminOps) CreateApprover(w http.ResponseWriter, r *http.Request) {
 	}
 	pool, _ := tenancy.PoolFromContext(r.Context())
 
-	count, err := activeApproverCountForStatus(r.Context(), pool, req.RecordTypeCode, req.CrmStatusCode)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to check existing approvers.")
-		return
-	}
-	if count >= maxApproversPerWorkflow {
-		fail(w, http.StatusConflict, "Maximum of 2 approvers can be configured for this workflow.")
-		return
-	}
-
 	// Resolve the creating employee (best-effort; may be NULL).
 	var createdBy *int
 	if id := resolveEmployeeID(r, identityID); id > 0 {
 		createdBy = &id
 	}
-	_, err = pool.Exec(r.Context(), `
+	_, err := pool.Exec(r.Context(), `
 		INSERT INTO crm_workflow_approver (record_type_id, crm_status_id, approver_employee_id, created_by)
 		VALUES (
 			(SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1),
@@ -223,30 +207,6 @@ func (h *CRMAdminOps) DeleteApprover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Approver removed."})
-}
-
-// activeApproverCountForStatus counts distinct active approvers whose
-// configuration would apply to recordTypeCode + crmStatusCode: an existing
-// wildcard row (crm_status_id NULL) counts against every status, and
-// crmStatusCode == "" (the row being added is itself a wildcard) counts every
-// existing row for the record type. Mirrors the wildcard-or-exact predicate
-// relationalStore.isConfiguredApprover uses at approval time.
-func activeApproverCountForStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode, crmStatusCode string) (int, error) {
-	var count int
-	err := pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT a.approver_employee_id) FROM crm_workflow_approver a
-		JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
-		LEFT JOIN lkp_crm_status cs ON cs.crm_status_id = a.crm_status_id
-		WHERE rt.record_type_code = $1 AND a.is_active
-		  AND (
-			NULLIF($2,'') IS NULL
-			OR a.crm_status_id IS NULL
-			OR cs.crm_status_code = $2
-		  )`, recordTypeCode, crmStatusCode).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("count active approvers: %w", err)
-	}
-	return count, nil
 }
 
 // resolveEmployeeID best-effort maps the caller's identity to an employee_id.
@@ -317,8 +277,8 @@ func activeApproverUserIDs(ctx context.Context, pool *pgxpool.Pool, recordTypeCo
 
 // replaceActiveApprovers sets the full any-status ("wildcard") active
 // approver set for recordTypeCode to exactly userIDs, replacing whatever was
-// configured before. Runs in one transaction so the swap is atomic; callers
-// must already have capped len(userIDs) at maxApproversPerWorkflow.
+// configured before. Runs in one transaction so the swap is atomic. No count
+// cap is enforced — the 2-approver limit is a UI concern.
 func replaceActiveApprovers(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string, userIDs []string) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {

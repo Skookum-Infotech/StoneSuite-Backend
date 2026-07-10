@@ -30,7 +30,13 @@ INSTALLATION_ID = get_env("GITHUB_INSTALLATION_ID")
 # PRIVATE_KEY = get_env("GITHUB_PRIVATE_KEY")
 PRIVATE_KEY = base64.b64decode(os.environ["GITHUB_PRIVATE_KEY_B64"])
 
+now = int(time.time())
 
+payload = {
+    "iat": now - 60,
+    "exp": now + 600,
+    "iss": APP_ID,
+}
 
 jwt_token = jwt.encode(
     payload,

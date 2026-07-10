@@ -81,51 +81,67 @@ var allowedExt = map[string]string{
 
 // ---- authorisation ----------------------------------------------------------
 
-// attachAuth is the RBAC gate for attachment handlers.
-// Attachments sit on top of CRM records, so we accept any equivalent CRM
-// permission: record:action OR lead:action OR prospect:action OR customer:action.
-// This allows roles that have specific CRM grants (e.g. lead:read) without
-// the generic record:* resource to still access attachments on those records.
-// Returns pool, scope, identityID, ok.
+// attachAuth is the RBAC + IDOR gate for attachment handlers. It resolves the
+// record's actual type — regardless of which of the three storage models
+// backs it (v1 workflow_records, v2 relational customer/CRM, or the
+// relational sales_order) — and checks the SPECIFIC resource:action
+// permission for that type, not any of a fixed list: a caller with only
+// sales_order:read must not be able to read attachments on a lead just
+// because "any CRM-ish permission" used to be accepted. When the caller's
+// grant is scoped to own/team, it also enforces the same row-level ownership
+// guard every other record endpoint uses (recordInScope). Denial is always
+// 404 (never 403), so callers cannot enumerate ids outside their scope or
+// permission set. Returns pool, the resolved record info, identityID, ok.
 func (h *AttachmentOps) attachAuth(
-	w http.ResponseWriter, r *http.Request,
-	_ authz.Resource, action authz.Action,
-) (*pgxpool.Pool, authz.Scope, string, bool) {
+	w http.ResponseWriter, r *http.Request, recordID string, action authz.Action,
+) (*pgxpool.Pool, workflow.RecordAccessInfo, string, bool) {
 
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
-		return nil, "", "", false
+		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
-		return nil, "", "", false
+		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 
-	// Accept any of: record, lead, prospect, customer for the requested action.
-	crmResources := []authz.Resource{
-		authz.ResourceRecord,
-		authz.ResourceLead,
-		authz.ResourceProspect,
-		authz.ResourceCustomer,
+	info, err := workflow.ResolveRecordAccess(r.Context(), pool, recordID)
+	if errors.Is(err, workflow.ErrRecordNotFound) {
+		fail(w, http.StatusNotFound, "Record not found.")
+		return nil, workflow.RecordAccessInfo{}, "", false
 	}
-	var best authz.Decision
-	for _, res := range crmResources {
-		d, checkErr := authz.Check(r.Context(), pool, payload.ID, res, action)
-		if checkErr != nil {
-			fail(w, http.StatusInternalServerError, "Permission check failed.")
-			return nil, "", "", false
-		}
-		if d.Allowed && !best.Allowed {
-			best = d
-		}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		return nil, workflow.RecordAccessInfo{}, "", false
 	}
-	if !best.Allowed {
+
+	resource := resourceForKey(info.WorkflowKey)
+	decision, err := authz.Check(r.Context(), pool, payload.ID, resource, action)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return nil, workflow.RecordAccessInfo{}, "", false
+	}
+	if !decision.Allowed {
 		fail(w, http.StatusForbidden, "You do not have permission to access attachments.")
-		return nil, "", "", false
+		return nil, workflow.RecordAccessInfo{}, "", false
 	}
-	return pool, best.Scope, payload.ID, true
+	if decision.Scope != authz.ScopeAll {
+		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, info.OwnerUserID, info.TeamID)
+		if aerr != nil {
+			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			return nil, workflow.RecordAccessInfo{}, "", false
+		}
+		if !allowed {
+			logSecurityEvent(r, "idor_denied",
+				"identity", payload.ID, "record", recordID, "resource", string(resource),
+				"action", string(action), "scope", string(decision.Scope))
+			fail(w, http.StatusNotFound, "Record not found.")
+			return nil, workflow.RecordAccessInfo{}, "", false
+		}
+	}
+	return pool, info, payload.ID, true
 }
 
 // ---- POST /api/tenant/records/{id}/attachments/presign-batch ----------------
@@ -153,11 +169,12 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "File storage is not configured.")
 		return
 	}
-	pool, _, _, ok := h.attachAuth(w, r, authz.ResourceRecord, authz.ActionUpdate)
+	recordID := r.PathValue("id")
+	pool, info, _, ok := h.attachAuth(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	recordID := r.PathValue("id")
+	workflowKey := info.WorkflowKey
 
 	var req presignBatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -170,17 +187,6 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Files) > maxFilesPerBatch {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("Maximum %d files per batch.", maxFilesPerBatch))
-		return
-	}
-
-	// Resolve the record — works for both v1 (workflow_records) and v2 (customer table).
-	workflowKey, err := workflow.RecordKeyForAttachment(r.Context(), pool, recordID)
-	if errors.Is(err, workflow.ErrRecordNotFound) {
-		fail(w, http.StatusNotFound, "Record not found.")
-		return
-	}
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record.")
 		return
 	}
 
@@ -265,11 +271,11 @@ type confirmBatchRequest struct {
 // For v1, status is set immediately to 'clean'; see workflow.InsertAttachment
 // for the malware-scanning extension point comment.
 func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Request) {
-	pool, _, identityID, ok := h.attachAuth(w, r, authz.ResourceRecord, authz.ActionUpdate)
+	recordID := r.PathValue("id")
+	pool, _, identityID, ok := h.attachAuth(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	recordID := r.PathValue("id")
 
 	var req confirmBatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -282,17 +288,6 @@ func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Reques
 	}
 	if len(req.Attachments) > maxFilesPerBatch {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("Maximum %d attachments per call.", maxFilesPerBatch))
-		return
-	}
-
-	// Verify record belongs to this tenant.
-	exists, err := workflow.RecordExistsAnywhere(r.Context(), pool, recordID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to verify record.")
-		return
-	}
-	if !exists {
-		fail(w, http.StatusNotFound, "Record not found.")
 		return
 	}
 
@@ -360,20 +355,9 @@ func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Reques
 
 // ListAttachments returns all attachments for a record. RBAC: record:read.
 func (h *AttachmentOps) ListAttachments(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.attachAuth(w, r, authz.ResourceRecord, authz.ActionRead)
-	if !ok {
-		return
-	}
 	recordID := r.PathValue("id")
-
-	// Verify record belongs to this tenant DB before listing.
-	exists, err := workflow.RecordExistsAnywhere(r.Context(), pool, recordID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to verify record.")
-		return
-	}
-	if !exists {
-		fail(w, http.StatusNotFound, "Record not found.")
+	pool, _, _, ok := h.attachAuth(w, r, recordID, authz.ActionRead)
+	if !ok {
 		return
 	}
 
@@ -398,11 +382,11 @@ func (h *AttachmentOps) DownloadAttachment(w http.ResponseWriter, r *http.Reques
 		fail(w, http.StatusServiceUnavailable, "File storage is not configured.")
 		return
 	}
-	pool, _, identityID, ok := h.attachAuth(w, r, authz.ResourceRecord, authz.ActionRead)
+	recordID := r.PathValue("id")
+	pool, _, identityID, ok := h.attachAuth(w, r, recordID, authz.ActionRead)
 	if !ok {
 		return
 	}
-	recordID := r.PathValue("id")
 	attachmentID := r.PathValue("attachmentId")
 
 	tenant, err := tenancy.TenantFromContext(r.Context())
@@ -454,11 +438,11 @@ func (h *AttachmentOps) DownloadAttachment(w http.ResponseWriter, r *http.Reques
 // RBAC: record:update. If R2 deletion fails the row is still removed and the
 // error is logged — the UI must not be left with an inaccessible phantom entry.
 func (h *AttachmentOps) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
-	pool, _, identityID, ok := h.attachAuth(w, r, authz.ResourceRecord, authz.ActionUpdate)
+	recordID := r.PathValue("id")
+	pool, _, identityID, ok := h.attachAuth(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	recordID := r.PathValue("id")
 	attachmentID := r.PathValue("attachmentId")
 
 	tenant, err := tenancy.TenantFromContext(r.Context())

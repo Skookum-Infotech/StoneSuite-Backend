@@ -486,6 +486,29 @@ func main() {
 		mux.Handle("POST /api/tenant/config/approvers", tenantChain(crmAdminOps.CreateApprover))
 		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
 
+		// Inventory: shared item catalog (Sales Order line items reference it).
+		inv := controllers.NewInventoryOps()
+		mux.Handle("GET /api/tenant/inventory/items", tenantChain(inv.List))
+		mux.Handle("POST /api/tenant/inventory/items/search", tenantChain(inv.Search))
+		mux.Handle("POST /api/tenant/inventory/items", tenantChain(inv.Create))
+		mux.Handle("GET /api/tenant/inventory/items/{uuid}", tenantChain(inv.Get))
+		mux.Handle("PATCH /api/tenant/inventory/items/{uuid}", tenantChain(inv.Update))
+		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
+
+		// Sales Order: dedicated relational module (header + line items), a
+		// sibling of the CRM customer table — not served through the generic
+		// /api/tenant/crm/{workflowKey} JSONB router.
+		so := controllers.NewSalesOrderOps()
+		mux.Handle("GET /api/tenant/sales-orders", tenantChain(so.List))
+		mux.Handle("POST /api/tenant/sales-orders/search", tenantChain(so.Search))
+		mux.Handle("POST /api/tenant/sales-orders", tenantChain(so.Create))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}", tenantChain(so.Get))
+		mux.Handle("PATCH /api/tenant/sales-orders/{uuid}", tenantChain(so.Update))
+		mux.Handle("DELETE /api/tenant/sales-orders/{uuid}", tenantChain(so.Delete))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/transition", tenantChain(so.Transition))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
+
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Both embeddings and chat are self-hosted on the same Ollama box
 		// (ADR-001) — no third-party LLM account, API key, or quota.

@@ -28,7 +28,7 @@ print("--------------------------------")
 APP_ID = get_env("GITHUB_APP_ID")
 INSTALLATION_ID = get_env("GITHUB_INSTALLATION_ID")
 # PRIVATE_KEY = get_env("GITHUB_PRIVATE_KEY")
-PRIVATE_KEY = base64.b64decode(os.environ["GITHUB_PRIVATE_KEY_B64"])
+private_key = base64.b64decode(os.environ["GITHUB_PRIVATE_KEY_B64"])
 
 now = int(time.time())
 

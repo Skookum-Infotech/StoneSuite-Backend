@@ -30,24 +30,7 @@ INSTALLATION_ID = get_env("GITHUB_INSTALLATION_ID")
 # PRIVATE_KEY = get_env("GITHUB_PRIVATE_KEY")
 PRIVATE_KEY = base64.b64decode(os.environ["GITHUB_PRIVATE_KEY_B64"])
 
-# Write the PEM from the Azure DevOps secret variable to a temp file
-with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as pem:
-    pem.write(PRIVATE_KEY.encode("utf-8"))
-    pem.flush()
-    pem_path = pem.name
 
-print("Generating GitHub App JWT...")
-
-now = int(time.time())
-
-payload = {
-    "iat": now - 60,
-    "exp": now + 600,
-    "iss": APP_ID,
-}
-
-with open(pem_path, "rb") as f:
-    private_key = f.read()
 
 jwt_token = jwt.encode(
     payload,

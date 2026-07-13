@@ -271,6 +271,9 @@ func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	order, err := salesorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
 	if err != nil {
+		if errors.Is(err, salesorder.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
 		soFail(w, err, "Failed to approve sales order.")
 		return
 	}

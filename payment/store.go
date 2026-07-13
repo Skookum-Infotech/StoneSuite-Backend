@@ -45,7 +45,7 @@ type paymentMeta struct {
 
 func scanPayment(row pgx.Row) (*Payment, paymentMeta, error) {
 	var (
-		p      Payment
+		p          Payment
 		ownerEmpID *int
 		currencyID *int
 		custom     map[string]any
@@ -136,15 +136,6 @@ func statusIDByCode(ctx context.Context, pool *pgxpool.Pool, typeID int, code st
 		return 0, fmt.Errorf("resolve status %s: %w", code, err)
 	}
 	return id, nil
-}
-
-func statusCodeByID(ctx context.Context, pool *pgxpool.Pool, statusID int) (string, error) {
-	var code string
-	if err := pool.QueryRow(ctx,
-		`SELECT record_status_code FROM lkp_record_status WHERE record_status_id = $1`, statusID).Scan(&code); err != nil {
-		return "", fmt.Errorf("resolve status code: %w", err)
-	}
-	return code, nil
 }
 
 func nullableInt(v int) any {

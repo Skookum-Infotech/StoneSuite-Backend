@@ -9,9 +9,9 @@ import (
 func TestPayment_JSONShape(t *testing.T) {
 	p := Payment{
 		ID: "abc", Number: "PYMT-000001", StatusCode: "PEND", StatusName: "Pending",
-		Customer: CustomerRef{ID: "cust-1", Name: "Acme"},
+		Customer:    CustomerRef{ID: "cust-1", Name: "Acme"},
 		OwnerUserID: "user-should-not-serialize",
-		MethodID: 1, MethodName: "Check",
+		MethodID:    1, MethodName: "Check",
 		Amount: 100, AppliedTotal: 40, UnappliedAmount: 60,
 		PaymentDate: time.Now(), CustomFields: map[string]any{}, Applications: []Application{},
 	}

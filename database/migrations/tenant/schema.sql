@@ -2874,3 +2874,124 @@ CREATE INDEX IF NOT EXISTS idx_ii_so_item     ON invoice_item (sales_order_item_
 
 -- invoice_history
 CREATE INDEX IF NOT EXISTS idx_inv_history_invoice ON invoice_history (invoice_id);
+
+-- ── Payments module ─────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS lkp_payment_method (
+    payment_method_id          SERIAL       PRIMARY KEY,
+    payment_method_name        VARCHAR(50)  NOT NULL,
+    payment_method_code        VARCHAR(10)  NOT NULL,
+    payment_method_is_active   BOOLEAN      NOT NULL DEFAULT TRUE,
+    payment_method_is_system   BOOLEAN      NOT NULL DEFAULT FALSE,
+    payment_method_created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payment_method_created_by  INTEGER      NOT NULL REFERENCES employee(employee_id),
+    payment_method_deleted_at  TIMESTAMP        NULL,
+    payment_method_deleted_by  INTEGER          NULL REFERENCES employee(employee_id),
+    payment_method_record_version INTEGER   NOT NULL DEFAULT 1,
+    CONSTRAINT uq_payment_method_code UNIQUE (payment_method_code)
+);
+
+INSERT INTO lkp_payment_method (payment_method_name, payment_method_code, payment_method_is_active, payment_method_is_system, payment_method_created_by) VALUES
+    ('Check',       'CHK_', TRUE, TRUE, 1),
+    ('Cash',        'CASH', TRUE, TRUE, 1),
+    ('Credit Card', 'CC__', TRUE, TRUE, 1),
+    ('ACH',         'ACH_', TRUE, TRUE, 1),
+    ('Wire',        'WIRE', TRUE, TRUE, 1),
+    ('Other',       'OTHR', TRUE, TRUE, 1)
+ON CONFLICT (payment_method_code) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS payment (
+    payment_id                  SERIAL        PRIMARY KEY,
+    payment_uuid                 UUID          NOT NULL DEFAULT gen_random_uuid(),
+    payment_number                VARCHAR(20)      NULL,
+
+    record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),
+    payment_status                 INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    payment_customer_id            INTEGER       NOT NULL REFERENCES customer(customer_id),
+
+    payment_method                  INTEGER       NOT NULL REFERENCES lkp_payment_method(payment_method_id),
+    payment_reference_number        VARCHAR(50)   NOT NULL DEFAULT '',
+    payment_date                     DATE          NOT NULL DEFAULT CURRENT_DATE,
+    payment_currency                 INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    payment_memo                      TEXT          NOT NULL DEFAULT '',
+    payment_internal_notes            TEXT          NOT NULL DEFAULT '',
+
+    payment_amount                     DECIMAL(15,2) NOT NULL,
+    payment_applied_total               DECIMAL(15,2) NOT NULL DEFAULT 0,
+    payment_unapplied_amount             DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    payment_owner_id                      INTEGER           NULL REFERENCES employee(employee_id),
+
+    payment_custom_fields                  JSONB        NOT NULL DEFAULT '{}',
+    payment_created_at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payment_created_by                       INTEGER          NULL REFERENCES employee(employee_id),
+    payment_updated_at                        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payment_updated_by                         INTEGER          NULL REFERENCES employee(employee_id),
+    payment_deleted_at                          TIMESTAMP        NULL,
+    payment_deleted_by                           INTEGER          NULL REFERENCES employee(employee_id),
+    payment_record_version                        INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_payment_uuid       UNIQUE (payment_uuid),
+    CONSTRAINT uq_payment_number     UNIQUE (payment_number),
+    CONSTRAINT chk_payment_amount_pos      CHECK (payment_amount > 0),
+    CONSTRAINT chk_payment_applied_nonneg  CHECK (payment_applied_total >= 0 AND payment_unapplied_amount >= 0),
+    CONSTRAINT chk_payment_applied_le_amt  CHECK (payment_applied_total <= payment_amount),
+    CONSTRAINT chk_payment_soft_delete     CHECK (
+        (payment_deleted_at IS NULL AND payment_deleted_by IS NULL) OR
+        (payment_deleted_at IS NOT NULL AND payment_deleted_by IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS payment_application (
+    application_id             SERIAL        PRIMARY KEY,
+    application_uuid            UUID          NOT NULL DEFAULT gen_random_uuid(),
+    payment_id                   INTEGER       NOT NULL REFERENCES payment(payment_id) ON DELETE CASCADE,
+    invoice_id                    INTEGER       NOT NULL REFERENCES invoice(invoice_id),
+
+    application_amount             DECIMAL(15,2) NOT NULL,
+
+    application_created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    application_created_by           INTEGER          NULL REFERENCES employee(employee_id),
+    application_deleted_at            TIMESTAMP        NULL,
+    application_deleted_by             INTEGER          NULL REFERENCES employee(employee_id),
+    application_record_version          INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_payment_application_uuid UNIQUE (application_uuid),
+    CONSTRAINT chk_pay_app_amount_pos      CHECK (application_amount > 0),
+    CONSTRAINT chk_pay_app_soft_delete     CHECK (
+        (application_deleted_at IS NULL AND application_deleted_by IS NULL) OR
+        (application_deleted_at IS NOT NULL AND application_deleted_by IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pay_app_live_pair
+    ON payment_application (payment_id, invoice_id) WHERE application_deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS payment_history (
+    payment_history_id        SERIAL       PRIMARY KEY,
+    payment_id                 INTEGER      NOT NULL REFERENCES payment(payment_id) ON DELETE CASCADE,
+    from_status_id               INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                  INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                          VARCHAR(32)  NOT NULL DEFAULT 'transition',
+    actor_employee_id                INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                          JSONB        NOT NULL DEFAULT '{}',
+    at                                 TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pay_customer      ON payment (payment_customer_id) WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_status         ON payment (payment_status)      WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_date            ON payment (payment_date)        WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_owner            ON payment (payment_owner_id)    WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_created_id      ON payment (payment_created_at, payment_id)  WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_updated_id      ON payment (payment_updated_at, payment_id)  WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_date_id          ON payment (payment_date, payment_id)         WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_amount_id         ON payment (payment_amount, payment_id)       WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_unapplied_id       ON payment (payment_unapplied_amount, payment_id) WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_status_created       ON payment (payment_status, payment_created_at, payment_id) WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_custom_gin            ON payment USING GIN (payment_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_pay_app_payment  ON payment_application (payment_id) WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pay_app_invoice  ON payment_application (invoice_id) WHERE application_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_pay_history_payment ON payment_history (payment_id);

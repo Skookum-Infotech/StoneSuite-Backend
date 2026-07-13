@@ -211,7 +211,6 @@ CREATE TABLE IF NOT EXISTS payment (
     CONSTRAINT chk_payment_amount_pos      CHECK (payment_amount > 0),
     CONSTRAINT chk_payment_applied_nonneg  CHECK (payment_applied_total >= 0 AND payment_unapplied_amount >= 0),
     CONSTRAINT chk_payment_applied_le_amt  CHECK (payment_applied_total <= payment_amount),
-    CONSTRAINT chk_payment_unapplied_eq    CHECK (payment_unapplied_amount = payment_amount - payment_applied_total),
     CONSTRAINT chk_payment_soft_delete     CHECK (
         (payment_deleted_at IS NULL AND payment_deleted_by IS NULL) OR
         (payment_deleted_at IS NOT NULL AND payment_deleted_by IS NOT NULL)

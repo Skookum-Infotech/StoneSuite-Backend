@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net"
@@ -98,15 +99,12 @@ type auditEntry struct {
 	At        time.Time      `json:"at"`
 }
 
-// RecordAudit GET /api/tenant/crm/{workflowKey}/records/{id}/audit
-// Returns the unified audit trail for a single CRM record (most recent first).
-func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	_, pool, _, _, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
-	if !ok {
-		return
-	}
-	rows, err := pool.Query(r.Context(), `
+// loadAuditEntries reads the unified audit_logs trail for a single record
+// (most recent first, capped at 200), shared by every resource's audit
+// endpoint (CRM records, Sales Orders, ...) so the scan/unmarshal logic lives
+// in one place.
+func loadAuditEntries(ctx context.Context, pool *pgxpool.Pool, recordID string) ([]auditEntry, error) {
+	rows, err := pool.Query(ctx, `
 		SELECT al.action, al.resource,
 		       COALESCE(u.full_name, u.email, ''),
 		       COALESCE(host(al.ip_address),''), COALESCE(al.app_version,''),
@@ -115,10 +113,9 @@ func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN users u ON u.id = al.actor_user_id
 		WHERE al.resource_id = $1
 		ORDER BY al.created_at DESC
-		LIMIT 200`, id)
+		LIMIT 200`, recordID)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load audit trail.")
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	entries := []auditEntry{}
@@ -129,8 +126,7 @@ func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
 		)
 		if err := rows.Scan(&e.Action, &e.Resource, &e.ActorName,
 			&e.IPAddress, &e.AppVersion, &oldRaw, &newRaw, &e.At); err != nil {
-			fail(w, http.StatusInternalServerError, "Failed to read audit trail.")
-			return
+			return nil, err
 		}
 		if len(oldRaw) > 0 {
 			_ = json.Unmarshal(oldRaw, &e.OldValue)
@@ -139,6 +135,22 @@ func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
 			_ = json.Unmarshal(newRaw, &e.NewValue)
 		}
 		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// RecordAudit GET /api/tenant/crm/{workflowKey}/records/{id}/audit
+// Returns the unified audit trail for a single CRM record (most recent first).
+func (h *CRMOps) RecordAudit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, pool, _, _, ok := h.authCRMByRecordID(w, r, id, authz.ActionRead)
+	if !ok {
+		return
+	}
+	entries, err := loadAuditEntries(r.Context(), pool, id)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load audit trail.")
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "recordId": id, "audit": entries,

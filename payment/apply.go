@@ -14,6 +14,21 @@ import (
 // enforced (spec §8, §11).
 var invoicePayableStatuses = map[string]bool{"SENT": true, "PART": true, "ODUE": true}
 
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
+}
+
 type lockedInvoice struct {
 	internalID int
 	customerID int
@@ -263,7 +278,7 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID s
 	tag, err := tx.Exec(ctx, `
 		UPDATE payment_application SET application_deleted_at = NOW(), application_deleted_by = $1
 		WHERE payment_id = $2 AND invoice_id = $3 AND application_deleted_at IS NULL`,
-		nullableInt(actorEmployeeID), lp.internalID, li.internalID)
+		actorOrSystem(actorEmployeeID), lp.internalID, li.internalID)
 	if err != nil {
 		return nil, fmt.Errorf("unapply: %w", err)
 	}

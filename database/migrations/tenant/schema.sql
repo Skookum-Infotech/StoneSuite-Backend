@@ -2692,3 +2692,182 @@ CREATE INDEX IF NOT EXISTS idx_alloc_line      ON inventory_allocation (sales_or
 CREATE INDEX IF NOT EXISTS idx_alloc_open      ON inventory_allocation (inventory_item_id, warehouse_id)
     WHERE allocation_status IN ('reserved','partially_fulfilled');
 
+
+
+-- =====================================================================
+-- INVOICE MODULE
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS invoice (
+    invoice_id                  SERIAL        PRIMARY KEY,
+    invoice_uuid                UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id               INTEGER          NULL,
+    invoice_number               VARCHAR(20)      NULL,
+
+    -- Classification
+    record_type                  INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),
+    invoice_status                INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Source linkage
+    invoice_customer_id          INTEGER       NOT NULL REFERENCES customer(customer_id),
+    invoice_sales_order_id       INTEGER           NULL REFERENCES sales_order(sales_order_id) ON DELETE SET NULL,
+
+    -- Primary info
+    invoice_po_number            VARCHAR(50)   NOT NULL DEFAULT '',
+    invoice_reference_number     VARCHAR(50)   NOT NULL DEFAULT '',
+    invoice_date                 DATE          NOT NULL DEFAULT CURRENT_DATE,
+    invoice_due_date             DATE              NULL,
+    invoice_sales_tax_percent    DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    invoice_memo                 TEXT          NOT NULL DEFAULT '',
+    invoice_notes                TEXT          NOT NULL DEFAULT '',
+    invoice_internal_notes       TEXT          NOT NULL DEFAULT '',
+    invoice_terms_conditions     TEXT          NOT NULL DEFAULT '',
+
+    -- Sales assignment
+    invoice_sales_rep_id         INTEGER           NULL REFERENCES employee(employee_id),
+    invoice_owner_id             INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Terms / pricing / currency
+    invoice_payment_terms        INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    invoice_price_level          INTEGER           NULL REFERENCES lkp_price_level(price_level_id),
+    invoice_currency             INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    invoice_exchange_rate        DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored)
+    invoice_subtotal             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    invoice_discount_total       DECIMAL(15,2) NOT NULL DEFAULT 0,
+    invoice_tax_total            DECIMAL(15,2) NOT NULL DEFAULT 0,
+    invoice_shipping_charge      DECIMAL(15,2) NOT NULL DEFAULT 0,
+    invoice_adjustment           DECIMAL(15,2) NOT NULL DEFAULT 0,
+    invoice_grand_total          DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- AR balance (stored, updated by payment-recording + transitions)
+    invoice_amount_paid          DECIMAL(15,2) NOT NULL DEFAULT 0,
+    invoice_balance_due          DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Billing snapshot (copied from customer, or from sales_order on conversion)
+    invoice_bill_customer_name   VARCHAR(150) NOT NULL DEFAULT '',
+    invoice_bill_attention       VARCHAR(150) NOT NULL DEFAULT '',
+    invoice_bill_addr_line1      VARCHAR(100) NOT NULL DEFAULT '',
+    invoice_bill_addr_line2      VARCHAR(100) NOT NULL DEFAULT '',
+    invoice_bill_addr_suitenum   VARCHAR(20)  NOT NULL DEFAULT '',
+    invoice_bill_addr_city       VARCHAR(100) NOT NULL DEFAULT '',
+    invoice_bill_addr_state      INTEGER          NULL REFERENCES lkp_state(state_id),
+    invoice_bill_addr_zip        VARCHAR(10)  NOT NULL DEFAULT '',
+    invoice_bill_addr_country    INTEGER          NULL REFERENCES lkp_country(country_id),
+    invoice_bill_phone           VARCHAR(20)  NOT NULL DEFAULT '',
+    invoice_bill_fax             VARCHAR(20)  NOT NULL DEFAULT '',
+    invoice_bill_email           VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Shipping snapshot
+    invoice_ship_same_as_bill    BOOLEAN      NOT NULL DEFAULT FALSE,
+    invoice_ship_customer_name   VARCHAR(150) NOT NULL DEFAULT '',
+    invoice_ship_attention       VARCHAR(150) NOT NULL DEFAULT '',
+    invoice_ship_addr_line1      VARCHAR(100) NOT NULL DEFAULT '',
+    invoice_ship_addr_line2      VARCHAR(100) NOT NULL DEFAULT '',
+    invoice_ship_addr_suitenum   VARCHAR(20)  NOT NULL DEFAULT '',
+    invoice_ship_addr_city       VARCHAR(100) NOT NULL DEFAULT '',
+    invoice_ship_addr_state      INTEGER          NULL REFERENCES lkp_state(state_id),
+    invoice_ship_addr_zip        VARCHAR(10)  NOT NULL DEFAULT '',
+    invoice_ship_addr_country    INTEGER          NULL REFERENCES lkp_country(country_id),
+    invoice_ship_phone           VARCHAR(20)  NOT NULL DEFAULT '',
+    invoice_ship_fax             VARCHAR(20)  NOT NULL DEFAULT '',
+    invoice_ship_email           VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Dynamic + lineage + audit
+    invoice_custom_fields        JSONB        NOT NULL DEFAULT '{}',
+    invoice_parent_id            INTEGER          NULL REFERENCES invoice(invoice_id),
+    invoice_created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    invoice_created_by           INTEGER          NULL REFERENCES employee(employee_id),
+    invoice_updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    invoice_updated_by            INTEGER          NULL REFERENCES employee(employee_id),
+    invoice_deleted_at            TIMESTAMP        NULL,
+    invoice_deleted_by            INTEGER          NULL REFERENCES employee(employee_id),
+    invoice_record_version        INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_invoice_uuid     UNIQUE (invoice_uuid),
+    CONSTRAINT uq_invoice_number   UNIQUE (invoice_number),
+    CONSTRAINT chk_invoice_tax_percent   CHECK (invoice_sales_tax_percent >= 0 AND invoice_sales_tax_percent <= 100),
+    CONSTRAINT chk_invoice_totals_nonneg CHECK (invoice_subtotal >= 0 AND invoice_grand_total >= 0),
+    CONSTRAINT chk_invoice_paid_nonneg   CHECK (invoice_amount_paid >= 0 AND invoice_balance_due >= 0),
+    CONSTRAINT chk_invoice_soft_delete   CHECK (
+        (invoice_deleted_at IS NULL AND invoice_deleted_by IS NULL) OR
+        (invoice_deleted_at IS NOT NULL AND invoice_deleted_by IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS invoice_item (
+    invoice_item_id          SERIAL        PRIMARY KEY,
+    invoice_item_uuid        UUID          NOT NULL DEFAULT gen_random_uuid(),
+    invoice_id                INTEGER       NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
+    line_number               INTEGER       NOT NULL,
+    inventory_item_id         INTEGER           NULL REFERENCES inventory_item(inventory_item_id),
+    sales_order_item_id       INTEGER           NULL REFERENCES sales_order_item(sales_order_item_id) ON DELETE SET NULL,
+
+    -- Snapshots (frozen at add/conversion time — never re-read from catalog)
+    item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)   NOT NULL DEFAULT '',
+    description                TEXT          NOT NULL DEFAULT '',
+    unit_id                    INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                  VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                   DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit_price                 DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent           DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    tax_rate_id                 INTEGER           NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent                 DECIMAL(6,4)  NOT NULL DEFAULT 0,
+
+    -- Stored line money
+    line_subtotal               DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount                DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                     DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                   DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by              INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at               TIMESTAMP        NULL,
+    item_record_version           INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_invoice_item_uuid UNIQUE (invoice_item_uuid),
+    CONSTRAINT uq_ii_line           UNIQUE (invoice_id, line_number),
+    CONSTRAINT chk_ii_qty           CHECK (quantity >= 0),
+    CONSTRAINT chk_ii_unit_price    CHECK (unit_price >= 0),
+    CONSTRAINT chk_ii_discount      CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_ii_tax           CHECK (tax_percent >= 0 AND tax_percent <= 100)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_history (
+    invoice_history_id       SERIAL       PRIMARY KEY,
+    invoice_id                INTEGER      NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
+    from_status_id             INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                      VARCHAR(32)  NOT NULL DEFAULT 'transition',
+    actor_employee_id            INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                     JSONB        NOT NULL DEFAULT '{}',
+    at                           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- invoice (listing/filtering)
+CREATE INDEX IF NOT EXISTS idx_inv_customer      ON invoice (invoice_customer_id)     WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_sales_order    ON invoice (invoice_sales_order_id)  WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_status          ON invoice (invoice_status)          WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_date            ON invoice (invoice_date)            WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_due_date        ON invoice (invoice_due_date)        WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_sales_rep       ON invoice (invoice_sales_rep_id)    WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_owner           ON invoice (invoice_owner_id)        WHERE invoice_deleted_at IS NULL;
+-- Keyset pagination tiebreakers (per sortable column + id)
+CREATE INDEX IF NOT EXISTS idx_inv_created_id      ON invoice (invoice_created_at, invoice_id)     WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_updated_id      ON invoice (invoice_updated_at, invoice_id)     WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_duedate_id      ON invoice (invoice_due_date, invoice_id)       WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_grandtotal_id   ON invoice (invoice_grand_total, invoice_id)    WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_balance_id      ON invoice (invoice_balance_due, invoice_id)    WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_status_created  ON invoice (invoice_status, invoice_created_at, invoice_id) WHERE invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_custom_gin      ON invoice USING GIN (invoice_custom_fields);
+
+-- invoice_item
+CREATE INDEX IF NOT EXISTS idx_ii_invoice     ON invoice_item (invoice_id)          WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ii_item        ON invoice_item (inventory_item_id);
+CREATE INDEX IF NOT EXISTS idx_ii_so_item     ON invoice_item (sales_order_item_id);
+
+-- invoice_history
+CREATE INDEX IF NOT EXISTS idx_inv_history_invoice ON invoice_history (invoice_id);

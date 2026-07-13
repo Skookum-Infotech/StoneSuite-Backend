@@ -264,3 +264,29 @@ func TestApply_ReapplyIncreasesExistingRow(t *testing.T) {
 		t.Fatalf("expected merged application amount 100, got %v", p2.Applications[0].Amount)
 	}
 }
+
+func TestQuickPay(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	_, invUUID := seedSentInvoice(t, pool, 100)
+
+	inv, err := QuickPay(ctx, pool, invUUID, 40, 1)
+	if err != nil {
+		t.Fatalf("quickpay 1: %v", err)
+	}
+	if inv.AmountPaid != 40 || inv.BalanceDue != 60 || inv.StatusCode != "PART" {
+		t.Fatalf("expected paid=40 balance=60 status=PART, got paid=%v balance=%v status=%s", inv.AmountPaid, inv.BalanceDue, inv.StatusCode)
+	}
+
+	inv, err = QuickPay(ctx, pool, invUUID, 60, 1)
+	if err != nil {
+		t.Fatalf("quickpay 2: %v", err)
+	}
+	if inv.AmountPaid != 100 || inv.BalanceDue != 0 || inv.StatusCode != "PAID" {
+		t.Fatalf("expected paid=100 balance=0 status=PAID, got paid=%v balance=%v status=%s", inv.AmountPaid, inv.BalanceDue, inv.StatusCode)
+	}
+
+	if _, err := QuickPay(ctx, pool, invUUID, 10, 1); err == nil {
+		t.Fatal("expected error overpaying a PAID invoice")
+	}
+}

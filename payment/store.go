@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // ErrNotFound is returned when a payment id matches no live row.
@@ -150,4 +152,28 @@ func nullableInt(v int) any {
 		return nil
 	}
 	return v
+}
+
+// validateCustom validates in.CustomFields against the "payment" workflow's
+// field definitions, if one has been seeded. No-ops when it hasn't (mirrors
+// invoice.validateCustom).
+func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]any) error {
+	if custom == nil {
+		return nil
+	}
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, "payment")
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load payment workflow: %w", err)
+	}
+	def, err := workflow.LoadDefinition(ctx, pool, wf.ID)
+	if err != nil {
+		return fmt.Errorf("load payment field definitions: %w", err)
+	}
+	if err := workflow.ValidateCustomFieldsPartial(def.Fields, custom); err != nil {
+		return ClientError{Msg: err.Error()}
+	}
+	return nil
 }

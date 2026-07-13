@@ -2281,3 +2281,414 @@ CREATE TABLE IF NOT EXISTS workflow_record_approval (
 CREATE INDEX IF NOT EXISTS idx_wf_record_approval_record
     ON workflow_record_approval (record_id, state_id);
 
+
+-- ── 000027_inventory_domain ──────────────────────────────────────────────────
+-- =====================================================================
+-- Tenant migration 027: Inventory domain — shared item/stock foundation for
+-- Sales Order (and future Purchase Order / Invoice / Manufacturing modules).
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md §5.1-5.2.
+-- New lkp_* reference tables (unit of measure, warehouse, tax rate) plus the
+-- inventory_item catalog and per-warehouse on-hand stock. inventory_allocation
+-- is deferred to migration 028 (it FKs sales_order/sales_order_item).
+-- =====================================================================
+
+-- lkp_unit --------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lkp_unit (
+    unit_id             SERIAL       PRIMARY KEY,
+    unit_name           VARCHAR(50)  NOT NULL,
+    unit_code           VARCHAR(10)  NOT NULL,
+    unit_category       VARCHAR(20)  NOT NULL DEFAULT 'count', -- count|length|area|volume|weight
+    unit_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    unit_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    unit_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    unit_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    unit_deleted_at     TIMESTAMP        NULL,
+    unit_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    unit_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_unit_code UNIQUE (unit_code),
+    CONSTRAINT chk_unit_category CHECK (unit_category IN ('count','length','area','volume','weight'))
+);
+
+INSERT INTO lkp_unit (unit_name, unit_code, unit_category, unit_is_system, unit_created_by) VALUES
+    ('Each','EA','count',TRUE,1), ('Box','BOX','count',TRUE,1), ('Set','SET','count',TRUE,1),
+    ('Pallet','PLT','count',TRUE,1), ('Slab','SLAB','count',TRUE,1),
+    ('Square Foot','SQFT','area',TRUE,1), ('Square Meter','SQM','area',TRUE,1),
+    ('Linear Foot','LFT','length',TRUE,1), ('Kilogram','KG','weight',TRUE,1), ('Pound','LB','weight',TRUE,1)
+ON CONFLICT (unit_code) DO NOTHING;
+
+-- lkp_warehouse -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lkp_warehouse (
+    warehouse_id             SERIAL       PRIMARY KEY,
+    warehouse_uuid           UUID         NOT NULL DEFAULT gen_random_uuid(),
+    warehouse_name           VARCHAR(100) NOT NULL,
+    warehouse_code           VARCHAR(20)  NOT NULL,
+    warehouse_addr_line1     VARCHAR(100) NOT NULL DEFAULT '',
+    warehouse_addr_line2     VARCHAR(100) NOT NULL DEFAULT '',
+    warehouse_addr_city      VARCHAR(100) NOT NULL DEFAULT '',
+    warehouse_addr_state     INTEGER          NULL REFERENCES lkp_state(state_id),
+    warehouse_addr_zip       VARCHAR(10)  NOT NULL DEFAULT '',
+    warehouse_addr_country   INTEGER          NULL REFERENCES lkp_country(country_id),
+    warehouse_is_default     BOOLEAN      NOT NULL DEFAULT FALSE,
+    warehouse_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    warehouse_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    warehouse_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    warehouse_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    warehouse_deleted_at     TIMESTAMP        NULL,
+    warehouse_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    warehouse_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_warehouse_code UNIQUE (warehouse_code),
+    CONSTRAINT uq_warehouse_uuid UNIQUE (warehouse_uuid)
+);
+-- At most one default warehouse.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouse_default
+    ON lkp_warehouse (warehouse_is_default) WHERE warehouse_is_default = TRUE;
+
+INSERT INTO lkp_warehouse (warehouse_name, warehouse_code, warehouse_is_default, warehouse_is_system, warehouse_created_by) VALUES
+    ('Main Warehouse','MAIN',TRUE,TRUE,1)
+ON CONFLICT (warehouse_code) DO NOTHING;
+
+-- lkp_tax_rate ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lkp_tax_rate (
+    tax_rate_id             SERIAL       PRIMARY KEY,
+    tax_rate_name           VARCHAR(50)  NOT NULL,
+    tax_rate_code           VARCHAR(20)  NOT NULL,
+    tax_rate_percent        DECIMAL(6,4) NOT NULL DEFAULT 0,
+    tax_rate_jurisdiction   VARCHAR(100) NOT NULL DEFAULT '',
+    tax_rate_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    tax_rate_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    tax_rate_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    tax_rate_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    tax_rate_deleted_at     TIMESTAMP        NULL,
+    tax_rate_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    tax_rate_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_tax_rate_code UNIQUE (tax_rate_code),
+    CONSTRAINT chk_tax_rate_percent CHECK (tax_rate_percent >= 0 AND tax_rate_percent <= 100)
+);
+
+INSERT INTO lkp_tax_rate (tax_rate_name, tax_rate_code, tax_rate_percent, tax_rate_is_system, tax_rate_created_by) VALUES
+    ('No Tax','NONE',0,TRUE,1)
+ON CONFLICT (tax_rate_code) DO NOTHING;
+
+-- inventory_item — sellable catalog item (hybrid PK, own custom_fields) ----
+CREATE TABLE IF NOT EXISTS inventory_item (
+    inventory_item_id             SERIAL        PRIMARY KEY,
+    inventory_item_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_item_sku            VARCHAR(50)   NOT NULL,
+    inventory_item_name           VARCHAR(150)  NOT NULL,
+    inventory_item_description    TEXT          NOT NULL DEFAULT '',
+    inventory_item_unit_id        INTEGER       NOT NULL REFERENCES lkp_unit(unit_id),
+    inventory_item_unit_price     DECIMAL(15,2) NOT NULL DEFAULT 0,
+    inventory_item_currency_id    INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    inventory_item_tax_rate_id    INTEGER           NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    inventory_item_is_active      BOOLEAN       NOT NULL DEFAULT TRUE,
+    inventory_item_custom_fields  JSONB         NOT NULL DEFAULT '{}',
+    inventory_item_created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_item_created_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_item_updated_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_item_updated_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_item_deleted_at     TIMESTAMP         NULL,
+    inventory_item_deleted_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_item_record_version INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_item_uuid UNIQUE (inventory_item_uuid),
+    CONSTRAINT chk_inventory_item_unit_price CHECK (inventory_item_unit_price >= 0),
+    CONSTRAINT chk_inventory_item_soft_delete CHECK (
+        (inventory_item_deleted_at IS NULL AND inventory_item_deleted_by IS NULL) OR
+        (inventory_item_deleted_at IS NOT NULL AND inventory_item_deleted_by IS NOT NULL)
+    )
+);
+-- SKU unique among live rows only (case-insensitive), so a SKU can be reused after soft delete.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_item_sku_active
+    ON inventory_item (LOWER(inventory_item_sku)) WHERE inventory_item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_item_active ON inventory_item (inventory_item_is_active) WHERE inventory_item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_item_gin    ON inventory_item USING GIN (inventory_item_custom_fields);
+
+-- inventory_stock — on-hand quantity per item x warehouse ------------------
+CREATE TABLE IF NOT EXISTS inventory_stock (
+    inventory_stock_id      SERIAL        PRIMARY KEY,
+    inventory_item_id       INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id) ON DELETE CASCADE,
+    warehouse_id             INTEGER      NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    quantity_on_hand         DECIMAL(14,3) NOT NULL DEFAULT 0,
+    reorder_point            DECIMAL(14,3) NOT NULL DEFAULT 0,
+    stock_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    stock_updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    stock_record_version     INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_stock_item_wh UNIQUE (inventory_item_id, warehouse_id),
+    CONSTRAINT chk_inventory_stock_on_hand CHECK (quantity_on_hand >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_inv_stock_wh ON inventory_stock (warehouse_id);
+
+
+-- ── 000028_sales_order ───────────────────────────────────────────────────────
+-- =====================================================================
+-- Tenant migration 028: Sales Order — relational header + line items +
+-- inventory allocation + status history. Sibling of `customer` (v2 pattern):
+-- hybrid SERIAL+UUID PK, employee-based audit columns, reused lkp_* lookups,
+-- snapshot billing/shipping + item data (frozen at create time so later master-
+-- data edits don't rewrite history). Supersedes the v1 JSONB `sales_order`
+-- workflow (seeded migration 000010) for production use — that workflow is
+-- left in place, unused, per the design doc's "genuinely missing" finding.
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md §5.3-5.4, §6.
+-- Create order (FK dependency): sales_order -> sales_order_item ->
+-- inventory_allocation (FKs both) -> sales_order_history.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS sales_order (
+    sales_order_id                 SERIAL        PRIMARY KEY,
+    sales_order_uuid               UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id                 INTEGER           NULL,  -- platform owner stamp, no cross-DB FK (matches customer)
+    sales_order_number             VARCHAR(20)       NULL,  -- 'SORD-000001', generated post-insert in Go
+
+    -- Classification (reused lookups)
+    record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = SORD
+    sales_order_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (optional, configuration-driven — AD-10; mirrors customer_approval_status)
+    sales_order_approval_status    VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    sales_order_approved_by        INTEGER           NULL REFERENCES employee(employee_id),  -- last approver (full trail in sales_order_approval)
+
+    -- Primary info
+    sales_order_customer_id        INTEGER       NOT NULL REFERENCES customer(customer_id),
+    sales_order_po_number          VARCHAR(50)   NOT NULL DEFAULT '',
+    sales_order_reference_number   VARCHAR(50)   NOT NULL DEFAULT '',
+    sales_order_date               DATE          NOT NULL DEFAULT CURRENT_DATE,
+    sales_order_expected_delivery  DATE              NULL,
+    sales_order_sales_tax_percent  DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    sales_order_memo               TEXT          NOT NULL DEFAULT '',
+    sales_order_notes              TEXT          NOT NULL DEFAULT '',
+    sales_order_internal_notes     TEXT          NOT NULL DEFAULT '',
+    sales_order_terms_conditions   TEXT          NOT NULL DEFAULT '',
+
+    -- Sales assignment
+    sales_order_sales_rep_id       INTEGER           NULL REFERENCES employee(employee_id),
+    sales_order_owner_id           INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Terms / pricing / currency
+    sales_order_payment_terms      INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    sales_order_payment_due_date   DATE              NULL,  -- schema.org paymentDueDate; derived order_date + terms.net_days when unset (AD-8)
+    sales_order_price_level        INTEGER           NULL REFERENCES lkp_price_level(price_level_id),
+    sales_order_currency           INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    sales_order_exchange_rate      DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored — snapshots must be immutable once frozen)
+    sales_order_subtotal           DECIMAL(15,2) NOT NULL DEFAULT 0,
+    sales_order_discount_total     DECIMAL(15,2) NOT NULL DEFAULT 0,
+    sales_order_tax_total          DECIMAL(15,2) NOT NULL DEFAULT 0,
+    sales_order_shipping_charge    DECIMAL(15,2) NOT NULL DEFAULT 0,
+    sales_order_adjustment         DECIMAL(15,2) NOT NULL DEFAULT 0,
+    sales_order_grand_total        DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Billing snapshot
+    sales_order_bill_customer_name VARCHAR(150) NOT NULL DEFAULT '',
+    sales_order_bill_attention     VARCHAR(150) NOT NULL DEFAULT '',
+    sales_order_bill_addr_line1    VARCHAR(100) NOT NULL DEFAULT '',
+    sales_order_bill_addr_line2    VARCHAR(100) NOT NULL DEFAULT '',
+    sales_order_bill_addr_suitenum VARCHAR(20)  NOT NULL DEFAULT '',
+    sales_order_bill_addr_city     VARCHAR(100) NOT NULL DEFAULT '',
+    sales_order_bill_addr_state    INTEGER          NULL REFERENCES lkp_state(state_id),
+    sales_order_bill_addr_zip      VARCHAR(10)  NOT NULL DEFAULT '',
+    sales_order_bill_addr_country  INTEGER          NULL REFERENCES lkp_country(country_id),
+    sales_order_bill_phone         VARCHAR(20)  NOT NULL DEFAULT '',
+    sales_order_bill_fax           VARCHAR(20)  NOT NULL DEFAULT '',
+    sales_order_bill_email         VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Shipping snapshot
+    sales_order_ship_same_as_bill  BOOLEAN      NOT NULL DEFAULT FALSE,
+    sales_order_ship_customer_name VARCHAR(150) NOT NULL DEFAULT '',
+    sales_order_ship_attention     VARCHAR(150) NOT NULL DEFAULT '',
+    sales_order_ship_addr_line1    VARCHAR(100) NOT NULL DEFAULT '',
+    sales_order_ship_addr_line2    VARCHAR(100) NOT NULL DEFAULT '',
+    sales_order_ship_addr_suitenum VARCHAR(20)  NOT NULL DEFAULT '',
+    sales_order_ship_addr_city     VARCHAR(100) NOT NULL DEFAULT '',
+    sales_order_ship_addr_state    INTEGER          NULL REFERENCES lkp_state(state_id),
+    sales_order_ship_addr_zip      VARCHAR(10)  NOT NULL DEFAULT '',
+    sales_order_ship_addr_country  INTEGER          NULL REFERENCES lkp_country(country_id),
+    sales_order_ship_phone         VARCHAR(20)  NOT NULL DEFAULT '',
+    sales_order_ship_fax           VARCHAR(20)  NOT NULL DEFAULT '',
+    sales_order_ship_email         VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Dynamic + lineage + audit
+    sales_order_custom_fields      JSONB        NOT NULL DEFAULT '{}',
+    sales_order_parent_id          INTEGER          NULL REFERENCES sales_order(sales_order_id),
+    sales_order_created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sales_order_created_by         INTEGER          NULL REFERENCES employee(employee_id),
+    sales_order_updated_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sales_order_updated_by         INTEGER          NULL REFERENCES employee(employee_id),
+    sales_order_deleted_at         TIMESTAMP        NULL,
+    sales_order_deleted_by         INTEGER          NULL REFERENCES employee(employee_id),
+    sales_order_record_version     INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_sales_order_uuid   UNIQUE (sales_order_uuid),
+    CONSTRAINT uq_sales_order_number UNIQUE (sales_order_number),
+    CONSTRAINT chk_so_approval_status CHECK (sales_order_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_so_tax_percent    CHECK (sales_order_sales_tax_percent >= 0 AND sales_order_sales_tax_percent <= 100),
+    CONSTRAINT chk_so_totals_nonneg  CHECK (sales_order_subtotal >= 0 AND sales_order_grand_total >= 0),
+    CONSTRAINT chk_so_soft_delete    CHECK (
+        (sales_order_deleted_at IS NULL AND sales_order_deleted_by IS NULL) OR
+        (sales_order_deleted_at IS NOT NULL AND sales_order_deleted_by IS NOT NULL)
+    )
+);
+
+-- sales_order_item — ordered lines (snapshot sku/name/description/unit/price/tax) --
+CREATE TABLE IF NOT EXISTS sales_order_item (
+    sales_order_item_id     SERIAL        PRIMARY KEY,
+    sales_order_item_uuid   UUID          NOT NULL DEFAULT gen_random_uuid(),
+    sales_order_id          INTEGER       NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    line_number              INTEGER      NOT NULL,
+    inventory_item_id       INTEGER           NULL REFERENCES inventory_item(inventory_item_id), -- NULL = free-text line
+    warehouse_id             INTEGER          NULL REFERENCES lkp_warehouse(warehouse_id),
+
+    -- Snapshots (frozen at add time)
+    item_name                VARCHAR(150) NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)  NOT NULL DEFAULT '',
+    description               TEXT         NOT NULL DEFAULT '',
+    unit_id                   INTEGER          NULL REFERENCES lkp_unit(unit_id),
+    unit_code                 VARCHAR(10)  NOT NULL DEFAULT '',
+    quantity                  DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit_price                DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent          DECIMAL(6,4) NOT NULL DEFAULT 0,
+    tax_rate_id               INTEGER          NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent               DECIMAL(6,4) NOT NULL DEFAULT 0,
+
+    -- Stored line money
+    line_subtotal             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                  DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Fulfillment (schema.org OrderItem.orderItemStatus): maintained rollup of this
+    -- line's allocations' fulfilled_quantity; status label derived open|partial|filled (AD-9)
+    line_fulfilled_quantity   DECIMAL(14,3) NOT NULL DEFAULT 0,
+
+    item_created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by           INTEGER          NULL REFERENCES employee(employee_id),
+    item_updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at           TIMESTAMP        NULL,
+    item_record_version       INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_sales_order_item_uuid UNIQUE (sales_order_item_uuid),
+    CONSTRAINT chk_soi_qty              CHECK (quantity >= 0),
+    CONSTRAINT chk_soi_unit_price       CHECK (unit_price >= 0),
+    CONSTRAINT chk_soi_discount         CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_soi_tax              CHECK (tax_percent >= 0 AND tax_percent <= 100),
+    CONSTRAINT chk_soi_fulfilled        CHECK (line_fulfilled_quantity >= 0 AND line_fulfilled_quantity <= quantity)
+);
+
+-- inventory_allocation — reservation per order line (shared inventory domain, not owned by SO) --
+CREATE TABLE IF NOT EXISTS inventory_allocation (
+    inventory_allocation_id    SERIAL        PRIMARY KEY,
+    inventory_allocation_uuid  UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_item_id          INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    warehouse_id               INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    sales_order_id             INTEGER       NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    sales_order_item_id        INTEGER       NOT NULL REFERENCES sales_order_item(sales_order_item_id) ON DELETE CASCADE,
+    allocated_quantity         DECIMAL(14,3) NOT NULL DEFAULT 0,
+    fulfilled_quantity         DECIMAL(14,3) NOT NULL DEFAULT 0,
+    allocation_status          VARCHAR(20)   NOT NULL DEFAULT 'reserved', -- reserved|partially_fulfilled|fulfilled|released
+    allocation_created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    allocation_created_by      INTEGER           NULL REFERENCES employee(employee_id),
+    allocation_updated_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    allocation_record_version  INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_allocation_uuid UNIQUE (inventory_allocation_uuid),
+    CONSTRAINT chk_alloc_qty        CHECK (allocated_quantity >= 0),
+    CONSTRAINT chk_alloc_fulfilled  CHECK (fulfilled_quantity >= 0 AND fulfilled_quantity <= allocated_quantity),
+    CONSTRAINT chk_alloc_status     CHECK (allocation_status IN ('reserved','partially_fulfilled','fulfilled','released'))
+);
+
+-- sales_order_history — typed from/to status trail (mirrors customer_history) --
+CREATE TABLE IF NOT EXISTS sales_order_history (
+    sales_order_history_id  SERIAL       PRIMARY KEY,
+    sales_order_id          INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    from_status_id          INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id            INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                  VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | cancel | update | approve
+    actor_employee_id       INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                JSONB        NOT NULL DEFAULT '{}',
+    at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes — listing/filtering (all partial on live rows) -------------------
+CREATE INDEX IF NOT EXISTS idx_so_customer   ON sales_order (sales_order_customer_id) WHERE sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_status     ON sales_order (sales_order_status)      WHERE sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_date       ON sales_order (sales_order_date)        WHERE sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_sales_rep  ON sales_order (sales_order_sales_rep_id) WHERE sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_owner      ON sales_order (sales_order_owner_id)     WHERE sales_order_deleted_at IS NULL;
+-- Keyset pagination tiebreaker (created_at, id) — matches query/ default sort.
+CREATE INDEX IF NOT EXISTS idx_so_created    ON sales_order (sales_order_created_at, sales_order_id) WHERE sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_custom_gin ON sales_order USING GIN (sales_order_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_soi_order ON sales_order_item (sales_order_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_soi_item  ON sales_order_item (inventory_item_id);
+-- Line number unique among live rows only (mirrors uq_inventory_item_sku_active):
+-- Update() soft-deletes an order's old lines and re-inserts replacements
+-- reusing the same line numbers, which a table-wide UNIQUE constraint would reject.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_soi_line_active
+    ON sales_order_item (sales_order_id, line_number) WHERE item_deleted_at IS NULL;
+
+-- ── 000029_sales_order_schema_org_alignment ──────────────────────────────────
+-- =====================================================================
+-- Tenant migration 029: align Sales Order with schema.org/Order + optional,
+-- configuration-driven approval. Additive & idempotent; no destructive change.
+--   AD-8  paymentDueDate    -> lkp_payment_terms.payment_terms_net_days (below)
+--                              + sales_order.sales_order_payment_due_date (in 028)
+--   AD-9  orderItemStatus   -> sales_order_item.line_fulfilled_quantity (in 028)
+--   AD-10 approval gate     -> sales_order_approver / sales_order_approval (below)
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md §2.1, §5.0, §5.5.
+-- =====================================================================
+
+-- AD-8: net-days on the existing payment-terms lookup so a due date can be
+-- derived (order_date + net_days). Existing table -> idempotent ALTER + backfill.
+ALTER TABLE lkp_payment_terms
+    ADD COLUMN IF NOT EXISTS payment_terms_net_days INTEGER NOT NULL DEFAULT 0;
+
+UPDATE lkp_payment_terms SET payment_terms_net_days = 10  WHERE payment_terms_code = 'N10_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 15  WHERE payment_terms_code = 'N15_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 30  WHERE payment_terms_code IN ('N30_','D50N'); -- 50% Deposit Net 30
+UPDATE lkp_payment_terms SET payment_terms_net_days = 45  WHERE payment_terms_code = 'N45_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 60  WHERE payment_terms_code = 'N60_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 90  WHERE payment_terms_code = 'N90_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 120 WHERE payment_terms_code = 'N120';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 0   WHERE payment_terms_code IN ('COR_','COD_','DOR_'); -- due immediately
+
+-- AD-8: AR aging / overdue-order lookups by due date (partial on live rows).
+CREATE INDEX IF NOT EXISTS idx_so_payment_due
+    ON sales_order (sales_order_payment_due_date) WHERE sales_order_deleted_at IS NULL;
+
+-- AD-10: approver configuration — which employee may approve at a given SORD
+-- status. Keyed to lkp_record_status (crm_workflow_approver points at the
+-- CRM-only lkp_crm_status, so it can't be reused verbatim). Zero rows for a
+-- status = no gate there; N rows = N required sign-offs.
+CREATE TABLE IF NOT EXISTS sales_order_approver (
+    sales_order_approver_id SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = SORD
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active               BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by              INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_sales_order_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_order_approver_lookup
+    ON sales_order_approver (record_type_id, record_status_id) WHERE is_active;
+
+-- AD-10: approval tracking — one row per approver who signed off on an order at
+-- a status. sales_order.sales_order_approval_status stays 'pending' until the
+-- sign-off count reaches the active configured-approver count. Mirrors customer_approval.
+CREATE TABLE IF NOT EXISTS sales_order_approval (
+    sales_order_approval_id SERIAL      PRIMARY KEY,
+    sales_order_id          INTEGER     NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at             TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_sales_order_approval UNIQUE (sales_order_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_order_approval_order ON sales_order_approval (sales_order_id);
+
+CREATE INDEX IF NOT EXISTS idx_so_history_order ON sales_order_history (sales_order_id);
+
+CREATE INDEX IF NOT EXISTS idx_alloc_item      ON inventory_allocation (inventory_item_id);
+CREATE INDEX IF NOT EXISTS idx_alloc_item_wh   ON inventory_allocation (inventory_item_id, warehouse_id);
+CREATE INDEX IF NOT EXISTS idx_alloc_order     ON inventory_allocation (sales_order_id);
+CREATE INDEX IF NOT EXISTS idx_alloc_line      ON inventory_allocation (sales_order_item_id);
+-- Partial index for the "available/allocated" aggregation (open reservations only).
+CREATE INDEX IF NOT EXISTS idx_alloc_open      ON inventory_allocation (inventory_item_id, warehouse_id)
+    WHERE allocation_status IN ('reserved','partially_fulfilled');
+

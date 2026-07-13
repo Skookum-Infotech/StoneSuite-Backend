@@ -1,6 +1,6 @@
 # Sales Order Module — Backend Design Spec
 
-**Date:** 2026-07-08
+**Date:** 2026-07-08 · **Revised:** 2026-07-12 (schema.org/Order alignment — AD-8 payment due date, AD-9 per-line fulfillment status; AD-10 optional configuration-driven approval)
 **Status:** Approved architecture; ready for implementation planning
 **Author:** Backend architecture pass (Claude)
 **Scope:** New Sales Order module + shared Inventory domain module for the StoneSuite multi-tenant, database-per-tenant CRM/ERP backend.
@@ -66,6 +66,47 @@ Money totals (`line_*`, header `subtotal/discount_total/tax_total/grand_total`) 
 Reuse `lkp_record_status` (already seeded for SORD). Legality of moves is a static Go transition map (mirrors how the relational `customer` store uses `crmCodeRank`), not a `workflow_transitions` table.
 
 **AD-7 — Order number `SORD-000001` generated in Go post-insert** (mirrors `customer_doc_num`): insert row → get `SERIAL` id → `UPDATE ... SET sales_order_number = 'SORD-' || lpad(id::text, 6, '0')`. UUID is the public id; number is the human-readable business id.
+
+---
+
+## 2.1 schema.org/Order Alignment
+
+The schema deliberately maps onto the [schema.org/Order](https://schema.org/Order) + `OrderItem` vocabulary so the model is interoperable with a well-known standard and no order-level concept is silently missing. Every schema.org property is either covered, intentionally out of scope for a B2B stone ERP, or deferred to a future module.
+
+| schema.org (`Order`/`OrderItem`) | StoneSuite field | Status |
+|---|---|---|
+| `orderNumber` | `sales_order_number` (`SORD-000001`) | ✅ covered |
+| `orderStatus` | `sales_order_status` → `lkp_record_status` (SORD set) | ✅ covered |
+| `orderDate` | `sales_order_date` | ✅ covered |
+| `customer` | `sales_order_customer_id` FK + billing-name snapshot | ✅ covered |
+| `orderedItem` / `acceptedOffer` | `sales_order_item` (item + qty + unit_price + line money) | ✅ covered |
+| `billingAddress` | billing snapshot block | ✅ covered |
+| `discount` / `discountCurrency` | `sales_order_discount_total` + per-line + `currency` | ✅ covered |
+| `seller` | the tenant org = the tenant DB (implicit) | ✅ covered |
+| `broker` | `sales_order_sales_rep_id` / `_owner_id` | ✅ covered |
+| `confirmationNumber` | `sales_order_number` / `sales_order_po_number` | ✅ covered |
+| `identifier` / `url` | `sales_order_uuid` + REST path | ✅ covered |
+| **`paymentDueDate`** | **`sales_order_payment_due_date` (NEW, AD-8)** | ✅ **added** |
+| **`orderItemStatus`** | **`sales_order_item.line_fulfilled_quantity` + derived line status (NEW, AD-9)** | ✅ **added** |
+| `orderDelivery` (ParcelDelivery) | `sales_order_expected_delivery` + shipping snapshot; carrier/tracking → future `sales_order_fulfillment` | 🔜 partial / deferred |
+| `partOfInvoice` | future Invoice module; `sales_order_parent_id` lineage anticipates it | 🔜 deferred |
+| `paymentMethod` / `paymentMethodId` / `paymentUrl` | belongs on Invoice/Payment; storing card data is prohibited | ❌ out of scope |
+| `discountCode` | modeled via `custom_fields` if ever needed | ❌ out of scope (YAGNI) |
+| `isGift` | consumer e-commerce concept | ❌ out of scope |
+
+**AD-8 — Store the payment due date on the header.**
+`paymentDueDate` is added as `sales_order_payment_due_date DATE NULL`. It is derivable from `order_date + payment terms`, but storing it turns AR aging / "overdue orders" into a single indexed range scan instead of a computed join, and preserves the due date if the terms lookup later changes. To make it *auto-derivable* (not just manually entered), the reused `lkp_payment_terms` lookup gains a `payment_terms_net_days` column (idempotent, non-destructive `ADD COLUMN IF NOT EXISTS ... DEFAULT 0`); the service computes `payment_due_date = order_date + net_days` when the caller doesn't supply one. Non-net terms (COD/COR/Due-on-Receipt) seed `net_days = 0`.
+
+**AD-9 — Track fulfillment per line (schema.org `orderItemStatus`).**
+`sales_order_item` gains `line_fulfilled_quantity DECIMAL(14,3) NOT NULL DEFAULT 0`, a maintained rollup of that line's allocations' `fulfilled_quantity` (updated in the same transaction that changes allocation fulfillment — same "stored rollup" treatment as the header money totals, per AD-5). The per-line **status label** (`open` / `partial` / `filled`) is *derived* as a pure function of `line_fulfilled_quantity` vs `quantity`, so it can never drift. This makes the header `OPEN → PART → FILL` transitions *derivable from aggregate line state* rather than purely manual (§8).
+
+**AD-10 — Approval is optional and configuration-driven, never hard-coded.**
+Whether a sales order must pass an approval gate (and how many people must sign off) is **pure tenant configuration**, not a code decision — mirroring the customer module's proven pattern. The SO module adds three things, mirroring `crm_workflow_approver` / `customer_approval` / `customer_approval_status` but keyed to the SO status table (`lkp_record_status`, since `crm_workflow_approver.crm_status_id` points at the CRM-only `lkp_crm_status` and can't be reused verbatim):
+- **`sales_order_approver`** (config): which `employee` may approve at a given `(record_type=SORD, record_status)`. Rows here are the *only* thing that turns a gate on.
+- **`sales_order_approval`** (tracking): one row per approver who has signed off on an order (mirrors `customer_approval`).
+- **`sales_order_approval_status`** column on the header: `none | pending | approved`.
+
+**The gate is emergent from configuration:** configure N approver rows for a status → entering that status sets `pending` and requires N distinct sign-offs before the order may advance; configure **zero** approver rows → there is **no gate**, and `Draft → Open` (or any move through `PAPV`/`APPV`) passes straight through. So "no approval," "single approver," and "dual/N approver" are all the same code path with different config — nothing about single-vs-dual is baked into the schema or the transition map. `PAPV`/`APPV` remain available in `lkp_record_status` (already seeded for SORD) for tenants that do configure approvers; unconfigured tenants simply never stop there.
 
 ---
 
@@ -184,6 +225,26 @@ For each new table: **(a)** why an existing table can't be reused, **(b)** why i
 ## 5. SQL — CREATE TABLE Statements
 
 > Illustrative migration content. Final DDL is appended to `database/migrations/tenant/schema.sql` via the **add-migration** skill (idempotent, non-destructive, `IF NOT EXISTS` everywhere). Numeric types standardized: **money `DECIMAL(15,2)`**, **quantity `DECIMAL(14,3)`**, **percent `DECIMAL(6,4)`**, **exchange rate `DECIMAL(18,6)`** (money/percent match existing `customer` columns).
+
+### 5.0 Reused-lookup enhancement — `lkp_payment_terms.payment_terms_net_days` (AD-8)
+
+`lkp_payment_terms` already exists (`schema.sql:832`) but has no numeric net-days, so a due date can't be derived from it. Add the column idempotently and backfill the seeded rows — non-destructive, safe to re-run.
+
+```sql
+-- Add net-days to the existing payment-terms lookup (idempotent, non-destructive)
+ALTER TABLE lkp_payment_terms
+    ADD COLUMN IF NOT EXISTS payment_terms_net_days INTEGER NOT NULL DEFAULT 0;
+
+-- Backfill net-days for the seeded system terms (safe to re-run)
+UPDATE lkp_payment_terms SET payment_terms_net_days = 10  WHERE payment_terms_code = 'N10_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 15  WHERE payment_terms_code = 'N15_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 30  WHERE payment_terms_code IN ('N30_','D50N'); -- 50% Deposit Net 30
+UPDATE lkp_payment_terms SET payment_terms_net_days = 45  WHERE payment_terms_code = 'N45_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 60  WHERE payment_terms_code = 'N60_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 90  WHERE payment_terms_code = 'N90_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 120 WHERE payment_terms_code = 'N120';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 0   WHERE payment_terms_code IN ('COR_','COD_','DOR_'); -- due immediately
+```
 
 ### 5.1 Inventory reference lookups
 
@@ -350,6 +411,10 @@ CREATE TABLE IF NOT EXISTS sales_order (
     record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = SORD
     sales_order_status            INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
+    -- Approval (optional, configuration-driven — AD-10; mirrors customer_approval_status)
+    sales_order_approval_status   VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    sales_order_approved_by       INTEGER           NULL REFERENCES employee(employee_id),  -- last approver (full trail in sales_order_approval)
+
     -- Primary info
     sales_order_customer_id       INTEGER       NOT NULL REFERENCES customer(customer_id),
     sales_order_po_number         VARCHAR(50)   NOT NULL DEFAULT '',   -- customer's Purchase Order Number
@@ -368,6 +433,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
 
     -- Terms / pricing / currency
     sales_order_payment_terms     INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    sales_order_payment_due_date  DATE              NULL,  -- schema.org paymentDueDate; derived from order_date + terms.net_days when unset (AD-8)
     sales_order_price_level       INTEGER           NULL REFERENCES lkp_price_level(price_level_id),
     sales_order_currency          INTEGER           NULL REFERENCES lkp_currency(currency_id),
     sales_order_exchange_rate     DECIMAL(18,6) NOT NULL DEFAULT 1,
@@ -422,6 +488,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
 
     CONSTRAINT uq_sales_order_uuid   UNIQUE (sales_order_uuid),
     CONSTRAINT uq_sales_order_number UNIQUE (sales_order_number),
+    CONSTRAINT chk_so_approval_status CHECK (sales_order_approval_status IN ('none','pending','approved')),
     CONSTRAINT chk_so_tax_percent    CHECK (sales_order_sales_tax_percent >= 0 AND sales_order_sales_tax_percent <= 100),
     CONSTRAINT chk_so_totals_nonneg  CHECK (sales_order_subtotal >= 0 AND sales_order_grand_total >= 0),
     CONSTRAINT chk_so_soft_delete    CHECK (
@@ -461,6 +528,10 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     line_tax                DECIMAL(15,2) NOT NULL DEFAULT 0,
     line_total              DECIMAL(15,2) NOT NULL DEFAULT 0,
 
+    -- Fulfillment (schema.org OrderItem.orderItemStatus): maintained rollup of this
+    -- line's allocations' fulfilled_quantity; status label derived open|partial|filled (AD-9)
+    line_fulfilled_quantity DECIMAL(14,3) NOT NULL DEFAULT 0,
+
     item_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     item_created_by         INTEGER           NULL REFERENCES employee(employee_id),
     item_updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -471,7 +542,8 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     CONSTRAINT chk_soi_qty              CHECK (quantity >= 0),
     CONSTRAINT chk_soi_unit_price       CHECK (unit_price >= 0),
     CONSTRAINT chk_soi_discount         CHECK (discount_percent >= 0 AND discount_percent <= 100),
-    CONSTRAINT chk_soi_tax              CHECK (tax_percent >= 0 AND tax_percent <= 100)
+    CONSTRAINT chk_soi_tax              CHECK (tax_percent >= 0 AND tax_percent <= 100),
+    CONSTRAINT chk_soi_fulfilled        CHECK (line_fulfilled_quantity >= 0 AND line_fulfilled_quantity <= quantity)
 );
 
 -- ── sales_order_history  (mirrors customer_history) ─────────────────────────
@@ -480,11 +552,44 @@ CREATE TABLE IF NOT EXISTS sales_order_history (
     sales_order_id          INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
     from_status_id          INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
     to_status_id            INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
-    action                  VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | cancel | update
+    action                  VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | cancel | update | approve
     actor_employee_id       INTEGER          NULL REFERENCES employee(employee_id),
     snapshot                JSONB        NOT NULL DEFAULT '{}',
     at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+```
+
+### 5.5 Approval — optional, configuration-driven (AD-10)
+
+```sql
+-- ── sales_order_approver  (config: who may approve at a given SORD status) ───
+--    Mirrors crm_workflow_approver, but keyed to lkp_record_status (SO status table).
+--    Zero rows for a status = no approval gate there. N rows = N required sign-offs.
+CREATE TABLE IF NOT EXISTS sales_order_approver (
+    sales_order_approver_id SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = SORD
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active               BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by              INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_sales_order_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_order_approver_lookup
+    ON sales_order_approver (record_type_id, record_status_id) WHERE is_active;
+
+-- ── sales_order_approval  (tracking: one row per approver who signed off) ────
+--    Mirrors customer_approval. sales_order.sales_order_approval_status stays
+--    'pending' until COUNT(approvals) >= COUNT(active configured approvers).
+CREATE TABLE IF NOT EXISTS sales_order_approval (
+    sales_order_approval_id SERIAL      PRIMARY KEY,
+    sales_order_id          INTEGER     NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at             TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_sales_order_approval UNIQUE (sales_order_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_order_approval_order ON sales_order_approval (sales_order_id);
 ```
 
 ---
@@ -522,7 +627,7 @@ CREATE INDEX IF NOT EXISTS idx_alloc_open      ON inventory_allocation (inventor
     WHERE allocation_status IN ('reserved','partially_fulfilled');
 ```
 
-> **Migration ordering note:** `inventory_allocation` FKs `sales_order` and `sales_order_item`, which FK nothing in inventory — so create order is: lookups → `inventory_item` → `inventory_stock` → `sales_order` → `sales_order_item` → `inventory_allocation` → `sales_order_history`.
+> **Migration ordering note:** `inventory_allocation` FKs `sales_order` and `sales_order_item`, which FK nothing in inventory — so create order is: lookups (incl. `lkp_payment_terms` net-days ALTER) → `inventory_item` → `inventory_stock` → `sales_order` → `sales_order_item` → `inventory_allocation` → `sales_order_history` → `sales_order_approval`. `sales_order_approver` (config) only needs the lookups + `employee`, so it can go with the lookups block.
 
 ---
 
@@ -586,7 +691,8 @@ var allowedSOTransitions = map[string]map[string]bool{
 ```
 
 - New orders start at **`DRFT`**.
-- `OPEN → PART → FILL` are normally driven by fulfillment (allocation `fulfilled_quantity` reaching `allocated_quantity` across lines), but manual transition is allowed for operators.
+- **Approval gate is configuration-driven (AD-10), layered on top of the static map.** `allowedSOTransitions` defines which moves are *legal*; the `sales_order_approver` config decides which are *gated*. On entering a status that has ≥1 active configured approver, the service sets `sales_order_approval_status = 'pending'` and blocks any onward transition until `COUNT(sales_order_approval for this status) ≥ COUNT(active approvers)`, then flips it to `'approved'`. If a status has **no** configured approvers, `approval_status` stays `'none'` and it is pass-through — so a tenant that configures nothing effectively runs `DRFT → OPEN` with `PAPV`/`APPV` as no-op waypoints. Single vs dual vs N approver is purely the number of configured rows; nothing is hard-coded. Approval denial for a non-approver → 403 (`ErrNotApprover` analog); attempting to advance a still-`pending` order → 409.
+- `OPEN → PART → FILL` are **derivable from aggregate line state** (§9): `PART` once any line's `line_fulfilled_quantity > 0`, `FILL` once every line is fully fulfilled. The service can auto-advance the header on allocation-fulfillment changes; manual transition remains allowed for operators, still gated by `allowedSOTransitions`.
 - Cancelling **releases** open allocations (`allocation_status = 'released'`) so reserved stock returns to available.
 
 ---
@@ -616,6 +722,27 @@ allocated_qty(item, wh) = Σ allocated_quantity  WHERE allocation_status IN ('re
 on_hand_qty(item, wh)   = inventory_stock.quantity_on_hand
 available_qty(item, wh) = on_hand_qty - allocated_qty
 so_qty(item, order)     = Σ sales_order_item.quantity for that item on that order
+```
+
+**Line fulfillment & per-line status (AD-9 — `sales_order_item.line_fulfilled_quantity` stored rollup; status derived):**
+```
+line_fulfilled_quantity = Σ inventory_allocation.fulfilled_quantity for that sales_order_item_id
+                          (maintained in the same tx that mutates allocation fulfillment)
+
+line_status(line) =  'open'     if line_fulfilled_quantity == 0
+                     'partial'  if 0 < line_fulfilled_quantity < quantity
+                     'filled'   if line_fulfilled_quantity >= quantity        (pure function, never stored)
+
+-- Header status auto-advance (still gated by allowedSOTransitions):
+all lines filled            → order eligible for FILL
+some line partial/filled    → order eligible for PART
+```
+
+**Payment due date (AD-8 — stored on header, derivable):**
+```
+payment_due_date = request.payment_due_date              if caller supplied one
+                 = order_date + terms.payment_terms_net_days   otherwise (when payment_terms set)
+                 = NULL                                   if no terms and none supplied
 ```
 
 ---
@@ -767,6 +894,7 @@ A `query.FieldResolver` mirroring `relationalResolver` (`crmstore/relational_fil
 | `expected_delivery` | `so.sales_order_expected_delivery` | date | gte, lte, between, is_null | **Expected Delivery Date** (range) |
 | `currency_id` | `so.sales_order_currency::text` | string | eq, in, is_null | **Currency** |
 | `payment_terms_id` | `so.sales_order_payment_terms::text` | string | eq, in, is_null | **Payment Terms** |
+| `payment_due_date` | `so.sales_order_payment_due_date` | date | eq, gt, gte, lt, lte, between, is_null | **Payment Due Date** (AR aging / overdue) |
 | `price_level_id` | `so.sales_order_price_level::text` | string | eq, in, is_null | **Price Level** |
 | `grand_total` | `so.sales_order_grand_total` | number | eq, gt, gte, lt, lte, between | **Grand Total** (range) |
 | `po_number` | `so.sales_order_po_number` | string | eq, contains, startswith | PO Number |
@@ -890,6 +1018,7 @@ CREATE INDEX IF NOT EXISTS idx_so_updated_id     ON sales_order (sales_order_upd
 CREATE INDEX IF NOT EXISTS idx_so_status_created ON sales_order (sales_order_status, sales_order_created_at, sales_order_id) WHERE sales_order_deleted_at IS NULL;
 -- Filter support (single-column partial)
 CREATE INDEX IF NOT EXISTS idx_so_expdelivery     ON sales_order (sales_order_expected_delivery) WHERE sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_payment_due      ON sales_order (sales_order_payment_due_date) WHERE sales_order_deleted_at IS NULL; -- AR aging / overdue orders (AD-8)
 CREATE INDEX IF NOT EXISTS idx_so_currency        ON sales_order (sales_order_currency)      WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_payment_terms   ON sales_order (sales_order_payment_terms) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_price_level     ON sales_order (sales_order_price_level)   WHERE sales_order_deleted_at IS NULL;
@@ -910,6 +1039,7 @@ CREATE INDEX IF NOT EXISTS idx_so_updated_by      ON sales_order (sales_order_up
 - `customerUuid` required, must resolve to a live `customer` in this tenant; caller must have scope on it.
 - `salesTaxPercent` 0–100; `exchangeRate` > 0.
 - `paymentTermsId`/`priceLevelId`/`currencyId`/`stateId`/`countryId` — must reference live, active lookup rows.
+- `paymentDueDate` (AD-8) optional; if supplied must be ≥ `orderDate`. If omitted and `paymentTermsId` is set, service derives `orderDate + payment_terms_net_days`; otherwise left NULL.
 - Money totals never negative (CHECK + service).
 - `customFields` validated against `sales_order` workflow's `workflow_field_definitions` (≤15, type/required/enum/regex) — reuse `workflow.ValidateCustomFields` / `ValidateCustomFieldsPartial`.
 
@@ -919,8 +1049,11 @@ CREATE INDEX IF NOT EXISTS idx_so_updated_by      ON sales_order (sales_order_up
 - `quantity` ≥ 0; `unitPrice` ≥ 0; `discountPercent` 0–100; `tax_percent` 0–100.
 - `inventoryItemUuid` XOR `description`: a line references a catalog item **or** is free-text (`inventory_item_id` NULL).
 - Allocation `fulfilled ≤ allocated`; `allocated ≤ available` at reserve time (checked under row lock on `inventory_stock`).
+- `line_fulfilled_quantity` (AD-9) is service-maintained only (never client-set): `0 ≤ line_fulfilled_quantity ≤ quantity` (DB CHECK `chk_soi_fulfilled`); it is recomputed from the line's allocations, and reducing a line's `quantity` below its already-fulfilled amount is rejected.
 
 **Transitions** — only moves in `allowedSOTransitions`; else 409. Cancel releases open allocations.
+
+**Approval (AD-10)** — if the target status has ≥1 active `sales_order_approver` row, the order becomes `pending` and cannot advance until enough distinct configured approvers have signed off (`sales_order_approval` rows ≥ active approver count); onward transition while `pending` → 409. Only a configured approver may sign off (else 403); a self-approval / duplicate sign-off is rejected by `uq_sales_order_approval`. Zero configured approvers ⇒ no gate.
 
 **Tenant/RBAC/IDOR** — every mutation checks `authz.Check(sales_order, action)` before touching the body; every single-record op runs the scope/IDOR guard and returns **404** (not 403) on denial, logging `idor_denied`. List/search compose scope into SQL (never filter-in-Go).
 
@@ -965,6 +1098,7 @@ New/changed files, following the traced `customer` architecture exactly:
 | Shared engine — sorting (§11.6) | Add generic opt-in `SortResolver` interface to `query/`; existing 3-field default unchanged for modules that don't implement it | `query/builder.go`, `query/filter.go` |
 | Shared engine — search (§11.5) | Add `Search` field to `query.Request` + generic opt-in `SearchResolver` interface; SO (and optionally CRM) resolvers implement `SearchPredicate` | `query/filter.go`, `query/builder.go` |
 | Numbering | Go post-insert `SORD-%06d` | `crmstore/relational_store.go` `customer_doc_num` |
+| Approval (AD-10) | Config-driven gate: `sales_order_approver` config + `sales_order_approval` tracking + `sales_order_approval_status`; service checks counts on transition (no hard-coded single/dual) | `crm_workflow_approver`, `customer_approval`, `workflow/approval.go` |
 | Audit | Reuse `auditCRM`-style helper writing `audit_logs` + `sales_order_history` | `controllers/crm_audit.go`, `customer_history` |
 | Attachments | Reuse as-is; ensure `RecordKeyForAttachment` resolves a `sales_order` UUID | `workflow/attachments.go:139` |
 | Tests | Table-driven store/validator tests; filter invariant tests; RBAC drift test already expects `sales_order` | `workflow/filter_test.go`, `rbac_catalog_drift_test.go` |
@@ -977,8 +1111,10 @@ New/changed files, following the traced `customer` architecture exactly:
 1. **Line naming convention:** header table `sales_order` uses full `sales_order_` prefixes (sibling of `customer`); child tables (`sales_order_item`, `sales_order_history`, `inventory_stock`, `inventory_allocation`) use the relaxed prefixed-PK + unprefixed-attribute style of `customer_history`. This split matches the existing master-vs-child convention in the schema.
 2. **`ss_customer_id`** kept on `sales_order` for parity with `customer` (platform owner stamp, no FK). Confirm it should be populated from the JWT/tenant context.
 3. **Inventory stock seeding:** `inventory_stock` rows are created lazily on first stock adjustment (or when an item is added to a warehouse). No seed data beyond the default warehouse.
-4. **Approval gate:** Sales Order includes `PAPV`/`APPV`. Whether it reuses the customer dual-approver machinery (`crm_workflow_approver`) or a simpler single-approver flow is deferred to the implementation plan.
+4. **Approval gate — DECIDED (2026-07-12): optional & configuration-driven (AD-10).** Not hard-coded single/dual. Adds `sales_order_approver` (config, keyed to `lkp_record_status` since `crm_workflow_approver` points at CRM-only `lkp_crm_status`), `sales_order_approval` (per-approver tracking, mirrors `customer_approval`), and `sales_order_approval_status` on the header. Gate is emergent: N configured approver rows for a status ⇒ N required sign-offs; zero rows ⇒ no gate (`PAPV`/`APPV` become pass-through). Tenants turn approval on/off and set the approver count entirely through configuration.
 5. **Legacy v1 `sales_order` workflow** (JSONB, `schema.sql:1617`) is left in place but superseded; the relational module is authoritative. No data migration needed (no production records).
 6. **Listing contract (§11) — DECIDED (CRM-exact).** Keyset cursor pagination + `{records, nextCursor, hasMore}`; no `COUNT(*)` on normal list calls, no offset default. `totalCount`/`filteredCount`/offset are out of the standard contract. Frontend list components are reused unchanged.
 7. **Sort + global search (§11.5–11.6) — DECIDED (shared engine).** Extend the generic `query/` engine with opt-in `SortResolver` + `SearchResolver` interfaces so every module can benefit; modules that don't opt in are unchanged. No Sales-Order-specific listing/search logic. Guarded by **filter-invariant-checker**.
 8. **Saved filters — DECIDED.** None in CRM today; not building a Sales-Order-specific one. If added later, build once as a generic shared `saved_view`.
+9. **schema.org/Order alignment — DECIDED (2026-07-12).** Added `sales_order_payment_due_date` (AD-8, schema.org `paymentDueDate`) and `sales_order_item.line_fulfilled_quantity` + derived line status (AD-9, schema.org `orderItemStatus`); enhanced reused `lkp_payment_terms` with `payment_terms_net_days` for due-date derivation (§2.1, §5.0). Consumer-only schema.org properties (`isGift`, `paymentUrl`, `paymentMethodId`) and `discountCode` are intentionally out of scope (custom field if needed). `orderDelivery` tracking and `partOfInvoice` remain deferred to the future Fulfillment/Invoice modules.
+10. **`payment_terms_net_days` mechanism:** the design shows an idempotent `ADD COLUMN IF NOT EXISTS ... DEFAULT` + backfill `UPDATE`s on the existing `lkp_payment_terms`; the exact canonical form (in-place `CREATE TABLE` edit vs. append-only idempotent block in `schema.sql`) is finalized through the **add-migration** skill at implementation time and checked by **migration-auditor**.

@@ -104,49 +104,83 @@ var crmTypeToWorkflowKey = map[string]string{
 	"CUST": "customer",
 }
 
-// RecordKeyForAttachment resolves the workflow key (e.g. "lead") and confirms
-// that the given UUID identifies a real record in this tenant's database.
-// It checks workflow_records first (v1 design) then the customer table (v2).
-// Returns ErrRecordNotFound when neither table has a matching row.
-func RecordKeyForAttachment(ctx context.Context, q Querier, recordID string) (workflowKey string, err error) {
-	// v1: workflow_records JOIN workflows
-	err = q.QueryRow(ctx, `
-		SELECT w.key FROM workflow_records wr
-		JOIN workflows w ON w.id = wr.workflow_id
-		WHERE wr.id = $1::uuid`, recordID).Scan(&workflowKey)
-	if err == nil {
-		return workflowKey, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("lookup record workflow key: %w", err)
-	}
-
-	// v2: customer table with record_type lookup
-	var typeCode string
-	err = q.QueryRow(ctx, `
-		SELECT rt.record_type_code
-		FROM customer c
-		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
-		WHERE c.customer_uuid = $1::uuid AND c.customer_deleted_at IS NULL`,
-		recordID).Scan(&typeCode)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrRecordNotFound
-	}
-	if err != nil {
-		return "", fmt.Errorf("lookup crm record type: %w", err)
-	}
-
-	if key, ok := crmTypeToWorkflowKey[typeCode]; ok {
-		return key, nil
-	}
-	// Non-CRM record type (sales order, invoice, etc.) — use generic bucket.
-	return strings.ToLower(typeCode), nil
+// RecordAccessInfo bundles what the attachment layer's RBAC + IDOR guard
+// needs for a record, regardless of which of the three storage models backs
+// it (v1 workflow_records, v2 relational customer/CRM, or the relational
+// sales_order). OwnerUserID/TeamID are tenant users.id/teams.id (empty when
+// unowned or not applicable — customer and sales_order have no team column).
+type RecordAccessInfo struct {
+	WorkflowKey string
+	OwnerUserID string
+	TeamID      string
 }
 
-// RecordExistsAnywhere checks both workflow_records (v1) and the customer table
-// (v2 relational design) to confirm a record UUID belongs to this tenant.
+// ResolveRecordAccess resolves a record's workflow key AND ownership in one
+// pass, checking workflow_records (v1) first, then the relational customer
+// table (v2 CRM), then the relational sales_order table — mirroring the same
+// branch order the old key-only RecordKeyForAttachment used. Returns
+// ErrRecordNotFound when none match.
+func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (RecordAccessInfo, error) {
+	// v1: any generic JSONB workflow record (lead/prospect/customer under a v1
+	// tenant, or a non-CRM workflow like invoice/quote/purchase_order).
+	rec, err := GetRecord(ctx, q, recordID)
+	if err == nil {
+		var wfKey string
+		if err := q.QueryRow(ctx, `SELECT key FROM workflows WHERE id = $1`, rec.WorkflowID).Scan(&wfKey); err != nil {
+			return RecordAccessInfo{}, fmt.Errorf("lookup workflow key: %w", err)
+		}
+		return RecordAccessInfo{WorkflowKey: wfKey, OwnerUserID: rec.OwnerUserID, TeamID: rec.TeamID}, nil
+	}
+	if !errors.Is(err, ErrRecordNotFound) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup v1 record: %w", err)
+	}
+
+	// v2: customer table (record_type + owner, resolved employee -> users.id
+	// the same way crmstore's relationalResolver/recordSelect does).
+	var typeCode, ownerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT rt.record_type_code, COALESCE(u.id::text,'')
+		FROM customer c
+		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
+		LEFT JOIN employee e ON e.employee_id = c.customer_crm_owner_user_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE c.customer_uuid = $1::uuid AND c.customer_deleted_at IS NULL`,
+		recordID).Scan(&typeCode, &ownerUserID)
+	if err == nil {
+		key := strings.ToLower(typeCode)
+		if k, ok := crmTypeToWorkflowKey[typeCode]; ok {
+			key = k
+		}
+		return RecordAccessInfo{WorkflowKey: key, OwnerUserID: ownerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup crm record: %w", err)
+	}
+
+	// sales_order: dedicated relational table (spec AD-1), owner resolved the
+	// same way (employee -> users.id); no team column.
+	var soOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM sales_order so
+		LEFT JOIN employee e ON e.employee_id = so.sales_order_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE so.sales_order_uuid = $1::uuid AND so.sales_order_deleted_at IS NULL`,
+		recordID).Scan(&soOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "sales_order", OwnerUserID: soOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup sales order: %w", err)
+	}
+
+	return RecordAccessInfo{}, ErrRecordNotFound
+}
+
+// RecordExistsAnywhere checks workflow_records (v1), customer (v2), and
+// sales_order to confirm a record UUID belongs to this tenant.
 func RecordExistsAnywhere(ctx context.Context, q Querier, recordID string) (bool, error) {
-	_, err := RecordKeyForAttachment(ctx, q, recordID)
+	_, err := ResolveRecordAccess(ctx, q, recordID)
 	if errors.Is(err, ErrRecordNotFound) {
 		return false, nil
 	}

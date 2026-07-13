@@ -44,7 +44,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if toStatusCode == "VOID" {
-		rows, err := tx.Query(ctx, `SELECT invoice_id FROM payment_application WHERE payment_id = $1 AND application_deleted_at IS NULL`, internalID)
+		// ORDER BY invoice_id fixes a global lock order across invoices so two
+		// concurrent VOID cascades touching the same two invoices can't lock
+		// them in opposite orders and deadlock.
+		rows, err := tx.Query(ctx, `SELECT invoice_id FROM payment_application WHERE payment_id = $1 AND application_deleted_at IS NULL ORDER BY invoice_id`, internalID)
 		if err != nil {
 			return nil, fmt.Errorf("list live applications: %w", err)
 		}

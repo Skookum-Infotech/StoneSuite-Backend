@@ -2829,7 +2829,6 @@ CREATE TABLE IF NOT EXISTS invoice_item (
     item_record_version           INTEGER       NOT NULL DEFAULT 1,
 
     CONSTRAINT uq_invoice_item_uuid UNIQUE (invoice_item_uuid),
-    CONSTRAINT uq_ii_line           UNIQUE (invoice_id, line_number),
     CONSTRAINT chk_ii_qty           CHECK (quantity >= 0),
     CONSTRAINT chk_ii_unit_price    CHECK (unit_price >= 0),
     CONSTRAINT chk_ii_discount      CHECK (discount_percent >= 0 AND discount_percent <= 100),
@@ -2865,6 +2864,10 @@ CREATE INDEX IF NOT EXISTS idx_inv_status_created  ON invoice (invoice_status, i
 CREATE INDEX IF NOT EXISTS idx_inv_custom_gin      ON invoice USING GIN (invoice_custom_fields);
 
 -- invoice_item
+-- Line numbers are unique per invoice among LIVE rows only, so Update can
+-- soft-delete a line and re-insert the same line_number (mirrors uq_soi_line_active).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ii_line_active
+    ON invoice_item (invoice_id, line_number) WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_ii_invoice     ON invoice_item (invoice_id)          WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_ii_item        ON invoice_item (inventory_item_id);
 CREATE INDEX IF NOT EXISTS idx_ii_so_item     ON invoice_item (sales_order_item_id);

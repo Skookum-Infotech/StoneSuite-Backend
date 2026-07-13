@@ -213,6 +213,96 @@ func TestRecordPayment(t *testing.T) {
 	}
 }
 
+// C1: a payment cannot be recorded before the invoice is sent.
+func TestRecordPayment_RejectedBeforeSent(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, itemUUID := seedCustomerAndItem(t, pool)
+
+	inv, err := Create(ctx, pool, CreateInvoiceInput{
+		CustomerUUID: custUUID,
+		Items:        []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 100}},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Still DRFT — payment must be rejected as a ClientError, and no money recorded.
+	_, err = RecordPayment(ctx, pool, inv.ID, 50, 1)
+	if _, ok := err.(ClientError); !ok {
+		t.Fatalf("expected ClientError paying a DRFT invoice, got %T: %v", err, err)
+	}
+	got, _ := Get(ctx, pool, inv.ID)
+	if got.AmountPaid != 0 || got.StatusCode != "DRFT" {
+		t.Fatalf("rejected payment must not mutate state, got paid=%v status=%s", got.AmountPaid, got.StatusCode)
+	}
+}
+
+// C2: Update soft-deletes prior lines (keeps history) and re-inserts the same
+// line_number via the partial unique index.
+func TestUpdate_SoftDeletesLines(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, itemUUID := seedCustomerAndItem(t, pool)
+
+	inv, err := Create(ctx, pool, CreateInvoiceInput{
+		CustomerUUID: custUUID,
+		Items:        []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 10}},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Update(ctx, pool, inv.ID, UpdateInvoiceInput{
+		Items: []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 2, UnitPrice: 10}},
+	}, 1); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	var internalID int
+	if err := pool.QueryRow(ctx, `SELECT invoice_id FROM invoice WHERE invoice_uuid = $1`, inv.ID).Scan(&internalID); err != nil {
+		t.Fatalf("resolve id: %v", err)
+	}
+	var total, live int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*), COUNT(*) FILTER (WHERE item_deleted_at IS NULL) FROM invoice_item WHERE invoice_id = $1`, internalID).Scan(&total, &live); err != nil {
+		t.Fatalf("count lines: %v", err)
+	}
+	if live != 1 {
+		t.Fatalf("expected 1 live line after update, got %d", live)
+	}
+	if total != 2 {
+		t.Fatalf("expected prior line soft-deleted (2 rows total), got %d — history was hard-deleted", total)
+	}
+}
+
+// C3: Update cannot reduce the total below the amount already paid.
+func TestUpdate_RejectsBelowAmountPaid(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, itemUUID := seedCustomerAndItem(t, pool)
+
+	inv, err := Create(ctx, pool, CreateInvoiceInput{
+		CustomerUUID: custUUID,
+		Items:        []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 100}},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for _, st := range []string{"PAPV", "APPV", "SENT"} {
+		if inv, err = Transition(ctx, pool, inv.ID, st, 1); err != nil {
+			t.Fatalf("transition to %s: %v", st, err)
+		}
+	}
+	if _, err = RecordPayment(ctx, pool, inv.ID, 60, 1); err != nil {
+		t.Fatalf("record payment: %v", err)
+	}
+	// Reduce the total to 10, below the 60 already paid → ClientError, not a 500.
+	_, err = Update(ctx, pool, inv.ID, UpdateInvoiceInput{
+		Items: []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 10}},
+	}, 1)
+	if _, ok := err.(ClientError); !ok {
+		t.Fatalf("expected ClientError reducing total below amount paid, got %T: %v", err, err)
+	}
+}
+
 func TestCreate_UnknownCustomer_IsClientError(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

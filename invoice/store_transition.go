@@ -94,15 +94,14 @@ func RecordPayment(ctx context.Context, pool *pgxpool.Pool, id string, amount fl
 		return nil, fmt.Errorf("resolve invoice for payment: %w", err)
 	}
 
-	if terminalStatuses[curStatusCode] {
-		return nil, ClientError{Msg: "Cannot record payment on a " + curStatusCode + " invoice."}
+	if !payableStatuses[curStatusCode] {
+		return nil, ClientError{Msg: "Cannot record payment on a " + curStatusCode + " invoice; it must be sent first."}
 	}
 
 	newAmountPaid := amountPaid + amount
-	// Use decimal math rounding conceptually, but float64 is fine for simple check
-	// We'll trust the DB constraints (which are DECIMAL) to catch tiny overflow,
-	// but let's check here to return a nice message.
-	if newAmountPaid > grandTotal+0.001 { // +0.001 to handle float fuzz
+	// Values are pre-rounded to 2dp; +0.001 absorbs float fuzz before the
+	// DECIMAL chk_invoice_paid_nonneg constraint would reject an overpayment.
+	if newAmountPaid > grandTotal+0.001 {
 		return nil, ClientError{Msg: "Payment exceeds balance due."}
 	}
 
@@ -111,17 +110,13 @@ func RecordPayment(ctx context.Context, pool *pgxpool.Pool, id string, amount fl
 		newBalanceDue = 0
 	}
 
-	// Auto-transition logic
+	// Auto-transition: fully paid -> PAID; a partial payment on SENT/ODUE -> PART.
+	// curStatusCode is guaranteed payable (SENT/PART/ODUE) by the guard above.
 	var toStatusCode string
 	if newBalanceDue < 0.005 { // basically 0
 		toStatusCode = "PAID"
-	} else if curStatusCode != "PART" && curStatusCode != "DRFT" && curStatusCode != "PAPV" && curStatusCode != "APPV" {
-		// If they pay a bit but they're in SENT/ODUE, move to PART.
-		// (Assuming they can't be in DRFT/PAPV/APPV and receive a payment, but if they are, we don't auto-transition to PART yet? 
-		// Actually, let's just use CanTransition to safely try PART).
-		if CanTransition(curStatusCode, "PART") {
-			toStatusCode = "PART"
-		}
+	} else if curStatusCode != "PART" && CanTransition(curStatusCode, "PART") {
+		toStatusCode = "PART"
 	}
 
 	var toStatusID int = curStatusID

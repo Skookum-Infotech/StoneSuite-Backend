@@ -55,11 +55,13 @@ func (resolver) Resolve(key string) (string, query.DataType, bool) {
 
 var _ query.FieldResolver = resolver{}
 
+// sortFields is the stable sort whitelist. Nullable columns (e.g. invoice_due_date)
+// are deliberately excluded: NULLs break keyset-cursor comparison. due_date stays
+// filterable via systemFields, just not sortable (mirrors salesorder.sortableFields).
 var sortFields = map[string]resolved{
 	"document_number": {"COALESCE(i.invoice_number,'')", query.TypeString},
 	"record_number":   {"COALESCE(i.invoice_number,'')", query.TypeString},
 	"invoice_date":    {"i.invoice_date", query.TypeDate},
-	"due_date":        {"i.invoice_due_date", query.TypeDate},
 	"grand_total":     {"i.invoice_grand_total", query.TypeNumber},
 	"balance_due":     {"i.invoice_balance_due", query.TypeNumber},
 	"status":          {"i.invoice_status", query.TypeNumber},

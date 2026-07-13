@@ -72,6 +72,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment, existing.AmountPaid)
 
+	// An invoice total can't be reduced below what has already been paid; that
+	// would force a negative balance_due (rejected by chk_invoice_paid_nonneg).
+	if existing.AmountPaid > header.GrandTotal+0.005 {
+		return nil, ClientError{Msg: "Cannot reduce the invoice total below the amount already paid."}
+	}
+
 	custom := in.CustomFields
 	if custom == nil {
 		custom = map[string]any{}
@@ -128,7 +134,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 		return nil, fmt.Errorf("update invoice: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, `DELETE FROM invoice_item WHERE invoice_id = $1`, internalID); err != nil {
+	// Soft-delete the current lines (preserving line-level history on this
+	// financial document) rather than hard-deleting; the partial unique index
+	// uq_ii_line_active lets the same line_number be re-inserted below.
+	if _, err := tx.Exec(ctx, `
+		UPDATE invoice_item SET item_deleted_at = NOW()
+		WHERE invoice_id = $1 AND item_deleted_at IS NULL`, internalID); err != nil {
 		return nil, fmt.Errorf("clear invoice lines: %w", err)
 	}
 	for i, rl := range resolved {

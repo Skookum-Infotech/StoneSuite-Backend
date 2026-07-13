@@ -2442,6 +2442,10 @@ CREATE TABLE IF NOT EXISTS sales_order (
     record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = SORD
     sales_order_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
+    -- Approval (optional, configuration-driven — AD-10; mirrors customer_approval_status)
+    sales_order_approval_status    VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    sales_order_approved_by        INTEGER           NULL REFERENCES employee(employee_id),  -- last approver (full trail in sales_order_approval)
+
     -- Primary info
     sales_order_customer_id        INTEGER       NOT NULL REFERENCES customer(customer_id),
     sales_order_po_number          VARCHAR(50)   NOT NULL DEFAULT '',
@@ -2460,6 +2464,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
 
     -- Terms / pricing / currency
     sales_order_payment_terms      INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    sales_order_payment_due_date   DATE              NULL,  -- schema.org paymentDueDate; derived order_date + terms.net_days when unset (AD-8)
     sales_order_price_level        INTEGER           NULL REFERENCES lkp_price_level(price_level_id),
     sales_order_currency           INTEGER           NULL REFERENCES lkp_currency(currency_id),
     sales_order_exchange_rate      DECIMAL(18,6) NOT NULL DEFAULT 1,
@@ -2514,6 +2519,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
 
     CONSTRAINT uq_sales_order_uuid   UNIQUE (sales_order_uuid),
     CONSTRAINT uq_sales_order_number UNIQUE (sales_order_number),
+    CONSTRAINT chk_so_approval_status CHECK (sales_order_approval_status IN ('none','pending','approved')),
     CONSTRAINT chk_so_tax_percent    CHECK (sales_order_sales_tax_percent >= 0 AND sales_order_sales_tax_percent <= 100),
     CONSTRAINT chk_so_totals_nonneg  CHECK (sales_order_subtotal >= 0 AND sales_order_grand_total >= 0),
     CONSTRAINT chk_so_soft_delete    CHECK (
@@ -2549,6 +2555,10 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     line_tax                  DECIMAL(15,2) NOT NULL DEFAULT 0,
     line_total                DECIMAL(15,2) NOT NULL DEFAULT 0,
 
+    -- Fulfillment (schema.org OrderItem.orderItemStatus): maintained rollup of this
+    -- line's allocations' fulfilled_quantity; status label derived open|partial|filled (AD-9)
+    line_fulfilled_quantity   DECIMAL(14,3) NOT NULL DEFAULT 0,
+
     item_created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     item_created_by           INTEGER          NULL REFERENCES employee(employee_id),
     item_updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2558,7 +2568,8 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     CONSTRAINT chk_soi_qty              CHECK (quantity >= 0),
     CONSTRAINT chk_soi_unit_price       CHECK (unit_price >= 0),
     CONSTRAINT chk_soi_discount         CHECK (discount_percent >= 0 AND discount_percent <= 100),
-    CONSTRAINT chk_soi_tax              CHECK (tax_percent >= 0 AND tax_percent <= 100)
+    CONSTRAINT chk_soi_tax              CHECK (tax_percent >= 0 AND tax_percent <= 100),
+    CONSTRAINT chk_soi_fulfilled        CHECK (line_fulfilled_quantity >= 0 AND line_fulfilled_quantity <= quantity)
 );
 
 -- inventory_allocation — reservation per order line (shared inventory domain, not owned by SO) --
@@ -2588,7 +2599,7 @@ CREATE TABLE IF NOT EXISTS sales_order_history (
     sales_order_id          INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
     from_status_id          INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
     to_status_id            INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
-    action                  VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | cancel | update
+    action                  VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | cancel | update | approve
     actor_employee_id       INTEGER          NULL REFERENCES employee(employee_id),
     snapshot                JSONB        NOT NULL DEFAULT '{}',
     at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -2611,6 +2622,65 @@ CREATE INDEX IF NOT EXISTS idx_soi_item  ON sales_order_item (inventory_item_id)
 -- reusing the same line numbers, which a table-wide UNIQUE constraint would reject.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_soi_line_active
     ON sales_order_item (sales_order_id, line_number) WHERE item_deleted_at IS NULL;
+
+-- ── 000029_sales_order_schema_org_alignment ──────────────────────────────────
+-- =====================================================================
+-- Tenant migration 029: align Sales Order with schema.org/Order + optional,
+-- configuration-driven approval. Additive & idempotent; no destructive change.
+--   AD-8  paymentDueDate    -> lkp_payment_terms.payment_terms_net_days (below)
+--                              + sales_order.sales_order_payment_due_date (in 028)
+--   AD-9  orderItemStatus   -> sales_order_item.line_fulfilled_quantity (in 028)
+--   AD-10 approval gate     -> sales_order_approver / sales_order_approval (below)
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md §2.1, §5.0, §5.5.
+-- =====================================================================
+
+-- AD-8: net-days on the existing payment-terms lookup so a due date can be
+-- derived (order_date + net_days). Existing table -> idempotent ALTER + backfill.
+ALTER TABLE lkp_payment_terms
+    ADD COLUMN IF NOT EXISTS payment_terms_net_days INTEGER NOT NULL DEFAULT 0;
+
+UPDATE lkp_payment_terms SET payment_terms_net_days = 10  WHERE payment_terms_code = 'N10_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 15  WHERE payment_terms_code = 'N15_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 30  WHERE payment_terms_code IN ('N30_','D50N'); -- 50% Deposit Net 30
+UPDATE lkp_payment_terms SET payment_terms_net_days = 45  WHERE payment_terms_code = 'N45_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 60  WHERE payment_terms_code = 'N60_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 90  WHERE payment_terms_code = 'N90_';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 120 WHERE payment_terms_code = 'N120';
+UPDATE lkp_payment_terms SET payment_terms_net_days = 0   WHERE payment_terms_code IN ('COR_','COD_','DOR_'); -- due immediately
+
+-- AD-8: AR aging / overdue-order lookups by due date (partial on live rows).
+CREATE INDEX IF NOT EXISTS idx_so_payment_due
+    ON sales_order (sales_order_payment_due_date) WHERE sales_order_deleted_at IS NULL;
+
+-- AD-10: approver configuration — which employee may approve at a given SORD
+-- status. Keyed to lkp_record_status (crm_workflow_approver points at the
+-- CRM-only lkp_crm_status, so it can't be reused verbatim). Zero rows for a
+-- status = no gate there; N rows = N required sign-offs.
+CREATE TABLE IF NOT EXISTS sales_order_approver (
+    sales_order_approver_id SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = SORD
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active               BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by              INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_sales_order_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_order_approver_lookup
+    ON sales_order_approver (record_type_id, record_status_id) WHERE is_active;
+
+-- AD-10: approval tracking — one row per approver who signed off on an order at
+-- a status. sales_order.sales_order_approval_status stays 'pending' until the
+-- sign-off count reaches the active configured-approver count. Mirrors customer_approval.
+CREATE TABLE IF NOT EXISTS sales_order_approval (
+    sales_order_approval_id SERIAL      PRIMARY KEY,
+    sales_order_id          INTEGER     NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at             TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_sales_order_approval UNIQUE (sales_order_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_order_approval_order ON sales_order_approval (sales_order_id);
 
 CREATE INDEX IF NOT EXISTS idx_so_history_order ON sales_order_history (sales_order_id);
 

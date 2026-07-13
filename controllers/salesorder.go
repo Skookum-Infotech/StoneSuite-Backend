@@ -102,8 +102,12 @@ func soFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
 	case errors.Is(err, salesorder.ErrNotFound):
 		fail(w, http.StatusNotFound, "Sales order not found.")
-	case errors.Is(err, salesorder.ErrInvalidTransition):
+	case errors.Is(err, salesorder.ErrInvalidTransition),
+		errors.Is(err, salesorder.ErrApprovalRequired),
+		errors.Is(err, salesorder.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, salesorder.ErrNotApprover):
+		fail(w, http.StatusForbidden, err.Error())
 	case salesorder.IsClientError(err):
 		fail(w, http.StatusBadRequest, err.Error())
 	default:
@@ -251,6 +255,26 @@ func (h *SalesOrderOps) Transition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditSO(r, pool, identityID, "transition", uuid, nil, order)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
+}
+
+// Approve POST /api/tenant/sales-orders/{uuid}/approve
+// Records the calling employee's approval sign-off on the order at its current
+// status (AD-10). RBAC gate is the transition action; being an eligible
+// approver is governed additionally by the sales_order_approver configuration
+// (a non-approver gets 403; a status with no approvers gets 409).
+func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authSOByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	order, err := salesorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	if err != nil {
+		soFail(w, err, "Failed to approve sales order.")
+		return
+	}
+	auditSO(r, pool, identityID, "approve", uuid, nil, order)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
 }
 

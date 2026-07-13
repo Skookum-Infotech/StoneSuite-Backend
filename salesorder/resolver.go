@@ -33,6 +33,7 @@ var systemFields = map[string]resolved{
 	"expected_delivery":    {"so.sales_order_expected_delivery", query.TypeDate},
 	"currency_id":          {"so.sales_order_currency::text", query.TypeString},
 	"payment_terms_id":     {"so.sales_order_payment_terms::text", query.TypeString},
+	"payment_due_date":     {"so.sales_order_payment_due_date", query.TypeDate},
 	"price_level_id":       {"so.sales_order_price_level::text", query.TypeString},
 	"grand_total":          {"so.sales_order_grand_total", query.TypeNumber},
 	"po_number":            {"so.sales_order_po_number", query.TypeString},

@@ -506,6 +506,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/sales-orders/{uuid}", tenantChain(so.Update))
 		mux.Handle("DELETE /api/tenant/sales-orders/{uuid}", tenantChain(so.Delete))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/transition", tenantChain(so.Transition))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/approve", tenantChain(so.Approve))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 

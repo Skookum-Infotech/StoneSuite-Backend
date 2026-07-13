@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -63,10 +64,12 @@ const draftStatusCode = "DRFT"
 const orderSelect = `
 	SELECT so.sales_order_uuid, COALESCE(so.sales_order_number,''),
 	       rs.record_status_name, rs.record_status_code,
+	       so.sales_order_approval_status,
 	       c.customer_uuid, c.customer_name,
 	       COALESCE(ou.id::text,''),
 	       to_char(so.sales_order_date,'YYYY-MM-DD'),
 	       COALESCE(to_char(so.sales_order_expected_delivery,'YYYY-MM-DD'),''),
+	       COALESCE(to_char(so.sales_order_payment_due_date,'YYYY-MM-DD'),''),
 	       so.sales_order_po_number, so.sales_order_reference_number, so.sales_order_memo,
 	       so.sales_order_notes, so.sales_order_internal_notes, so.sales_order_terms_conditions,
 	       so.sales_order_payment_terms, so.sales_order_price_level, so.sales_order_currency,
@@ -94,9 +97,9 @@ func scanOrder(row pgx.Row) (*Order, error) {
 	var o Order
 	var customRaw []byte
 	if err := row.Scan(
-		&o.ID, &o.Number, &o.Status, &o.StatusCode,
+		&o.ID, &o.Number, &o.Status, &o.StatusCode, &o.ApprovalStatus,
 		&o.Customer.ID, &o.Customer.Name, &o.OwnerUserID,
-		&o.OrderDate, &o.ExpectedDelivery,
+		&o.OrderDate, &o.ExpectedDelivery, &o.PaymentDueDate,
 		&o.PONumber, &o.ReferenceNumber, &o.Memo,
 		&o.Notes, &o.InternalNotes, &o.TermsConditions,
 		&o.PaymentTermsID, &o.PriceLevelID, &o.CurrencyID,
@@ -128,7 +131,8 @@ const itemSelect = `
 	       ii.inventory_item_uuid,
 	       soi.sku, soi.item_name, soi.description, COALESCE(soi.unit_code,''),
 	       soi.quantity, soi.unit_price, soi.discount_percent, soi.tax_percent,
-	       soi.line_subtotal, soi.line_discount, soi.line_tax, soi.line_total
+	       soi.line_subtotal, soi.line_discount, soi.line_tax, soi.line_total,
+	       soi.line_fulfilled_quantity
 	FROM sales_order_item soi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = soi.inventory_item_id
 	WHERE soi.sales_order_id = $1 AND soi.item_deleted_at IS NULL
@@ -141,7 +145,9 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
+		&l.FulfilledQuantity,
 	)
+	l.Status = lineStatus(l.FulfilledQuantity, l.Quantity)
 	return l, err
 }
 
@@ -529,6 +535,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 		custom = map[string]any{}
 	}
 
+	dueDate, err := resolvePaymentDueDate(ctx, tx, in.OrderDate, in.PaymentDueDate, in.PaymentTermsID)
+	if err != nil {
+		return nil, err
+	}
+
 	cv := []colVal{
 		{"record_type", recordTypeID, ""},
 		{"sales_order_status", draftStatusID, ""},
@@ -537,6 +548,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 		{"sales_order_reference_number", in.ReferenceNumber, ""},
 		{"sales_order_date", orNow(in.OrderDate), "::date"},
 		{"sales_order_expected_delivery", nullableDate(in.ExpectedDelivery), "::date"},
+		{"sales_order_payment_due_date", dueDate, "::date"},
 		{"sales_order_sales_tax_percent", in.SalesTaxPercent, ""},
 		{"sales_order_memo", in.Memo, ""},
 		{"sales_order_notes", in.Notes, ""},
@@ -652,6 +664,45 @@ func nullableDate(d string) any {
 	return d
 }
 
+// resolvePaymentDueDate computes the sales_order_payment_due_date arg (AD-8,
+// schema.org paymentDueDate): an explicit caller value wins (and must be on or
+// after the order date); otherwise the order date plus the payment term's
+// net-days; otherwise NULL. orderDate is the raw request value (blank ⇒ today,
+// matching orNow). Returns a nullable "yyyy-mm-dd" date arg.
+func resolvePaymentDueDate(ctx context.Context, q workflow.Querier, orderDate, explicit string, paymentTermsID *int) (any, error) {
+	base := time.Now()
+	if od := strings.TrimSpace(orderDate); od != "" && od != "now" {
+		parsed, perr := time.Parse("2006-01-02", od)
+		if perr != nil {
+			return nil, ClientError{Msg: "Order date must be in yyyy-mm-dd format."}
+		}
+		base = parsed
+	}
+	if s := strings.TrimSpace(explicit); s != "" {
+		due, perr := time.Parse("2006-01-02", s)
+		if perr != nil {
+			return nil, ClientError{Msg: "Payment due date must be in yyyy-mm-dd format."}
+		}
+		if due.Before(base) {
+			return nil, ClientError{Msg: "Payment due date cannot be before the order date."}
+		}
+		return s, nil
+	}
+	if paymentTermsID == nil || *paymentTermsID <= 0 {
+		return nil, nil
+	}
+	var netDays int
+	err := q.QueryRow(ctx,
+		`SELECT payment_terms_net_days FROM lkp_payment_terms WHERE payment_terms_id = $1`, *paymentTermsID).Scan(&netDays)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // invalid terms id is reported by the header FK violation
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load payment terms net days: %w", err)
+	}
+	return base.AddDate(0, 0, netDays).Format("2006-01-02"), nil
+}
+
 // insertLines bulk-inserts resolved lines as sales_order_item rows.
 func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
@@ -744,11 +795,17 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
 
+	dueDate, err := resolvePaymentDueDate(ctx, tx, in.OrderDate, in.PaymentDueDate, in.PaymentTermsID)
+	if err != nil {
+		return nil, err
+	}
+
 	cv := []colVal{
 		{"sales_order_po_number", in.PONumber, ""},
 		{"sales_order_reference_number", in.ReferenceNumber, ""},
 		{"sales_order_date", orNow(in.OrderDate), "::date"},
 		{"sales_order_expected_delivery", nullableDate(in.ExpectedDelivery), "::date"},
+		{"sales_order_payment_due_date", dueDate, "::date"},
 		{"sales_order_sales_tax_percent", in.SalesTaxPercent, ""},
 		{"sales_order_memo", in.Memo, ""},
 		{"sales_order_notes", in.Notes, ""},
@@ -843,13 +900,13 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID, curStatusID int
-	var curStatusCode string
+	var curStatusCode, approvalStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT so.sales_order_id, so.sales_order_status, rs.record_status_code
+		SELECT so.sales_order_id, so.sales_order_status, rs.record_status_code, so.sales_order_approval_status
 		FROM sales_order so JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL
 		FOR UPDATE OF so`, uuid,
-	).Scan(&internalID, &curStatusID, &curStatusCode)
+	).Scan(&internalID, &curStatusID, &curStatusCode, &approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -869,11 +926,31 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 		return nil, ClientError{Msg: "Unknown target status."}
 	}
 
+	// AD-10 approval gate: an order may not leave a status that has configured
+	// approvers until it has been approved. Statuses with no approvers never block.
+	requiredHere, err := activeApproverCount(ctx, tx, recordTypeID, curStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if requiredHere > 0 && approvalStatus != approvalApproved {
+		return nil, ErrApprovalRequired
+	}
+	// The status being entered may itself require approval → start it pending.
+	targetApprovers, err := activeApproverCount(ctx, tx, recordTypeID, toStatusID)
+	if err != nil {
+		return nil, err
+	}
+	newApprovalStatus := approvalNone
+	if targetApprovers > 0 {
+		newApprovalStatus = approvalPending
+	}
+
 	if _, err := tx.Exec(ctx, `
 		UPDATE sales_order SET
-			sales_order_status = $2, sales_order_updated_at = NOW(),
+			sales_order_status = $2, sales_order_approval_status = $4, sales_order_approved_by = NULL,
+			sales_order_updated_at = NOW(),
 			sales_order_updated_by = $3, sales_order_record_version = sales_order_record_version + 1
-		WHERE sales_order_id = $1`, internalID, toStatusID, nullableInt(actorEmployeeID)); err != nil {
+		WHERE sales_order_id = $1`, internalID, toStatusID, nullableInt(actorEmployeeID), newApprovalStatus); err != nil {
 		return nil, fmt.Errorf("transition sales order: %w", err)
 	}
 

@@ -41,6 +41,7 @@ type orderFields struct {
 	ReferenceNumber    string         `json:"referenceNumber"`
 	OrderDate          string         `json:"orderDate"`        // "yyyy-mm-dd"
 	ExpectedDelivery   string         `json:"expectedDelivery"` // "yyyy-mm-dd"
+	PaymentDueDate     string         `json:"paymentDueDate"`   // "yyyy-mm-dd"; blank ⇒ derived from terms (AD-8)
 	PaymentTermsID     *int           `json:"paymentTermsId"`
 	PriceLevelID       *int           `json:"priceLevelId"`
 	CurrencyID         *int           `json:"currencyId"`
@@ -96,6 +97,25 @@ type Line struct {
 	LineDiscount    float64 `json:"lineDiscount"`
 	LineTax         float64 `json:"lineTax"`
 	LineTotal       float64 `json:"lineTotal"`
+
+	// Fulfillment (schema.org OrderItem.orderItemStatus, AD-9). FulfilledQuantity
+	// is the stored rollup of the line's allocations; Status is derived from it.
+	FulfilledQuantity float64 `json:"fulfilledQuantity"`
+	Status            string  `json:"status"` // open | partial | filled
+}
+
+// lineStatus derives the schema.org-style per-line fulfillment status (AD-9)
+// as a pure function of fulfilled vs ordered quantity — never stored, so it
+// cannot drift from line_fulfilled_quantity.
+func lineStatus(fulfilled, quantity float64) string {
+	switch {
+	case fulfilled <= 0:
+		return "open"
+	case fulfilled >= quantity:
+		return "filled"
+	default:
+		return "partial"
+	}
 }
 
 // Order is the full API response for a sales order header (+ lines, when
@@ -106,12 +126,14 @@ type Line struct {
 type Order struct {
 	ID               string      `json:"id"`
 	Number           string      `json:"salesOrderNumber"`
-	Status           string      `json:"status"`     // human label, e.g. "Draft"
-	StatusCode       string      `json:"statusCode"` // lkp_record_status code, e.g. "DRFT"
+	Status           string      `json:"status"`         // human label, e.g. "Draft"
+	StatusCode       string      `json:"statusCode"`     // lkp_record_status code, e.g. "DRFT"
+	ApprovalStatus   string      `json:"approvalStatus"` // none | pending | approved (AD-10)
 	Customer         CustomerRef `json:"customer"`
 	OwnerUserID      string      `json:"-"`
 	OrderDate        string      `json:"orderDate"`
 	ExpectedDelivery string      `json:"expectedDelivery,omitempty"`
+	PaymentDueDate   string      `json:"paymentDueDate,omitempty"`
 	PONumber         string      `json:"poNumber,omitempty"`
 	ReferenceNumber  string      `json:"referenceNumber,omitempty"`
 	Memo             string      `json:"memo,omitempty"`

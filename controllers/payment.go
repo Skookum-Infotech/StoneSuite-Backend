@@ -153,6 +153,11 @@ func (h *PaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
+	for _, app := range in.Applications {
+		if !h.invoiceInScopeForUpdate(w, r, pool, identityID, app.InvoiceUUID) {
+			return
+		}
+	}
 	empID := resolveEmployeeID(r, identityID)
 	p, err := payment.Create(r.Context(), pool, in, empID)
 	if err != nil {

@@ -49,6 +49,21 @@ func TestPaymentOps_Apply_RequiresInvoiceUuidAndAmount(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
+func TestPaymentOps_Create_RequiresAuthEvenWithInlineApplications(t *testing.T) {
+	h := NewPaymentOps()
+	body := `{"customerUuid":"does-not-matter","methodId":1,"amount":100,
+		"applications":[{"invoiceUuid":"victim-invoice","amount":100}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tenant/payments", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.Create(rr, req)
+	// No auth context on the request, so this must still 401 before ever
+	// reaching the inline-application invoice-scope loop (or the store).
+	// This guards against a regression where Create's payment:create check
+	// is skipped or reordered after body decoding for requests carrying
+	// inline applications.
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
 func TestPaymentFail_MapsStoreErrorsToHTTPStatus(t *testing.T) {
 	tests := []struct {
 		name       string

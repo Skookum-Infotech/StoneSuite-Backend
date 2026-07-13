@@ -22,11 +22,6 @@ func (e ClientError) Error() string { return e.Msg }
 // terminalStatuses are the statuses Update/Transition reject certain edits against.
 var terminalStatuses = map[string]bool{"PAID": true, "VOID": true}
 
-// payableStatuses are the only statuses a payment can be recorded against. An
-// invoice must be sent before it can take money; recording a payment earlier
-// would strand it (e.g. a full payment on DRFT can't reach PAID). See spec §12.
-var payableStatuses = map[string]bool{"SENT": true, "PART": true, "ODUE": true}
-
 const headerSelect = `
 	SELECT i.invoice_uuid, i.invoice_number,
 	       COALESCE(rs.record_status_code,''), COALESCE(rs.record_status_name,''),

@@ -154,89 +154,6 @@ func TestUpdate_RejectedOnTerminalStatus(t *testing.T) {
 	}
 }
 
-func TestRecordPayment(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	custUUID, itemUUID := seedCustomerAndItem(t, pool)
-
-	inv, err := Create(ctx, pool, CreateInvoiceInput{
-		CustomerUUID: custUUID,
-		Items:        []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 100}},
-	}, 1)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	
-	// Transition DRFT -> PAPV -> APPV -> SENT to allow valid PART transition if needed
-	// Actually invoice payment might be valid at any state but let's do normal flow.
-	for _, st := range []string{"PAPV", "APPV", "SENT"} {
-		inv, err = Transition(ctx, pool, inv.ID, st, 1)
-		if err != nil {
-			t.Fatalf("transition to %s: %v", st, err)
-		}
-	}
-
-	// Pay part of the grand total (100)
-	inv, err = RecordPayment(ctx, pool, inv.ID, 40, 1)
-	if err != nil {
-		t.Fatalf("record payment 1: %v", err)
-	}
-	if inv.AmountPaid != 40 {
-		t.Fatalf("amount paid = %v, want 40", inv.AmountPaid)
-	}
-	if inv.BalanceDue != 60 {
-		t.Fatalf("balance due = %v, want 60", inv.BalanceDue)
-	}
-	if inv.StatusCode != "PART" {
-		t.Fatalf("expected PART status, got %s", inv.StatusCode)
-	}
-
-	// Pay the rest
-	inv, err = RecordPayment(ctx, pool, inv.ID, 60, 1)
-	if err != nil {
-		t.Fatalf("record payment 2: %v", err)
-	}
-	if inv.AmountPaid != 100 {
-		t.Fatalf("amount paid = %v, want 100", inv.AmountPaid)
-	}
-	if inv.BalanceDue != 0 {
-		t.Fatalf("balance due = %v, want 0", inv.BalanceDue)
-	}
-	if inv.StatusCode != "PAID" {
-		t.Fatalf("expected PAID status, got %s", inv.StatusCode)
-	}
-	
-	// Overpay should fail
-	_, err = RecordPayment(ctx, pool, inv.ID, 10, 1)
-	if err == nil {
-		t.Fatalf("expected error on overpayment / paying a PAID invoice")
-	}
-}
-
-// C1: a payment cannot be recorded before the invoice is sent.
-func TestRecordPayment_RejectedBeforeSent(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	custUUID, itemUUID := seedCustomerAndItem(t, pool)
-
-	inv, err := Create(ctx, pool, CreateInvoiceInput{
-		CustomerUUID: custUUID,
-		Items:        []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 100}},
-	}, 1)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	// Still DRFT — payment must be rejected as a ClientError, and no money recorded.
-	_, err = RecordPayment(ctx, pool, inv.ID, 50, 1)
-	if _, ok := err.(ClientError); !ok {
-		t.Fatalf("expected ClientError paying a DRFT invoice, got %T: %v", err, err)
-	}
-	got, _ := Get(ctx, pool, inv.ID)
-	if got.AmountPaid != 0 || got.StatusCode != "DRFT" {
-		t.Fatalf("rejected payment must not mutate state, got paid=%v status=%s", got.AmountPaid, got.StatusCode)
-	}
-}
-
 // C2: Update soft-deletes prior lines (keeps history) and re-inserts the same
 // line_number via the partial unique index.
 func TestUpdate_SoftDeletesLines(t *testing.T) {
@@ -291,8 +208,10 @@ func TestUpdate_RejectsBelowAmountPaid(t *testing.T) {
 			t.Fatalf("transition to %s: %v", st, err)
 		}
 	}
-	if _, err = RecordPayment(ctx, pool, inv.ID, 60, 1); err != nil {
-		t.Fatalf("record payment: %v", err)
+	// amount_paid is now written by the payment module, not this package —
+	// seed it directly to test Update's own guard in isolation.
+	if _, err := pool.Exec(ctx, `UPDATE invoice SET invoice_amount_paid = 60 WHERE invoice_uuid = $1`, inv.ID); err != nil {
+		t.Fatalf("seed amount_paid: %v", err)
 	}
 	// Reduce the total to 10, below the 60 already paid → ClientError, not a 500.
 	_, err = Update(ctx, pool, inv.ID, UpdateInvoiceInput{

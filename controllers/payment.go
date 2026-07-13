@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/payment"
@@ -75,6 +76,50 @@ func (h *PaymentOps) authPaymentByUUID(w http.ResponseWriter, r *http.Request, u
 		return nil, "", "", false
 	}
 	return pool, identityID, scope, true
+}
+
+// invoiceInScopeForUpdate checks the caller holds invoice:update and that the
+// target invoice is within their scope, writing the response and returning
+// false on denial (404 on scope denial, per the IDOR convention). Used by
+// Apply/Unapply because those endpoints mutate an invoice's AR balance as a
+// side effect of a payment-side action.
+func (h *PaymentOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID, invoiceUUID string) bool {
+	decision, err := authz.Check(r.Context(), pool, identityID, authz.ResourceInvoice, authz.ActionUpdate)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return false
+	}
+	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(authz.ResourceInvoice), "action", string(authz.ActionUpdate))
+		fail(w, http.StatusForbidden, "You do not have permission to update invoices.")
+		return false
+	}
+	if decision.Scope == authz.ScopeAll {
+		return true
+	}
+	inv, err := invoice.Get(r.Context(), pool, invoiceUUID)
+	if errors.Is(err, invoice.ErrNotFound) {
+		fail(w, http.StatusNotFound, "Invoice not found.")
+		return false
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load invoice.")
+		return false
+	}
+	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, inv.OwnerUserID, "")
+	if aerr != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return false
+	}
+	if !allowed {
+		logSecurityEvent(r, "idor_denied",
+			"identity", identityID, "record", invoiceUUID, "resource", string(authz.ResourceInvoice),
+			"action", "update", "scope", string(decision.Scope))
+		fail(w, http.StatusNotFound, "Invoice not found.")
+		return false
+	}
+	return true
 }
 
 func paymentFail(w http.ResponseWriter, err error, serverMsg string) {

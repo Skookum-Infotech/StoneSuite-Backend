@@ -24,6 +24,7 @@ func TestInvoiceOps_RequiresAuth(t *testing.T) {
 		"Transition":    h.Transition,
 		"RecordPayment": h.RecordPayment,
 		"Audit":         h.Audit,
+		"Payments":      h.Payments,
 	}
 	for name, fn := range handlers {
 		t.Run(name, func(t *testing.T) {

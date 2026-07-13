@@ -510,6 +510,18 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 
+		// Invoice: dedicated v2 relational module, sibling of sales order.
+		invOps := controllers.NewInvoiceOps()
+		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))
+		mux.Handle("POST /api/tenant/invoices/search", tenantChain(invOps.Search))
+		mux.Handle("POST /api/tenant/invoices", tenantChain(invOps.Create))
+		mux.Handle("GET /api/tenant/invoices/{uuid}", tenantChain(invOps.Get))
+		mux.Handle("PATCH /api/tenant/invoices/{uuid}", tenantChain(invOps.Update))
+		mux.Handle("DELETE /api/tenant/invoices/{uuid}", tenantChain(invOps.Delete))
+		mux.Handle("POST /api/tenant/invoices/{uuid}/transition", tenantChain(invOps.Transition))
+		mux.Handle("POST /api/tenant/invoices/{uuid}/payment", tenantChain(invOps.RecordPayment))
+		mux.Handle("GET /api/tenant/invoices/{uuid}/audit", tenantChain(invOps.Audit))
+
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Both embeddings and chat are self-hosted on the same Ollama box
 		// (ADR-001) — no third-party LLM account, API key, or quota.

@@ -64,3 +64,11 @@ func TestCatalog_InventoryItemPermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestCatalog_InvoicePermissions(t *testing.T) {
+	for _, a := range []Action{ActionCreate, ActionRead, ActionUpdate, ActionDelete, ActionTransition} {
+		if !IsValidPermission(ResourceInvoice, a) {
+			t.Fatalf("invoice:%s must be a valid permission", a)
+		}
+	}
+}

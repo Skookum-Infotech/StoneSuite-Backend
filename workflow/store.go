@@ -500,6 +500,25 @@ func UserIDByIdentity(ctx context.Context, q Querier, identityID string) (string
 	return id, nil
 }
 
+// EmployeeIDByIdentity resolves a control-plane identity to a tenant
+// employee_id, for stores outside crmstore (e.g. inventory, salesorder) that
+// need the same identity->employee mapping the CRM v2 store uses internally.
+// Returns ok=false when the identity has no employee row (e.g. no profile).
+func EmployeeIDByIdentity(ctx context.Context, q Querier, identityID string) (int, bool) {
+	if identityID == "" {
+		return 0, false
+	}
+	var id int
+	err := q.QueryRow(ctx, `
+		SELECT e.employee_id FROM employee e
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE u.identity_id = $1 AND e.employee_deleted_at IS NULL`, identityID).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // TeamIDsForUser lists the team ids a tenant user belongs to.
 func TeamIDsForUser(ctx context.Context, q Querier, userID string) ([]string, error) {
 	rows, err := q.Query(ctx, `SELECT team_id FROM team_members WHERE user_id = $1`, userID)

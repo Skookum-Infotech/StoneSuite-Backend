@@ -49,6 +49,15 @@ func TestResolver_SortExpr(t *testing.T) {
 	if ok {
 		t.Error("expected custom field to be rejected for sorting")
 	}
+
+	// Nullable due_date must NOT be sortable (NULLs break keyset pagination)...
+	if _, _, ok := r.SortExpr("due_date"); ok {
+		t.Error("due_date is nullable and must be rejected for sorting")
+	}
+	// ...but it must still be resolvable as a filter field.
+	if _, _, ok := r.Resolve("due_date"); !ok {
+		t.Error("due_date must remain filterable via Resolve")
+	}
 }
 
 func TestResolver_SearchPredicate(t *testing.T) {

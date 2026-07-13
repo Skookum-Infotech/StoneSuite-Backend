@@ -2874,3 +2874,114 @@ CREATE INDEX IF NOT EXISTS idx_ii_so_item     ON invoice_item (sales_order_item_
 
 -- invoice_history
 CREATE INDEX IF NOT EXISTS idx_inv_history_invoice ON invoice_history (invoice_id);
+
+-- ── 000030_vendor_module ──────────────────────────────────────────────────
+-- =====================================================================
+-- Tenant migration 030: Vendor module — a dedicated relational sibling of
+-- `customer`/`sales_order` (not the generic v1 JSONB workflow engine; the
+-- pre-existing `workflows` row keyed 'vendor' from migration 010 is an
+-- unrelated legacy JSONB placeholder — see the identical note on
+-- salesorder.Create). Modeled on schema.org/Person ∩ schema.org/Organization:
+-- vendor_type discriminates which field group is authoritative. record_type
+-- VNDR and its Active/Inactive lkp_record_status rows already exist (migration
+-- 002); this adds an On Hold status alongside them.
+-- =====================================================================
+
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'ONHD', 'On Hold', record_type_id, TRUE, TRUE, 1
+FROM lkp_record_type WHERE record_type_code = 'VNDR'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS vendor (
+    vendor_id                      SERIAL        PRIMARY KEY,
+    vendor_uuid                    UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_number                  VARCHAR(20)       NULL,  -- 'VNDR-000001', generated post-insert in Go
+
+    record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = VNDR
+    vendor_status                  INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+    vendor_type                    VARCHAR(20)   NOT NULL DEFAULT 'Organization', -- schema.org @type: Person | Organization
+
+    -- Ownership (IDOR scope; team scope collapses to own — mirrors sales_order,
+    -- which has no team column either)
+    vendor_owner_id                INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Shared (schema.org properties common to Person and Organization)
+    vendor_email                   VARCHAR(100)  NOT NULL DEFAULT '',
+    vendor_physical_address        TEXT          NOT NULL DEFAULT '',
+    vendor_fax_number              VARCHAR(20)   NOT NULL DEFAULT '',
+    vendor_global_location_number  VARCHAR(20)   NOT NULL DEFAULT '',  -- schema.org globalLocationNumber
+    vendor_isic_v4_code            VARCHAR(20)   NOT NULL DEFAULT '',  -- schema.org isicV4
+    vendor_associated_brands       JSONB         NOT NULL DEFAULT '[]', -- string[] (schema.org brand)
+    vendor_awards_won              VARCHAR(255)  NOT NULL DEFAULT '',  -- schema.org award
+    vendor_contact_point           JSONB         NOT NULL DEFAULT '{}', -- schema.org ContactPoint {contactType,telephone,email}
+    vendor_funder                  VARCHAR(150)  NOT NULL DEFAULT '',  -- schema.org funder
+    vendor_offer_catalog_url       VARCHAR(255)  NOT NULL DEFAULT '',  -- schema.org hasOfferCatalog
+    vendor_point_of_sale_locations VARCHAR(255)  NOT NULL DEFAULT '',  -- schema.org hasPOS
+
+    -- schema.org/Person — authoritative when vendor_type = 'Person'
+    vendor_honorific_prefix        VARCHAR(20)   NOT NULL DEFAULT '',
+    vendor_given_name              VARCHAR(75)   NOT NULL DEFAULT '',
+    vendor_additional_name         VARCHAR(75)   NOT NULL DEFAULT '',
+    vendor_family_name             VARCHAR(75)   NOT NULL DEFAULT '',
+    vendor_honorific_suffix        VARCHAR(20)   NOT NULL DEFAULT '',
+    vendor_job_title               VARCHAR(100)  NOT NULL DEFAULT '',
+    vendor_gender                  VARCHAR(30)   NOT NULL DEFAULT '',
+    vendor_nationality_country_id  INTEGER           NULL REFERENCES lkp_country(country_id),
+    vendor_height                  VARCHAR(30)   NOT NULL DEFAULT '',
+    vendor_net_worth               VARCHAR(50)   NOT NULL DEFAULT '',
+
+    -- schema.org/Organization — authoritative when vendor_type = 'Organization'
+    vendor_legal_name              VARCHAR(150)  NOT NULL DEFAULT '',
+    vendor_registration_info       TEXT          NOT NULL DEFAULT '',
+    vendor_duns_number             VARCHAR(20)   NOT NULL DEFAULT '',
+    vendor_founding_date           DATE              NULL,
+    vendor_founding_location       VARCHAR(150)  NOT NULL DEFAULT '',
+    vendor_dissolution_date        DATE              NULL,
+    vendor_department              VARCHAR(100)  NOT NULL DEFAULT '',
+    vendor_accepted_payment_methods JSONB        NOT NULL DEFAULT '[]', -- string[]
+    vendor_compliance_policies     JSONB         NOT NULL DEFAULT '{}', -- {ethicsPolicyUrl,diversityPolicyUrl,correctionsPolicyUrl,actionableFeedbackPolicyUrl}
+
+    -- Lineage + audit (mirrors sales_order tail)
+    vendor_created_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_created_by              INTEGER           NULL REFERENCES employee(employee_id),
+    vendor_updated_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_updated_by              INTEGER           NULL REFERENCES employee(employee_id),
+    vendor_deleted_at              TIMESTAMP         NULL,
+    vendor_deleted_by              INTEGER           NULL REFERENCES employee(employee_id),
+    vendor_record_version          INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_uuid          UNIQUE (vendor_uuid),
+    CONSTRAINT uq_vendor_number        UNIQUE (vendor_number),
+    CONSTRAINT chk_vendor_type         CHECK (vendor_type IN ('Person','Organization')),
+    CONSTRAINT chk_vendor_person_names CHECK (
+        vendor_type <> 'Person' OR (vendor_given_name <> '' AND vendor_family_name <> '')
+    ),
+    CONSTRAINT chk_vendor_org_legal_name CHECK (
+        vendor_type <> 'Organization' OR vendor_legal_name <> ''
+    ),
+    CONSTRAINT chk_vendor_soft_delete CHECK (
+        (vendor_deleted_at IS NULL AND vendor_deleted_by IS NULL) OR
+        (vendor_deleted_at IS NOT NULL AND vendor_deleted_by IS NOT NULL)
+    )
+);
+
+-- vendor_history — status trail (mirrors sales_order_history, no approval)
+CREATE TABLE IF NOT EXISTS vendor_history (
+    vendor_history_id  SERIAL       PRIMARY KEY,
+    vendor_id           INTEGER      NOT NULL REFERENCES vendor(vendor_id) ON DELETE CASCADE,
+    from_status_id       INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id         INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | update
+    actor_employee_id     INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot              JSONB        NOT NULL DEFAULT '{}',
+    at                    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes — listing/filtering (all partial on live rows) -------------------
+CREATE INDEX IF NOT EXISTS idx_vendor_status      ON vendor (vendor_status)      WHERE vendor_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vendor_owner       ON vendor (vendor_owner_id)    WHERE vendor_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vendor_type        ON vendor (vendor_type)       WHERE vendor_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vendor_created_id  ON vendor (vendor_created_at, vendor_id) WHERE vendor_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vendor_updated_id  ON vendor (vendor_updated_at, vendor_id) WHERE vendor_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vendor_custom_gin  ON vendor USING GIN (vendor_associated_brands);
+CREATE INDEX IF NOT EXISTS idx_vendor_history_vendor ON vendor_history (vendor_id);

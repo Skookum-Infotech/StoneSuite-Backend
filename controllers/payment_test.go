@@ -25,6 +25,7 @@ func TestPaymentOps_RequiresAuth(t *testing.T) {
 		"Transition": h.Transition,
 		"Apply":      h.Apply,
 		"Unapply":    h.Unapply,
+		"Audit":      h.Audit,
 	}
 	for name, fn := range handlers {
 		t.Run(name, func(t *testing.T) {

@@ -147,3 +147,120 @@ func TestCreate_UnknownCustomer_IsClientError(t *testing.T) {
 		t.Fatalf("expected ClientError, got %T: %v", err, err)
 	}
 }
+
+func TestApply_CapsAtInvoiceBalance(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, invUUID := seedSentInvoice(t, pool, 100)
+	methodID := firstMethodID(t, pool)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 200}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 150, 1); err == nil {
+		t.Fatal("expected error applying more than the invoice's balance_due (100)")
+	}
+	p2, err := Apply(ctx, pool, p.ID, invUUID, 100, 1)
+	if err != nil {
+		t.Fatalf("apply within balance: %v", err)
+	}
+	if p2.AppliedTotal != 100 || p2.UnappliedAmount != 100 {
+		t.Fatalf("applied=%v unapplied=%v, want 100/100", p2.AppliedTotal, p2.UnappliedAmount)
+	}
+}
+
+func TestApply_RejectsCrossCustomerInvoice(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	_, invUUID := seedSentInvoice(t, pool, 100) // invoice belongs to its own customer
+	otherCust := seedCustomer(t, pool)          // payment belongs to a different customer
+	methodID := firstMethodID(t, pool)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: otherCust, MethodID: methodID, Amount: 100}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 50, 1); err == nil {
+		t.Fatal("expected error applying to an invoice of a different customer")
+	}
+}
+
+func TestApply_RejectsUnsentInvoice(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID := seedCustomer(t, pool)
+	methodID := firstMethodID(t, pool)
+	// Invoice left at DRFT (never transitioned to SENT).
+	var itemUUID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
+		VALUES ('DRFT-SKU', 'Item', 1, 50, 1) RETURNING inventory_item_uuid`).Scan(&itemUUID); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	inv, err := invoice.Create(ctx, pool, invoice.CreateInvoiceInput{
+		CustomerUUID: custUUID, Items: []invoice.InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 50}},
+	}, 1)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 50}, 1)
+	if err != nil {
+		t.Fatalf("create payment: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, inv.ID, 50, 1); err == nil {
+		t.Fatal("expected error applying to a DRFT invoice")
+	}
+}
+
+func TestUnapply_RestoresBalanceAndRevertsStatus(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, invUUID := seedSentInvoice(t, pool, 100)
+	methodID := firstMethodID(t, pool)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 100, 1); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	inv, _ := invoice.Get(ctx, pool, invUUID)
+	if inv.StatusCode != "PAID" {
+		t.Fatalf("expected PAID after full apply, got %s", inv.StatusCode)
+	}
+
+	p2, err := Unapply(ctx, pool, p.ID, invUUID, 1)
+	if err != nil {
+		t.Fatalf("unapply: %v", err)
+	}
+	if p2.AppliedTotal != 0 || p2.UnappliedAmount != 100 {
+		t.Fatalf("applied=%v unapplied=%v, want 0/100", p2.AppliedTotal, p2.UnappliedAmount)
+	}
+	inv2, _ := invoice.Get(ctx, pool, invUUID)
+	if inv2.AmountPaid != 0 || inv2.BalanceDue != 100 || inv2.StatusCode != "SENT" {
+		t.Fatalf("expected invoice reverted to SENT/0/100, got status=%s paid=%v balance=%v", inv2.StatusCode, inv2.AmountPaid, inv2.BalanceDue)
+	}
+}
+
+func TestApply_ReapplyIncreasesExistingRow(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, invUUID := seedSentInvoice(t, pool, 100)
+	methodID := firstMethodID(t, pool)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 40, 1); err != nil {
+		t.Fatalf("apply 1: %v", err)
+	}
+	p2, err := Apply(ctx, pool, p.ID, invUUID, 60, 1)
+	if err != nil {
+		t.Fatalf("apply 2: %v", err)
+	}
+	if len(p2.Applications) != 1 {
+		t.Fatalf("expected exactly 1 live application row (merged), got %d", len(p2.Applications))
+	}
+	if p2.Applications[0].Amount != 100 {
+		t.Fatalf("expected merged application amount 100, got %v", p2.Applications[0].Amount)
+	}
+}

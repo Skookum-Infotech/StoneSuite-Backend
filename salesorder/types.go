@@ -22,16 +22,22 @@ type AddressInput struct {
 
 // LineInput2 is one ordered line on create/update. InventoryItemUUID selects
 // a catalog item (the server snapshots its sku/name/description/unit/price/
-// tax); omit it for a free-text line, in which case Description is required.
+// tax, ignoring SKU/ItemName/UnitCode/TaxPercent below); omit it for a
+// free-text line, in which case Description is required and SKU/ItemName/
+// UnitCode/TaxPercent (when set) are taken as-is instead of derived.
 type LineInput2 struct {
-	LineNumber        int     `json:"lineNumber"`
-	InventoryItemUUID string  `json:"inventoryItemUuid"`
-	Description       string  `json:"description"`
-	Quantity          float64 `json:"quantity"`
-	UnitPrice         float64 `json:"unitPrice"`
-	DiscountPercent   float64 `json:"discountPercent"`
-	TaxRateID         *int    `json:"taxRateId"`
-	WarehouseID       *int    `json:"warehouseId"`
+	LineNumber        int      `json:"lineNumber"`
+	InventoryItemUUID string   `json:"inventoryItemUuid"`
+	Description       string   `json:"description"`
+	SKU               string   `json:"sku"`
+	ItemName          string   `json:"itemName"`
+	UnitCode          string   `json:"unitCode"`
+	Quantity          float64  `json:"quantity"`
+	UnitPrice         float64  `json:"unitPrice"`
+	DiscountPercent   float64  `json:"discountPercent"`
+	TaxRateID         *int     `json:"taxRateId"`
+	TaxPercent        *float64 `json:"taxPercent"`
+	WarehouseID       *int     `json:"warehouseId"`
 }
 
 // orderFields is the header payload shared by create and update (everything

@@ -70,10 +70,10 @@ type Invoice struct {
 	OwnerEmployeeID    *int   `json:"ownerEmployeeId,omitempty"`
 	SalesRepEmployeeID *int   `json:"salesRepEmployeeId,omitempty"`
 
-	PONumber         string     `json:"poNumber"`
-	ReferenceNumber  string     `json:"referenceNumber"`
-	InvoiceDate      time.Time  `json:"invoiceDate"`
-	DueDate          *time.Time `json:"dueDate,omitempty"`
+	PONumber         string `json:"poNumber"`
+	ReferenceNumber  string `json:"referenceNumber"`
+	InvoiceDate      string `json:"invoiceDate"`       // "yyyy-mm-dd"
+	DueDate          string `json:"dueDate,omitempty"` // "yyyy-mm-dd"
 
 	PaymentTermsID *int    `json:"paymentTermsId,omitempty"`
 	PriceLevelID   *int    `json:"priceLevelId,omitempty"`
@@ -125,8 +125,8 @@ type CreateInvoiceInput struct {
 	CustomerUUID       string         `json:"customerUuid"`
 	PONumber           string         `json:"poNumber"`
 	ReferenceNumber    string         `json:"referenceNumber"`
-	InvoiceDate        *time.Time     `json:"invoiceDate,omitempty"`
-	DueDate            *time.Time     `json:"dueDate,omitempty"`
+	InvoiceDate        string         `json:"invoiceDate"`       // "yyyy-mm-dd"; blank ⇒ CURRENT_DATE
+	DueDate            string         `json:"dueDate,omitempty"` // "yyyy-mm-dd"
 	PaymentTermsID     *int           `json:"paymentTermsId,omitempty"`
 	PriceLevelID       *int           `json:"priceLevelId,omitempty"`
 	CurrencyID         *int           `json:"currencyId,omitempty"`
@@ -150,8 +150,8 @@ type CreateInvoiceInput struct {
 type UpdateInvoiceInput struct {
 	PONumber           string         `json:"poNumber"`
 	ReferenceNumber    string         `json:"referenceNumber"`
-	InvoiceDate        *time.Time     `json:"invoiceDate,omitempty"`
-	DueDate            *time.Time     `json:"dueDate,omitempty"`
+	InvoiceDate        string         `json:"invoiceDate"`       // "yyyy-mm-dd"; blank leaves the stored date unchanged
+	DueDate            string         `json:"dueDate,omitempty"` // "yyyy-mm-dd"
 	PaymentTermsID     *int           `json:"paymentTermsId,omitempty"`
 	PriceLevelID       *int           `json:"priceLevelId,omitempty"`
 	CurrencyID         *int           `json:"currencyId,omitempty"`

@@ -48,6 +48,16 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+// isCheckViolation reports whether err is a PostgreSQL CHECK-constraint
+// violation (code 23514) — a numeric field landed outside the range a schema
+// CHECK enforces (e.g. a percent column) that Go-level validation didn't
+// already catch. A safety net so an unmapped constraint surfaces as a 400,
+// not an opaque 500.
+func isCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
 // sordRecordTypeCode is the lkp_record_type code for Sales Order (spec §1).
 const sordRecordTypeCode = "SORD"
 
@@ -347,6 +357,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 		if in.UnitPrice < 0 {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: unit price cannot be negative.", in.LineNumber)}
 		}
+		if in.DiscountPercent < 0 || in.DiscountPercent > 100 {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: discount percent must be between 0 and 100.", in.LineNumber)}
+		}
 
 		rl := resolvedLine{
 			lineNumber:      in.LineNumber,
@@ -490,6 +503,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 	if strings.TrimSpace(in.CustomerUUID) == "" {
 		return nil, ClientError{Msg: "A customer is required."}
 	}
+	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
+		return nil, ClientError{Msg: "Sales tax percent must be between 0 and 100."}
+	}
 	// CustomFields is stored as-is, unvalidated: there is no admin-configurable
 	// field-definition set for the relational sales_order module yet. It must
 	// NOT be validated against the workflow keyed "sales_order" — that is an
@@ -587,6 +603,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return nil, ClientError{Msg: "One of the referenced ids (payment terms, price level, currency, state, or country) does not exist."}
+		}
+		if isCheckViolation(err) {
+			return nil, ClientError{Msg: "One or more sales order values are out of range."}
 		}
 		return nil, fmt.Errorf("insert sales order: %w", err)
 	}
@@ -732,6 +751,9 @@ func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []re
 			if isForeignKeyViolation(err) {
 				return ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit, tax rate, or warehouse was referenced.", l.lineNumber)}
 			}
+			if isCheckViolation(err) {
+				return ClientError{Msg: fmt.Sprintf("Line %d: one or more values are out of range.", l.lineNumber)}
+			}
 			return fmt.Errorf("insert sales order item: %w", err)
 		}
 	}
@@ -758,6 +780,9 @@ func writeHistory(ctx context.Context, tx pgx.Tx, orderInternalID int, action st
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrderInput, actorEmployeeID int) (*Order, error) {
 	// See Create: CustomFields is intentionally not validated against the
 	// unrelated legacy "sales_order" v1 workflow.
+	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
+		return nil, ClientError{Msg: "Sales tax percent must be between 0 and 100."}
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update sales order: %w", err)
@@ -844,6 +869,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return nil, ClientError{Msg: "One of the referenced ids (payment terms, price level, currency, state, or country) does not exist."}
+		}
+		if isCheckViolation(err) {
+			return nil, ClientError{Msg: "One or more sales order values are out of range."}
 		}
 		return nil, fmt.Errorf("update sales order: %w", err)
 	}

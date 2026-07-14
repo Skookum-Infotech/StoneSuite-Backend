@@ -376,6 +376,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: either an inventory item or a description is required.", in.LineNumber)}
 		} else {
 			rl.desc = in.Description
+			rl.sku = strings.TrimSpace(in.SKU)
+			rl.name = strings.TrimSpace(in.ItemName)
+			rl.unitCode = strings.TrimSpace(in.UnitCode)
 		}
 
 		if rl.taxRateID != nil {
@@ -384,6 +387,11 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 				return nil, err
 			}
 			rl.taxPercent = pct
+		} else if in.TaxPercent != nil {
+			if *in.TaxPercent < 0 || *in.TaxPercent > 100 {
+				return nil, ClientError{Msg: fmt.Sprintf("Line %d: tax percent must be between 0 and 100.", in.LineNumber)}
+			}
+			rl.taxPercent = *in.TaxPercent
 		} else {
 			rl.taxPercent = headerTax
 		}

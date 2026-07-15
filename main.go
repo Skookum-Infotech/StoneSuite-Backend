@@ -537,6 +537,20 @@ func main() {
 		mux.Handle("POST /api/tenant/quotes/{uuid}/approve", tenantChain(quo.Approve))
 		mux.Handle("GET /api/tenant/quotes/{uuid}/audit", tenantChain(quo.Audit))
 
+		// Vendor: dedicated relational module (supplier/contractor directory,
+		// modeled on schema.org Person ∩ Organization) — a sibling of the CRM
+		// customer table and Sales Order, not the generic
+		// /api/tenant/crm/{workflowKey} JSONB router.
+		vnd := controllers.NewVendorOps()
+		mux.Handle("GET /api/tenant/vendors", tenantChain(vnd.List))
+		mux.Handle("POST /api/tenant/vendors/search", tenantChain(vnd.Search))
+		mux.Handle("POST /api/tenant/vendors", tenantChain(vnd.Create))
+		mux.Handle("GET /api/tenant/vendors/{uuid}", tenantChain(vnd.Get))
+		mux.Handle("PATCH /api/tenant/vendors/{uuid}", tenantChain(vnd.Update))
+		mux.Handle("DELETE /api/tenant/vendors/{uuid}", tenantChain(vnd.Delete))
+		mux.Handle("POST /api/tenant/vendors/{uuid}/transition", tenantChain(vnd.Transition))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/audit", tenantChain(vnd.Audit))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

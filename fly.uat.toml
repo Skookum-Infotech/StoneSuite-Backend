@@ -1,9 +1,6 @@
 app            = "uat-stonesuite-api"
 primary_region = "iad"
 
-[build]
-  dockerfile = "Dockerfile"
-
 [env]
   PORT                = "8080"
   # IMPORTANT: CORS_ORIGIN and FRONTEND_URL must match the exact origin of the deployed

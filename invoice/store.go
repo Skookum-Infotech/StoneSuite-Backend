@@ -29,7 +29,7 @@ const headerSelect = `
 	       COALESCE(so.sales_order_uuid::text,''), COALESCE(so.sales_order_number,''),
 	       COALESCE(ou.id::text,''), i.invoice_owner_id, i.invoice_sales_rep_id,
 	       i.invoice_po_number, i.invoice_reference_number,
-	       i.invoice_date, i.invoice_due_date,
+	       to_char(i.invoice_date,'YYYY-MM-DD'), COALESCE(to_char(i.invoice_due_date,'YYYY-MM-DD'),''),
 	       i.invoice_payment_terms, i.invoice_price_level, i.invoice_currency,
 	       i.invoice_exchange_rate, i.invoice_sales_tax_percent,
 	       i.invoice_memo, i.invoice_notes, i.invoice_internal_notes, i.invoice_terms_conditions,

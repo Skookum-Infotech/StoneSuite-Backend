@@ -172,7 +172,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 			invoice_ship_phone, invoice_ship_fax, invoice_ship_email,
 			invoice_custom_fields, invoice_created_by, invoice_updated_by
 		) VALUES (
-			$1,$2,$3, $4,$5,COALESCE($6, CURRENT_DATE),$7, $8,$9,$10,$11,$12, $13,$14, $15,$16,$17,
+			$1,$2,$3, $4,$5,COALESCE(NULLIF($6,'')::date, CURRENT_DATE),NULLIF($7,'')::date, $8,$9,$10,$11,$12, $13,$14, $15,$16,$17,
 			$18,$19,$20, $21,$22,$23,
 			$24,$25,
 			$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,

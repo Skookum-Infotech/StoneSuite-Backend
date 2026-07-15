@@ -95,7 +95,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	_, err = tx.Exec(ctx, `
 		UPDATE invoice SET
 			invoice_po_number = $1, invoice_reference_number = $2,
-			invoice_date = COALESCE($3, invoice_date), invoice_due_date = $4,
+			invoice_date = COALESCE(NULLIF($3,'')::date, invoice_date), invoice_due_date = NULLIF($4,'')::date,
 			invoice_sales_tax_percent = $5, invoice_memo = $6, invoice_notes = $7,
 			invoice_internal_notes = $8, invoice_terms_conditions = $9,
 			invoice_sales_rep_id = $10, invoice_owner_id = COALESCE($11, invoice_owner_id),

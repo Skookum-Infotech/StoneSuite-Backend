@@ -510,6 +510,20 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 
+		// Estimate: dedicated v2 relational module (header + line items + approval),
+		// a sibling of Sales Order/Invoice — not served through the generic
+		// /api/tenant/crm/{workflowKey} JSONB router.
+		est := controllers.NewEstimateOps()
+		mux.Handle("GET /api/tenant/estimates", tenantChain(est.List))
+		mux.Handle("POST /api/tenant/estimates/search", tenantChain(est.Search))
+		mux.Handle("POST /api/tenant/estimates", tenantChain(est.Create))
+		mux.Handle("GET /api/tenant/estimates/{uuid}", tenantChain(est.Get))
+		mux.Handle("PATCH /api/tenant/estimates/{uuid}", tenantChain(est.Update))
+		mux.Handle("DELETE /api/tenant/estimates/{uuid}", tenantChain(est.Delete))
+		mux.Handle("POST /api/tenant/estimates/{uuid}/transition", tenantChain(est.Transition))
+		mux.Handle("POST /api/tenant/estimates/{uuid}/approve", tenantChain(est.Approve))
+		mux.Handle("GET /api/tenant/estimates/{uuid}/audit", tenantChain(est.Audit))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

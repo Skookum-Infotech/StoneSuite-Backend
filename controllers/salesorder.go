@@ -283,8 +283,24 @@ func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 
 // Inventory GET /api/tenant/sales-orders/{uuid}/inventory
 func (h *SalesOrderOps) Inventory(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authSOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, _, ok := h.authSOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
+		return
+	}
+	// The inventory tab reads inventory_item-resource tables (stock and
+	// allocation aggregated tenant-wide), so require inventory_item:read in
+	// addition to sales_order:read — a caller with only sales_order:read must
+	// not see warehouse stock they'd be denied at GET /inventory/items.
+	invDecision, err := authz.Check(r.Context(), pool, identityID, authz.ResourceInventoryItem, authz.ActionRead)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return
+	}
+	if !invDecision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(authz.ResourceInventoryItem),
+			"action", string(authz.ActionRead), "sales_order", r.PathValue("uuid"))
+		fail(w, http.StatusForbidden, "You do not have permission to read inventory.")
 		return
 	}
 	items, err := salesorder.InventoryForOrder(r.Context(), pool, r.PathValue("uuid"))

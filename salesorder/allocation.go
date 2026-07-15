@@ -86,6 +86,7 @@ func InventoryForOrder(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]
 		       COALESCE(alloc.allocated,0), order_items.so_qty
 		FROM order_items
 		JOIN inventory_item ii ON ii.inventory_item_id = order_items.inventory_item_id
+			AND ii.inventory_item_deleted_at IS NULL
 		LEFT JOIN stock ON stock.inventory_item_id = order_items.inventory_item_id
 		LEFT JOIN alloc ON alloc.inventory_item_id = order_items.inventory_item_id
 		ORDER BY ii.inventory_item_sku`, uuid)

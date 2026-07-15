@@ -98,6 +98,8 @@ func (h *UserOps) ListUsers(w http.ResponseWriter, r *http.Request) {
 //   - Expired invite for same email → superseded (new invite created).
 //   - Email already registered to another tenant → 409.
 //   - initialRoleId supplied but does not exist → 400.
+//   - initialRoleId supplied without role:update permission → 403.
+//   - initialRoleId names a system role → 403.
 func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	payload, ok := h.authorizeUser(w, r, authz.ActionCreate)
 	if !ok {
@@ -159,14 +161,40 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If initialRoleId is specified, verify the role exists in the tenant DB.
+	// If initialRoleId is specified, the invite pre-assigns a role on accept
+	// (see AcceptInvite). Pre-assigning a role is a role:update action, so
+	// require that permission in addition to user:create — otherwise a caller
+	// holding only user:create could grant any role, up to and including
+	// super_admin, that they could never assign directly via
+	// POST /users/{id}/roles. System roles are never assignable through an
+	// invite (they are immutable and must not be handed out this way).
 	if req.InitialRoleID != "" {
-		if _, err := authz.GetRole(r.Context(), pool, req.InitialRoleID); err != nil {
+		role, err := authz.GetRole(r.Context(), pool, req.InitialRoleID)
+		if err != nil {
 			if errors.Is(err, authz.ErrRoleNotFound) {
 				fail(w, http.StatusBadRequest, "The specified role does not exist.")
 				return
 			}
 			fail(w, http.StatusInternalServerError, "Failed to validate role.")
+			return
+		}
+		roleDecision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceRole, authz.ActionUpdate)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			return
+		}
+		if !roleDecision.Allowed {
+			logSecurityEvent(r, "permission_denied",
+				"identity", payload.ID, "resource", string(authz.ResourceRole),
+				"action", string(authz.ActionUpdate), "role", req.InitialRoleID)
+			fail(w, http.StatusForbidden, "You do not have permission to assign roles.")
+			return
+		}
+		if role.IsSystem {
+			logSecurityEvent(r, "permission_denied",
+				"identity", payload.ID, "resource", string(authz.ResourceRole),
+				"action", "assign_system_role", "role", req.InitialRoleID)
+			fail(w, http.StatusForbidden, "System roles cannot be assigned through an invitation.")
 			return
 		}
 	}

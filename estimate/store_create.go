@@ -78,6 +78,13 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 		} else if strings.TrimSpace(in.Description) == "" {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: either an inventory item or a description is required.", in.LineNumber)}
 		} else {
+			// Free-text lines (no catalog item) snapshot the caller's
+			// description as both the item name and the description,
+			// mirroring invoice.resolveLine — item_name must never be left
+			// empty, or a round-tripped Update (fromEstimate -> toCreatePayload)
+			// would see neither an inventoryItemUuid nor a description and be
+			// rejected by this same check.
+			rl.name = in.Description
 			rl.desc = in.Description
 		}
 

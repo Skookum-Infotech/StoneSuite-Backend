@@ -563,6 +563,22 @@ func main() {
 		mux.Handle("POST /api/tenant/invoices/{uuid}/payment", tenantChain(invOps.RecordPayment))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/audit", tenantChain(invOps.Audit))
 
+		// Payment: dedicated v2 relational module, sibling of invoice. Its
+		// payment_application ledger is now the source of truth for invoice AR
+		// balances (spec docs/superpowers/specs/2026-07-13-payments-module-design.md).
+		payOps := controllers.NewPaymentOps()
+		mux.Handle("GET /api/tenant/payments", tenantChain(payOps.List))
+		mux.Handle("POST /api/tenant/payments/search", tenantChain(payOps.Search))
+		mux.Handle("POST /api/tenant/payments", tenantChain(payOps.Create))
+		mux.Handle("GET /api/tenant/payments/{uuid}", tenantChain(payOps.Get))
+		mux.Handle("PATCH /api/tenant/payments/{uuid}", tenantChain(payOps.Update))
+		mux.Handle("DELETE /api/tenant/payments/{uuid}", tenantChain(payOps.Delete))
+		mux.Handle("POST /api/tenant/payments/{uuid}/transition", tenantChain(payOps.Transition))
+		mux.Handle("POST /api/tenant/payments/{uuid}/apply", tenantChain(payOps.Apply))
+		mux.Handle("POST /api/tenant/payments/{uuid}/unapply", tenantChain(payOps.Unapply))
+		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
+		mux.Handle("GET /api/tenant/invoices/{uuid}/payments", tenantChain(invOps.Payments))
+
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Both embeddings and chat are self-hosted on the same Ollama box
 		// (ADR-001) — no third-party LLM account, API key, or quota.

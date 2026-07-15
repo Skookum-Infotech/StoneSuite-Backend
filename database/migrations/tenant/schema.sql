@@ -2874,3 +2874,411 @@ CREATE INDEX IF NOT EXISTS idx_ii_so_item     ON invoice_item (sales_order_item_
 
 -- invoice_history
 CREATE INDEX IF NOT EXISTS idx_inv_history_invoice ON invoice_history (invoice_id);
+CREATE TABLE IF NOT EXISTS estimate (
+    estimate_id                  SERIAL        PRIMARY KEY,
+    estimate_uuid                UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id                INTEGER          NULL,  -- platform owner stamp, no cross-DB FK (matches customer/sales_order/invoice)
+    estimate_number               VARCHAR(20)      NULL,  -- 'ESTM-000001', generated post-insert in Go
+
+    -- Classification
+    record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = ESTM
+    estimate_status                INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (optional, configuration-driven â€” AD-8, mirrors sales_order_approval_status)
+    estimate_approval_status       VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    estimate_approved_by           INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Primary info
+    estimate_customer_id           INTEGER       NOT NULL REFERENCES customer(customer_id),
+    estimate_po_number             VARCHAR(50)   NOT NULL DEFAULT '',
+    estimate_reference_number      VARCHAR(50)   NOT NULL DEFAULT '',
+    estimate_date                  DATE          NOT NULL DEFAULT CURRENT_DATE,
+    estimate_valid_until           DATE              NULL,  -- matches v1 workflow field 'valid_until'
+    estimate_sales_tax_percent     DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    estimate_memo                  TEXT          NOT NULL DEFAULT '',
+    estimate_notes                 TEXT          NOT NULL DEFAULT '',
+    estimate_internal_notes        TEXT          NOT NULL DEFAULT '',
+    estimate_terms_conditions      TEXT          NOT NULL DEFAULT '',
+
+    -- Sales assignment
+    estimate_sales_rep_id          INTEGER           NULL REFERENCES employee(employee_id),
+    estimate_owner_id              INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Terms / pricing / currency
+    estimate_payment_terms         INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    estimate_price_level           INTEGER           NULL REFERENCES lkp_price_level(price_level_id),
+    estimate_currency              INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    estimate_exchange_rate         DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored)
+    estimate_subtotal              DECIMAL(15,2) NOT NULL DEFAULT 0,
+    estimate_discount_total        DECIMAL(15,2) NOT NULL DEFAULT 0,
+    estimate_tax_total             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    estimate_shipping_charge       DECIMAL(15,2) NOT NULL DEFAULT 0,
+    estimate_adjustment            DECIMAL(15,2) NOT NULL DEFAULT 0,
+    estimate_grand_total           DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Billing snapshot (copied from customer)
+    estimate_bill_customer_name    VARCHAR(150) NOT NULL DEFAULT '',
+    estimate_bill_attention        VARCHAR(150) NOT NULL DEFAULT '',
+    estimate_bill_addr_line1       VARCHAR(100) NOT NULL DEFAULT '',
+    estimate_bill_addr_line2       VARCHAR(100) NOT NULL DEFAULT '',
+    estimate_bill_addr_suitenum    VARCHAR(20)  NOT NULL DEFAULT '',
+    estimate_bill_addr_city        VARCHAR(100) NOT NULL DEFAULT '',
+    estimate_bill_addr_state       INTEGER          NULL REFERENCES lkp_state(state_id),
+    estimate_bill_addr_zip         VARCHAR(10)  NOT NULL DEFAULT '',
+    estimate_bill_addr_country     INTEGER          NULL REFERENCES lkp_country(country_id),
+    estimate_bill_phone            VARCHAR(20)  NOT NULL DEFAULT '',
+    estimate_bill_fax              VARCHAR(20)  NOT NULL DEFAULT '',
+    estimate_bill_email            VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Shipping snapshot
+    estimate_ship_same_as_bill     BOOLEAN      NOT NULL DEFAULT FALSE,
+    estimate_ship_customer_name    VARCHAR(150) NOT NULL DEFAULT '',
+    estimate_ship_attention        VARCHAR(150) NOT NULL DEFAULT '',
+    estimate_ship_addr_line1       VARCHAR(100) NOT NULL DEFAULT '',
+    estimate_ship_addr_line2       VARCHAR(100) NOT NULL DEFAULT '',
+    estimate_ship_addr_suitenum    VARCHAR(20)  NOT NULL DEFAULT '',
+    estimate_ship_addr_city        VARCHAR(100) NOT NULL DEFAULT '',
+    estimate_ship_addr_state       INTEGER          NULL REFERENCES lkp_state(state_id),
+    estimate_ship_addr_zip         VARCHAR(10)  NOT NULL DEFAULT '',
+    estimate_ship_addr_country     INTEGER          NULL REFERENCES lkp_country(country_id),
+    estimate_ship_phone            VARCHAR(20)  NOT NULL DEFAULT '',
+    estimate_ship_fax              VARCHAR(20)  NOT NULL DEFAULT '',
+    estimate_ship_email            VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Dynamic + audit
+    estimate_custom_fields         JSONB        NOT NULL DEFAULT '{}',
+    estimate_created_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    estimate_created_by            INTEGER          NULL REFERENCES employee(employee_id),
+    estimate_updated_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    estimate_updated_by            INTEGER          NULL REFERENCES employee(employee_id),
+    estimate_deleted_at            TIMESTAMP        NULL,
+    estimate_deleted_by            INTEGER          NULL REFERENCES employee(employee_id),
+    estimate_record_version        INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_estimate_uuid       UNIQUE (estimate_uuid),
+    CONSTRAINT uq_estimate_number     UNIQUE (estimate_number),
+    CONSTRAINT chk_est_approval_status CHECK (estimate_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_est_tax_percent    CHECK (estimate_sales_tax_percent >= 0 AND estimate_sales_tax_percent <= 100),
+    CONSTRAINT chk_est_totals_nonneg  CHECK (estimate_subtotal >= 0 AND estimate_grand_total >= 0),
+    CONSTRAINT chk_est_soft_delete    CHECK (
+        (estimate_deleted_at IS NULL AND estimate_deleted_by IS NULL) OR
+        (estimate_deleted_at IS NOT NULL AND estimate_deleted_by IS NOT NULL)
+    )
+);
+
+### 5.2 `estimate_item` (line items)
+
+CREATE TABLE IF NOT EXISTS estimate_item (
+    estimate_item_id          SERIAL        PRIMARY KEY,
+    estimate_item_uuid        UUID          NOT NULL DEFAULT gen_random_uuid(),
+    estimate_id                INTEGER       NOT NULL REFERENCES estimate(estimate_id) ON DELETE CASCADE,
+    line_number                 INTEGER      NOT NULL,
+    inventory_item_id           INTEGER          NULL REFERENCES inventory_item(inventory_item_id),   -- NULL = free-text line
+
+    -- Snapshots (frozen at add time â€” never re-read from catalog)
+    item_name                   VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                          VARCHAR(50)   NOT NULL DEFAULT '',
+    description                  TEXT          NOT NULL DEFAULT '',
+    unit_id                      INTEGER          NULL REFERENCES lkp_unit(unit_id),
+    unit_code                    VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                     DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit_price                   DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent             DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    tax_rate_id                   INTEGER          NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent                   DECIMAL(6,4)  NOT NULL DEFAULT 0,
+
+    -- Stored line money
+    line_subtotal                 DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount                  DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                       DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                      DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at                 TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by                 INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at                 TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at                  TIMESTAMP        NULL,
+    item_record_version              INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_estimate_item_uuid UNIQUE (estimate_item_uuid),
+    CONSTRAINT chk_esti_qty          CHECK (quantity >= 0),
+    CONSTRAINT chk_esti_unit_price   CHECK (unit_price >= 0),
+    CONSTRAINT chk_esti_discount     CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_esti_tax          CHECK (tax_percent >= 0 AND tax_percent <= 100)
+);
+
+### 5.3 `estimate_history`
+
+CREATE TABLE IF NOT EXISTS estimate_history (
+    estimate_history_id       SERIAL       PRIMARY KEY,
+    estimate_id                 INTEGER      NOT NULL REFERENCES estimate(estimate_id) ON DELETE CASCADE,
+    from_status_id               INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                  INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                        VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | convert | update | approve
+    actor_employee_id              INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                       JSONB        NOT NULL DEFAULT '{}',
+    at                             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+### 5.4 `estimate_approver` / `estimate_approval` (AD-8, mirrors `sales_order_approver`/`_approval`)
+
+CREATE TABLE IF NOT EXISTS estimate_approver (
+    estimate_approver_id    SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = ESTM
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_estimate_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS estimate_approval (
+    estimate_approval_id    SERIAL      PRIMARY KEY,
+    estimate_id              INTEGER     NOT NULL REFERENCES estimate(estimate_id) ON DELETE CASCADE,
+    record_status_id         INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id     INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at               TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_estimate_approval UNIQUE (estimate_id, record_status_id, approver_employee_id)
+);
+
+### 5.5 `quote` (header)
+
+CREATE TABLE IF NOT EXISTS quote (
+    quote_id                     SERIAL        PRIMARY KEY,
+    quote_uuid                   UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id                 INTEGER          NULL,  -- platform owner stamp, no cross-DB FK
+    quote_number                   VARCHAR(20)      NULL,  -- 'QUOT-000001', generated post-insert in Go
+
+    -- Classification
+    record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = QUOT
+    quote_status                    INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (optional, configuration-driven â€” AD-8)
+    quote_approval_status           VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    quote_approved_by               INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Lineage (AD-5): source Estimate, if any. Nullable â€” a Quote may be created standalone.
+    quote_estimate_id                INTEGER          NULL REFERENCES estimate(estimate_id),
+
+    -- Primary info
+    quote_customer_id                INTEGER       NOT NULL REFERENCES customer(customer_id),
+    quote_po_number                  VARCHAR(50)   NOT NULL DEFAULT '',
+    quote_reference_number           VARCHAR(50)   NOT NULL DEFAULT '',
+    quote_date                       DATE          NOT NULL DEFAULT CURRENT_DATE,
+    quote_valid_until                DATE              NULL,
+    quote_sales_tax_percent          DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    quote_memo                       TEXT          NOT NULL DEFAULT '',
+    quote_notes                      TEXT          NOT NULL DEFAULT '',
+    quote_internal_notes             TEXT          NOT NULL DEFAULT '',
+    quote_terms_conditions           TEXT          NOT NULL DEFAULT '',
+
+    -- Sales assignment
+    quote_sales_rep_id               INTEGER           NULL REFERENCES employee(employee_id),
+    quote_owner_id                   INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Terms / pricing / currency
+    quote_payment_terms              INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    quote_price_level                INTEGER           NULL REFERENCES lkp_price_level(price_level_id),
+    quote_currency                   INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    quote_exchange_rate              DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored)
+    quote_subtotal                   DECIMAL(15,2) NOT NULL DEFAULT 0,
+    quote_discount_total             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    quote_tax_total                  DECIMAL(15,2) NOT NULL DEFAULT 0,
+    quote_shipping_charge            DECIMAL(15,2) NOT NULL DEFAULT 0,
+    quote_adjustment                 DECIMAL(15,2) NOT NULL DEFAULT 0,
+    quote_grand_total                DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Billing snapshot
+    quote_bill_customer_name         VARCHAR(150) NOT NULL DEFAULT '',
+    quote_bill_attention             VARCHAR(150) NOT NULL DEFAULT '',
+    quote_bill_addr_line1            VARCHAR(100) NOT NULL DEFAULT '',
+    quote_bill_addr_line2            VARCHAR(100) NOT NULL DEFAULT '',
+    quote_bill_addr_suitenum         VARCHAR(20)  NOT NULL DEFAULT '',
+    quote_bill_addr_city             VARCHAR(100) NOT NULL DEFAULT '',
+    quote_bill_addr_state            INTEGER          NULL REFERENCES lkp_state(state_id),
+    quote_bill_addr_zip              VARCHAR(10)  NOT NULL DEFAULT '',
+    quote_bill_addr_country          INTEGER          NULL REFERENCES lkp_country(country_id),
+    quote_bill_phone                 VARCHAR(20)  NOT NULL DEFAULT '',
+    quote_bill_fax                   VARCHAR(20)  NOT NULL DEFAULT '',
+    quote_bill_email                 VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Shipping snapshot
+    quote_ship_same_as_bill          BOOLEAN      NOT NULL DEFAULT FALSE,
+    quote_ship_customer_name         VARCHAR(150) NOT NULL DEFAULT '',
+    quote_ship_attention             VARCHAR(150) NOT NULL DEFAULT '',
+    quote_ship_addr_line1            VARCHAR(100) NOT NULL DEFAULT '',
+    quote_ship_addr_line2            VARCHAR(100) NOT NULL DEFAULT '',
+    quote_ship_addr_suitenum         VARCHAR(20)  NOT NULL DEFAULT '',
+    quote_ship_addr_city             VARCHAR(100) NOT NULL DEFAULT '',
+    quote_ship_addr_state            INTEGER          NULL REFERENCES lkp_state(state_id),
+    quote_ship_addr_zip              VARCHAR(10)  NOT NULL DEFAULT '',
+    quote_ship_addr_country          INTEGER          NULL REFERENCES lkp_country(country_id),
+    quote_ship_phone                 VARCHAR(20)  NOT NULL DEFAULT '',
+    quote_ship_fax                   VARCHAR(20)  NOT NULL DEFAULT '',
+    quote_ship_email                 VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Dynamic + audit
+    quote_custom_fields               JSONB        NOT NULL DEFAULT '{}',
+    quote_created_at                  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    quote_created_by                  INTEGER          NULL REFERENCES employee(employee_id),
+    quote_updated_at                  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    quote_updated_by                  INTEGER          NULL REFERENCES employee(employee_id),
+    quote_deleted_at                  TIMESTAMP        NULL,
+    quote_deleted_by                  INTEGER          NULL REFERENCES employee(employee_id),
+    quote_record_version              INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_quote_uuid       UNIQUE (quote_uuid),
+    CONSTRAINT uq_quote_number     UNIQUE (quote_number),
+    CONSTRAINT chk_quo_approval_status CHECK (quote_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_quo_tax_percent    CHECK (quote_sales_tax_percent >= 0 AND quote_sales_tax_percent <= 100),
+    CONSTRAINT chk_quo_totals_nonneg  CHECK (quote_subtotal >= 0 AND quote_grand_total >= 0),
+    CONSTRAINT chk_quo_soft_delete    CHECK (
+        (quote_deleted_at IS NULL AND quote_deleted_by IS NULL) OR
+        (quote_deleted_at IS NOT NULL AND quote_deleted_by IS NOT NULL)
+    )
+);
+
+### 5.6 `quote_item` (line items)
+
+CREATE TABLE IF NOT EXISTS quote_item (
+    quote_item_id              SERIAL        PRIMARY KEY,
+    quote_item_uuid             UUID          NOT NULL DEFAULT gen_random_uuid(),
+    quote_id                     INTEGER       NOT NULL REFERENCES quote(quote_id) ON DELETE CASCADE,
+    line_number                   INTEGER      NOT NULL,
+    inventory_item_id             INTEGER          NULL REFERENCES inventory_item(inventory_item_id),   -- NULL = free-text line
+    estimate_item_id               INTEGER          NULL REFERENCES estimate_item(estimate_item_id),     -- lineage from Estimate conversion
+
+    -- Snapshots (frozen at add/conversion time â€” never re-read from catalog)
+    item_name                      VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                              VARCHAR(50)   NOT NULL DEFAULT '',
+    description                      TEXT          NOT NULL DEFAULT '',
+    unit_id                           INTEGER          NULL REFERENCES lkp_unit(unit_id),
+    unit_code                         VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                          DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit_price                        DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent                  DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    tax_rate_id                        INTEGER          NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent                        DECIMAL(6,4)  NOT NULL DEFAULT 0,
+
+    -- Stored line money
+    line_subtotal                      DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount                       DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                            DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at                       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by                       INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at                       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at                        TIMESTAMP        NULL,
+    item_record_version                    INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_quote_item_uuid UNIQUE (quote_item_uuid),
+    CONSTRAINT chk_qi_qty         CHECK (quantity >= 0),
+    CONSTRAINT chk_qi_unit_price  CHECK (unit_price >= 0),
+    CONSTRAINT chk_qi_discount    CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_qi_tax         CHECK (tax_percent >= 0 AND tax_percent <= 100)
+);
+
+### 5.7 `quote_history`
+
+CREATE TABLE IF NOT EXISTS quote_history (
+    quote_history_id         SERIAL       PRIMARY KEY,
+    quote_id                   INTEGER      NOT NULL REFERENCES quote(quote_id) ON DELETE CASCADE,
+    from_status_id               INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                  INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                         VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | convert | update | approve
+    actor_employee_id               INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                         JSONB        NOT NULL DEFAULT '{}',
+    at                                TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+### 5.8 `quote_approver` / `quote_approval` (AD-8)
+
+CREATE TABLE IF NOT EXISTS quote_approver (
+    quote_approver_id       SERIAL      PRIMARY KEY,
+    record_type_id           INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = QUOT
+    record_status_id         INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id     INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                 BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                 INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_quote_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS quote_approval (
+    quote_approval_id       SERIAL      PRIMARY KEY,
+    quote_id                  INTEGER     NOT NULL REFERENCES quote(quote_id) ON DELETE CASCADE,
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_quote_approval UNIQUE (quote_id, record_status_id, approver_employee_id)
+);
+
+### 5.9 `quote_conversion` (AD-6 â€” Quote â†’ Sales Order lineage)
+
+CREATE TABLE IF NOT EXISTS quote_conversion (
+    quote_conversion_id      SERIAL       PRIMARY KEY,
+    quote_id                   INTEGER      NOT NULL REFERENCES quote(quote_id) ON DELETE CASCADE,
+    sales_order_id              INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    converted_at                 TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    converted_by                  INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                       JSONB        NOT NULL DEFAULT '{}',  -- lightweight {quoteItemId: salesOrderItemId} line mapping for audit
+
+    CONSTRAINT uq_quote_conversion_sales_order UNIQUE (sales_order_id)
+);
+
+### 5.10 Indexes
+
+-- estimate (listing/filtering â€” all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_est_customer      ON estimate (estimate_customer_id)  WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_status        ON estimate (estimate_status)       WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_date          ON estimate (estimate_date)         WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_sales_rep     ON estimate (estimate_sales_rep_id) WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_owner         ON estimate (estimate_owner_id)     WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_created_id    ON estimate (estimate_created_at, estimate_id)     WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_updated_id    ON estimate (estimate_updated_at, estimate_id)     WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_validuntil_id ON estimate (estimate_valid_until, estimate_id)    WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_grandtotal_id ON estimate (estimate_grand_total, estimate_id)    WHERE estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_est_custom_gin    ON estimate USING GIN (estimate_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_esti_estimate ON estimate_item (estimate_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_esti_item     ON estimate_item (inventory_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_esti_line_active
+    ON estimate_item (estimate_id, line_number) WHERE item_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_est_history_estimate ON estimate_history (estimate_id);
+
+CREATE INDEX IF NOT EXISTS idx_estimate_approver_lookup
+    ON estimate_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_estimate_approval_estimate ON estimate_approval (estimate_id);
+
+-- quote (listing/filtering â€” all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_quo_customer      ON quote (quote_customer_id)  WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_estimate       ON quote (quote_estimate_id)  WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_status         ON quote (quote_status)       WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_date           ON quote (quote_date)         WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_sales_rep      ON quote (quote_sales_rep_id) WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_owner          ON quote (quote_owner_id)     WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_created_id     ON quote (quote_created_at, quote_id)     WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_updated_id     ON quote (quote_updated_at, quote_id)     WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_validuntil_id  ON quote (quote_valid_until, quote_id)    WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_grandtotal_id  ON quote (quote_grand_total, quote_id)    WHERE quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_custom_gin     ON quote USING GIN (quote_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_qi_quote     ON quote_item (quote_id)        WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_qi_item      ON quote_item (inventory_item_id);
+CREATE INDEX IF NOT EXISTS idx_qi_est_item  ON quote_item (estimate_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_qi_line_active
+    ON quote_item (quote_id, line_number) WHERE item_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_quo_history_quote ON quote_history (quote_id);
+
+CREATE INDEX IF NOT EXISTS idx_quote_approver_lookup
+    ON quote_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_quote_approval_quote ON quote_approval (quote_id);
+
+CREATE INDEX IF NOT EXISTS idx_quote_conversion_quote ON quote_conversion (quote_id);

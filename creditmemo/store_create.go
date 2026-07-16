@@ -191,7 +191,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 			credit_memo_bill_addr_country, credit_memo_bill_phone, credit_memo_bill_fax, credit_memo_bill_email,
 			credit_memo_custom_fields, credit_memo_created_by, credit_memo_updated_by
 		) VALUES (
-			$1,$2, $3,$4,$5, $6,COALESCE($7, CURRENT_DATE),$8, $9,$10,$11,$12, $13,$14, $15,$16,
+			$1,$2, $3,$4,$5, $6,COALESCE(NULLIF($7,'')::date, CURRENT_DATE),$8, $9,$10,$11,$12, $13,$14, $15,$16,
 			$17,$18,$19,$20,$21, $22,$23,
 			$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
 			$36,$37,$38

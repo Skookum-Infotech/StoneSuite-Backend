@@ -178,10 +178,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 const systemEmployeeID = 1
 
 // SoftDelete marks an invoice deleted (paired deleted_at/deleted_by). Blocked
-// (400-mapped ClientError) while any live payment_application references it —
-// the payment must be unapplied (or voided, which cascades) first. This
-// mirrors the guard payment.SoftDelete enforces on its own side (spec AD-11:
-// every visible payment_application row's parent must always be resolvable).
+// (400-mapped ClientError) while any live payment_application OR
+// credit_memo_application references it — the payment or credit memo must be
+// unapplied (or voided, which cascades) first. This mirrors the guard
+// payment.SoftDelete and creditmemo.SoftDelete each enforce on their own side
+// (spec AD-11 / credit memo AD-16: every visible application row's parent must
+// always be resolvable).
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID int) error {
 	internalID, _, err := internalIDByUUID(ctx, pool, id)
 	if err != nil {
@@ -195,6 +197,15 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	}
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete an invoice with live payment applications; unapply them first."}
+	}
+	var liveCredits int
+	if err := pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM credit_memo_application WHERE invoice_id = $1 AND application_deleted_at IS NULL`,
+		internalID).Scan(&liveCredits); err != nil {
+		return fmt.Errorf("count live credit applications: %w", err)
+	}
+	if liveCredits > 0 {
+		return ClientError{Msg: "Cannot delete an invoice with live credit memo applications; unapply them first."}
 	}
 
 	deletedBy := actorEmployeeID

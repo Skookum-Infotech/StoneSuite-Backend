@@ -3512,3 +3512,239 @@ CREATE INDEX IF NOT EXISTS idx_vendor_created_id  ON vendor (vendor_created_at, 
 CREATE INDEX IF NOT EXISTS idx_vendor_updated_id  ON vendor (vendor_updated_at, vendor_id) WHERE vendor_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vendor_custom_gin  ON vendor USING GIN (vendor_associated_brands);
 CREATE INDEX IF NOT EXISTS idx_vendor_history_vendor ON vendor_history (vendor_id);
+
+
+-- -- 000031_credit_memo_module -----------------------------------------------
+-- =====================================================================
+-- Tenant migration 031: Credit Memo module -- a dedicated relational sibling
+-- of `invoice`/`payment` (not the generic v1 JSONB workflow engine; the
+-- pre-existing `workflows` row keyed 'credit_memo' from migration 010 is an
+-- unrelated legacy JSONB placeholder, left in place unused -- see the
+-- identical note on sales_order above).
+--
+-- A credit memo is credit issued to a customer (returned goods, overbilling,
+-- negotiated adjustment) which is applied against invoices to reduce what they
+-- owe. It is invoice-shaped (header + lines, AD-3) with payment's
+-- applied/unapplied rollup grafted on, and it moves money only through the
+-- credit_memo_application ledger (AD-6).
+--
+-- record_type CRDT (id 9) and its DRFT/APPV/APPL/VOID statuses already exist
+-- (migration 002) -- this block adds NO seed rows. The lkp_record_status seed
+-- keys statuses to record types by hardcoded integer, so it is append-only.
+--
+-- Spec: docs/superpowers/specs/2026-07-15-credit-memo-module-design.md
+-- =====================================================================
+
+-- Invoice AR rollup gains a third component (AD-4). `invoice_amount_paid`
+-- keeps meaning CASH; credit applied against an invoice accumulates here
+-- instead, so AR aging and "how much did we actually collect?" stay
+-- answerable from the invoice row.
+--   invoice_balance_due = grand_total - amount_paid - credit_total
+-- Sole writer: invoice.RecomputeBalance (invoice/balance.go, AD-5).
+ALTER TABLE invoice ADD COLUMN IF NOT EXISTS invoice_credit_total DECIMAL(15,2) NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS credit_memo (
+    credit_memo_id              SERIAL        PRIMARY KEY,
+    credit_memo_uuid            UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id              INTEGER           NULL,  -- platform owner stamp, no cross-DB FK
+    credit_memo_number          VARCHAR(20)       NULL,
+
+    -- Classification
+    record_type                 INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),
+    credit_memo_status          INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Source linkage. Both are LINEAGE ONLY (AD-2) -- they carry no money
+    -- semantics. credit_memo_application is the only thing that moves balance.
+    -- A goodwill credit has neither.
+    credit_memo_customer_id     INTEGER       NOT NULL REFERENCES customer(customer_id),
+    credit_memo_invoice_id      INTEGER           NULL REFERENCES invoice(invoice_id) ON DELETE SET NULL,
+    credit_memo_sales_order_id  INTEGER           NULL REFERENCES sales_order(sales_order_id) ON DELETE SET NULL,
+
+    -- Primary info
+    credit_memo_reference_number VARCHAR(50)  NOT NULL DEFAULT '',
+    credit_memo_date             DATE         NOT NULL DEFAULT CURRENT_DATE,
+    credit_memo_reason           VARCHAR(150) NOT NULL DEFAULT '',
+    credit_memo_sales_tax_percent DECIMAL(6,4) NOT NULL DEFAULT 0,
+    credit_memo_memo             TEXT         NOT NULL DEFAULT '',
+    credit_memo_notes            TEXT         NOT NULL DEFAULT '',
+    credit_memo_internal_notes   TEXT         NOT NULL DEFAULT '',
+
+    -- Sales assignment
+    credit_memo_sales_rep_id     INTEGER          NULL REFERENCES employee(employee_id),
+    credit_memo_owner_id         INTEGER          NULL REFERENCES employee(employee_id),
+
+    -- Pricing / currency. Display only -- no conversion is performed (AD-17).
+    credit_memo_price_level      INTEGER          NULL REFERENCES lkp_price_level(price_level_id),
+    credit_memo_currency         INTEGER          NULL REFERENCES lkp_currency(currency_id),
+    credit_memo_exchange_rate    DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored, not recomputed on read)
+    credit_memo_subtotal         DECIMAL(15,2) NOT NULL DEFAULT 0,
+    credit_memo_discount_total   DECIMAL(15,2) NOT NULL DEFAULT 0,
+    credit_memo_tax_total        DECIMAL(15,2) NOT NULL DEFAULT 0,
+    credit_memo_adjustment       DECIMAL(15,2) NOT NULL DEFAULT 0,
+    credit_memo_grand_total      DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Application rollup (stored; derived from credit_memo_application, AD-6)
+    credit_memo_applied_total    DECIMAL(15,2) NOT NULL DEFAULT 0,
+    credit_memo_unapplied_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Billing snapshot (copied from customer at create -- never re-read)
+    credit_memo_bill_customer_name VARCHAR(150) NOT NULL DEFAULT '',
+    credit_memo_bill_attention     VARCHAR(150) NOT NULL DEFAULT '',
+    credit_memo_bill_addr_line1    VARCHAR(100) NOT NULL DEFAULT '',
+    credit_memo_bill_addr_line2    VARCHAR(100) NOT NULL DEFAULT '',
+    credit_memo_bill_addr_suitenum VARCHAR(20)  NOT NULL DEFAULT '',
+    credit_memo_bill_addr_city     VARCHAR(100) NOT NULL DEFAULT '',
+    credit_memo_bill_addr_state    INTEGER          NULL REFERENCES lkp_state(state_id),
+    credit_memo_bill_addr_zip      VARCHAR(10)  NOT NULL DEFAULT '',
+    credit_memo_bill_addr_country  INTEGER          NULL REFERENCES lkp_country(country_id),
+    credit_memo_bill_phone         VARCHAR(20)  NOT NULL DEFAULT '',
+    credit_memo_bill_fax           VARCHAR(20)  NOT NULL DEFAULT '',
+    credit_memo_bill_email         VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Dynamic + lineage + audit
+    credit_memo_custom_fields    JSONB        NOT NULL DEFAULT '{}',
+    credit_memo_parent_id        INTEGER          NULL REFERENCES credit_memo(credit_memo_id),
+    credit_memo_created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    credit_memo_created_by       INTEGER          NULL REFERENCES employee(employee_id),
+    credit_memo_updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    credit_memo_updated_by       INTEGER          NULL REFERENCES employee(employee_id),
+    credit_memo_deleted_at       TIMESTAMP        NULL,
+    credit_memo_deleted_by       INTEGER          NULL REFERENCES employee(employee_id),
+    credit_memo_record_version   INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_credit_memo_uuid       UNIQUE (credit_memo_uuid),
+    CONSTRAINT uq_credit_memo_number     UNIQUE (credit_memo_number),
+    CONSTRAINT chk_cm_tax_percent        CHECK (credit_memo_sales_tax_percent >= 0 AND credit_memo_sales_tax_percent <= 100),
+    CONSTRAINT chk_cm_totals_nonneg      CHECK (credit_memo_subtotal >= 0 AND credit_memo_grand_total >= 0),
+    CONSTRAINT chk_cm_applied_nonneg     CHECK (credit_memo_applied_total >= 0 AND credit_memo_unapplied_amount >= 0),
+    CONSTRAINT chk_cm_applied_le_total   CHECK (credit_memo_applied_total <= credit_memo_grand_total),
+    CONSTRAINT chk_cm_soft_delete        CHECK (
+        (credit_memo_deleted_at IS NULL AND credit_memo_deleted_by IS NULL) OR
+        (credit_memo_deleted_at IS NOT NULL AND credit_memo_deleted_by IS NOT NULL)
+    )
+);
+
+-- credit_memo_item -- mirrors invoice_item, including its asymmetry with the
+-- header: no item_deleted_by and no item_updated_by. inventory_item_id records
+-- WHAT was credited; nothing decrements stock (AD-11 -- this repo has no
+-- inventory write path at all).
+CREATE TABLE IF NOT EXISTS credit_memo_item (
+    credit_memo_item_id      SERIAL        PRIMARY KEY,
+    credit_memo_item_uuid    UUID          NOT NULL DEFAULT gen_random_uuid(),
+    credit_memo_id            INTEGER       NOT NULL REFERENCES credit_memo(credit_memo_id) ON DELETE CASCADE,
+    line_number               INTEGER       NOT NULL,
+    inventory_item_id         INTEGER           NULL REFERENCES inventory_item(inventory_item_id),
+    invoice_item_id           INTEGER           NULL REFERENCES invoice_item(invoice_item_id) ON DELETE SET NULL,
+
+    -- Snapshots (frozen at add time -- never re-read from catalog)
+    item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)   NOT NULL DEFAULT '',
+    description               TEXT          NOT NULL DEFAULT '',
+    unit_id                   INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                 VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                  DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit_price                DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent          DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    tax_rate_id               INTEGER           NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent               DECIMAL(6,4)  NOT NULL DEFAULT 0,
+
+    -- Stored line money
+    line_subtotal             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                  DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by           INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at           TIMESTAMP         NULL,
+    item_record_version       INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_credit_memo_item_uuid UNIQUE (credit_memo_item_uuid),
+    CONSTRAINT chk_cmi_qty          CHECK (quantity >= 0),
+    CONSTRAINT chk_cmi_unit_price   CHECK (unit_price >= 0),
+    CONSTRAINT chk_cmi_discount     CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_cmi_tax          CHECK (tax_percent >= 0 AND tax_percent <= 100)
+);
+
+-- credit_memo_application -- the ledger of record (AD-6). Mirrors
+-- payment_application. Cannot reuse that table: its payment_id is NOT NULL
+-- REFERENCES payment, so a credit would need a fabricated payment row, which
+-- would corrupt invoice_amount_paid's "cash" meaning (AD-4).
+-- invoice_id is deliberately NOT ON DELETE CASCADE -- an invoice must not be
+-- hard-deletable out from under a live credit application.
+CREATE TABLE IF NOT EXISTS credit_memo_application (
+    application_id             SERIAL        PRIMARY KEY,
+    application_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
+    credit_memo_id             INTEGER       NOT NULL REFERENCES credit_memo(credit_memo_id) ON DELETE CASCADE,
+    invoice_id                 INTEGER       NOT NULL REFERENCES invoice(invoice_id),
+
+    application_amount         DECIMAL(15,2) NOT NULL,
+
+    application_created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    application_created_by     INTEGER           NULL REFERENCES employee(employee_id),
+    application_deleted_at     TIMESTAMP         NULL,
+    application_deleted_by     INTEGER           NULL REFERENCES employee(employee_id),
+    application_record_version INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_credit_memo_application_uuid UNIQUE (application_uuid),
+    CONSTRAINT chk_cm_app_amount_pos           CHECK (application_amount > 0),
+    CONSTRAINT chk_cm_app_soft_delete          CHECK (
+        (application_deleted_at IS NULL AND application_deleted_by IS NULL) OR
+        (application_deleted_at IS NOT NULL AND application_deleted_by IS NOT NULL)
+    )
+);
+
+-- credit_memo_history -- typed status trail, written INSIDE the mutation
+-- transaction (unlike audit_logs, written outside it from the controller).
+CREATE TABLE IF NOT EXISTS credit_memo_history (
+    credit_memo_history_id  SERIAL       PRIMARY KEY,
+    credit_memo_id          INTEGER      NOT NULL REFERENCES credit_memo(credit_memo_id) ON DELETE CASCADE,
+    from_status_id          INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id            INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                  VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | update | transition | apply | unapply
+    actor_employee_id       INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                JSONB        NOT NULL DEFAULT '{}',
+    at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes -- listing/filtering (all partial on live rows) -------------------
+CREATE INDEX IF NOT EXISTS idx_cm_customer      ON credit_memo (credit_memo_customer_id)    WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_invoice       ON credit_memo (credit_memo_invoice_id)     WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_sales_order   ON credit_memo (credit_memo_sales_order_id) WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_status        ON credit_memo (credit_memo_status)         WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_date          ON credit_memo (credit_memo_date)           WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_sales_rep     ON credit_memo (credit_memo_sales_rep_id)   WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_owner         ON credit_memo (credit_memo_owner_id)       WHERE credit_memo_deleted_at IS NULL;
+-- Keyset pagination tiebreakers (one per sortable column + id)
+CREATE INDEX IF NOT EXISTS idx_cm_created_id    ON credit_memo (credit_memo_created_at, credit_memo_id)       WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_updated_id    ON credit_memo (credit_memo_updated_at, credit_memo_id)       WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_date_id       ON credit_memo (credit_memo_date, credit_memo_id)             WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_total_id      ON credit_memo (credit_memo_grand_total, credit_memo_id)      WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_unapplied_id  ON credit_memo (credit_memo_unapplied_amount, credit_memo_id) WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_status_created ON credit_memo (credit_memo_status, credit_memo_created_at, credit_memo_id) WHERE credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_custom_gin    ON credit_memo USING GIN (credit_memo_custom_fields);
+
+-- credit_memo_item
+-- Line numbers are unique per memo among LIVE rows only, so Update can
+-- soft-delete a line and re-insert the same line_number (mirrors uq_ii_line_active).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cmi_line_active
+    ON credit_memo_item (credit_memo_id, line_number) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cmi_memo       ON credit_memo_item (credit_memo_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cmi_item       ON credit_memo_item (inventory_item_id);
+CREATE INDEX IF NOT EXISTS idx_cmi_inv_item   ON credit_memo_item (invoice_item_id);
+
+-- credit_memo_application -- one live row per (memo, invoice) pair, so a
+-- re-apply increments the existing row rather than inserting a second
+-- (mirrors uq_pay_app_live_pair).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cm_app_live_pair
+    ON credit_memo_application (credit_memo_id, invoice_id) WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_app_memo    ON credit_memo_application (credit_memo_id) WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_app_invoice ON credit_memo_application (invoice_id)     WHERE application_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_cm_history_memo ON credit_memo_history (credit_memo_id);
+
+-- Invoice's new credit rollup column (sortable via the invoice resolver).
+CREATE INDEX IF NOT EXISTS idx_inv_credit_id  ON invoice (invoice_credit_total, invoice_id) WHERE invoice_deleted_at IS NULL;

@@ -9,19 +9,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/creditmemo"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
-	"stonesuite-backend/payment"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
 
-type PaymentOps struct{}
+type CreditMemoOps struct{}
 
-func NewPaymentOps() *PaymentOps { return &PaymentOps{} }
+func NewCreditMemoOps() *CreditMemoOps { return &CreditMemoOps{} }
 
-func (h *PaymentOps) authPayment(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
+func (h *CreditMemoOps) authCreditMemo(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
@@ -32,47 +32,48 @@ func (h *PaymentOps) authPayment(w http.ResponseWriter, r *http.Request, action 
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return nil, "", "", false
 	}
-	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourcePayment, action)
+	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceCreditMemo, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false
 	}
 	if !decision.Allowed {
 		logSecurityEvent(r, "permission_denied",
-			"identity", payload.ID, "resource", string(authz.ResourcePayment), "action", string(action))
-		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" payments.")
+			"identity", payload.ID, "resource", string(authz.ResourceCreditMemo), "action", string(action))
+		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" credit memos.")
 		return nil, "", "", false
 	}
 	return pool, payload.ID, decision.Scope, true
 }
 
-func (h *PaymentOps) authPaymentByUUID(w http.ResponseWriter, r *http.Request, uuid string, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
-	pool, identityID, scope, ok := h.authPayment(w, r, action)
+func (h *CreditMemoOps) authCreditMemoByUUID(w http.ResponseWriter, r *http.Request, uuid string, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
+	pool, identityID, scope, ok := h.authCreditMemo(w, r, action)
 	if !ok {
 		return nil, "", "", false
 	}
 	if scope == authz.ScopeAll {
 		return pool, identityID, scope, true
 	}
-	p, err := payment.Get(r.Context(), pool, uuid)
-	if errors.Is(err, payment.ErrNotFound) {
-		fail(w, http.StatusNotFound, "Payment not found.")
+	cm, err := creditmemo.Get(r.Context(), pool, uuid)
+	if errors.Is(err, creditmemo.ErrNotFound) {
+		fail(w, http.StatusNotFound, "Credit memo not found.")
 		return nil, "", "", false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load payment.")
+		fail(w, http.StatusInternalServerError, "Failed to load credit memo.")
 		return nil, "", "", false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, p.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, cm.OwnerUserID, "")
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false
 	}
 	if !allowed {
 		logSecurityEvent(r, "idor_denied",
-			"identity", identityID, "record", uuid, "resource", string(authz.ResourcePayment),
+			"identity", identityID, "record", uuid, "resource", string(authz.ResourceCreditMemo),
 			"action", string(action), "scope", string(scope))
-		fail(w, http.StatusNotFound, "Payment not found.")
+		// 404, not 403: a 403 would confirm the id exists and let it be enumerated.
+		fail(w, http.StatusNotFound, "Credit memo not found.")
 		return nil, "", "", false
 	}
 	return pool, identityID, scope, true
@@ -82,8 +83,8 @@ func (h *PaymentOps) authPaymentByUUID(w http.ResponseWriter, r *http.Request, u
 // target invoice is within their scope, writing the response and returning
 // false on denial (404 on scope denial, per the IDOR convention). Used by
 // Apply/Unapply because those endpoints mutate an invoice's AR balance as a
-// side effect of a payment-side action.
-func (h *PaymentOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID, invoiceUUID string) bool {
+// side effect of a credit-memo-side action.
+func (h *CreditMemoOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID, invoiceUUID string) bool {
 	decision, err := authz.Check(r.Context(), pool, identityID, authz.ResourceInvoice, authz.ActionUpdate)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
@@ -122,21 +123,20 @@ func (h *PaymentOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
-func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
+func creditMemoFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
-	case errors.Is(err, payment.ErrNotFound):
-		fail(w, http.StatusNotFound, "Payment not found.")
-	case errors.Is(err, payment.ErrInvalidTransition):
+	case errors.Is(err, creditmemo.ErrNotFound):
+		fail(w, http.StatusNotFound, "Credit memo not found.")
+	case errors.Is(err, creditmemo.ErrInvalidTransition):
 		fail(w, http.StatusConflict, err.Error())
 	default:
-		var ce payment.ClientError
+		var ce creditmemo.ClientError
 		if errors.As(err, &ce) {
 			fail(w, http.StatusBadRequest, ce.Error())
 			return
 		}
 		// Apply/Unapply reach into the invoice package for the row lock and the
-		// AR rollup, so a bad invoice surfaces as invoice.ClientError. Without
-		// this arm it would fall through to 500.
+		// AR rollup, so a bad invoice surfaces as invoice.ClientError.
 		var ice invoice.ClientError
 		if errors.As(err, &ice) {
 			fail(w, http.StatusBadRequest, ice.Error())
@@ -151,84 +151,85 @@ func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
 	}
 }
 
-func (h *PaymentOps) Create(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, _, ok := h.authPayment(w, r, authz.ActionCreate)
+func (h *CreditMemoOps) Create(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, _, ok := h.authCreditMemo(w, r, authz.ActionCreate)
 	if !ok {
 		return
 	}
-	var in payment.CreatePaymentInput
+	var in creditmemo.CreateCreditMemoInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	for _, app := range in.Applications {
-		if !h.invoiceInScopeForUpdate(w, r, pool, identityID, app.InvoiceUUID) {
-			return
-		}
+	// A new memo starts at DRFT and cannot move credit (spec AD-7), so Create
+	// never applies. Reject rather than silently ignoring the field.
+	if len(in.Applications) > 0 {
+		fail(w, http.StatusBadRequest, "A new credit memo starts as a draft and cannot be applied; approve it first, then apply.")
+		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	p, err := payment.Create(r.Context(), pool, in, empID)
+	cm, err := creditmemo.Create(r.Context(), pool, in, empID)
 	if err != nil {
-		paymentFail(w, err, "Failed to create payment.")
+		creditMemoFail(w, err, "Failed to create credit memo.")
 		return
 	}
-	auditPayment(r, pool, empID, "create", p.ID, nil, p)
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "payment": p})
+	auditCreditMemo(r, pool, empID, "create", cm.ID, nil, cm)
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "creditMemo": cm})
 }
 
-func (h *PaymentOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authPaymentByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+func (h *CreditMemoOps) Get(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authCreditMemoByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	p, err := payment.Get(r.Context(), pool, r.PathValue("uuid"))
+	cm, err := creditmemo.Get(r.Context(), pool, r.PathValue("uuid"))
 	if err != nil {
-		paymentFail(w, err, "Failed to load payment.")
+		creditMemoFail(w, err, "Failed to load credit memo.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }
 
-func (h *PaymentOps) Update(w http.ResponseWriter, r *http.Request) {
+func (h *CreditMemoOps) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("uuid")
-	pool, identityID, _, ok := h.authPaymentByUUID(w, r, id, authz.ActionUpdate)
+	pool, identityID, _, ok := h.authCreditMemoByUUID(w, r, id, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	var in payment.UpdatePaymentInput
+	var in creditmemo.UpdateCreditMemoInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	before, _ := payment.Get(r.Context(), pool, id)
+	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := payment.Update(r.Context(), pool, id, in, empID)
+	after, err := creditmemo.Update(r.Context(), pool, id, in, empID)
 	if err != nil {
-		paymentFail(w, err, "Failed to update payment.")
+		creditMemoFail(w, err, "Failed to update credit memo.")
 		return
 	}
-	auditPayment(r, pool, empID, "update", id, before, after)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": after})
+	auditCreditMemo(r, pool, empID, "update", id, before, after)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": after})
 }
 
-func (h *PaymentOps) Delete(w http.ResponseWriter, r *http.Request) {
+func (h *CreditMemoOps) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("uuid")
-	pool, identityID, _, ok := h.authPaymentByUUID(w, r, id, authz.ActionDelete)
+	pool, identityID, _, ok := h.authCreditMemoByUUID(w, r, id, authz.ActionDelete)
 	if !ok {
 		return
 	}
-	before, _ := payment.Get(r.Context(), pool, id)
+	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := payment.SoftDelete(r.Context(), pool, id, empID); err != nil {
-		paymentFail(w, err, "Failed to delete payment.")
+	if err := creditmemo.SoftDelete(r.Context(), pool, id, empID); err != nil {
+		creditMemoFail(w, err, "Failed to delete credit memo.")
 		return
 	}
-	auditPayment(r, pool, empID, "delete", id, before, nil)
-	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Payment deleted."})
+	auditCreditMemo(r, pool, empID, "delete", id, before, nil)
+	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Credit memo deleted."})
 }
 
-func (h *PaymentOps) List(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, scope, ok := h.authPayment(w, r, authz.ActionRead)
+func (h *CreditMemoOps) List(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, scope, ok := h.authCreditMemo(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -238,9 +239,9 @@ func (h *PaymentOps) List(w http.ResponseWriter, r *http.Request) {
 			req.Limit = n
 		}
 	}
-	page, err := payment.Search(r.Context(), pool, string(scope), identityID, req)
+	page, err := creditmemo.Search(r.Context(), pool, string(scope), identityID, req)
 	if err != nil {
-		paymentFail(w, err, "Failed to list payments.")
+		creditMemoFail(w, err, "Failed to list credit memos.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -249,8 +250,8 @@ func (h *PaymentOps) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *PaymentOps) Search(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, scope, ok := h.authPayment(w, r, authz.ActionRead)
+func (h *CreditMemoOps) Search(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, scope, ok := h.authCreditMemo(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -261,9 +262,9 @@ func (h *PaymentOps) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	page, err := payment.Search(r.Context(), pool, string(scope), identityID, req)
+	page, err := creditmemo.Search(r.Context(), pool, string(scope), identityID, req)
 	if err != nil {
-		paymentFail(w, err, "Failed to search payments.")
+		creditMemoFail(w, err, "Failed to search credit memos.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

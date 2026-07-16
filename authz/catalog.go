@@ -158,6 +158,11 @@ var catalog = []Permission{
 	{ResourceCreditMemo, ActionUpdate},
 	{ResourceCreditMemo, ActionDelete},
 	{ResourceCreditMemo, ActionTransition},
+	// Approving a credit memo (DRFT->APPV) is what authorizes real credit
+	// against AR, so it is a distinct capability from moving the record around:
+	// a sales role can hold create/read/update without ever being able to
+	// approve its own drafts. Every other CRDT transition uses ActionTransition.
+	{ResourceCreditMemo, ActionApprove},
 
 	{ResourceRefund, ActionCreate},
 	{ResourceRefund, ActionRead},

@@ -579,6 +579,24 @@ func main() {
 		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/payments", tenantChain(invOps.Payments))
 
+		// Credit Memo: dedicated v2 relational module, sibling of invoice and
+		// payment. Its credit_memo_application ledger feeds invoice_credit_total,
+		// the non-cash half of an invoice's balance_due — payment_application
+		// remains the cash half (spec
+		// docs/superpowers/specs/2026-07-15-credit-memo-module-design.md).
+		cmOps := controllers.NewCreditMemoOps()
+		mux.Handle("GET /api/tenant/credit-memos", tenantChain(cmOps.List))
+		mux.Handle("POST /api/tenant/credit-memos/search", tenantChain(cmOps.Search))
+		mux.Handle("POST /api/tenant/credit-memos", tenantChain(cmOps.Create))
+		mux.Handle("GET /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Get))
+		mux.Handle("PATCH /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Update))
+		mux.Handle("DELETE /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Delete))
+		mux.Handle("POST /api/tenant/credit-memos/{uuid}/transition", tenantChain(cmOps.Transition))
+		mux.Handle("POST /api/tenant/credit-memos/{uuid}/apply", tenantChain(cmOps.Apply))
+		mux.Handle("POST /api/tenant/credit-memos/{uuid}/unapply", tenantChain(cmOps.Unapply))
+		mux.Handle("GET /api/tenant/credit-memos/{uuid}/audit", tenantChain(cmOps.Audit))
+		mux.Handle("GET /api/tenant/invoices/{uuid}/credit-memos", tenantChain(invOps.CreditMemos))
+
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Both embeddings and chat are self-hosted on the same Ollama box
 		// (ADR-001) — no third-party LLM account, API key, or quota.

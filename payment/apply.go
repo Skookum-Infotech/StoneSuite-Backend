@@ -7,12 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
 
-// invoicePayableStatuses are the only invoice statuses Apply accepts new
-// money against — identical to the gate the retired invoice.RecordPayment
-// enforced (spec §8, §11).
-var invoicePayableStatuses = map[string]bool{"SENT": true, "PART": true, "ODUE": true}
+	"stonesuite-backend/invoice"
+)
 
 // systemEmployeeID is the fallback actor for soft-delete columns that must
 // never be NULL when their paired *_deleted_at timestamp is set (enforced by
@@ -27,35 +24,6 @@ func actorOrSystem(actorEmployeeID int) int {
 		return systemEmployeeID
 	}
 	return actorEmployeeID
-}
-
-type lockedInvoice struct {
-	internalID int
-	customerID int
-	statusCode string
-	grandTotal float64
-	amountPaid float64
-}
-
-// lockInvoiceForUpdate loads + row-locks a live invoice by uuid inside tx.
-// Callers must already hold the payment row's lock first (fixed lock order:
-// payment before invoice) to keep Apply/Unapply/void-cascade deadlock-free.
-func lockInvoiceForUpdate(ctx context.Context, tx pgx.Tx, invoiceUUID string) (lockedInvoice, error) {
-	var li lockedInvoice
-	err := tx.QueryRow(ctx, `
-		SELECT i.invoice_id, i.invoice_customer_id, rs.record_status_code, i.invoice_grand_total, i.invoice_amount_paid
-		FROM invoice i
-		JOIN lkp_record_status rs ON rs.record_status_id = i.invoice_status
-		WHERE i.invoice_uuid = $1 AND i.invoice_deleted_at IS NULL
-		FOR UPDATE OF i`, invoiceUUID,
-	).Scan(&li.internalID, &li.customerID, &li.statusCode, &li.grandTotal, &li.amountPaid)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return lockedInvoice{}, ClientError{Msg: "Unknown or deleted invoice."}
-	}
-	if err != nil {
-		return lockedInvoice{}, fmt.Errorf("lock invoice: %w", err)
-	}
-	return li, nil
 }
 
 type lockedPayment struct {
@@ -103,72 +71,10 @@ func recomputePayment(ctx context.Context, tx pgx.Tx, internalID int, amount flo
 	return nil
 }
 
-// deriveInvoiceStatus re-derives an invoice's status purely from its
-// recomputed balance (spec §8 Apply/Unapply steps). This intentionally does
-// NOT go through invoice.CanTransition: that map is for user-directed
-// transitions and has no path back out of PAID, or from PART to SENT — moves
-// an Unapply legitimately needs. See Task 3.3 step 1 for the full rationale.
-func deriveInvoiceStatus(currentCode string, amountPaid, grandTotal float64) string {
-	balanceDue := grandTotal - amountPaid
-	switch {
-	case balanceDue <= 0.005:
-		return "PAID"
-	case amountPaid > 0.005:
-		return "PART"
-	case currentCode == "PART" || currentCode == "PAID":
-		return "SENT" // fully unapplied back to zero; ODUE re-flagging is a separate concern
-	default:
-		return currentCode
-	}
-}
-
-// recomputeInvoice recomputes invoice_amount_paid/balance_due from live
-// payment_application rows (across all payments), re-derives status, and
-// writes both plus an invoice_history row, inside tx.
-func recomputeInvoice(ctx context.Context, tx pgx.Tx, li lockedInvoice, action string, actorEmployeeID int) error {
-	var amountPaid float64
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(pa.application_amount), 0)
-		FROM payment_application pa
-		JOIN payment p ON p.payment_id = pa.payment_id
-		WHERE pa.invoice_id = $1 AND pa.application_deleted_at IS NULL AND p.payment_deleted_at IS NULL`,
-		li.internalID).Scan(&amountPaid); err != nil {
-		return fmt.Errorf("sum invoice applications: %w", err)
-	}
-	amountPaid = round2(amountPaid)
-	balanceDue := round2(li.grandTotal - amountPaid)
-	if balanceDue < 0 {
-		balanceDue = 0
-	}
-
-	toCode := deriveInvoiceStatus(li.statusCode, amountPaid, li.grandTotal)
-	var invTypeID int
-	if err := tx.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'INVC'`).Scan(&invTypeID); err != nil {
-		return fmt.Errorf("resolve INVC type: %w", err)
-	}
-	var fromStatusID, toStatusID int
-	if err := tx.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = $2`,
-		invTypeID, li.statusCode).Scan(&fromStatusID); err != nil {
-		return fmt.Errorf("resolve invoice from-status: %w", err)
-	}
-	if err := tx.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = $2`,
-		invTypeID, toCode).Scan(&toStatusID); err != nil {
-		return fmt.Errorf("resolve invoice to-status: %w", err)
-	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE invoice SET invoice_amount_paid = $1, invoice_balance_due = $2, invoice_status = $3,
-			invoice_updated_at = NOW(), invoice_updated_by = $4, invoice_record_version = invoice_record_version + 1
-		WHERE invoice_id = $5`, amountPaid, balanceDue, toStatusID, nullableInt(actorEmployeeID), li.internalID); err != nil {
-		return fmt.Errorf("update invoice rollup: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO invoice_history (invoice_id, from_status_id, to_status_id, action, actor_employee_id)
-		VALUES ($1, $2, $3, $4, $5)`, li.internalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID)); err != nil {
-		return fmt.Errorf("insert invoice %s history: %w", action, err)
-	}
-	return nil
-}
+// The invoice AR rollup -- and the status derived from it -- now lives in
+// invoice.RecomputeBalance / invoice.DeriveStatus, because credit memos write
+// it too (credit_memo_application). Keeping a second copy here is how the cash
+// and credit ledgers would silently drift apart.
 
 // Apply allocates amount of paymentUUID's unapplied balance to invoiceUUID.
 // Caps at min(payment.unapplied_amount, invoice.balance_due); rejects (400)
@@ -192,15 +98,15 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 	if lp.statusCode == "VOID" {
 		return nil, ClientError{Msg: "Cannot apply a voided payment."}
 	}
-	li, err := lockInvoiceForUpdate(ctx, tx, invoiceUUID) // then invoice
+	li, err := invoice.LockForUpdate(ctx, tx, invoiceUUID) // then invoice
 	if err != nil {
 		return nil, err
 	}
-	if li.customerID != lp.customerID {
+	if li.CustomerID != lp.customerID {
 		return nil, ClientError{Msg: "Invoice belongs to a different customer than the payment."}
 	}
-	if !invoicePayableStatuses[li.statusCode] {
-		return nil, ClientError{Msg: "Cannot apply payment to a " + li.statusCode + " invoice; it must be sent first."}
+	if !invoice.PayableStatuses[li.StatusCode] {
+		return nil, ClientError{Msg: "Cannot apply payment to a " + li.StatusCode + " invoice; it must be sent first."}
 	}
 
 	var applied float64
@@ -208,7 +114,9 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 		return nil, fmt.Errorf("sum payment applications: %w", err)
 	}
 	unapplied := round2(lp.amount - applied)
-	invoiceBalance := round2(li.grandTotal - li.amountPaid)
+	// BalanceDue nets off credit memos as well as cash, so a credited invoice
+	// cannot be overpaid.
+	invoiceBalance := li.BalanceDue()
 	capAmt := unapplied
 	if invoiceBalance < capAmt {
 		capAmt = invoiceBalance
@@ -219,12 +127,12 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 
 	var existingID int
 	err = tx.QueryRow(ctx, `SELECT application_id FROM payment_application WHERE payment_id = $1 AND invoice_id = $2 AND application_deleted_at IS NULL`,
-		lp.internalID, li.internalID).Scan(&existingID)
+		lp.internalID, li.InternalID).Scan(&existingID)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO payment_application (payment_id, invoice_id, application_amount, application_created_by)
-			VALUES ($1,$2,$3,$4)`, lp.internalID, li.internalID, round2(amount), nullableInt(actorEmployeeID)); err != nil {
+			VALUES ($1,$2,$3,$4)`, lp.internalID, li.InternalID, round2(amount), nullableInt(actorEmployeeID)); err != nil {
 			return nil, fmt.Errorf("insert payment application: %w", err)
 		}
 	case err != nil:
@@ -240,7 +148,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 	if err := recomputePayment(ctx, tx, lp.internalID, lp.amount, actorEmployeeID); err != nil {
 		return nil, err
 	}
-	if err := recomputeInvoice(ctx, tx, li, "payment", actorEmployeeID); err != nil {
+	if err := invoice.RecomputeBalance(ctx, tx, li, "payment", actorEmployeeID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -270,7 +178,7 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID s
 	if err != nil {
 		return nil, err
 	}
-	li, err := lockInvoiceForUpdate(ctx, tx, invoiceUUID)
+	li, err := invoice.LockForUpdate(ctx, tx, invoiceUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +186,7 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID s
 	tag, err := tx.Exec(ctx, `
 		UPDATE payment_application SET application_deleted_at = NOW(), application_deleted_by = $1
 		WHERE payment_id = $2 AND invoice_id = $3 AND application_deleted_at IS NULL`,
-		actorOrSystem(actorEmployeeID), lp.internalID, li.internalID)
+		actorOrSystem(actorEmployeeID), lp.internalID, li.InternalID)
 	if err != nil {
 		return nil, fmt.Errorf("unapply: %w", err)
 	}
@@ -289,7 +197,7 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID s
 	if err := recomputePayment(ctx, tx, lp.internalID, lp.amount, actorEmployeeID); err != nil {
 		return nil, err
 	}
-	if err := recomputeInvoice(ctx, tx, li, "unapply", actorEmployeeID); err != nil {
+	if err := invoice.RecomputeBalance(ctx, tx, li, "unapply", actorEmployeeID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `

@@ -48,8 +48,8 @@ func seedCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, itemUUID s
 	}
 
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_price, inventory_item_created_by)
-		VALUES ($1, $2, 25.00, 1) RETURNING inventory_item_uuid`,
+		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
+		VALUES ($1, $2, 1, 25.00, 1) RETURNING inventory_item_uuid`,
 		"SKU-"+suffix, "Test Item "+suffix).Scan(&itemUUID); err != nil {
 		t.Fatalf("seed inventory item: %v", err)
 	}

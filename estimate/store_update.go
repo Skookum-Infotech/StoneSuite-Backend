@@ -60,6 +60,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEstim
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
 
+	// estimate_custom_fields is NOT NULL DEFAULT '{}'; a nil map encodes as SQL
+	// NULL and violates the constraint.
+	custom := in.CustomFields
+	if custom == nil {
+		custom = map[string]any{}
+	}
+
 	cv := []colVal{
 		{"estimate_po_number", in.PONumber, ""},
 		{"estimate_reference_number", in.ReferenceNumber, ""},
@@ -82,7 +89,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEstim
 		{"estimate_adjustment", in.Adjustment, ""},
 		{"estimate_grand_total", header.GrandTotal, ""},
 		{"estimate_ship_same_as_bill", in.ShipSameAsBilling, ""},
-		{"estimate_custom_fields", in.CustomFields, ""},
+		{"estimate_custom_fields", custom, ""},
 	}
 	cv = append(cv, addrColVals("estimate_bill", billing)...)
 	cv = append(cv, addrColVals("estimate_ship", shipping)...)

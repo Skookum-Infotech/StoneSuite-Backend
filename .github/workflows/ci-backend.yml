@@ -26,6 +26,102 @@ jobs:
       - name: Test
         run: go test ./...
 
+  schema-apply:
+    name: Schema apply · Idempotency · DB tests
+    runs-on: ubuntu-latest
+    # pgvector, not stock postgres: the RAG tables need CREATE EXTENSION vector,
+    # which Neon provides in production and plain postgres:16 does not.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      PGPASSWORD: postgres
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache-dependency-path: go.sum
+
+      # --single-transaction is REQUIRED, not tidiness: it matches what the Go
+      # code does (ApplyTenantSchema runs the whole file in one tx.Exec). Under
+      # psql's default autocommit, the `CREATE TEMP TABLE ... ON COMMIT DROP`
+      # tables are dropped between statements and the apply fails spuriously.
+      - name: Apply tenant schema to a fresh database
+        run: |
+          psql -d postgres -c 'CREATE DATABASE tenant_fresh;'
+          psql -d tenant_fresh --single-transaction -v ON_ERROR_STOP=1 \
+               -f database/migrations/tenant/schema.sql
+
+      # "Editing the SQL file IS the migration" -- it is re-applied on every
+      # boot and provision, against databases in any prior state. Re-applying
+      # proves idempotency, which add-migration/SKILL.md asks a human to check
+      # by hand.
+      - name: Re-apply tenant schema (proves idempotency)
+        run: |
+          psql -d tenant_fresh --single-transaction -v ON_ERROR_STOP=1 \
+               -f database/migrations/tenant/schema.sql
+
+      - name: Apply control-plane schema twice
+        run: |
+          psql -d postgres -c 'CREATE DATABASE cp_fresh;'
+          psql -d cp_fresh --single-transaction -v ON_ERROR_STOP=1 \
+               -f database/migrations/control_plane/schema.sql
+          psql -d cp_fresh --single-transaction -v ON_ERROR_STOP=1 \
+               -f database/migrations/control_plane/schema.sql
+
+      # These are excluded from `go test ./...` at COMPILE time (no -tags
+      # dbtest), so until now nothing has ever executed a store, conversion or
+      # AR-rollup path in CI.
+      #
+      # One fresh database PER PACKAGE. Several dbtests assert on the absence
+      # of global config (estimate's TestApprove_RequiresConfiguredApprover
+      # expects no *_approver rows), so a shared database makes them
+      # order-dependent. Per-package databases also mirror production, where
+      # every tenant DB is created fresh from this same schema.sql.
+      - name: Run DB-backed tests (-tags dbtest)
+        run: |
+          set -euo pipefail
+          psql -d postgres -c 'CREATE DATABASE cp_tests;'
+          psql -d cp_tests --single-transaction -v ON_ERROR_STOP=1 \
+               -f database/migrations/control_plane/schema.sql
+          cp_dsn="postgres://postgres:postgres@localhost:5432/cp_tests"
+
+          # Read line-by-line rather than relying on word-splitting an
+          # unquoted $pkgs: package paths are newline-separated and splitting
+          # behaviour differs between shells.
+          grep -rl '^//go:build dbtest' --include='*_test.go' . \
+            | xargs -n1 dirname | sort -u | sed 's|^\./||' > /tmp/dbtest_pkgs
+          echo "dbtest packages:"; cat /tmp/dbtest_pkgs
+
+          rc=0
+          while IFS= read -r dir; do
+            [ -n "$dir" ] || continue
+            db="t_$(printf '%s' "$dir" | tr '/-' '__')"
+            psql -d postgres -c "CREATE DATABASE $db;"
+            psql -d "$db" --single-transaction -v ON_ERROR_STOP=1 \
+                 -f database/migrations/tenant/schema.sql >/dev/null
+            echo "::group::dbtest $dir"
+            TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/$db" \
+            TEST_CP_DATABASE_URL="$cp_dsn" \
+              go test -tags dbtest -count=1 "./$dir/" || rc=1
+            echo "::endgroup::"
+          done < /tmp/dbtest_pkgs
+          exit $rc
+
   govulncheck:
     name: Vulnerability scan
     runs-on: ubuntu-latest

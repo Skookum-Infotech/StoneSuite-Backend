@@ -38,8 +38,8 @@ type LineInput struct {
 type quoteFields struct {
 	PONumber           string         `json:"poNumber"`
 	ReferenceNumber    string         `json:"referenceNumber"`
-	QuoteDate       string         `json:"quoteDate"` // "yyyy-mm-dd"
-	ValidUntil         string         `json:"validUntil"`   // "yyyy-mm-dd"
+	QuoteDate          string         `json:"quoteDate"`  // "yyyy-mm-dd"
+	ValidUntil         string         `json:"validUntil"` // "yyyy-mm-dd"
 	PaymentTermsID     *int           `json:"paymentTermsId"`
 	PriceLevelID       *int           `json:"priceLevelId"`
 	CurrencyID         *int           `json:"currencyId"`
@@ -109,7 +109,7 @@ type Quote struct {
 	ApprovalStatus  string      `json:"approvalStatus"` // none | pending | approved
 	Customer        CustomerRef `json:"customer"`
 	OwnerUserID     string      `json:"-"`
-	QuoteDate    string      `json:"quoteDate"`
+	QuoteDate       string      `json:"quoteDate"`
 	ValidUntil      string      `json:"validUntil,omitempty"`
 	PONumber        string      `json:"poNumber,omitempty"`
 	ReferenceNumber string      `json:"referenceNumber,omitempty"`

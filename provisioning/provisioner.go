@@ -52,8 +52,8 @@ type Provisioner struct {
 
 	// cf handles per-tenant R2 bucket creation. nil = no Cloudflare API token
 	// configured; bucket step is skipped and tenant falls back to shared bucket.
-	cf             *storage.CFClient
-	corsOrigins    []string // CORS origins to allow on new tenant buckets
+	cf          *storage.CFClient
+	corsOrigins []string // CORS origins to allow on new tenant buckets
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup

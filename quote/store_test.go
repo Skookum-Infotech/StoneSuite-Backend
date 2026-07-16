@@ -48,8 +48,8 @@ func seedCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, itemUUID s
 	}
 
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_price, inventory_item_created_by)
-		VALUES ($1, $2, 25.00, 1) RETURNING inventory_item_uuid`,
+		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
+		VALUES ($1, $2, 1, 25.00, 1) RETURNING inventory_item_uuid`,
 		"SKU-"+suffix, "Test Item "+suffix).Scan(&itemUUID); err != nil {
 		t.Fatalf("seed inventory item: %v", err)
 	}
@@ -138,8 +138,8 @@ func TestSoftDelete_ThenGetReturnsNotFound(t *testing.T) {
 	custUUID, itemUUID := seedCustomerAndItem(t, pool)
 
 	created, err := Create(context.Background(), pool, CreateQuoteInput{
-		CustomerUUID:   custUUID,
-		quoteFields: quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -157,8 +157,8 @@ func TestTransition_DraftToPendingApproval(t *testing.T) {
 	custUUID, itemUUID := seedCustomerAndItem(t, pool)
 
 	created, err := Create(context.Background(), pool, CreateQuoteInput{
-		CustomerUUID:   custUUID,
-		quoteFields: quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -177,8 +177,8 @@ func TestTransition_RejectsIllegalMove(t *testing.T) {
 	custUUID, itemUUID := seedCustomerAndItem(t, pool)
 
 	created, err := Create(context.Background(), pool, CreateQuoteInput{
-		CustomerUUID:   custUUID,
-		quoteFields: quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -193,8 +193,8 @@ func TestApprove_RequiresConfiguredApprover(t *testing.T) {
 	custUUID, itemUUID := seedCustomerAndItem(t, pool)
 
 	created, err := Create(context.Background(), pool, CreateQuoteInput{
-		CustomerUUID:   custUUID,
-		quoteFields: quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -215,8 +215,8 @@ func TestApprove_SignOffFlipsApprovalStatus(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := Create(ctx, pool, CreateQuoteInput{
-		CustomerUUID:   custUUID,
-		quoteFields: quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -253,8 +253,8 @@ func TestSearch_ReturnsCreatedQuote(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := Create(ctx, pool, CreateQuoteInput{
-		CustomerUUID:   custUUID,
-		quoteFields: quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)

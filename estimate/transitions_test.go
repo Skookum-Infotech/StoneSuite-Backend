@@ -19,13 +19,13 @@ func TestCanTransition(t *testing.T) {
 	}
 
 	bad := [][2]string{
-		{"DRFT", "APPV"},   // must go through PAPV
-		{"DRFT", "SENT"},   // can't skip straight to sent
-		{"RJCT", "DRFT"},   // terminal
-		{"EXPR", "SENT"},   // terminal
-		{"CANC", "DRFT"},   // terminal
-		{"SENT", "APPV"},   // can't go backward
-		{"APPV", "DRFT"},   // no backward path from APPV
+		{"DRFT", "APPV"}, // must go through PAPV
+		{"DRFT", "SENT"}, // can't skip straight to sent
+		{"RJCT", "DRFT"}, // terminal
+		{"EXPR", "SENT"}, // terminal
+		{"CANC", "DRFT"}, // terminal
+		{"SENT", "APPV"}, // can't go backward
+		{"APPV", "DRFT"}, // no backward path from APPV
 	}
 	for _, pair := range bad {
 		if CanTransition(pair[0], pair[1]) {

@@ -60,15 +60,15 @@ type vendorFields struct {
 	NetWorth             string `json:"netWorth"`
 
 	// schema.org/Organization — authoritative when VendorType == "Organization"
-	LegalName              string               `json:"legalName"`
-	RegistrationInfo       string               `json:"registrationInfo"`
-	DUNSNumber             string               `json:"dunsNumber"`
-	FoundingDate           string               `json:"foundingDate"` // "yyyy-mm-dd"
-	FoundingLocation       string               `json:"foundingLocation"`
-	DissolutionDate        string               `json:"dissolutionDate"` // "yyyy-mm-dd"
-	Department             string               `json:"department"`
-	AcceptedPaymentMethods []string             `json:"acceptedPaymentMethods"`
-	CompliancePolicies     *CompliancePolicies  `json:"compliancePolicies"`
+	LegalName              string              `json:"legalName"`
+	RegistrationInfo       string              `json:"registrationInfo"`
+	DUNSNumber             string              `json:"dunsNumber"`
+	FoundingDate           string              `json:"foundingDate"` // "yyyy-mm-dd"
+	FoundingLocation       string              `json:"foundingLocation"`
+	DissolutionDate        string              `json:"dissolutionDate"` // "yyyy-mm-dd"
+	Department             string              `json:"department"`
+	AcceptedPaymentMethods []string            `json:"acceptedPaymentMethods"`
+	CompliancePolicies     *CompliancePolicies `json:"compliancePolicies"`
 }
 
 // CreateVendorInput is the create-request payload.

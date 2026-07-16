@@ -1,5 +1,5 @@
 -- =====================================================================
--- StoneSuite Tenant Schema GÇö single canonical file.
+-- StoneSuite Tenant Schema -- single canonical file.
 --
 -- Applied to EACH tenant's isolated database at provisioning time and
 -- on every startup for existing tenants (idempotent via CREATE IF NOT EXISTS,
@@ -10,7 +10,7 @@
 -- =====================================================================
 
 
--- GöÇGöÇ 000001_tenant_base GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000001_tenant_base --------------------------------------------------
 -- =====================================================================
 -- Tenant-template schema (applied to EACH tenant's isolated database).
 -- Phase 0 baseline: tenant-local user profiles. Roles/RBAC (Phase 2)
@@ -35,9 +35,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_identity ON users(identity_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email    ON users(LOWER(email));
 
 
--- GöÇGöÇ 000002_tenant_rbac GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000002_tenant_rbac --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 2: dynamic RBAC.
+-- Tenant-template schema -- Phase 2: dynamic RBAC.
 -- Applied to EACH tenant's isolated database after the base schema.
 --
 -- Model: roles are bundles of {resource, action, scope} permissions.
@@ -95,9 +95,9 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON team_members(user_id);
 
 
--- GöÇGöÇ 000003_tenant_workflow GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000003_tenant_workflow --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 3: dynamic workflow engine.
+-- Tenant-template schema -- Phase 3: dynamic workflow engine.
 -- Applied to EACH tenant's isolated database after RBAC.
 --
 -- Workflows are state machines defined as DATA (these tables), edited by a
@@ -211,9 +211,9 @@ CREATE TABLE IF NOT EXISTS workflow_record_history (
 CREATE INDEX IF NOT EXISTS idx_wf_record_history_record ON workflow_record_history(record_id);
 
 
--- GöÇGöÇ 000004_prospects GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000004_prospects --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 4: dedicated Prospects table.
+-- Tenant-template schema -- Phase 4: dedicated Prospects table.
 -- Provides a first-class CRM prospects entity with typed, indexed columns
 -- instead of storing everything in the generic workflow_records JSONB blob.
 --
@@ -314,7 +314,7 @@ CREATE TABLE IF NOT EXISTS prospects (
     stripe_payment_method    VARCHAR(128) NOT NULL DEFAULT '',
     stripe_currency          VARCHAR(16)  NOT NULL DEFAULT '',
 
-    -- CCH-« SureTax-«
+    -- CCH(R) SureTax(R)
     suretax_customer_number  VARCHAR(128) NOT NULL DEFAULT '',
     tax_exempt               BOOLEAN      NOT NULL DEFAULT FALSE,
     exemption_certificate    VARCHAR(255) NOT NULL DEFAULT '',
@@ -345,9 +345,9 @@ CREATE INDEX IF NOT EXISTS idx_prospects_status  ON prospects(status);
 CREATE INDEX IF NOT EXISTS idx_prospects_owner   ON prospects(owner_user_id);
 
 
--- GöÇGöÇ 000005_leads GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000005_leads --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 5: dedicated Leads table.
+-- Tenant-template schema -- Phase 5: dedicated Leads table.
 -- Mirrors the Lead entity from the CRM module with typed columns.
 -- =====================================================================
 
@@ -415,9 +415,9 @@ CREATE INDEX IF NOT EXISTS idx_leads_status  ON leads(lead_status);
 CREATE INDEX IF NOT EXISTS idx_leads_owner   ON leads(owner_user_id);
 
 
--- GöÇGöÇ 000006_crm_custom_fields GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000006_crm_custom_fields --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 6: custom_fields JSONB on CRM tables.
+-- Tenant-template schema -- Phase 6: custom_fields JSONB on CRM tables.
 -- Allows admins to add up to 15 custom fields (via workflow_field_definitions)
 -- to Lead and Prospect records without requiring schema migrations.
 -- =====================================================================
@@ -429,11 +429,11 @@ CREATE INDEX IF NOT EXISTS idx_leads_custom     ON leads     USING gin(custom_fi
 CREATE INDEX IF NOT EXISTS idx_prospects_custom ON prospects USING gin(custom_fields);
 
 
--- GöÇGöÇ 000007_crm_unified GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000007_crm_unified --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 7: Unified CRM workflow fields.
+-- Tenant-template schema -- Phase 7: Unified CRM workflow fields.
 --
--- Adds pipeline_order to workflows so the LeadGåÆProspectGåÆCustomer
+-- Adds pipeline_order to workflows so the Lead->Prospect->Customer
 -- dependency chain can be enforced server-side when toggling enabled.
 -- Adds parent_record_id to workflow_records to track lineage when a
 -- lead is converted to a prospect or a prospect to a customer.
@@ -450,13 +450,13 @@ ALTER TABLE workflow_records ADD COLUMN IF NOT EXISTS parent_record_id UUID REFE
 CREATE INDEX IF NOT EXISTS idx_workflow_records_parent ON workflow_records(parent_record_id) WHERE parent_record_id IS NOT NULL;
 
 
--- GöÇGöÇ 000008_record_numbering GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000008_record_numbering --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 8: per-workflow record auto-numbering.
+-- Tenant-template schema -- Phase 8: per-workflow record auto-numbering.
 --
 -- Lets a super admin configure auto-generated record numbers (prefix +
 -- zero-padded sequence + suffix) per workflow. One row per workflow,
--- created lazily via upsert when the config is first set GÇö no seeding
+-- created lazily via upsert when the config is first set -- no seeding
 -- required for new or future workflows.
 -- =====================================================================
 
@@ -477,7 +477,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_records_record_number
     ON workflow_records(workflow_id, record_number) WHERE record_number IS NOT NULL;
 
 
--- GöÇGöÇ 000012_drop_legacy_crm GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000012_drop_legacy_crm --------------------------------------------------
 -- SAFETY: This migration permanently drops the `leads` and `prospects` tables (CASCADE).
 -- Before this migration was embedded, the following was verified:
 --   1. No application code queries leads/prospects (replaced by workflow_records + crm_record).
@@ -498,7 +498,7 @@ DROP TABLE IF EXISTS leads CASCADE;
 DROP TABLE IF EXISTS prospects CASCADE;
 
 
--- GöÇGöÇ 000013_employee GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000013_employee --------------------------------------------------
 -- =====================================================================
 -- Tenant migration 012: employee table (v2 relational design).
 --
@@ -544,7 +544,7 @@ SELECT setval(
 );
 
 
--- GöÇGöÇ 000014_lkp_tables GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000014_lkp_tables --------------------------------------------------
 -- =====================================================================
 -- Tenant migration 013: ERP lookup tables (v2 relational design).
 -- Source: StoneSuite_Lookup_DDL_DML_v1.sql (Elevation Stone). Converted to
@@ -573,11 +573,11 @@ INSERT INTO lkp_currency (currency_name, currency_code, currency_symbol, currenc
     ('US Dollar',          'USD',  '$',  TRUE, TRUE, 1),
     ('Canadian Dollar',    'CAD',  'C$', TRUE, TRUE, 1),
     ('Mexican Peso',       'MXN',  '$',  TRUE, TRUE, 1),
-    ('Indian Rupee',       'INR',  'Gé¦',  TRUE, TRUE, 1),
-    ('Euro',               'EUR',  'Gé¼',  TRUE, TRUE, 1),
-    ('British Pound',      'GBP',  '-ú',  TRUE, TRUE, 1),
+    ('Indian Rupee',       'INR',  'â‚¹',  TRUE, TRUE, 1),
+    ('Euro',               'EUR',  'â‚¬',  TRUE, TRUE, 1),
+    ('British Pound',      'GBP',  'Â£',  TRUE, TRUE, 1),
     ('Australian Dollar',  'AUD',  'A$', TRUE, TRUE, 1),
-    ('UAE Dirham',         'AED',  '+».+Ñ',TRUE, TRUE, 1)
+    ('UAE Dirham',         'AED',  'Ø¯.Ø¥',TRUE, TRUE, 1)
 ON CONFLICT (currency_code) DO NOTHING;
 
 -- 2. lkp_country ------------------------------------------------------
@@ -887,7 +887,7 @@ INSERT INTO lkp_contact_method (contact_method_name, contact_method_is_active, c
     ('Email', TRUE, TRUE, 1), ('Phone', TRUE, TRUE, 1), ('Text', TRUE, TRUE, 1), ('Postal Mail', TRUE, TRUE, 1)
 ON CONFLICT (contact_method_name) DO NOTHING;
 
--- Indexes GÇö active-record queries -------------------------------------
+-- Indexes -- active-record queries -------------------------------------
 CREATE INDEX IF NOT EXISTS idx_currency_active ON lkp_currency (currency_is_active) WHERE currency_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_country_active ON lkp_country (country_is_active) WHERE country_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_state_active ON lkp_state (state_is_active) WHERE state_deleted_at IS NULL;
@@ -902,9 +902,9 @@ CREATE INDEX IF NOT EXISTS idx_lead_source_active ON lkp_crm_lead_source (lead_s
 CREATE INDEX IF NOT EXISTS idx_contact_method_active ON lkp_contact_method (contact_method_is_active) WHERE contact_method_deleted_at IS NULL;
 
 
--- GöÇGöÇ 000018_lkp_price_level GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000018_lkp_price_level --------------------------------------------------
 -- =====================================================================
--- Tenant migration 018: lkp_price_level GÇö the 12th CRM lookup table.
+-- Tenant migration 018: lkp_price_level -- the 12th CRM lookup table.
 -- Source: StonSuite_DBSchema.xlsx (Look Up Tables sheet, Price Levels).
 -- Created before customer (019), which FKs customer_price_level here.
 -- Idempotent: CREATE TABLE IF NOT EXISTS + INSERT ... ON CONFLICT DO NOTHING.
@@ -935,9 +935,9 @@ INSERT INTO lkp_price_level (price_level_name, price_level_code, price_level_dis
 ON CONFLICT (price_level_code) DO NOTHING;
 
 
--- GöÇGöÇ 000015_crm_record GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000015_crm_record --------------------------------------------------
 -- =====================================================================
--- Tenant migration 014: crm_record GÇö the single CRM master table (v2).
+-- Tenant migration 014: crm_record -- the single CRM master table (v2).
 --
 -- One physical table holds Lead, Prospect and Customer records; the
 -- crm_record_type_id (LEAD/PROS/CUST in lkp_record_type) decides which
@@ -1012,9 +1012,9 @@ CREATE INDEX IF NOT EXISTS idx_crm_record_parent ON crm_record (crm_record_paren
 CREATE INDEX IF NOT EXISTS idx_crm_record_custom_fields ON crm_record USING GIN (crm_record_custom_fields);
 
 
--- GöÇGöÇ 000016_crm_record_history GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000016_crm_record_history --------------------------------------------------
 -- =====================================================================
--- Tenant migration 015: crm_record_history GÇö CRM transition audit (v2).
+-- Tenant migration 015: crm_record_history -- CRM transition audit (v2).
 --
 -- One row per stage/status change (and approval) on a crm_record, so the
 -- lead -> prospect -> customer journey and approvals are auditable.
@@ -1036,9 +1036,9 @@ CREATE TABLE IF NOT EXISTS crm_record_history (
 CREATE INDEX IF NOT EXISTS idx_crm_record_history_record ON crm_record_history (crm_record_id);
 
 
--- GöÇGöÇ 000017_crm_workflow_approver GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000017_crm_workflow_approver --------------------------------------------------
 -- =====================================================================
--- Tenant migration 016: crm_workflow_approver GÇö configurable approvers (v2).
+-- Tenant migration 016: crm_workflow_approver -- configurable approvers (v2).
 --
 -- Configures which employee may approve a CRM record at a given stage/status
 -- (e.g. record_type = CUST, crm_status = Customer Closed Won). When a customer
@@ -1061,9 +1061,9 @@ CREATE INDEX IF NOT EXISTS idx_crm_workflow_approver_lookup
     ON crm_workflow_approver (record_type_id, crm_status_id) WHERE is_active;
 
 
--- GöÇGöÇ 000019_customer GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000019_customer --------------------------------------------------
 -- =====================================================================
--- Tenant migration 019: customer GÇö the single CRM master table (v2).
+-- Tenant migration 019: customer -- the single CRM master table (v2).
 -- Source of truth: StonSuite_DBSchema.xlsx (Customer sheet), ADR-002.
 --
 -- One physical table holds Lead, Prospect and Customer records, distinguished
@@ -1072,7 +1072,7 @@ CREATE INDEX IF NOT EXISTS idx_crm_workflow_approver_lookup
 -- Supersedes crm_record (migration 015), which is left in place but unused.
 --
 -- Design notes (ADR-002):
---   * ss_customer_id is a plain integer owner-stamp (no cross-DB FK GÇö the
+--   * ss_customer_id is a plain integer owner-stamp (no cross-DB FK -- the
 --     control plane is a separate database); ss_tenant_id is omitted because
 --     the DB connection itself is the tenant scope (database-per-tenant).
 --   * customer_uuid is the external/API id (non-enumerable); customer_id is
@@ -1144,7 +1144,7 @@ CREATE TABLE IF NOT EXISTS customer (
     customer_ship_addr_zip             VARCHAR(10)  NOT NULL DEFAULT '',
     customer_ship_addr_country         INTEGER          NULL REFERENCES lkp_country(country_id),
 
-    -- CRM / sales-cycle fields (mandatory for LEAD/PROS GÇö enforced in Go)
+    -- CRM / sales-cycle fields (mandatory for LEAD/PROS -- enforced in Go)
     customer_crm_owner_user_id         INTEGER          NULL REFERENCES employee(employee_id),
     customer_lead_source               INTEGER          NULL REFERENCES lkp_crm_lead_source(lead_source_id),
     customer_lead_score                INTEGER          NULL,
@@ -1210,9 +1210,9 @@ CREATE INDEX IF NOT EXISTS idx_customer_parent   ON customer (customer_parent_id
 CREATE INDEX IF NOT EXISTS idx_customer_custom_fields ON customer USING GIN (customer_custom_fields);
 
 
--- GöÇGöÇ 000021_customer_history GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000021_customer_history --------------------------------------------------
 -- =====================================================================
--- Tenant migration 021: customer_history GÇö CRM stage/status change trail (v2).
+-- Tenant migration 021: customer_history -- CRM stage/status change trail (v2).
 --
 -- One row per stage/status change (and approval) on a customer record, so the
 -- lead -> prospect -> customer journey and approvals are auditable. Mirrors the
@@ -1235,9 +1235,9 @@ CREATE TABLE IF NOT EXISTS customer_history (
 CREATE INDEX IF NOT EXISTS idx_customer_history_record ON customer_history (customer_id);
 
 
--- GöÇGöÇ 000025_customer_approval GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000025_customer_approval --------------------------------------------------
 -- =====================================================================
--- Tenant migration 025: customer_approval GÇö per-approver approval tracking (v2).
+-- Tenant migration 025: customer_approval -- per-approver approval tracking (v2).
 --
 -- One row per (customer record, approver) who has signed off. Lets a workflow
 -- require more than one approver: customer.customer_approval_status stays
@@ -1259,7 +1259,7 @@ CREATE TABLE IF NOT EXISTS customer_approval (
 CREATE INDEX IF NOT EXISTS idx_customer_approval_customer ON customer_approval (customer_id);
 
 
--- GöÇGöÇ 000020_audit_logs_enrich GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000020_audit_logs_enrich --------------------------------------------------
 -- =====================================================================
 -- Tenant migration 020: enrich audit_logs into the unified change trail.
 --
@@ -1304,7 +1304,7 @@ ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS app_version TEXT;
 CREATE INDEX IF NOT EXISTS idx_audit_logs_table ON audit_logs(table_name);
 
 
--- GöÇGöÇ 000024_attachments_recover GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000024_attachments_recover --------------------------------------------------
 -- Migration 024: recreate workflow_record_attachments if absent.
 --
 -- Migration 011 created this table with a FK to workflow_records(id).
@@ -1336,7 +1336,7 @@ CREATE TABLE IF NOT EXISTS workflow_record_attachments (
 CREATE INDEX IF NOT EXISTS idx_wf_record_attachments_record ON workflow_record_attachments(record_id);
 
 
--- GöÇGöÇ 000023_attachments_drop_wf_fk GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000023_attachments_drop_wf_fk --------------------------------------------------
 -- Migration 023: decouple workflow_record_attachments from workflow_records.
 --
 -- The attachment table was originally keyed to workflow_records(id), but the
@@ -1347,9 +1347,9 @@ ALTER TABLE IF EXISTS workflow_record_attachments
   DROP CONSTRAINT IF EXISTS workflow_record_attachments_record_id_fkey;
 
 
--- GöÇGöÇ 000009_seed_crm_workflows GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000009_seed_crm_workflows --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 8: Seed CRM workflows (Lead/Prospect/Customer).
+-- Tenant-template schema -- Phase 8: Seed CRM workflows (Lead/Prospect/Customer).
 --
 -- On first apply (new tenant): inserts default workflows with states, transitions, and fields.
 -- On re-apply (existing tenant): skips workflows that already exist (idempotent).
@@ -1524,9 +1524,9 @@ END IF;
 END $$;
 
 
--- GöÇGöÇ 000010_seed_sales_purchases_workflows GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000010_seed_sales_purchases_workflows --------------------------------------------------
 -- =====================================================================
--- Tenant-template schema GÇö Phase 10: Seed Sales & Purchases workflows.
+-- Tenant-template schema -- Phase 10: Seed Sales & Purchases workflows.
 --
 -- Seeds 16 new workflows (8 Sales + 8 Purchases) with states, transitions,
 -- and basic field definitions. Idempotent: skips workflows that already exist.
@@ -2164,7 +2164,7 @@ END IF;
 END $$;
 
 
--- GöÇGöÇ 000022_deactivate_legacy_crm_record_status GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000022_deactivate_legacy_crm_record_status --------------------------------------------------
 -- =====================================================================
 -- Tenant migration 022: deactivate legacy record_status entries for
 -- Lead, Prospect, and Customer record types.
@@ -2184,12 +2184,12 @@ WHERE record_status_record_type IN (
     WHERE record_type_code IN ('LEAD', 'PROS', 'CUST')
 );
 
--- GöÇGöÇ 000023_rag_vectors GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000023_rag_vectors --------------------------------------------------
 -- =====================================================================
 -- RAG assistant storage. Vectors live in the tenant DB so cross-tenant
 -- retrieval is impossible by construction. owner_user_id / team_id are
 -- denormalized onto each chunk so the RBAC scope clause can be ANDed onto
--- the similarity search (scope can only narrow, never widen GÇö same
+-- the similarity search (scope can only narrow, never widen -- same
 -- invariant as the Record Filter Engine).
 -- =====================================================================
 
@@ -2203,7 +2203,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     -- per record. The v2 relational CRM store has no per-record workflow UUID
     -- (its record types are a fixed lead/prospect/customer enum, not rows in
     -- `workflows`), and this column is otherwise unused (not part of any scope
-    -- filter) GÇö see crmstore/rag_loader.go for the UUID-format guard.
+    -- filter) -- see crmstore/rag_loader.go for the UUID-format guard.
     workflow_id   UUID,
     owner_user_id UUID,
     team_id       UUID,
@@ -2220,7 +2220,7 @@ CREATE INDEX        IF NOT EXISTS rag_chunks_scope_idx    ON rag_chunks (owner_u
 CREATE INDEX        IF NOT EXISTS rag_chunks_embedding_idx
     ON rag_chunks USING hnsw (embedding vector_cosine_ops);
 
--- Hybrid retrieval GÇö lexical (keyword) arm beside the vector arm. A generated
+-- Hybrid retrieval -- lexical (keyword) arm beside the vector arm. A generated
 -- tsvector over content + a GIN index lets exact terms / rare tokens (record
 -- numbers, names, codes) that a 768-dim embedding blurs be matched precisely.
 -- 'simple' config (no stemming) so identifiers like INC-2023-Q4-011 survive
@@ -2242,7 +2242,7 @@ CREATE INDEX IF NOT EXISTS rag_index_queue_pending_idx
     ON rag_index_queue (status) WHERE status = 'pending';
 
 
--- GöÇGöÇ 000026_workflow_state_approvals GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000026_workflow_state_approvals ------------------------------------------
 -- Generic per-state approver gating for the workflow engine. A workflow state
 -- is "approval-gated" simply by having >= 1 active approver row here (presence-
 -- based, mirroring the CRM crm_workflow_approver model). While a record sits in
@@ -2251,7 +2251,7 @@ CREATE INDEX IF NOT EXISTS rag_index_queue_pending_idx
 -- (record, state). Approval status is DERIVED from these two tables, so no
 -- approval_status column is added to workflow_records.
 
--- workflow_state_approver GÇö which tenant users may approve a given state.
+-- workflow_state_approver -- which tenant users may approve a given state.
 CREATE TABLE IF NOT EXISTS workflow_state_approver (
     id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     state_id          UUID        NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
@@ -2266,7 +2266,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_state_approver_state
 CREATE INDEX IF NOT EXISTS idx_wf_state_approver_user
     ON workflow_state_approver (approver_user_id) WHERE is_active;
 
--- workflow_record_approval GÇö one row per sign-off in the record's current
+-- workflow_record_approval -- one row per sign-off in the record's current
 -- pending cycle. UNIQUE(record_id, state_id, approver_user_id) is the DB guard
 -- against the same approver signing off twice; the engine deletes rows for a
 -- (record, state) when the record re-enters that state so each cycle is fresh.
@@ -2282,11 +2282,11 @@ CREATE INDEX IF NOT EXISTS idx_wf_record_approval_record
     ON workflow_record_approval (record_id, state_id);
 
 
--- GöÇGöÇ 000027_inventory_domain GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000027_inventory_domain --------------------------------------------------
 -- =====================================================================
--- Tenant migration 027: Inventory domain GÇö shared item/stock foundation for
+-- Tenant migration 027: Inventory domain -- shared item/stock foundation for
 -- Sales Order (and future Purchase Order / Invoice / Manufacturing modules).
--- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md -º5.1-5.2.
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md sec 5.1-5.2.
 -- New lkp_* reference tables (unit of measure, warehouse, tax rate) plus the
 -- inventory_item catalog and per-warehouse on-hand stock. inventory_allocation
 -- is deferred to migration 028 (it FKs sales_order/sales_order_item).
@@ -2369,7 +2369,7 @@ INSERT INTO lkp_tax_rate (tax_rate_name, tax_rate_code, tax_rate_percent, tax_ra
     ('No Tax','NONE',0,TRUE,1)
 ON CONFLICT (tax_rate_code) DO NOTHING;
 
--- inventory_item GÇö sellable catalog item (hybrid PK, own custom_fields) ----
+-- inventory_item -- sellable catalog item (hybrid PK, own custom_fields) ----
 CREATE TABLE IF NOT EXISTS inventory_item (
     inventory_item_id             SERIAL        PRIMARY KEY,
     inventory_item_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
@@ -2402,7 +2402,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_item_sku_active
 CREATE INDEX IF NOT EXISTS idx_inv_item_active ON inventory_item (inventory_item_is_active) WHERE inventory_item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_inv_item_gin    ON inventory_item USING GIN (inventory_item_custom_fields);
 
--- inventory_stock GÇö on-hand quantity per item x warehouse ------------------
+-- inventory_stock -- on-hand quantity per item x warehouse ------------------
 CREATE TABLE IF NOT EXISTS inventory_stock (
     inventory_stock_id      SERIAL        PRIMARY KEY,
     inventory_item_id       INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id) ON DELETE CASCADE,
@@ -2418,16 +2418,16 @@ CREATE TABLE IF NOT EXISTS inventory_stock (
 CREATE INDEX IF NOT EXISTS idx_inv_stock_wh ON inventory_stock (warehouse_id);
 
 
--- GöÇGöÇ 000028_sales_order GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000028_sales_order -------------------------------------------------------
 -- =====================================================================
--- Tenant migration 028: Sales Order GÇö relational header + line items +
+-- Tenant migration 028: Sales Order -- relational header + line items +
 -- inventory allocation + status history. Sibling of `customer` (v2 pattern):
 -- hybrid SERIAL+UUID PK, employee-based audit columns, reused lkp_* lookups,
 -- snapshot billing/shipping + item data (frozen at create time so later master-
 -- data edits don't rewrite history). Supersedes the v1 JSONB `sales_order`
--- workflow (seeded migration 000010) for production use GÇö that workflow is
+-- workflow (seeded migration 000010) for production use -- that workflow is
 -- left in place, unused, per the design doc's "genuinely missing" finding.
--- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md -º5.3-5.4, -º6.
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md sec 5.3-5.4, sec 6.
 -- Create order (FK dependency): sales_order -> sales_order_item ->
 -- inventory_allocation (FKs both) -> sales_order_history.
 -- =====================================================================
@@ -2442,7 +2442,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
     record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = SORD
     sales_order_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
-    -- Approval (optional, configuration-driven GÇö AD-10; mirrors customer_approval_status)
+    -- Approval (optional, configuration-driven -- AD-10; mirrors customer_approval_status)
     sales_order_approval_status    VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
     sales_order_approved_by        INTEGER           NULL REFERENCES employee(employee_id),  -- last approver (full trail in sales_order_approval)
 
@@ -2469,7 +2469,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
     sales_order_currency           INTEGER           NULL REFERENCES lkp_currency(currency_id),
     sales_order_exchange_rate      DECIMAL(18,6) NOT NULL DEFAULT 1,
 
-    -- Money summary (stored GÇö snapshots must be immutable once frozen)
+    -- Money summary (stored -- snapshots must be immutable once frozen)
     sales_order_subtotal           DECIMAL(15,2) NOT NULL DEFAULT 0,
     sales_order_discount_total     DECIMAL(15,2) NOT NULL DEFAULT 0,
     sales_order_tax_total          DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -2528,7 +2528,7 @@ CREATE TABLE IF NOT EXISTS sales_order (
     )
 );
 
--- sales_order_item GÇö ordered lines (snapshot sku/name/description/unit/price/tax) --
+-- sales_order_item -- ordered lines (snapshot sku/name/description/unit/price/tax) --
 CREATE TABLE IF NOT EXISTS sales_order_item (
     sales_order_item_id     SERIAL        PRIMARY KEY,
     sales_order_item_uuid   UUID          NOT NULL DEFAULT gen_random_uuid(),
@@ -2572,7 +2572,7 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     CONSTRAINT chk_soi_fulfilled        CHECK (line_fulfilled_quantity >= 0 AND line_fulfilled_quantity <= quantity)
 );
 
--- inventory_allocation GÇö reservation per order line (shared inventory domain, not owned by SO) --
+-- inventory_allocation -- reservation per order line (shared inventory domain, not owned by SO) --
 CREATE TABLE IF NOT EXISTS inventory_allocation (
     inventory_allocation_id    SERIAL        PRIMARY KEY,
     inventory_allocation_uuid  UUID          NOT NULL DEFAULT gen_random_uuid(),
@@ -2593,7 +2593,7 @@ CREATE TABLE IF NOT EXISTS inventory_allocation (
     CONSTRAINT chk_alloc_status     CHECK (allocation_status IN ('reserved','partially_fulfilled','fulfilled','released'))
 );
 
--- sales_order_history GÇö typed from/to status trail (mirrors customer_history) --
+-- sales_order_history -- typed from/to status trail (mirrors customer_history) --
 CREATE TABLE IF NOT EXISTS sales_order_history (
     sales_order_history_id  SERIAL       PRIMARY KEY,
     sales_order_id          INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
@@ -2605,13 +2605,13 @@ CREATE TABLE IF NOT EXISTS sales_order_history (
     at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Indexes GÇö listing/filtering (all partial on live rows) -------------------
+-- Indexes -- listing/filtering (all partial on live rows) -------------------
 CREATE INDEX IF NOT EXISTS idx_so_customer   ON sales_order (sales_order_customer_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_status     ON sales_order (sales_order_status)      WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_date       ON sales_order (sales_order_date)        WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_sales_rep  ON sales_order (sales_order_sales_rep_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_owner      ON sales_order (sales_order_owner_id)     WHERE sales_order_deleted_at IS NULL;
--- Keyset pagination tiebreaker (created_at, id) GÇö matches query/ default sort.
+-- Keyset pagination tiebreaker (created_at, id) -- matches query/ default sort.
 CREATE INDEX IF NOT EXISTS idx_so_created    ON sales_order (sales_order_created_at, sales_order_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_custom_gin ON sales_order USING GIN (sales_order_custom_fields);
 
@@ -2623,7 +2623,7 @@ CREATE INDEX IF NOT EXISTS idx_soi_item  ON sales_order_item (inventory_item_id)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_soi_line_active
     ON sales_order_item (sales_order_id, line_number) WHERE item_deleted_at IS NULL;
 
--- GöÇGöÇ 000029_sales_order_schema_org_alignment GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000029_sales_order_schema_org_alignment ----------------------------------
 -- =====================================================================
 -- Tenant migration 029: align Sales Order with schema.org/Order + optional,
 -- configuration-driven approval. Additive & idempotent; no destructive change.
@@ -2631,7 +2631,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_soi_line_active
 --                              + sales_order.sales_order_payment_due_date (in 028)
 --   AD-9  orderItemStatus   -> sales_order_item.line_fulfilled_quantity (in 028)
 --   AD-10 approval gate     -> sales_order_approver / sales_order_approval (below)
--- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md -º2.1, -º5.0, -º5.5.
+-- Source: docs/superpowers/specs/2026-07-08-sales-order-module-design.md sec 2.1, sec 5.0, sec 5.5.
 -- =====================================================================
 
 -- AD-8: net-days on the existing payment-terms lookup so a due date can be
@@ -2652,7 +2652,7 @@ UPDATE lkp_payment_terms SET payment_terms_net_days = 0   WHERE payment_terms_co
 CREATE INDEX IF NOT EXISTS idx_so_payment_due
     ON sales_order (sales_order_payment_due_date) WHERE sales_order_deleted_at IS NULL;
 
--- AD-10: approver configuration GÇö which employee may approve at a given SORD
+-- AD-10: approver configuration -- which employee may approve at a given SORD
 -- status. Keyed to lkp_record_status (crm_workflow_approver points at the
 -- CRM-only lkp_crm_status, so it can't be reused verbatim). Zero rows for a
 -- status = no gate there; N rows = N required sign-offs.
@@ -2669,7 +2669,7 @@ CREATE TABLE IF NOT EXISTS sales_order_approver (
 CREATE INDEX IF NOT EXISTS idx_sales_order_approver_lookup
     ON sales_order_approver (record_type_id, record_status_id) WHERE is_active;
 
--- AD-10: approval tracking GÇö one row per approver who signed off on an order at
+-- AD-10: approval tracking -- one row per approver who signed off on an order at
 -- a status. sales_order.sales_order_approval_status stays 'pending' until the
 -- sign-off count reaches the active configured-approver count. Mirrors customer_approval.
 CREATE TABLE IF NOT EXISTS sales_order_approval (
@@ -2804,7 +2804,7 @@ CREATE TABLE IF NOT EXISTS invoice_item (
     inventory_item_id         INTEGER           NULL REFERENCES inventory_item(inventory_item_id),
     sales_order_item_id       INTEGER           NULL REFERENCES sales_order_item(sales_order_item_id) ON DELETE SET NULL,
 
-    -- Snapshots (frozen at add/conversion time GÇö never re-read from catalog)
+    -- Snapshots (frozen at add/conversion time -- never re-read from catalog)
     item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
     sku                       VARCHAR(50)   NOT NULL DEFAULT '',
     description                TEXT          NOT NULL DEFAULT '',
@@ -2884,7 +2884,7 @@ CREATE TABLE IF NOT EXISTS estimate (
     record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = ESTM
     estimate_status                INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
-    -- Approval (optional, configuration-driven +óGé¼GÇ¥ AD-8, mirrors sales_order_approval_status)
+    -- Approval (optional, configuration-driven -- AD-8, mirrors sales_order_approval_status)
     estimate_approval_status       VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
     estimate_approved_by           INTEGER           NULL REFERENCES employee(employee_id),
 
@@ -2968,7 +2968,7 @@ CREATE TABLE IF NOT EXISTS estimate (
     )
 );
 
-### 5.2 `estimate_item` (line items)
+-- 5.2 estimate_item (line items)
 
 CREATE TABLE IF NOT EXISTS estimate_item (
     estimate_item_id          SERIAL        PRIMARY KEY,
@@ -2977,7 +2977,7 @@ CREATE TABLE IF NOT EXISTS estimate_item (
     line_number                 INTEGER      NOT NULL,
     inventory_item_id           INTEGER          NULL REFERENCES inventory_item(inventory_item_id),   -- NULL = free-text line
 
-    -- Snapshots (frozen at add time +óGé¼GÇ¥ never re-read from catalog)
+    -- Snapshots (frozen at add time -- never re-read from catalog)
     item_name                   VARCHAR(150)  NOT NULL DEFAULT '',
     sku                          VARCHAR(50)   NOT NULL DEFAULT '',
     description                  TEXT          NOT NULL DEFAULT '',
@@ -3008,7 +3008,7 @@ CREATE TABLE IF NOT EXISTS estimate_item (
     CONSTRAINT chk_esti_tax          CHECK (tax_percent >= 0 AND tax_percent <= 100)
 );
 
-### 5.3 `estimate_history`
+-- 5.3 estimate_history
 
 CREATE TABLE IF NOT EXISTS estimate_history (
     estimate_history_id       SERIAL       PRIMARY KEY,
@@ -3021,7 +3021,7 @@ CREATE TABLE IF NOT EXISTS estimate_history (
     at                             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-### 5.4 `estimate_approver` / `estimate_approval` (AD-8, mirrors `sales_order_approver`/`_approval`)
+-- 5.4 estimate_approver / estimate_approval (AD-8, mirrors sales_order_approver/_approval)
 
 CREATE TABLE IF NOT EXISTS estimate_approver (
     estimate_approver_id    SERIAL      PRIMARY KEY,
@@ -3043,7 +3043,7 @@ CREATE TABLE IF NOT EXISTS estimate_approval (
     CONSTRAINT uq_estimate_approval UNIQUE (estimate_id, record_status_id, approver_employee_id)
 );
 
-### 5.5 `quote` (header)
+-- 5.5 quote (header)
 
 CREATE TABLE IF NOT EXISTS quote (
     quote_id                     SERIAL        PRIMARY KEY,
@@ -3055,11 +3055,11 @@ CREATE TABLE IF NOT EXISTS quote (
     record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = QUOT
     quote_status                    INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
-    -- Approval (optional, configuration-driven +óGé¼GÇ¥ AD-8)
+    -- Approval (optional, configuration-driven -- AD-8)
     quote_approval_status           VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
     quote_approved_by               INTEGER           NULL REFERENCES employee(employee_id),
 
-    -- Lineage (AD-5): source Estimate, if any. Nullable +óGé¼GÇ¥ a Quote may be created standalone.
+    -- Lineage (AD-5): source Estimate, if any. Nullable -- a Quote may be created standalone.
     quote_estimate_id                INTEGER          NULL REFERENCES estimate(estimate_id),
 
     -- Primary info
@@ -3142,7 +3142,7 @@ CREATE TABLE IF NOT EXISTS quote (
     )
 );
 
-### 5.6 `quote_item` (line items)
+-- 5.6 quote_item (line items)
 
 CREATE TABLE IF NOT EXISTS quote_item (
     quote_item_id              SERIAL        PRIMARY KEY,
@@ -3152,7 +3152,7 @@ CREATE TABLE IF NOT EXISTS quote_item (
     inventory_item_id             INTEGER          NULL REFERENCES inventory_item(inventory_item_id),   -- NULL = free-text line
     estimate_item_id               INTEGER          NULL REFERENCES estimate_item(estimate_item_id),     -- lineage from Estimate conversion
 
-    -- Snapshots (frozen at add/conversion time +óGé¼GÇ¥ never re-read from catalog)
+    -- Snapshots (frozen at add/conversion time -- never re-read from catalog)
     item_name                      VARCHAR(150)  NOT NULL DEFAULT '',
     sku                              VARCHAR(50)   NOT NULL DEFAULT '',
     description                      TEXT          NOT NULL DEFAULT '',
@@ -3183,7 +3183,7 @@ CREATE TABLE IF NOT EXISTS quote_item (
     CONSTRAINT chk_qi_tax         CHECK (tax_percent >= 0 AND tax_percent <= 100)
 );
 
-### 5.7 `quote_history`
+-- 5.7 quote_history
 
 CREATE TABLE IF NOT EXISTS quote_history (
     quote_history_id         SERIAL       PRIMARY KEY,
@@ -3196,7 +3196,7 @@ CREATE TABLE IF NOT EXISTS quote_history (
     at                                TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-### 5.8 `quote_approver` / `quote_approval` (AD-8)
+-- 5.8 quote_approver / quote_approval (AD-8)
 
 CREATE TABLE IF NOT EXISTS quote_approver (
     quote_approver_id       SERIAL      PRIMARY KEY,
@@ -3218,7 +3218,7 @@ CREATE TABLE IF NOT EXISTS quote_approval (
     CONSTRAINT uq_quote_approval UNIQUE (quote_id, record_status_id, approver_employee_id)
 );
 
-### 5.9 `quote_conversion` (AD-6 +óGé¼GÇ¥ Quote +óGÇáGÇÖ Sales Order lineage)
+-- 5.9 quote_conversion (AD-6 -- Quote -> Sales Order lineage)
 
 CREATE TABLE IF NOT EXISTS quote_conversion (
     quote_conversion_id      SERIAL       PRIMARY KEY,
@@ -3231,9 +3231,9 @@ CREATE TABLE IF NOT EXISTS quote_conversion (
     CONSTRAINT uq_quote_conversion_sales_order UNIQUE (sales_order_id)
 );
 
-### 5.10 Indexes
+-- 5.10 Indexes
 
--- estimate (listing/filtering +óGé¼GÇ¥ all partial on live rows)
+-- estimate (listing/filtering -- all partial on live rows)
 CREATE INDEX IF NOT EXISTS idx_est_customer      ON estimate (estimate_customer_id)  WHERE estimate_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_est_status        ON estimate (estimate_status)       WHERE estimate_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_est_date          ON estimate (estimate_date)         WHERE estimate_deleted_at IS NULL;
@@ -3256,7 +3256,7 @@ CREATE INDEX IF NOT EXISTS idx_estimate_approver_lookup
     ON estimate_approver (record_type_id, record_status_id) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_estimate_approval_estimate ON estimate_approval (estimate_id);
 
--- quote (listing/filtering +óGé¼GÇ¥ all partial on live rows)
+-- quote (listing/filtering -- all partial on live rows)
 CREATE INDEX IF NOT EXISTS idx_quo_customer      ON quote (quote_customer_id)  WHERE quote_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_quo_estimate       ON quote (quote_estimate_id)  WHERE quote_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_quo_status         ON quote (quote_status)       WHERE quote_deleted_at IS NULL;
@@ -3282,7 +3282,7 @@ CREATE INDEX IF NOT EXISTS idx_quote_approver_lookup
 CREATE INDEX IF NOT EXISTS idx_quote_approval_quote ON quote_approval (quote_id);
 
 CREATE INDEX IF NOT EXISTS idx_quote_conversion_quote ON quote_conversion (quote_id);
--- =ƒôà Payments module =ƒôàGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- Payments module ----------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS lkp_payment_method (
     payment_method_id          SERIAL       PRIMARY KEY,
@@ -3402,13 +3402,13 @@ CREATE INDEX IF NOT EXISTS idx_pay_app_payment  ON payment_application (payment_
 CREATE INDEX IF NOT EXISTS idx_pay_app_invoice  ON payment_application (invoice_id) WHERE application_deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_pay_history_payment ON payment_history (payment_id);
--- =ƒ¢Æ 000030_vendor_module =ƒ¢ÆGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇ
+-- -- 000030_vendor_module -----------------------------------------------
 -- =====================================================================
--- Tenant migration 030: Vendor module GÇö a dedicated relational sibling of
+-- Tenant migration 030: Vendor module -- a dedicated relational sibling of
 -- `customer`/`sales_order` (not the generic v1 JSONB workflow engine; the
 -- pre-existing `workflows` row keyed 'vendor' from migration 010 is an
--- unrelated legacy JSONB placeholder GÇö see the identical note on
--- salesorder.Create). Modeled on schema.org/Person Gê¬ schema.org/Organization:
+-- unrelated legacy JSONB placeholder -- see the identical note on
+-- salesorder.Create). Modeled on schema.org/Person INTERSECT schema.org/Organization:
 -- vendor_type discriminates which field group is authoritative. record_type
 -- VNDR and its Active/Inactive lkp_record_status rows already exist (migration
 -- 002); this adds an On Hold status alongside them.
@@ -3428,7 +3428,7 @@ CREATE TABLE IF NOT EXISTS vendor (
     vendor_status                  INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
     vendor_type                    VARCHAR(20)   NOT NULL DEFAULT 'Organization', -- schema.org @type: Person | Organization
 
-    -- Ownership (IDOR scope; team scope collapses to own GÇö mirrors sales_order,
+    -- Ownership (IDOR scope; team scope collapses to own -- mirrors sales_order,
     -- which has no team column either)
     vendor_owner_id                INTEGER           NULL REFERENCES employee(employee_id),
 
@@ -3445,7 +3445,7 @@ CREATE TABLE IF NOT EXISTS vendor (
     vendor_offer_catalog_url       VARCHAR(255)  NOT NULL DEFAULT '',  -- schema.org hasOfferCatalog
     vendor_point_of_sale_locations VARCHAR(255)  NOT NULL DEFAULT '',  -- schema.org hasPOS
 
-    -- schema.org/Person GÇö authoritative when vendor_type = 'Person'
+    -- schema.org/Person -- authoritative when vendor_type = 'Person'
     vendor_honorific_prefix        VARCHAR(20)   NOT NULL DEFAULT '',
     vendor_given_name              VARCHAR(75)   NOT NULL DEFAULT '',
     vendor_additional_name         VARCHAR(75)   NOT NULL DEFAULT '',
@@ -3457,7 +3457,7 @@ CREATE TABLE IF NOT EXISTS vendor (
     vendor_height                  VARCHAR(30)   NOT NULL DEFAULT '',
     vendor_net_worth               VARCHAR(50)   NOT NULL DEFAULT '',
 
-    -- schema.org/Organization GÇö authoritative when vendor_type = 'Organization'
+    -- schema.org/Organization -- authoritative when vendor_type = 'Organization'
     vendor_legal_name              VARCHAR(150)  NOT NULL DEFAULT '',
     vendor_registration_info       TEXT          NOT NULL DEFAULT '',
     vendor_duns_number             VARCHAR(20)   NOT NULL DEFAULT '',
@@ -3492,7 +3492,7 @@ CREATE TABLE IF NOT EXISTS vendor (
     )
 );
 
--- vendor_history GÇö status trail (mirrors sales_order_history, no approval)
+-- vendor_history -- status trail (mirrors sales_order_history, no approval)
 CREATE TABLE IF NOT EXISTS vendor_history (
     vendor_history_id  SERIAL       PRIMARY KEY,
     vendor_id           INTEGER      NOT NULL REFERENCES vendor(vendor_id) ON DELETE CASCADE,
@@ -3504,7 +3504,7 @@ CREATE TABLE IF NOT EXISTS vendor_history (
     at                    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Indexes GÇö listing/filtering (all partial on live rows) -------------------
+-- Indexes -- listing/filtering (all partial on live rows) -------------------
 CREATE INDEX IF NOT EXISTS idx_vendor_status      ON vendor (vendor_status)      WHERE vendor_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vendor_owner       ON vendor (vendor_owner_id)    WHERE vendor_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vendor_type        ON vendor (vendor_type)       WHERE vendor_deleted_at IS NULL;

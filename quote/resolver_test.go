@@ -10,9 +10,9 @@ func TestResolver_Resolve(t *testing.T) {
 	r := resolver{}
 
 	tests := []struct {
-		key     string
-		wantOK  bool
-		wantDT  query.DataType
+		key    string
+		wantOK bool
+		wantDT query.DataType
 	}{
 		{"id", true, query.TypeString},
 		{"document_number", true, query.TypeString},
@@ -22,7 +22,7 @@ func TestResolver_Resolve(t *testing.T) {
 		{"quote_date", true, query.TypeDate},
 		{"valid_until", true, query.TypeDate},
 		{"cf:budget", true, query.TypeString},
-		{"cf:Invalid-Key", false, ""},   // fails validCustomKey regex
+		{"cf:Invalid-Key", false, ""}, // fails validCustomKey regex
 		{"nonexistent_field", false, ""},
 		{"'; DROP TABLE quote; --", false, ""}, // injection attempt must not resolve
 	}

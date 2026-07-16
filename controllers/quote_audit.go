@@ -19,11 +19,11 @@ func quoteSnapshot(e *quote.Quote) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":             e.ID,
+		"id":          e.ID,
 		"quoteNumber": e.Number,
-		"status":         e.Status,
-		"customerId":     e.Customer.ID,
-		"grandTotal":     e.GrandTotal,
+		"status":      e.Status,
+		"customerId":  e.Customer.ID,
+		"grandTotal":  e.GrandTotal,
 	}
 }
 

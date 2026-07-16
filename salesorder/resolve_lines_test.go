@@ -13,14 +13,14 @@ func TestResolveLinesFreeText(t *testing.T) {
 
 	t.Run("sku/itemName/unitCode/taxPercent pass through untouched", func(t *testing.T) {
 		items := []LineInput2{{
-			LineNumber:      1,
-			Description:     "Custom fabricated bracket",
-			SKU:             "  CUST-001  ",
-			ItemName:        "  Custom Bracket  ",
-			UnitCode:        " ea ",
-			Quantity:        2,
-			UnitPrice:       50,
-			TaxPercent:      float64Ptr(7.5),
+			LineNumber:  1,
+			Description: "Custom fabricated bracket",
+			SKU:         "  CUST-001  ",
+			ItemName:    "  Custom Bracket  ",
+			UnitCode:    " ea ",
+			Quantity:    2,
+			UnitPrice:   50,
+			TaxPercent:  float64Ptr(7.5),
 		}}
 		got, err := resolveLines(ctx, fakeQuerier{}, items, 0)
 		if err != nil {

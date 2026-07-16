@@ -63,17 +63,17 @@ type Invoice struct {
 	StatusCode string `json:"statusCode"`
 	StatusName string `json:"status"`
 
-	Customer CustomerRef    `json:"customer"`
+	Customer   CustomerRef    `json:"customer"`
 	SalesOrder *SalesOrderRef `json:"salesOrder,omitempty"` // nullable lineage
 
 	OwnerUserID        string `json:"-"`
 	OwnerEmployeeID    *int   `json:"ownerEmployeeId,omitempty"`
 	SalesRepEmployeeID *int   `json:"salesRepEmployeeId,omitempty"`
 
-	PONumber         string `json:"poNumber"`
-	ReferenceNumber  string `json:"referenceNumber"`
-	InvoiceDate      string `json:"invoiceDate"`       // "yyyy-mm-dd"
-	DueDate          string `json:"dueDate,omitempty"` // "yyyy-mm-dd"
+	PONumber        string `json:"poNumber"`
+	ReferenceNumber string `json:"referenceNumber"`
+	InvoiceDate     string `json:"invoiceDate"`       // "yyyy-mm-dd"
+	DueDate         string `json:"dueDate,omitempty"` // "yyyy-mm-dd"
 
 	PaymentTermsID *int    `json:"paymentTermsId,omitempty"`
 	PriceLevelID   *int    `json:"priceLevelId,omitempty"`
@@ -122,52 +122,52 @@ type InvoiceLineInput struct {
 // CreateInvoiceInput is the request payload for POST /api/tenant/invoices.
 // Notice it doesn't take salesOrderUuid (that is only set via the convert endpoint).
 type CreateInvoiceInput struct {
-	CustomerUUID       string         `json:"customerUuid"`
-	PONumber           string         `json:"poNumber"`
-	ReferenceNumber    string         `json:"referenceNumber"`
-	InvoiceDate        string         `json:"invoiceDate"`       // "yyyy-mm-dd"; blank ⇒ CURRENT_DATE
-	DueDate            string         `json:"dueDate,omitempty"` // "yyyy-mm-dd"
-	PaymentTermsID     *int           `json:"paymentTermsId,omitempty"`
-	PriceLevelID       *int           `json:"priceLevelId,omitempty"`
-	CurrencyID         *int           `json:"currencyId,omitempty"`
-	SalesRepEmployeeID *int           `json:"salesRepEmployeeId,omitempty"`
-	OwnerEmployeeID    *int           `json:"ownerEmployeeId,omitempty"`
-	SalesTaxPercent    float64        `json:"salesTaxPercent"`
-	Memo               string         `json:"memo"`
-	Notes              string         `json:"notes"`
-	InternalNotes      string         `json:"internalNotes"`
-	TermsConditions    string         `json:"termsConditions"`
-	ShipSameAsBilling  bool           `json:"shipSameAsBilling"`
-	Billing            AddressInput   `json:"billing"`
-	Shipping           AddressInput   `json:"shipping"`
-	ShippingCharge     float64        `json:"shippingCharge"`
-	Adjustment         float64        `json:"adjustment"`
-	CustomFields       map[string]any `json:"customFields"`
+	CustomerUUID       string             `json:"customerUuid"`
+	PONumber           string             `json:"poNumber"`
+	ReferenceNumber    string             `json:"referenceNumber"`
+	InvoiceDate        string             `json:"invoiceDate"`       // "yyyy-mm-dd"; blank ⇒ CURRENT_DATE
+	DueDate            string             `json:"dueDate,omitempty"` // "yyyy-mm-dd"
+	PaymentTermsID     *int               `json:"paymentTermsId,omitempty"`
+	PriceLevelID       *int               `json:"priceLevelId,omitempty"`
+	CurrencyID         *int               `json:"currencyId,omitempty"`
+	SalesRepEmployeeID *int               `json:"salesRepEmployeeId,omitempty"`
+	OwnerEmployeeID    *int               `json:"ownerEmployeeId,omitempty"`
+	SalesTaxPercent    float64            `json:"salesTaxPercent"`
+	Memo               string             `json:"memo"`
+	Notes              string             `json:"notes"`
+	InternalNotes      string             `json:"internalNotes"`
+	TermsConditions    string             `json:"termsConditions"`
+	ShipSameAsBilling  bool               `json:"shipSameAsBilling"`
+	Billing            AddressInput       `json:"billing"`
+	Shipping           AddressInput       `json:"shipping"`
+	ShippingCharge     float64            `json:"shippingCharge"`
+	Adjustment         float64            `json:"adjustment"`
+	CustomFields       map[string]any     `json:"customFields"`
 	Items              []InvoiceLineInput `json:"items"`
 }
 
 // UpdateInvoiceInput is the request payload for PATCH /api/tenant/invoices/{uuid}.
 type UpdateInvoiceInput struct {
-	PONumber           string         `json:"poNumber"`
-	ReferenceNumber    string         `json:"referenceNumber"`
-	InvoiceDate        string         `json:"invoiceDate"`       // "yyyy-mm-dd"; blank leaves the stored date unchanged
-	DueDate            string         `json:"dueDate,omitempty"` // "yyyy-mm-dd"
-	PaymentTermsID     *int           `json:"paymentTermsId,omitempty"`
-	PriceLevelID       *int           `json:"priceLevelId,omitempty"`
-	CurrencyID         *int           `json:"currencyId,omitempty"`
-	SalesRepEmployeeID *int           `json:"salesRepEmployeeId,omitempty"`
-	OwnerEmployeeID    *int           `json:"ownerEmployeeId,omitempty"`
-	SalesTaxPercent    float64        `json:"salesTaxPercent"`
-	Memo               string         `json:"memo"`
-	Notes              string         `json:"notes"`
-	InternalNotes      string         `json:"internalNotes"`
-	TermsConditions    string         `json:"termsConditions"`
-	ShipSameAsBilling  bool           `json:"shipSameAsBilling"`
-	Billing            AddressInput   `json:"billing"`
-	Shipping           AddressInput   `json:"shipping"`
-	ShippingCharge     float64        `json:"shippingCharge"`
-	Adjustment         float64        `json:"adjustment"`
-	CustomFields       map[string]any `json:"customFields"`
+	PONumber           string             `json:"poNumber"`
+	ReferenceNumber    string             `json:"referenceNumber"`
+	InvoiceDate        string             `json:"invoiceDate"`       // "yyyy-mm-dd"; blank leaves the stored date unchanged
+	DueDate            string             `json:"dueDate,omitempty"` // "yyyy-mm-dd"
+	PaymentTermsID     *int               `json:"paymentTermsId,omitempty"`
+	PriceLevelID       *int               `json:"priceLevelId,omitempty"`
+	CurrencyID         *int               `json:"currencyId,omitempty"`
+	SalesRepEmployeeID *int               `json:"salesRepEmployeeId,omitempty"`
+	OwnerEmployeeID    *int               `json:"ownerEmployeeId,omitempty"`
+	SalesTaxPercent    float64            `json:"salesTaxPercent"`
+	Memo               string             `json:"memo"`
+	Notes              string             `json:"notes"`
+	InternalNotes      string             `json:"internalNotes"`
+	TermsConditions    string             `json:"termsConditions"`
+	ShipSameAsBilling  bool               `json:"shipSameAsBilling"`
+	Billing            AddressInput       `json:"billing"`
+	Shipping           AddressInput       `json:"shipping"`
+	ShippingCharge     float64            `json:"shippingCharge"`
+	Adjustment         float64            `json:"adjustment"`
+	CustomFields       map[string]any     `json:"customFields"`
 	Items              []InvoiceLineInput `json:"items"`
 }
 

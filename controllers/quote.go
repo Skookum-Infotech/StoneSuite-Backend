@@ -10,9 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
-	"stonesuite-backend/quote"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
+	"stonesuite-backend/quote"
 	"stonesuite-backend/tenancy"
 )
 

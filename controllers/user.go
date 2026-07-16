@@ -18,7 +18,6 @@ import (
 	"stonesuite-backend/userstore"
 )
 
-
 // userInviteExpiry is the TTL for workspace user invitations.
 const userInviteExpiry = 48 * time.Hour
 
@@ -222,10 +221,10 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"success":         true,
-		"message":         "Invitation sent.",
-		"inviteId":        invite.ID,
-		"inviteLink":      link, // returned for dev/debug; omit in production UI
+		"success":    true,
+		"message":    "Invitation sent.",
+		"inviteId":   invite.ID,
+		"inviteLink": link, // returned for dev/debug; omit in production UI
 	})
 }
 

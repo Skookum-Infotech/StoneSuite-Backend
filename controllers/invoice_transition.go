@@ -6,6 +6,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/invoice"
+	"stonesuite-backend/payment"
 )
 
 type invTransitionRequest struct {
@@ -37,10 +38,12 @@ type recordPaymentRequest struct {
 	Amount float64 `json:"amount"`
 }
 
+// RecordPayment is the legacy quick-pay endpoint (spec AD-5): it now delegates
+// to payment.QuickPay, which creates a Payment + one payment_application
+// under the hood, instead of writing invoice_amount_paid directly. Path,
+// request, and response shape are unchanged for API compatibility.
 func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("uuid")
-	// Using ActionUpdate for payment, or maybe ActionTransition, but we'll use ActionUpdate
-	// since they are modifying the invoice's financial state, and payments can trigger transitions.
 	pool, identityID, _, ok := h.authInvoiceByUUID(w, r, id, authz.ActionUpdate)
 	if !ok {
 		return
@@ -51,7 +54,7 @@ func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	inv, err := invoice.RecordPayment(r.Context(), pool, id, req.Amount, empID)
+	inv, err := payment.QuickPay(r.Context(), pool, id, req.Amount, empID)
 	if err != nil {
 		invoiceFail(w, err, "Failed to record payment.")
 		return

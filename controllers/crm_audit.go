@@ -89,14 +89,14 @@ func auditCRMDelete(r *http.Request, pool *pgxpool.Pool, identityID, resource, r
 
 // auditEntry is one row of a record's audit trail in API form.
 type auditEntry struct {
-	Action    string         `json:"action"`
-	Resource  string         `json:"resource"`
-	ActorName string         `json:"actorName"`
-	IPAddress string         `json:"ipAddress"`
-	AppVersion string        `json:"appVersion"`
-	OldValue  map[string]any `json:"oldValue,omitempty"`
-	NewValue  map[string]any `json:"newValue,omitempty"`
-	At        time.Time      `json:"at"`
+	Action     string         `json:"action"`
+	Resource   string         `json:"resource"`
+	ActorName  string         `json:"actorName"`
+	IPAddress  string         `json:"ipAddress"`
+	AppVersion string         `json:"appVersion"`
+	OldValue   map[string]any `json:"oldValue,omitempty"`
+	NewValue   map[string]any `json:"newValue,omitempty"`
+	At         time.Time      `json:"at"`
 }
 
 // loadAuditEntries reads the unified audit_logs trail for a single record

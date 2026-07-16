@@ -9,7 +9,6 @@ import (
 	"net/http"
 )
 
-
 const cfAPIBase = "https://api.cloudflare.com/client/v4"
 
 // CFClientIface is the subset of CFClient used by handlers so callers can

@@ -29,10 +29,10 @@ type Beginner interface {
 
 // Sentinel errors.
 var (
-	ErrWorkflowNotFound   = errors.New("workflow not found")
-	ErrRecordNotFound     = errors.New("record not found")
-	ErrFieldCap           = fmt.Errorf("a workflow may have at most %d custom fields", MaxCustomFields)
-	ErrDisableDependency  = errors.New("workflow has upstream dependency")
+	ErrWorkflowNotFound  = errors.New("workflow not found")
+	ErrRecordNotFound    = errors.New("record not found")
+	ErrFieldCap          = fmt.Errorf("a workflow may have at most %d custom fields", MaxCustomFields)
+	ErrDisableDependency = errors.New("workflow has upstream dependency")
 )
 
 // ----- workflows -------------------------------------------------------------

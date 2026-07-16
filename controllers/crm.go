@@ -532,6 +532,24 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "targetWorkflowKey is required.")
 		return
 	}
+	// Converting mints a record of the TARGET workflow, so the caller must hold
+	// create on the target resource — authCRMByRecordID above only checked
+	// create on the SOURCE. Without this a caller with lead:create but no
+	// customer:create could mint a customer by converting a lead they own.
+	targetResource := resourceForKey(req.TargetWorkflowKey)
+	targetDecision, err := authz.Check(r.Context(), pool, identityID, targetResource, authz.ActionCreate)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return
+	}
+	if !targetDecision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(targetResource),
+			"action", string(authz.ActionCreate), "source_record", r.PathValue("id"))
+		fail(w, http.StatusForbidden,
+			"You do not have permission to create "+req.TargetWorkflowKey+".")
+		return
+	}
 	newRec, sourceID, err := st.ConvertRecord(r.Context(), pool, r.PathValue("id"),
 		req.TargetWorkflowKey, req.CoreFields, req.CustomFields, identityID)
 	if err != nil {

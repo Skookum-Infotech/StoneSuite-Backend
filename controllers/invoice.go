@@ -12,6 +12,7 @@ import (
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/payment"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
@@ -87,6 +88,11 @@ func invoiceFail(w http.ResponseWriter, err error, serverMsg string) {
 		var ce invoice.ClientError
 		if errors.As(err, &ce) {
 			fail(w, http.StatusBadRequest, ce.Error())
+			return
+		}
+		var pce payment.ClientError
+		if errors.As(err, &pce) {
+			fail(w, http.StatusBadRequest, pce.Error())
 			return
 		}
 		var ife *query.InvalidFilterError

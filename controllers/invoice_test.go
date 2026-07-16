@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"stonesuite-backend/invoice"
+	"stonesuite-backend/payment"
 	"stonesuite-backend/query"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,7 @@ func TestInvoiceOps_RequiresAuth(t *testing.T) {
 		"Transition":    h.Transition,
 		"RecordPayment": h.RecordPayment,
 		"Audit":         h.Audit,
+		"Payments":      h.Payments,
 	}
 	for name, fn := range handlers {
 		t.Run(name, func(t *testing.T) {
@@ -45,6 +47,7 @@ func TestInvoiceFail_MapsStoreErrorsToHTTPStatus(t *testing.T) {
 		{"not found", invoice.ErrNotFound, http.StatusNotFound},
 		{"invalid transition", invoice.ErrInvalidTransition, http.StatusConflict},
 		{"client error", invoice.ClientError{Msg: "bad input"}, http.StatusBadRequest},
+		{"payment client error", payment.ClientError{Msg: "bad input"}, http.StatusBadRequest},
 		{"invalid filter", &query.InvalidFilterError{Field: "x", Msg: "unknown field"}, http.StatusBadRequest},
 		{"other", errors.New("boom"), http.StatusInternalServerError},
 	}

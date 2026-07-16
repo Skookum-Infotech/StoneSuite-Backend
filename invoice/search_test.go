@@ -42,7 +42,7 @@ func TestSearch_PaginationAndFilter(t *testing.T) {
 	if page.NextCursor == "" {
 		t.Fatal("expected a NextCursor")
 	}
-	
+
 	// Fetch next page
 	page2, err := Search(ctx, pool, "all", "test-identity", query.Request{
 		Sort:   []query.SortKey{{Field: "created_at", Dir: query.DirDesc}},
@@ -52,7 +52,7 @@ func TestSearch_PaginationAndFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search page 2: %v", err)
 	}
-	
+
 	if len(page2.Records) == 0 {
 		t.Fatalf("expected at least 1 record on page 2")
 	}

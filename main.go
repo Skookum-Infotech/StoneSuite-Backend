@@ -510,6 +510,33 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 
+		// Estimate: dedicated v2 relational module (header + line items + approval),
+		// a sibling of Sales Order/Invoice — not served through the generic
+		// /api/tenant/crm/{workflowKey} JSONB router.
+		est := controllers.NewEstimateOps()
+		mux.Handle("GET /api/tenant/estimates", tenantChain(est.List))
+		mux.Handle("POST /api/tenant/estimates/search", tenantChain(est.Search))
+		mux.Handle("POST /api/tenant/estimates", tenantChain(est.Create))
+		mux.Handle("GET /api/tenant/estimates/{uuid}", tenantChain(est.Get))
+		mux.Handle("PATCH /api/tenant/estimates/{uuid}", tenantChain(est.Update))
+		mux.Handle("DELETE /api/tenant/estimates/{uuid}", tenantChain(est.Delete))
+		mux.Handle("POST /api/tenant/estimates/{uuid}/transition", tenantChain(est.Transition))
+		mux.Handle("POST /api/tenant/estimates/{uuid}/approve", tenantChain(est.Approve))
+		mux.Handle("GET /api/tenant/estimates/{uuid}/audit", tenantChain(est.Audit))
+
+		// Quote: dedicated v2 relational module (header + line items + approval),
+		// a sibling of Estimate — not served through the generic JSONB router.
+		quo := controllers.NewQuoteOps()
+		mux.Handle("GET /api/tenant/quotes", tenantChain(quo.List))
+		mux.Handle("POST /api/tenant/quotes/search", tenantChain(quo.Search))
+		mux.Handle("POST /api/tenant/quotes", tenantChain(quo.Create))
+		mux.Handle("GET /api/tenant/quotes/{uuid}", tenantChain(quo.Get))
+		mux.Handle("PATCH /api/tenant/quotes/{uuid}", tenantChain(quo.Update))
+		mux.Handle("DELETE /api/tenant/quotes/{uuid}", tenantChain(quo.Delete))
+		mux.Handle("POST /api/tenant/quotes/{uuid}/transition", tenantChain(quo.Transition))
+		mux.Handle("POST /api/tenant/quotes/{uuid}/approve", tenantChain(quo.Approve))
+		mux.Handle("GET /api/tenant/quotes/{uuid}/audit", tenantChain(quo.Audit))
+
 		// Vendor: dedicated relational module (supplier/contractor directory,
 		// modeled on schema.org Person ∩ Organization) — a sibling of the CRM
 		// customer table and Sales Order, not the generic
@@ -535,6 +562,22 @@ func main() {
 		mux.Handle("POST /api/tenant/invoices/{uuid}/transition", tenantChain(invOps.Transition))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/payment", tenantChain(invOps.RecordPayment))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/audit", tenantChain(invOps.Audit))
+
+		// Payment: dedicated v2 relational module, sibling of invoice. Its
+		// payment_application ledger is now the source of truth for invoice AR
+		// balances (spec docs/superpowers/specs/2026-07-13-payments-module-design.md).
+		payOps := controllers.NewPaymentOps()
+		mux.Handle("GET /api/tenant/payments", tenantChain(payOps.List))
+		mux.Handle("POST /api/tenant/payments/search", tenantChain(payOps.Search))
+		mux.Handle("POST /api/tenant/payments", tenantChain(payOps.Create))
+		mux.Handle("GET /api/tenant/payments/{uuid}", tenantChain(payOps.Get))
+		mux.Handle("PATCH /api/tenant/payments/{uuid}", tenantChain(payOps.Update))
+		mux.Handle("DELETE /api/tenant/payments/{uuid}", tenantChain(payOps.Delete))
+		mux.Handle("POST /api/tenant/payments/{uuid}/transition", tenantChain(payOps.Transition))
+		mux.Handle("POST /api/tenant/payments/{uuid}/apply", tenantChain(payOps.Apply))
+		mux.Handle("POST /api/tenant/payments/{uuid}/unapply", tenantChain(payOps.Unapply))
+		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
+		mux.Handle("GET /api/tenant/invoices/{uuid}/payments", tenantChain(invOps.Payments))
 
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Both embeddings and chat are self-hosted on the same Ollama box

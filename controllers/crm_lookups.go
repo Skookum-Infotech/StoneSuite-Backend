@@ -7,7 +7,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/authz"
+	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/workflow"
 )
 
 // CRMLookups serves the read-only lkp_* reference tables that back the
@@ -48,6 +51,29 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+
+	// RBAC: this endpoint backs the core-field selects behind the Lead /
+	// Prospect / Customer forms, so require read on at least one of them — the
+	// same gate as GET /api/tenant/crm/statuses. Without it the whole reference
+	// set (including the customer book and staff directory below) was readable
+	// by any authenticated tenant user, including a zero-grant guest.
+	payload, err := middleware.GetUserFromContext(ctx)
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return
+	}
+	crmDecision, err := authz.CheckAny(ctx, pool, payload.ID,
+		[]authz.Resource{authz.ResourceLead, authz.ResourceProspect, authz.ResourceCustomer}, authz.ActionRead)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return
+	}
+	if !crmDecision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", payload.ID, "resource", "crm_lookups", "action", string(authz.ActionRead))
+		fail(w, http.StatusForbidden, "You do not have permission to read CRM records.")
+		return
+	}
 
 	customerTypes, err := queryLookupItems(ctx, pool,
 		`SELECT customer_type_id, customer_type_code, customer_type_name FROM lkp_customer_type
@@ -125,30 +151,57 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Employees: maps employee_id (integer FK) to display name, used for the
-	// Sales Rep field and any other employee FK selects.
-	employees, err := queryLookupItems(ctx, pool,
-		`SELECT e.employee_id, '', COALESCE(NULLIF(u.full_name,''), u.email)
-		 FROM employee e
-		 JOIN users u ON u.id = e.employee_user_id
-		 WHERE e.employee_deleted_at IS NULL AND u.status = 'active'
-		 ORDER BY COALESCE(NULLIF(u.full_name,''), u.email)`)
+	// Sales Rep field and any other employee FK selects. This is the tenant
+	// staff directory, so it is gated behind user:read and returned empty to
+	// callers without it (the picker degrades rather than 403-ing the form).
+	employees := []LookupItem{}
+	userDecision, err := authz.Check(ctx, pool, payload.ID, authz.ResourceUser, authz.ActionRead)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load employees.")
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return
+	}
+	if userDecision.Allowed {
+		employees, err = queryLookupItems(ctx, pool,
+			`SELECT e.employee_id, '', COALESCE(NULLIF(u.full_name,''), u.email)
+			 FROM employee e
+			 JOIN users u ON u.id = e.employee_user_id
+			 WHERE e.employee_deleted_at IS NULL AND u.status = 'active'
+			 ORDER BY COALESCE(NULLIF(u.full_name,''), u.email)`)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load employees.")
+			return
+		}
 	}
 	// Parent customers: used for the Parent Customer (customer_parent_company) FK
 	// select, which stores the integer customer_id of the owning company record.
-	parentCustomers, err := queryLookupItems(ctx, pool,
-		`SELECT c.customer_id, COALESCE(c.customer_doc_num,''), c.customer_name
+	// Scope-filtered to the caller's CRM scope exactly as ListRecords is, so an
+	// own/team-scoped caller sees only customers they own, not the whole book.
+	parentCustomers := []LookupItem{}
+	loadParents := true
+	parentQuery := `SELECT c.customer_id, COALESCE(c.customer_doc_num,''), c.customer_name
 		 FROM customer c
 		 JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
 		 WHERE rt.record_type_code IN ('LEAD','PROS','CUST')
 		   AND c.customer_deleted_at IS NULL
-		   AND c.customer_name IS NOT NULL
-		 ORDER BY c.customer_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load parent customers.")
-		return
+		   AND c.customer_name IS NOT NULL`
+	parentArgs := []any{}
+	if crmDecision.Scope == authz.ScopeOwn || crmDecision.Scope == authz.ScopeTeam {
+		empID, found := workflow.EmployeeIDByIdentity(ctx, pool, payload.ID)
+		if found {
+			parentQuery += ` AND c.customer_crm_owner_user_id = $1`
+			parentArgs = append(parentArgs, empID)
+		} else {
+			// No employee profile → owns nothing (mirrors ListRecords).
+			loadParents = false
+		}
+	}
+	if loadParents {
+		parentQuery += ` ORDER BY c.customer_name`
+		parentCustomers, err = queryLookupItems(ctx, pool, parentQuery, parentArgs...)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load parent customers.")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -170,8 +223,8 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func queryLookupItems(ctx context.Context, pool *pgxpool.Pool, query string) ([]LookupItem, error) {
-	rows, err := pool.Query(ctx, query)
+func queryLookupItems(ctx context.Context, pool *pgxpool.Pool, query string, args ...any) ([]LookupItem, error) {
+	rows, err := pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query lookup items: %w", err)
 	}

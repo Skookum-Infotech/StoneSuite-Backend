@@ -30,10 +30,10 @@ func TestRecordResolver(t *testing.T) {
 		{"cf:budget", "(custom_fields->>'budget')::numeric", query.TypeNumber, true},
 		{"cf:source", "custom_fields->>'source'", query.TypeEnum, true},
 		{"core:company_name", "core_fields->>'company_name'", query.TypeString, true},
-		{"cf:unknown", "", "", false},          // not a defined custom field
-		{"core:bad-key", "", "", false},        // fails identifier regex => rejected
-		{"core:x'; DROP", "", "", false},       // injection attempt rejected
-		{"totally_unknown", "", "", false},     // not system/cf/core
+		{"cf:unknown", "", "", false},      // not a defined custom field
+		{"core:bad-key", "", "", false},    // fails identifier regex => rejected
+		{"core:x'; DROP", "", "", false},   // injection attempt rejected
+		{"totally_unknown", "", "", false}, // not system/cf/core
 	}
 	for _, c := range cases {
 		t.Run(c.key, func(t *testing.T) {

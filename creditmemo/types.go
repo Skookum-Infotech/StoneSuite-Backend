@@ -138,7 +138,7 @@ type CreateCreditMemoInput struct {
 	InvoiceUUID     string                `json:"invoiceUuid"`
 	SalesOrderUUID  string                `json:"salesOrderUuid"`
 	ReferenceNumber string                `json:"referenceNumber"`
-	CreditMemoDate  *time.Time            `json:"creditMemoDate,omitempty"`
+	CreditMemoDate  string                `json:"creditMemoDate,omitempty"` // "yyyy-mm-dd"; blank ⇒ CURRENT_DATE
 	Reason          string                `json:"reason"`
 	SalesTaxPercent float64               `json:"salesTaxPercent"`
 	Adjustment      float64               `json:"adjustment"`
@@ -162,7 +162,7 @@ type CreateCreditMemoInput struct {
 // it. Non-monetary fields stay editable in any non-terminal status.
 type UpdateCreditMemoInput struct {
 	ReferenceNumber string                `json:"referenceNumber"`
-	CreditMemoDate  *time.Time            `json:"creditMemoDate,omitempty"`
+	CreditMemoDate  string                `json:"creditMemoDate,omitempty"` // "yyyy-mm-dd"; blank leaves the stored date unchanged
 	Reason          string                `json:"reason"`
 	SalesTaxPercent *float64              `json:"salesTaxPercent,omitempty"`
 	Adjustment      *float64              `json:"adjustment,omitempty"`

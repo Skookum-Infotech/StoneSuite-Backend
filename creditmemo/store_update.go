@@ -126,7 +126,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 	if _, err := tx.Exec(ctx, `
 		UPDATE credit_memo SET
 			credit_memo_reference_number = $1,
-			credit_memo_date = COALESCE($2, credit_memo_date),
+			credit_memo_date = COALESCE(NULLIF($2,'')::date, credit_memo_date),
 			credit_memo_reason = $3,
 			credit_memo_sales_tax_percent = $4,
 			credit_memo_adjustment = $5,

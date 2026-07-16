@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/invoice"
 )
 
 // Transition moves a payment to toStatusCode after validating the move
@@ -66,14 +68,9 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		}
 
 		for _, invInternalID := range invoiceInternalIDs {
-			var li lockedInvoice
-			li.internalID = invInternalID
-			if err := tx.QueryRow(ctx, `
-				SELECT rs.record_status_code, i.invoice_grand_total, i.invoice_amount_paid
-				FROM invoice i JOIN lkp_record_status rs ON rs.record_status_id = i.invoice_status
-				WHERE i.invoice_id = $1 FOR UPDATE OF i`, invInternalID,
-			).Scan(&li.statusCode, &li.grandTotal, &li.amountPaid); err != nil {
-				return nil, fmt.Errorf("lock invoice for void cascade: %w", err)
+			li, err := invoice.LockForUpdateByID(ctx, tx, invInternalID)
+			if err != nil {
+				return nil, err
 			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE payment_application SET application_deleted_at = NOW(), application_deleted_by = $1
@@ -81,7 +78,7 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 				actorOrSystem(actorEmployeeID), internalID, invInternalID); err != nil {
 				return nil, fmt.Errorf("cascade-unapply: %w", err)
 			}
-			if err := recomputeInvoice(ctx, tx, li, "unapply", actorEmployeeID); err != nil {
+			if err := invoice.RecomputeBalance(ctx, tx, li, "unapply", actorEmployeeID); err != nil {
 				return nil, err
 			}
 		}

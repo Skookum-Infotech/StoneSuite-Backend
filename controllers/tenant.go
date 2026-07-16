@@ -38,8 +38,8 @@ const tenantDeleteGraceDays = 30
 type TenantOps struct {
 	CP          *tenancy.ControlPlane
 	Prov        *provisioning.Provisioner
-	Router      *tenancy.Router  // resolves tenant DB pools (used to reach the owner workspace)
-	Jobs        *jobqueue.Queue  // durable async job queue (provisioning, etc.)
+	Router      *tenancy.Router // resolves tenant DB pools (used to reach the owner workspace)
+	Jobs        *jobqueue.Queue // durable async job queue (provisioning, etc.)
 	CF          storage.CFClientIface
 	CORSOrigins []string
 }
@@ -101,7 +101,9 @@ func isUniqueViolation(err error) bool {
 func applyLink(token string) string { return frontendBase() + "/onboarding/apply?token=" + token }
 
 // setupLink is the public URL where an onboarded customer sets their password.
-func setupLink(token string) string { return frontendBase() + "/onboarding/set-password?token=" + token }
+func setupLink(token string) string {
+	return frontendBase() + "/onboarding/set-password?token=" + token
+}
 
 // resetLink is the public URL where any user resets a forgotten password.
 func resetLink(token string) string { return frontendBase() + "/reset-password?token=" + token }
@@ -229,9 +231,9 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"success":          true,
-		"tenantId":         tenant.ID,
-		"slug":             tenant.Slug,
+		"success":           true,
+		"tenantId":          tenant.ID,
+		"slug":              tenant.Slug,
 		"passwordSetupLink": setupLink,
 	})
 }
@@ -278,8 +280,8 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 	// Seed minimal metadata so the customer's form is pre-filled.
 	seed := map[string]any{
-		"company_name":     req.CompanyName,
-		"super_admin_name": req.RecipientName,
+		"company_name":      req.CompanyName,
+		"super_admin_name":  req.RecipientName,
 		"super_admin_email": req.ContactEmail,
 	}
 	if md, mErr := json.Marshal(seed); mErr == nil {

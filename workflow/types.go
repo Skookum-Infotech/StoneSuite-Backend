@@ -39,13 +39,13 @@ const (
 
 // Workflow is a state machine definition.
 type Workflow struct {
-	ID            string   `json:"id"`
-	Key           string   `json:"key"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	Enabled       bool     `json:"enabled"`
-	IsDefault     bool     `json:"isDefault"`
-	PipelineOrder int      `json:"pipelineOrder"` // 0 = unordered; 1=Lead,2=Prospect,3=Customer
+	ID            string `json:"id"`
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Enabled       bool   `json:"enabled"`
+	IsDefault     bool   `json:"isDefault"`
+	PipelineOrder int    `json:"pipelineOrder"` // 0 = unordered; 1=Lead,2=Prospect,3=Customer
 	// ApproverUserIds is populated by the controller layer (not this package —
 	// approver config lives in crmstore) for CRM workflows only. Left nil for
 	// non-CRM workflows and by callers that don't need it (e.g. ListWorkflows).

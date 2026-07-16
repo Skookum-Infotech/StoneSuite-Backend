@@ -147,11 +147,11 @@ type Order struct {
 	InternalNotes    string      `json:"internalNotes,omitempty"`
 	TermsConditions  string      `json:"termsConditions,omitempty"`
 
-	PaymentTermsID     *int `json:"paymentTermsId"`
-	PriceLevelID       *int `json:"priceLevelId"`
-	CurrencyID         *int `json:"currencyId"`
-	SalesRepEmployeeID *int `json:"salesRepEmployeeId"`
-	OwnerEmployeeID    *int `json:"ownerEmployeeId"`
+	PaymentTermsID     *int    `json:"paymentTermsId"`
+	PriceLevelID       *int    `json:"priceLevelId"`
+	CurrencyID         *int    `json:"currencyId"`
+	SalesRepEmployeeID *int    `json:"salesRepEmployeeId"`
+	OwnerEmployeeID    *int    `json:"ownerEmployeeId"`
 	SalesTaxPercent    float64 `json:"salesTaxPercent"`
 
 	ShipSameAsBilling bool         `json:"shipSameAsBilling"`

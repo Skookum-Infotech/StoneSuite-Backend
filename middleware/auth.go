@@ -80,7 +80,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			if errors.Is(err, jwt.ErrTokenExpired) {
 				message = "Authentication session expired. Please sign in again."
 			}
-			
+
 			_ = json.NewEncoder(w).Encode(models.APIResponse{
 				Success: false,
 				Message: message,
@@ -125,7 +125,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			UserID:       userID,
 			ActiveRoleID: activeRoleID,
 		}
-		
+
 		ctx := context.WithValue(r.Context(), UserContextKey, ctxPayload)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

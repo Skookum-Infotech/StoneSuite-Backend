@@ -30,13 +30,13 @@ var ErrDuplicateUser = errors.New("user already exists in this workspace")
 
 // User is a workspace member profile in the tenant database.
 type User struct {
-	ID         string    `json:"id"`
-	IdentityID string    `json:"identityId"`
-	Email      string    `json:"email"`
-	FullName   string    `json:"fullName"`
-	Status     string    `json:"status"` // active | invited | disabled
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID         string        `json:"id"`
+	IdentityID string        `json:"identityId"`
+	Email      string        `json:"email"`
+	FullName   string        `json:"fullName"`
+	Status     string        `json:"status"` // active | invited | disabled
+	CreatedAt  time.Time     `json:"createdAt"`
+	UpdatedAt  time.Time     `json:"updatedAt"`
 	Roles      []RoleSummary `json:"roles,omitempty"`
 }
 

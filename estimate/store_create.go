@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"stonesuite-backend/workflow"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/workflow"
 )
 
 // resolvedLine is a line after catalog/free-text resolution, ready to price

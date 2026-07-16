@@ -29,7 +29,7 @@ var systemFields = map[string]resolved{
 	"status":           {"est.quote_status::text", query.TypeString},
 	"sales_rep_id":     {"est.quote_sales_rep_id::text", query.TypeString},
 	"owner_id":         {"est.quote_owner_id::text", query.TypeString},
-	"quote_date":    {"est.quote_date", query.TypeDate},
+	"quote_date":       {"est.quote_date", query.TypeDate},
 	"valid_until":      {"est.quote_valid_until", query.TypeDate},
 	"currency_id":      {"est.quote_currency::text", query.TypeString},
 	"payment_terms_id": {"est.quote_payment_terms::text", query.TypeString},
@@ -58,7 +58,7 @@ func (resolver) Resolve(key string) (string, query.DataType, bool) {
 var sortableFields = map[string]resolved{
 	"document_number": {"est.quote_number", query.TypeString},
 	"record_number":   {"est.quote_number", query.TypeString},
-	"quote_date":   {"est.quote_date", query.TypeDate},
+	"quote_date":      {"est.quote_date", query.TypeDate},
 	"grand_total":     {"est.quote_grand_total", query.TypeNumber},
 	"status":          {"est.quote_status", query.TypeNumber},
 	"customer_id":     {"est.quote_customer_id", query.TypeNumber},

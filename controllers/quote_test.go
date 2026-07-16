@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"stonesuite-backend/quote"
 	"stonesuite-backend/query"
+	"stonesuite-backend/quote"
 
 	"github.com/stretchr/testify/assert"
 )

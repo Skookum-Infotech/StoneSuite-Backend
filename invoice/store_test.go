@@ -148,7 +148,7 @@ func TestUpdate_RejectedOnTerminalStatus(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE invoice SET invoice_status = $1 WHERE invoice_uuid = $2", paidStatusID, inv.ID); err != nil {
 		t.Fatalf("force status: %v", err)
 	}
-	
+
 	if _, err := Update(ctx, pool, inv.ID, UpdateInvoiceInput{Items: []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 5, UnitPrice: 10}}}, 1); err == nil {
 		t.Fatal("expected update on PAID invoice to be rejected")
 	}

@@ -597,6 +597,24 @@ func main() {
 		mux.Handle("GET /api/tenant/credit-memos/{uuid}/audit", tenantChain(cmOps.Audit))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/credit-memos", tenantChain(invOps.CreditMemos))
 
+		// Refund: dedicated v2 relational module, sibling of payment and credit
+		// memo. Record-only (no payment gateway or webhooks exist in this
+		// codebase) — draws down a payment's overpayment or a credit memo's
+		// unapplied balance via the refund_application ledger, which feeds the
+		// refund-owned payment_refunded_total / credit_memo_refunded_total
+		// rollups (spec docs/superpowers/specs/2026-07-16-refund-module-design.md).
+		rfndOps := controllers.NewRefundOps()
+		mux.Handle("GET /api/tenant/refunds", tenantChain(rfndOps.List))
+		mux.Handle("POST /api/tenant/refunds/search", tenantChain(rfndOps.Search))
+		mux.Handle("POST /api/tenant/refunds", tenantChain(rfndOps.Create))
+		mux.Handle("GET /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Get))
+		mux.Handle("PATCH /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Update))
+		mux.Handle("DELETE /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Delete))
+		mux.Handle("POST /api/tenant/refunds/{uuid}/transition", tenantChain(rfndOps.Transition))
+		mux.Handle("POST /api/tenant/refunds/{uuid}/apply", tenantChain(rfndOps.Apply))
+		mux.Handle("POST /api/tenant/refunds/{uuid}/unapply", tenantChain(rfndOps.Unapply))
+		mux.Handle("GET /api/tenant/refunds/{uuid}/audit", tenantChain(rfndOps.Audit))
+
 		// AI assistant: RBAC-scoped RAG chat over CRM records + app help.
 		// Both embeddings and chat are self-hosted on the same Ollama box
 		// (ADR-001) — no third-party LLM account, API key, or quota.

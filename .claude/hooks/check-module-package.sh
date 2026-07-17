@@ -24,7 +24,7 @@ esac
 
 mod=$(basename "$(dirname "$file")")
 case "$mod" in
-  quote|estimate|salesorder|invoice|payment|creditmemo|vendors|inventory) ;;
+  quote|estimate|salesorder|invoice|payment|creditmemo|vendors|inventory|refund) ;;
   *) exit 0 ;;
 esac
 

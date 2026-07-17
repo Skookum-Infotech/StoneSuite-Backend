@@ -578,6 +578,7 @@ func main() {
 		mux.Handle("POST /api/tenant/payments/{uuid}/unapply", tenantChain(payOps.Unapply))
 		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/payments", tenantChain(invOps.Payments))
+		mux.Handle("GET /api/tenant/payments/{uuid}/refunds", tenantChain(payOps.Refunds))
 
 		// Credit Memo: dedicated v2 relational module, sibling of invoice and
 		// payment. Its credit_memo_application ledger feeds invoice_credit_total,
@@ -596,6 +597,7 @@ func main() {
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/unapply", tenantChain(cmOps.Unapply))
 		mux.Handle("GET /api/tenant/credit-memos/{uuid}/audit", tenantChain(cmOps.Audit))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/credit-memos", tenantChain(invOps.CreditMemos))
+		mux.Handle("GET /api/tenant/credit-memos/{uuid}/refunds", tenantChain(cmOps.Refunds))
 
 		// Refund: dedicated v2 relational module, sibling of payment and credit
 		// memo. Record-only (no payment gateway or webhooks exist in this

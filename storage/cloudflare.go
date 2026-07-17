@@ -67,8 +67,8 @@ func (c *CFClient) CreateBucket(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("create r2 bucket: %w", err)
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	// 200 = created; 409 = already exists (idempotent).
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
@@ -127,7 +127,7 @@ func (c *CFClient) SetBucketCORS(ctx context.Context, bucket string, origins []s
 	if err != nil {
 		return fmt.Errorf("set r2 bucket cors: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {

@@ -20,9 +20,6 @@ var ErrAttachmentNotFound = errors.New("attachment not found")
 // maxFileNameLength is the maximum byte length of a sanitized display filename.
 const maxFileNameLength = 255
 
-// maxPerRecordBytes is the cumulative upload cap per record (200 MB).
-const maxPerRecordBytes int64 = 200 * 1024 * 1024
-
 // Attachment is a single file attached to a workflow record.
 type Attachment struct {
 	ID               string    `json:"id"`

@@ -36,7 +36,7 @@ type fakeQuerier struct {
 
 func (q fakeQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
 func (q fakeQuerier) QueryRow(context.Context, string, ...any) pgx.Row {
-	return fakeRow{netDays: q.netDays, err: q.err}
+	return fakeRow(q)
 }
 func (q fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, nil

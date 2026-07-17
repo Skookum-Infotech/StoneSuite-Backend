@@ -264,7 +264,7 @@ func main() {
 
 	// /api/metrics — Prometheus exposition. Optionally bearer-token protected
 	// (METRICS_TOKEN); Fly's built-in Prometheus scrapes this for free.
-	var metricsHandler http.Handler = metrics.Handler()
+	metricsHandler := metrics.Handler()
 	if tok := config.AppConfig.MetricsToken; tok != "" {
 		inner := metricsHandler
 		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

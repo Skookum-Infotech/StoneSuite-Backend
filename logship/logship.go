@@ -159,7 +159,7 @@ func (s *Shipper) send(batch [][]byte) {
 		fmt.Fprintf(os.Stderr, "logship: ship %d lines: %v\n", len(batch), err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		fmt.Fprintf(os.Stderr, "logship: ingest returned HTTP %d\n", resp.StatusCode)
 	}

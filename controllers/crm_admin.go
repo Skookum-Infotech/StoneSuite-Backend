@@ -284,7 +284,7 @@ func replaceActiveApprovers(ctx context.Context, pool *pgxpool.Pool, recordTypeC
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	empIDs := make([]int, 0, len(userIDs))
 	for _, uid := range userIDs {

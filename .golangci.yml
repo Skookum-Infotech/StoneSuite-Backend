@@ -1,0 +1,14 @@
+version: "2"
+
+# Standard set = errcheck, govet, ineffassign, staticcheck, unused. Deliberately
+# not the full "all" set — start from a codebase that is actually green
+# (see CI job "lint") and expand the linter list as a separate, reviewed change.
+linters:
+  default: standard
+
+# Both default to a cap (50 / 3) that silently truncates output instead of
+# failing loudly -- a local `golangci-lint run` can look clean while dozens of
+# real issues are hidden. Disabled so CI always reports everything.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

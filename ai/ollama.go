@@ -117,7 +117,7 @@ func (e *OllamaEmbedder) postJSON(ctx context.Context, url string, body, out any
 			return fmt.Errorf("do request: %w", err)
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

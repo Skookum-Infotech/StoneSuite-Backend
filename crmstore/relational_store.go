@@ -145,13 +145,12 @@ var customerFields = []cfield{
 	{"customer_days_overdue", "customer_days_overdue", kInt, false},
 }
 
-// leadProspectRequired lists the CoreFields keys the workbook marks mandatory
-// for LEAD/PROS records. Enforcement is deferred until the frontend collects
-// them (the forms are a separate follow-up); kept here as the single reference.
-var leadProspectRequired = []string{
-	"customer_lead_source", "customer_lead_score", "customer_expected_close_date",
-	"customer_expected_deal_value", "customer_last_contacted_date", "customer_preferred_contact_method",
-}
+// The CoreFields keys the workbook marks mandatory for LEAD/PROS records are:
+// customer_lead_source, customer_lead_score, customer_expected_close_date,
+// customer_expected_deal_value, customer_last_contacted_date,
+// customer_preferred_contact_method.
+// Enforcement is deferred until the frontend collects them (the forms are a
+// separate follow-up); kept here as the single reference.
 
 // selectExpr returns the SELECT expression for a registry column, normalising
 // nullable text/decimal/date to non-null strings so scanning is uniform.

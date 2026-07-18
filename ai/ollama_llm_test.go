@@ -25,14 +25,14 @@ func TestOllamaLLMChat(t *testing.T) {
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		if body.Stream {
 			t.Errorf("expected stream:false, got true")
 		}
 		if len(body.Messages) == 0 || body.Messages[0].Role != "system" {
 			t.Errorf("expected first message to be role=system, got %+v", body.Messages)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"message": map[string]any{"role": "assistant", "content": "grounded answer"},
 		})
 	}))
@@ -52,7 +52,7 @@ func TestOllamaLLMChat(t *testing.T) {
 func TestOllamaLLMChatAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error":"model not loaded"}`))
+		_, _ = w.Write([]byte(`{"error":"model not loaded"}`))
 	}))
 	defer srv.Close()
 
@@ -69,7 +69,7 @@ func TestOllamaLLMChatAPIError(t *testing.T) {
 
 func TestOllamaLLMChatEmptyResponseIsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"role": "assistant", "content": ""}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"role": "assistant", "content": ""}})
 	}))
 	defer srv.Close()
 
@@ -95,9 +95,9 @@ func TestOllamaLLMChatBoundsGenerationLength(t *testing.T) {
 				NumPredict int `json:"num_predict"`
 			} `json:"options"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		gotOptions = body.Options
-		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
 	}))
 	defer srv.Close()
 
@@ -118,11 +118,11 @@ func TestOllamaLLMChatMapsMessagesInOrder(t *testing.T) {
 				Role string `json:"role"`
 			} `json:"messages"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		for _, m := range body.Messages {
 			gotRoles = append(gotRoles, m.Role)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": "ok"}})
 	}))
 	defer srv.Close()
 

@@ -49,9 +49,9 @@ func (q *fakeQueue) Fail(_ context.Context, id string) error {
 }
 
 type fakeLoader struct {
-	doc                          ai.RecordDoc
-	workflowID, owner, team, err string
-	loadErr                      error
+	doc                     ai.RecordDoc
+	workflowID, owner, team string
+	loadErr                 error
 }
 
 func (l *fakeLoader) Load(_ context.Context, _ string) (ai.RecordDoc, string, string, string, error) {

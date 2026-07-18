@@ -169,6 +169,12 @@ var catalog = []Permission{
 	{ResourceRefund, ActionUpdate},
 	{ResourceRefund, ActionDelete},
 	{ResourceRefund, ActionTransition},
+	// Approving a refund (PEND->APPV) is what authorizes it to draw down a
+	// payment or credit memo, so it is a distinct capability from moving the
+	// record around: a support role can hold create/read/update without ever
+	// being able to approve its own initiated refunds. Every other transition
+	// uses ActionTransition (mirrors ResourceCreditMemo above).
+	{ResourceRefund, ActionApprove},
 
 	{ResourceVendor, ActionCreate},
 	{ResourceVendor, ActionRead},

@@ -79,7 +79,7 @@ func (s *CPHelpStore) ReplaceDoc(ctx context.Context, docKey string, chunks []He
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `DELETE FROM cp_rag_chunks WHERE doc_key = $1`, docKey); err != nil {
 		return fmt.Errorf("delete existing chunks for %s: %w", docKey, err)

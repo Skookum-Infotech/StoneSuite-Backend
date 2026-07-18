@@ -68,7 +68,9 @@ func TestRenderRecordIsDeterministic(t *testing.T) {
 		StateName:   "New",
 		Custom:      map[string]any{"b": 2, "a": 1, "c": 3},
 	}
-	if RenderRecord(doc) != RenderRecord(doc) {
+	first := RenderRecord(doc)
+	second := RenderRecord(doc)
+	if first != second {
 		t.Fatal("RenderRecord is not deterministic across calls")
 	}
 }

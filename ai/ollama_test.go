@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -25,9 +26,9 @@ func TestOllamaEmbedAppliesDocPrefix(t *testing.T) {
 			Model  string `json:"model"`
 			Prompt string `json:"prompt"`
 		}
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 		gotPrompts = append(gotPrompts, req.Prompt)
-		json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2, 0.3}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2, 0.3}})
 	}))
 	defer srv.Close()
 
@@ -53,9 +54,9 @@ func TestOllamaQueryEmbedderUsesQueryPrefix(t *testing.T) {
 		var req struct {
 			Prompt string `json:"prompt"`
 		}
-		json.Unmarshal(body, &req)
+		_ = json.Unmarshal(body, &req)
 		gotPrompt = req.Prompt
-		json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.4, 0.5, 0.6}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.4, 0.5, 0.6}})
 	}))
 	defer srv.Close()
 
@@ -71,7 +72,7 @@ func TestOllamaQueryEmbedderUsesQueryPrefix(t *testing.T) {
 func TestOllamaEmbedAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error":"model not loaded"}`))
+		_, _ = w.Write([]byte(`{"error":"model not loaded"}`))
 	}))
 	defer srv.Close()
 
@@ -90,10 +91,10 @@ func TestOllamaEmbedAPIError(t *testing.T) {
 // mid start or stop. A transport-level failure (not an HTTP error response)
 // must be retried, not surfaced immediately.
 func TestOllamaEmbedRetriesTransportFailure(t *testing.T) {
-	var calls int
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls == 1 {
+		n := calls.Add(1)
+		if n == 1 {
 			// Simulate a reset connection: hijack and close without a response.
 			hj, ok := w.(http.Hijacker)
 			if !ok {
@@ -103,10 +104,10 @@ func TestOllamaEmbedRetriesTransportFailure(t *testing.T) {
 			if err != nil {
 				t.Fatalf("hijack: %v", err)
 			}
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2}})
 	}))
 	defer srv.Close()
 
@@ -120,8 +121,8 @@ func TestOllamaEmbedRetriesTransportFailure(t *testing.T) {
 	if len(vecs) != 1 || len(vecs[0]) != 2 {
 		t.Fatalf("got %v, want one 2-dim vector", vecs)
 	}
-	if calls != 2 {
-		t.Fatalf("calls = %d, want 2 (one failure + one successful retry)", calls)
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2 (one failure + one successful retry)", calls.Load())
 	}
 }
 
@@ -130,10 +131,10 @@ func TestOllamaEmbedRetriesTransportFailure(t *testing.T) {
 // consecutive transport failures before the machine becomes reachable must
 // still resolve successfully once it does.
 func TestOllamaEmbedRecoversFromExtendedColdStart(t *testing.T) {
-	var calls int
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls <= transportRetries {
+		n := calls.Add(1)
+		if n <= transportRetries {
 			hj, ok := w.(http.Hijacker)
 			if !ok {
 				t.Fatal("ResponseWriter does not support hijacking")
@@ -142,10 +143,10 @@ func TestOllamaEmbedRecoversFromExtendedColdStart(t *testing.T) {
 			if err != nil {
 				t.Fatalf("hijack: %v", err)
 			}
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"embedding": []float32{0.1, 0.2}})
 	}))
 	defer srv.Close()
 
@@ -159,8 +160,8 @@ func TestOllamaEmbedRecoversFromExtendedColdStart(t *testing.T) {
 	if len(vecs) != 1 || len(vecs[0]) != 2 {
 		t.Fatalf("got %v, want one 2-dim vector", vecs)
 	}
-	if calls != transportRetries+1 {
-		t.Fatalf("calls = %d, want %d (failed on every attempt but the last)", calls, transportRetries+1)
+	if calls.Load() != transportRetries+1 {
+		t.Fatalf("calls = %d, want %d (failed on every attempt but the last)", calls.Load(), transportRetries+1)
 	}
 }
 
@@ -168,12 +169,12 @@ func TestOllamaEmbedRecoversFromExtendedColdStart(t *testing.T) {
 // is bounded — a sustained outage must still surface an error, not retry
 // forever.
 func TestOllamaEmbedGivesUpAfterTransportRetriesExhausted(t *testing.T) {
-	var calls int
+	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		hj, _ := w.(http.Hijacker)
 		conn, _, _ := hj.Hijack()
-		conn.Close()
+		_ = conn.Close()
 	}))
 	defer srv.Close()
 
@@ -184,7 +185,7 @@ func TestOllamaEmbedGivesUpAfterTransportRetriesExhausted(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error after exhausting retries, got nil")
 	}
-	if calls != transportRetries+1 {
-		t.Fatalf("calls = %d, want %d (initial attempt + %d retries)", calls, transportRetries+1, transportRetries)
+	if calls.Load() != transportRetries+1 {
+		t.Fatalf("calls = %d, want %d (initial attempt + %d retries)", calls.Load(), transportRetries+1, transportRetries)
 	}
 }

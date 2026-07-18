@@ -8,26 +8,35 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ## Repo Structure
 ```
 .
-├── fly.toml                # Fly.io deployment config (v2 format)
+├── fly.toml                 # Fly.io deploy config (v2); ollama/ ships its own fly.toml
 ├── Dockerfile               # Multi-stage Alpine build (CGO_ENABLED=0)
-├── main.go                  # Entry point: init CP, apply migrations, start server
+├── main.go                  # Entry point: init CP, apply migrations, wire routes, start server
 ├── config/                  # Env-based AppConfig struct
 ├── tenancy/                 # Control-plane registry, resolver, router, middleware
 ├── authz/                   # RBAC: permission catalog, enforcer
 ├── workflow/                # Workflow engine: state machines, custom fields, seed data
-├── controllers/             # HTTP handlers (tenant, lead, prospect, customer, RBAC, onboarding)
-├── middleware/              # JWT auth, tenancy resolver, request logging, recover, rate limiting
-├── database/                # Pool init, migrations (control-plane + tenant)
-├── services/                # Email service, provisioning
-├── lead/, prospect/         # Lead/Prospect store & types (JSONB custom_fields)
 ├── crmstore/                # v1 JSONB + v2 relational CRM record stores
 ├── query/                   # Store-agnostic record filter/sort/keyset-pagination engine
+├── controllers/             # HTTP handlers + module route wiring (tenant, CRM, RBAC, onboarding)
+├── middleware/              # JWT auth, tenancy resolver, request logging, recover, rate limiting
+├── userstore/               # Tenant user store
+├── quote/ estimate/ salesorder/ invoice/ payment/ creditmemo/ vendors/
+│                            # Relational document modules (clone twins) — see "Document Modules"
+├── inventory/               # Inventory items module (relational)
+├── ai/                      # Provider-agnostic RAG primitives (Embedder/LLMClient, orchestrator); dep-free of app pkgs
+├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
+├── cmd/rag-ingest-help/     # CLI: ingest embedded help docs into the RAG index
+├── jobqueue/                # Async job queue
 ├── provisioning/            # Provisioner: queue, worker, async job runner
+├── services/                # Email service, provisioning helpers
 ├── storage/                 # R2 per-tenant bucket client
-├── metrics/, logship/       # Prometheus metrics, Axiom log shipping
+├── secret/                  # Field-level secret encryption (SECRET_ENCRYPTION_KEY)
+├── cache/ models/           # In-process cache; shared model types
+├── metrics/ logship/        # Prometheus metrics, Axiom log shipping
+├── docs/                    # Embedded help-doc corpus (docs/embed.go) + concept notes
 └── database/migrations/
-    ├── control_plane/       # CP schema: tenants, identities, invites, sso_configs, audit_logs
-    └── tenant/              # Tenant template: workflows, states, transitions, records, audit_logs
+    ├── control_plane/schema.sql  # Canonical CP schema: tenants, identities, invites, sso_configs, audit_logs
+    └── tenant/schema.sql         # Canonical tenant template: workflows, states, transitions, records, module tables, audit_logs
 ```
 
 ## Common Commands
@@ -94,6 +103,11 @@ fly status
 5. **System roles (super_admin, guest) are immutable** — cannot be deleted or modified by users.
 6. **Log security events.** Failed logins, permission denials, IDOR attempts, and rate-limit hits go through `logSecurityEvent(r, "<event>", kv...)` or `slog.Warn("security event", ...)` with a stable `security_event` key. Never log passwords or raw tokens.
 
+### Document Modules (Clone Discipline)
+The relational document modules — `quote`, `estimate`, `salesorder`, `invoice`, `payment`, `creditmemo`, `vendors` — are structural **copy-paste twins** cloned from one skeleton (package + `tenant/schema.sql` tables + controller wired in `controllers/` + RBAC catalog entries + status/approval flow). There is no shared base, so a cross-cutting fix (auth chain, scope plumbing, `logSecurityEvent`, registration) must be **hand-ported to every module**.
+1. **Scaffold new modules with the `new-module` skill** — it wires the full security chain; don't hand-roll.
+2. **After editing any module, run the `module-drift-checker` agent** to catch copy-paste leftovers and missing auth/scope/logging.
+
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.
 1. **Filter ⨯ scope is ANDed, never OR.** The RBAC scope clause and the user filter compose with `AND` — a filter can only narrow the caller's permitted set, never widen it. Keep `workflow/filter_test.go` green.
@@ -103,6 +117,12 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 5. **Sortable fields are restricted** to stable non-null columns (`created_at`, `updated_at`, `record_number`).
 6. **Map errors correctly.** `*query.InvalidFilterError` → 400, never a 500.
 7. **`query` imports nothing app-specific** — keep it dependency-free.
+
+### AI / RAG (`ai/`)
+1. **`ai/` is provider-agnostic and dependency-free of app packages** (Embedder + LLMClient interfaces, RAG orchestrator, record rendering) — same discipline as `query/`. Keep app types out of it.
+2. **LLM + embeddings are self-hosted via Ollama** (`ollama/` is its own Fly app), not a hosted API — chosen for data-residency/security. Don't swap in a hosted embeddings/LLM API without that trade-off being decided explicitly.
+3. **Help corpus is embedded** (`docs/embed.go`) and ingested with `go run ./cmd/rag-ingest-help`; reindex via `POST /api/platform/ai/reindex-help`.
+4. **Tenant RAG Q&A is `POST /api/tenant/ai/ask`** (auth + TenantResolver); `/api/embeddings` + `/api/chat` proxy the model.
 
 ### Custom Fields & JSONB (Data Integrity)
 1. **custom_fields JSONB must validate against `workflow_field_definitions` before save** (type, required, enum, regex).

@@ -64,7 +64,7 @@ func (c *OllamaLLMClient) Chat(ctx context.Context, system string, messages []Me
 		reqMessages = append(reqMessages, ollamaChatMessage{Role: "system", Content: system})
 	}
 	for _, m := range messages {
-		reqMessages = append(reqMessages, ollamaChatMessage{Role: m.Role, Content: m.Content})
+		reqMessages = append(reqMessages, ollamaChatMessage(m))
 	}
 	body := ollamaChatReq{
 		Model:    c.model,
@@ -101,7 +101,7 @@ func (c *OllamaLLMClient) postJSON(ctx context.Context, url string, body, out an
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

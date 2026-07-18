@@ -43,9 +43,12 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ```bash
 go run .                  # start server → http://localhost:8080
 go test ./...             # run all tests
+go test -tags dbtest ./... # run DB-backed tests too (needs TEST_DATABASE_URL; skip cleanly otherwise)
 go build ./...             # verify build compiles
 golangci-lint run          # lint (requires golangci-lint installed)
 ```
+
+**Note:** `gh` CLI may not be authenticated in this environment — if `gh pr create`/`gh auth login` fails, use the GitHub MCP connector tools (`mcp__github__create_pull_request`, etc.) instead.
 
 ## Deployment (Fly.io)
 
@@ -107,6 +110,7 @@ fly status
 The relational document modules — `quote`, `estimate`, `salesorder`, `invoice`, `payment`, `creditmemo`, `vendors` — are structural **copy-paste twins** cloned from one skeleton (package + `tenant/schema.sql` tables + controller wired in `controllers/` + RBAC catalog entries + status/approval flow). There is no shared base, so a cross-cutting fix (auth chain, scope plumbing, `logSecurityEvent`, registration) must be **hand-ported to every module**.
 1. **Scaffold new modules with the `new-module` skill** — it wires the full security chain; don't hand-roll.
 2. **After editing any module, run the `module-drift-checker` agent** to catch copy-paste leftovers and missing auth/scope/logging.
+3. A module's `store.go` should be split by verb (`store_create.go`/`store_update.go`/`store_transition.go`/`store_search.go` or `search.go`, naming varies by module vintage) once it grows large; `invoice/store_line_resolve.go` is the reference pattern for pulling out shared line-resolution helpers. Some existing "clean" siblings (`quote`, `estimate`) still exceed the 300-line file cap — known pre-existing drift, not a new problem to fix reflexively.
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

@@ -175,7 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_field_defs_workflow ON workflow_field_definiti
 CREATE TABLE IF NOT EXISTS workflow_records (
     id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     workflow_id      UUID        NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
-    current_state_id UUID        REFERENCES workflow_states(id),
+    current_state_id UUID        REFERENCES workflow_states(id) ON DELETE SET NULL,
     owner_user_id    UUID        REFERENCES users(id) ON DELETE SET NULL,
     team_id          UUID        REFERENCES teams(id) ON DELETE SET NULL,
     core_fields      JSONB       NOT NULL DEFAULT '{}'::jsonb, -- workflow built-ins
@@ -510,7 +510,7 @@ DROP TABLE IF EXISTS prospects CASCADE;
 
 CREATE TABLE IF NOT EXISTS employee (
     employee_id             SERIAL       PRIMARY KEY,
-    employee_user_id        UUID             NULL REFERENCES users(id),
+    employee_user_id        UUID             NULL REFERENCES users(id) ON DELETE SET NULL,
     employee_first_name     VARCHAR(100) NOT NULL DEFAULT '',
     employee_last_name      VARCHAR(100) NOT NULL DEFAULT '',
     employee_email          VARCHAR(255) NOT NULL,
@@ -3913,3 +3913,169 @@ CREATE INDEX IF NOT EXISTS idx_rfnd_history_refund ON refund_history (refund_id)
 -- New rollup columns on payment/credit_memo (sortable via each module's own resolver).
 CREATE INDEX IF NOT EXISTS idx_pay_refunded_id ON payment     (payment_refunded_total, payment_id)         WHERE payment_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_cm_refunded_id  ON credit_memo (credit_memo_refunded_total, credit_memo_id) WHERE credit_memo_deleted_at IS NULL;
+
+
+-- -- 000033_review_hardening --------------------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 33: SQL review hardening.
+--
+-- Three independent, idempotent fixes surfaced by a schema review:
+--  1. Drop single-column status indexes made redundant by a composite
+--     (status, created_at, id) index already covering the same lookups.
+--  2. Tighten two users(id)/workflow_states(id) FKs to ON DELETE SET NULL,
+--     matching the behavior every sibling FK in the file already uses.
+--  3. Add CHECK constraints on *_history.action / enum-like columns that
+--     were previously enforced only by a comment. Value lists were taken
+--     from the actual literals each Go package writes (grepped from
+--     source), not from the (in two cases stale) column comments --
+--     notably rag_index_queue.status is missing 'inflight' in its
+--     comment, and users.status is missing 'suspended'.
+-- =====================================================================
+
+-- 1. Redundant single-column indexes (composite index already covers these
+--    via leftmost-prefix; DROP INDEX IF EXISTS is naturally idempotent).
+DROP INDEX IF EXISTS idx_inv_status;
+DROP INDEX IF EXISTS idx_pay_status;
+DROP INDEX IF EXISTS idx_cm_status;
+DROP INDEX IF EXISTS idx_rfnd_status;
+
+-- 2. FK ON DELETE fixes for tenants provisioned before this migration.
+--    (Fresh tenants already get the fixed behavior from the CREATE TABLE
+--    definitions above; confdeltype != 'n' guards against re-running this
+--    on a DB that's already been fixed.)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'employee_employee_user_id_fkey' AND confdeltype != 'n'
+  ) THEN
+    ALTER TABLE employee DROP CONSTRAINT employee_employee_user_id_fkey;
+    ALTER TABLE employee ADD CONSTRAINT employee_employee_user_id_fkey
+      FOREIGN KEY (employee_user_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'workflow_records_current_state_id_fkey' AND confdeltype != 'n'
+  ) THEN
+    ALTER TABLE workflow_records DROP CONSTRAINT workflow_records_current_state_id_fkey;
+    ALTER TABLE workflow_records ADD CONSTRAINT workflow_records_current_state_id_fkey
+      FOREIGN KEY (current_state_id) REFERENCES workflow_states(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- 3. CHECK constraints on previously comment-only enum columns.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_status') THEN
+    ALTER TABLE users ADD CONSTRAINT chk_users_status
+      CHECK (status IN ('active','invited','disabled','suspended'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_wf_transition_actions_type') THEN
+    ALTER TABLE workflow_transition_actions ADD CONSTRAINT chk_wf_transition_actions_type
+      CHECK (type IN ('send_email','assign_owner','set_field','webhook','create_record'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_rag_index_queue_op') THEN
+    ALTER TABLE rag_index_queue ADD CONSTRAINT chk_rag_index_queue_op
+      CHECK (op IN ('upsert','delete'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_rag_index_queue_status') THEN
+    ALTER TABLE rag_index_queue ADD CONSTRAINT chk_rag_index_queue_status
+      CHECK (status IN ('pending','inflight','done','error'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_crm_record_history_action') THEN
+    ALTER TABLE crm_record_history ADD CONSTRAINT chk_crm_record_history_action
+      CHECK (action IN ('create','transition','convert','approve'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_customer_history_action') THEN
+    ALTER TABLE customer_history ADD CONSTRAINT chk_customer_history_action
+      CHECK (action IN ('create','transition','convert','approve'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_sales_order_history_action') THEN
+    ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
+      CHECK (action IN ('create','transition','cancel','update','approve'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_invoice_history_action') THEN
+    ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
+      CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_estimate_history_action') THEN
+    ALTER TABLE estimate_history ADD CONSTRAINT chk_estimate_history_action
+      CHECK (action IN ('create','transition','convert','update','approve'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_quote_history_action') THEN
+    ALTER TABLE quote_history ADD CONSTRAINT chk_quote_history_action
+      CHECK (action IN ('create','transition','convert','update','approve'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_payment_history_action') THEN
+    ALTER TABLE payment_history ADD CONSTRAINT chk_payment_history_action
+      CHECK (action IN ('create','apply','unapply','transition'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_credit_memo_history_action') THEN
+    ALTER TABLE credit_memo_history ADD CONSTRAINT chk_credit_memo_history_action
+      CHECK (action IN ('create','update','transition','apply','unapply'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_refund_history_action') THEN
+    ALTER TABLE refund_history ADD CONSTRAINT chk_refund_history_action
+      CHECK (action IN ('create','update','transition','apply','unapply'));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_vendor_history_action') THEN
+    ALTER TABLE vendor_history ADD CONSTRAINT chk_vendor_history_action
+      CHECK (action IN ('create','transition','update'));
+  END IF;
+END $$;

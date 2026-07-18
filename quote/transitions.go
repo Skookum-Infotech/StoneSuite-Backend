@@ -8,7 +8,7 @@ var ErrInvalidTransition = errors.New("invalid quote status transition")
 // allowedTransitions maps a status code to the set of codes reachable from it
 // (spec §7). Terminal states (RJCT, EXPR, CANC) map to an empty set. There is
 // no "Accepted" status: acceptance is expressed by converting the quote
-// into a quote (spec §9.1), which does not require a status change here.
+// into an order (spec §9.1), which does not require a status change here.
 var allowedTransitions = map[string]map[string]bool{
 	"DRFT": {"PAPV": true, "CANC": true},
 	"PAPV": {"APPV": true, "DRFT": true, "CANC": true},

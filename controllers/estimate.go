@@ -56,6 +56,8 @@ func (h *EstimateOps) authEstimate(w http.ResponseWriter, r *http.Request, actio
 		return nil, "", "", false
 	}
 	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", payload.ID, "resource", string(authz.ResourceEstimate), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" estimates.")
 		return nil, "", "", false
 	}

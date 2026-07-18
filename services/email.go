@@ -151,7 +151,7 @@ func sendViaResend(apiKey, from, to, subject, html string) error {
 	if err != nil {
 		return fmt.Errorf("resend: send to %s: %w", to, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

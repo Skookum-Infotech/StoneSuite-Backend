@@ -67,7 +67,7 @@ func (p *SQLProvider) CreateDatabase(ctx context.Context, dbName string) error {
 	if err != nil {
 		return fmt.Errorf("admin connect: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	var exists bool
 	if err := conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", dbName).Scan(&exists); err != nil {
@@ -91,7 +91,7 @@ func (p *SQLProvider) DropDatabase(ctx context.Context, dbName string) error {
 	if err != nil {
 		return fmt.Errorf("admin connect: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	if _, err := conn.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" WITH (FORCE)`, dbName)); err != nil {
 		return fmt.Errorf("drop database %q: %w", dbName, err)

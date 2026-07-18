@@ -3748,3 +3748,168 @@ CREATE INDEX IF NOT EXISTS idx_cm_history_memo ON credit_memo_history (credit_me
 
 -- Invoice's new credit rollup column (sortable via the invoice resolver).
 CREATE INDEX IF NOT EXISTS idx_inv_credit_id  ON invoice (invoice_credit_total, invoice_id) WHERE invoice_deleted_at IS NULL;
+-- -- 000032_refund_module -----------------------------------------------
+-- =====================================================================
+-- Tenant migration 032: Refund module -- a dedicated relational sibling of
+-- `payment`/`credit_memo` (not the generic v1 JSONB workflow engine).
+--
+-- A refund is money returned to a customer, drawn from either an overpayment
+-- held on a payment (payment_unapplied_amount) or an unapplied credit memo
+-- (credit_memo_unapplied_amount). It is payment-shaped (scalar amount, no
+-- lines -- AD-1) and moves money only through the refund_application ledger,
+-- which targets exactly one of payment or credit_memo per row (AD-2).
+--
+-- record_type RFND (id 10) and its PEND/APPV/SENT/VOID statuses already
+-- exist (migration 002) -- this block adds NO seed rows. The lkp_record_status
+-- seed keys statuses to record types by hardcoded integer, so it is
+-- append-only.
+--
+-- This module is record-only: no payment gateway, no inbound webhooks, no
+-- gateway-log table. None of that infrastructure exists anywhere in this
+-- codebase (AD-10) -- a refund records money that was already returned
+-- out-of-band, exactly like payment records money already collected.
+--
+-- Spec: docs/superpowers/specs/2026-07-16-refund-module-design.md
+-- =====================================================================
+
+-- payment/credit_memo each gain one rollup column, sole writer is refund/
+-- (AD-2). Neither payment's nor credit_memo's own Go code ever reads or
+-- writes these -- there is exactly one writer, so no shared invariant needs
+-- extracting the way invoice.RecomputeBalance was for invoice_credit_total.
+--   available_from_payment     = payment_unapplied_amount     - payment_refunded_total
+--   available_from_credit_memo = credit_memo_unapplied_amount - credit_memo_refunded_total
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_refunded_total     DECIMAL(15,2) NOT NULL DEFAULT 0;
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_refunded_total DECIMAL(15,2) NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS refund (
+    refund_id                  SERIAL        PRIMARY KEY,
+    refund_uuid                UUID          NOT NULL DEFAULT gen_random_uuid(),
+    refund_number              VARCHAR(20)       NULL,
+
+    -- Classification
+    record_type                INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),
+    refund_status               INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    refund_customer_id          INTEGER       NOT NULL REFERENCES customer(customer_id),
+
+    -- Source linkage. LINEAGE ONLY (AD-12 for invoice; the typical/primary
+    -- source for payment/credit_memo) -- refund_application is the only thing
+    -- that moves balance.
+    refund_payment_id            INTEGER          NULL REFERENCES payment(payment_id) ON DELETE SET NULL,
+    refund_credit_memo_id         INTEGER          NULL REFERENCES credit_memo(credit_memo_id) ON DELETE SET NULL,
+    refund_invoice_id              INTEGER          NULL REFERENCES invoice(invoice_id) ON DELETE SET NULL,
+
+    -- Primary info
+    refund_method                 INTEGER       NOT NULL REFERENCES lkp_payment_method(payment_method_id),
+    refund_reference_number        VARCHAR(50)   NOT NULL DEFAULT '',
+    refund_date                      DATE          NOT NULL DEFAULT CURRENT_DATE,
+    refund_currency                   INTEGER          NULL REFERENCES lkp_currency(currency_id),
+    refund_reason                      VARCHAR(150)  NOT NULL DEFAULT '',
+    refund_memo                         TEXT          NOT NULL DEFAULT '',
+    refund_internal_notes                 TEXT          NOT NULL DEFAULT '',
+
+    -- Money summary (stored, not recomputed on read)
+    refund_amount                          DECIMAL(15,2) NOT NULL,
+    refund_applied_total                    DECIMAL(15,2) NOT NULL DEFAULT 0,
+    refund_unapplied_amount                  DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    refund_owner_id                            INTEGER          NULL REFERENCES employee(employee_id),
+
+    refund_custom_fields                        JSONB        NOT NULL DEFAULT '{}',
+    refund_created_at                            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    refund_created_by                             INTEGER          NULL REFERENCES employee(employee_id),
+    refund_updated_at                              TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    refund_updated_by                               INTEGER          NULL REFERENCES employee(employee_id),
+    refund_deleted_at                                TIMESTAMP        NULL,
+    refund_deleted_by                                 INTEGER          NULL REFERENCES employee(employee_id),
+    refund_record_version                              INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_refund_uuid           UNIQUE (refund_uuid),
+    CONSTRAINT uq_refund_number         UNIQUE (refund_number),
+    CONSTRAINT chk_refund_amount_pos    CHECK (refund_amount > 0),
+    CONSTRAINT chk_refund_applied_nonneg CHECK (refund_applied_total >= 0 AND refund_unapplied_amount >= 0),
+    CONSTRAINT chk_refund_applied_le_amt CHECK (refund_applied_total <= refund_amount),
+    CONSTRAINT chk_refund_soft_delete    CHECK (
+        (refund_deleted_at IS NULL AND refund_deleted_by IS NULL) OR
+        (refund_deleted_at IS NOT NULL AND refund_deleted_by IS NOT NULL)
+    )
+);
+
+-- refund_application -- the ledger of record (AD-2). Targets exactly one of
+-- payment or credit_memo per row (chk_refund_app_xor_source). Cannot reuse
+-- payment_application / credit_memo_application: both have a NOT NULL FK to
+-- their single target type. payment_id/credit_memo_id are deliberately NOT
+-- ON DELETE CASCADE -- a source must not be hard-deletable out from under a
+-- live refund application.
+CREATE TABLE IF NOT EXISTS refund_application (
+    application_id             SERIAL        PRIMARY KEY,
+    application_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
+    refund_id                  INTEGER       NOT NULL REFERENCES refund(refund_id) ON DELETE CASCADE,
+    payment_id                 INTEGER           NULL REFERENCES payment(payment_id),
+    credit_memo_id             INTEGER           NULL REFERENCES credit_memo(credit_memo_id),
+
+    application_amount         DECIMAL(15,2) NOT NULL,
+
+    application_created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    application_created_by     INTEGER           NULL REFERENCES employee(employee_id),
+    application_deleted_at     TIMESTAMP         NULL,
+    application_deleted_by     INTEGER           NULL REFERENCES employee(employee_id),
+    application_record_version INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_refund_application_uuid  UNIQUE (application_uuid),
+    CONSTRAINT chk_refund_app_amount_pos   CHECK (application_amount > 0),
+    CONSTRAINT chk_refund_app_xor_source   CHECK (
+        (payment_id IS NOT NULL AND credit_memo_id IS NULL) OR
+        (payment_id IS NULL AND credit_memo_id IS NOT NULL)
+    ),
+    CONSTRAINT chk_refund_app_soft_delete  CHECK (
+        (application_deleted_at IS NULL AND application_deleted_by IS NULL) OR
+        (application_deleted_at IS NOT NULL AND application_deleted_by IS NOT NULL)
+    )
+);
+
+-- One live application per (refund, payment) or (refund, credit_memo) pair,
+-- so a re-apply increments the existing row rather than inserting a second
+-- (mirrors uq_pay_app_live_pair / uq_cm_app_live_pair). COALESCE(...,0) lets a
+-- single partial unique index cover both source columns despite the XOR.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_refund_app_live_pair
+    ON refund_application (refund_id, COALESCE(payment_id, 0), COALESCE(credit_memo_id, 0))
+    WHERE application_deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS refund_history (
+    refund_history_id       SERIAL       PRIMARY KEY,
+    refund_id                INTEGER      NOT NULL REFERENCES refund(refund_id) ON DELETE CASCADE,
+    from_status_id             INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                 INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                         VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | update | transition | apply | unapply
+    actor_employee_id                INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                           JSONB        NOT NULL DEFAULT '{}',
+    at                                  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes -- listing/filtering (all partial on live rows) -------------------
+CREATE INDEX IF NOT EXISTS idx_rfnd_customer     ON refund (refund_customer_id)     WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_payment      ON refund (refund_payment_id)      WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_credit_memo  ON refund (refund_credit_memo_id)  WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_invoice      ON refund (refund_invoice_id)      WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_status       ON refund (refund_status)          WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_date         ON refund (refund_date)            WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_owner        ON refund (refund_owner_id)        WHERE refund_deleted_at IS NULL;
+-- Keyset pagination tiebreakers (one per sortable column + id)
+CREATE INDEX IF NOT EXISTS idx_rfnd_created_id   ON refund (refund_created_at, refund_id)      WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_updated_id   ON refund (refund_updated_at, refund_id)      WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_date_id      ON refund (refund_date, refund_id)            WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_amount_id    ON refund (refund_amount, refund_id)          WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_unapplied_id ON refund (refund_unapplied_amount, refund_id) WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_status_created ON refund (refund_status, refund_created_at, refund_id) WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_custom_gin   ON refund USING GIN (refund_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_rfnd_app_refund      ON refund_application (refund_id)      WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_app_payment     ON refund_application (payment_id)     WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_app_credit_memo ON refund_application (credit_memo_id) WHERE application_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_rfnd_history_refund ON refund_history (refund_id);
+
+-- New rollup columns on payment/credit_memo (sortable via each module's own resolver).
+CREATE INDEX IF NOT EXISTS idx_pay_refunded_id ON payment     (payment_refunded_total, payment_id)         WHERE payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_refunded_id  ON credit_memo (credit_memo_refunded_total, credit_memo_id) WHERE credit_memo_deleted_at IS NULL;

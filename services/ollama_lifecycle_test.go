@@ -26,7 +26,7 @@ func TestOllamaLifecycleStartAllStartsEveryMachine(t *testing.T) {
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/machines") && r.Method == http.MethodGet:
-			json.NewEncoder(w).Encode([]flyMachine{{ID: "m1"}, {ID: "m2"}})
+			_ = json.NewEncoder(w).Encode([]flyMachine{{ID: "m1"}, {ID: "m2"}})
 		case strings.HasSuffix(r.URL.Path, "/start") && r.Method == http.MethodPost:
 			started = append(started, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/apps/app1/machines/"), "/start"))
 			w.WriteHeader(http.StatusOK)
@@ -53,7 +53,7 @@ func TestOllamaLifecycleStopAllContinuesAfterOneFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/machines") && r.Method == http.MethodGet:
-			json.NewEncoder(w).Encode([]flyMachine{{ID: "bad"}, {ID: "good"}})
+			_ = json.NewEncoder(w).Encode([]flyMachine{{ID: "bad"}, {ID: "good"}})
 		case strings.HasSuffix(r.URL.Path, "/stop") && r.Method == http.MethodPost:
 			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/apps/app1/machines/"), "/stop")
 			if id == "bad" {
@@ -84,7 +84,7 @@ func TestOllamaLifecycleStopAllContinuesAfterOneFailure(t *testing.T) {
 func TestOllamaLifecycleListMachinesPropagatesHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("invalid token"))
+		_, _ = w.Write([]byte("invalid token"))
 	}))
 	defer srv.Close()
 

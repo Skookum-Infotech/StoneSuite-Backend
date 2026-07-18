@@ -216,7 +216,7 @@ func (c *Client) signedDelete(ctx context.Context, key string) error {
 	if err != nil {
 		return fmt.Errorf("execute r2 delete: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	// 204 No Content = deleted; 404 = already gone (idempotent).

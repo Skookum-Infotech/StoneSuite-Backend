@@ -198,16 +198,6 @@ func statusIDByCode(ctx context.Context, pool *pgxpool.Pool, typeID int, code st
 	return id, nil
 }
 
-// statusCodeByID resolves a status row's code from its internal id.
-func statusCodeByID(ctx context.Context, pool *pgxpool.Pool, statusID int) (string, error) {
-	var code string
-	if err := pool.QueryRow(ctx,
-		`SELECT record_status_code FROM lkp_record_status WHERE record_status_id = $1`, statusID).Scan(&code); err != nil {
-		return "", fmt.Errorf("resolve status code: %w", err)
-	}
-	return code, nil
-}
-
 // validateCustom validates in.CustomFields against the "invoice" workflow's field definitions.
 func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]any) error {
 	if custom == nil {

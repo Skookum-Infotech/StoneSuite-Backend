@@ -60,7 +60,10 @@ func (q *Queue) ClaimPending(ctx context.Context, n int) ([]Job, error) {
 // Complete marks a job done.
 func (q *Queue) Complete(ctx context.Context, id string) error {
 	_, err := q.pool.Exec(ctx, `UPDATE rag_index_queue SET status='done' WHERE id=$1`, id)
-	return err
+	if err != nil {
+		return fmt.Errorf("complete job %s: %w", id, err)
+	}
+	return nil
 }
 
 // maxAttempts bounds queue-level retries. Kept generous relative to the
@@ -75,7 +78,10 @@ func (q *Queue) Fail(ctx context.Context, id string) error {
 		UPDATE rag_index_queue
 		SET status = CASE WHEN attempts >= $2 THEN 'error' ELSE 'pending' END
 		WHERE id=$1`, id, maxAttempts)
-	return err
+	if err != nil {
+		return fmt.Errorf("fail job %s: %w", id, err)
+	}
+	return nil
 }
 
 // Stats reports the current pending backlog: how many jobs are pending and

@@ -55,6 +55,8 @@ func (h *VendorOps) authVendor(w http.ResponseWriter, r *http.Request, action au
 		return nil, "", "", false
 	}
 	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", payload.ID, "resource", string(authz.ResourceVendor), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" vendors.")
 		return nil, "", "", false
 	}

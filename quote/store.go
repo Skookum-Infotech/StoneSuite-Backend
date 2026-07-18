@@ -294,36 +294,36 @@ func taxPercentForRate(ctx context.Context, q workflow.Querier, taxRateID int) (
 // quoteSelect is the base SELECT shared by Get and Search. Column order
 // must match scanQuote's Scan(...) arg order exactly.
 const quoteSelect = `
-	SELECT est.quote_uuid, COALESCE(est.quote_number,''),
+	SELECT qt.quote_uuid, COALESCE(qt.quote_number,''),
 	       rs.record_status_name, rs.record_status_code,
-	       est.quote_approval_status,
+	       qt.quote_approval_status,
 	       c.customer_uuid, c.customer_name,
 	       COALESCE(ou.id::text,''),
 	       COALESCE(e.estimate_uuid::text,''),
-	       to_char(est.quote_date,'YYYY-MM-DD'),
-	       COALESCE(to_char(est.quote_valid_until,'YYYY-MM-DD'),''),
-	       est.quote_po_number, est.quote_reference_number, est.quote_memo,
-	       est.quote_notes, est.quote_internal_notes, est.quote_terms_conditions,
-	       est.quote_payment_terms, est.quote_price_level, est.quote_currency,
-	       est.quote_sales_rep_id, est.quote_owner_id, est.quote_sales_tax_percent,
-	       est.quote_ship_same_as_bill,
-	       est.quote_bill_customer_name, est.quote_bill_attention,
-	       est.quote_bill_addr_line1, est.quote_bill_addr_line2, est.quote_bill_addr_suitenum,
-	       est.quote_bill_addr_city, est.quote_bill_addr_state, est.quote_bill_addr_zip,
-	       est.quote_bill_addr_country, est.quote_bill_phone, est.quote_bill_fax, est.quote_bill_email,
-	       est.quote_ship_customer_name, est.quote_ship_attention,
-	       est.quote_ship_addr_line1, est.quote_ship_addr_line2, est.quote_ship_addr_suitenum,
-	       est.quote_ship_addr_city, est.quote_ship_addr_state, est.quote_ship_addr_zip,
-	       est.quote_ship_addr_country, est.quote_ship_phone, est.quote_ship_fax, est.quote_ship_email,
-	       est.quote_custom_fields,
-	       est.quote_subtotal, est.quote_discount_total, est.quote_tax_total,
-	       est.quote_shipping_charge, est.quote_adjustment, est.quote_grand_total,
-	       est.quote_created_at, est.quote_updated_at
-	FROM quote est
-	JOIN lkp_record_status rs ON rs.record_status_id = est.quote_status
-	JOIN customer c ON c.customer_id = est.quote_customer_id
-	LEFT JOIN estimate e ON e.estimate_id = est.quote_estimate_id
-	LEFT JOIN employee oe ON oe.employee_id = est.quote_owner_id
+	       to_char(qt.quote_date,'YYYY-MM-DD'),
+	       COALESCE(to_char(qt.quote_valid_until,'YYYY-MM-DD'),''),
+	       qt.quote_po_number, qt.quote_reference_number, qt.quote_memo,
+	       qt.quote_notes, qt.quote_internal_notes, qt.quote_terms_conditions,
+	       qt.quote_payment_terms, qt.quote_price_level, qt.quote_currency,
+	       qt.quote_sales_rep_id, qt.quote_owner_id, qt.quote_sales_tax_percent,
+	       qt.quote_ship_same_as_bill,
+	       qt.quote_bill_customer_name, qt.quote_bill_attention,
+	       qt.quote_bill_addr_line1, qt.quote_bill_addr_line2, qt.quote_bill_addr_suitenum,
+	       qt.quote_bill_addr_city, qt.quote_bill_addr_state, qt.quote_bill_addr_zip,
+	       qt.quote_bill_addr_country, qt.quote_bill_phone, qt.quote_bill_fax, qt.quote_bill_email,
+	       qt.quote_ship_customer_name, qt.quote_ship_attention,
+	       qt.quote_ship_addr_line1, qt.quote_ship_addr_line2, qt.quote_ship_addr_suitenum,
+	       qt.quote_ship_addr_city, qt.quote_ship_addr_state, qt.quote_ship_addr_zip,
+	       qt.quote_ship_addr_country, qt.quote_ship_phone, qt.quote_ship_fax, qt.quote_ship_email,
+	       qt.quote_custom_fields,
+	       qt.quote_subtotal, qt.quote_discount_total, qt.quote_tax_total,
+	       qt.quote_shipping_charge, qt.quote_adjustment, qt.quote_grand_total,
+	       qt.quote_created_at, qt.quote_updated_at
+	FROM quote qt
+	JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
+	JOIN customer c ON c.customer_id = qt.quote_customer_id
+	LEFT JOIN estimate e ON e.estimate_id = qt.quote_estimate_id
+	LEFT JOIN employee oe ON oe.employee_id = qt.quote_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 
 func scanQuote(row pgx.Row) (*Quote, error) {
@@ -417,7 +417,7 @@ func loadLines(ctx context.Context, q workflow.Querier, uuid string) ([]Line, er
 // Get loads a single live quote by its external uuid, including its lines.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Quote, error) {
 	e, err := scanQuote(pool.QueryRow(ctx, quoteSelect+`
-		WHERE est.quote_uuid = $1 AND est.quote_deleted_at IS NULL`, uuid))
+		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

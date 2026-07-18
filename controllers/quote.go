@@ -56,6 +56,8 @@ func (h *QuoteOps) authQuote(w http.ResponseWriter, r *http.Request, action auth
 		return nil, "", "", false
 	}
 	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", payload.ID, "resource", string(authz.ResourceQuote), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" quotes.")
 		return nil, "", "", false
 	}
@@ -70,7 +72,7 @@ func (h *QuoteOps) authQuoteByUUID(w http.ResponseWriter, r *http.Request, uuid 
 	if !ok {
 		return nil, "", nil, false
 	}
-	est, err := quote.Get(r.Context(), pool, uuid)
+	qte, err := quote.Get(r.Context(), pool, uuid)
 	if errors.Is(err, quote.ErrNotFound) {
 		fail(w, http.StatusNotFound, "Quote not found.")
 		return nil, "", nil, false
@@ -80,7 +82,7 @@ func (h *QuoteOps) authQuoteByUUID(w http.ResponseWriter, r *http.Request, uuid 
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {
-		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, est.OwnerUserID, "")
+		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, qte.OwnerUserID, "")
 		if aerr != nil {
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, "", nil, false
@@ -93,7 +95,7 @@ func (h *QuoteOps) authQuoteByUUID(w http.ResponseWriter, r *http.Request, uuid 
 			return nil, "", nil, false
 		}
 	}
-	return pool, identityID, est, true
+	return pool, identityID, qte, true
 }
 
 // quoteFail maps a store error to an HTTP response.

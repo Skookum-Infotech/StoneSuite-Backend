@@ -190,10 +190,11 @@ func TestApply_RejectsUnsentInvoice(t *testing.T) {
 	custUUID := seedCustomer(t, pool)
 	methodID := firstMethodID(t, pool)
 	// Invoice left at DRFT (never transitioned to SENT).
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	var itemUUID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
-		VALUES ('DRFT-SKU', 'Item', 1, 50, 1) RETURNING inventory_item_uuid`).Scan(&itemUUID); err != nil {
+		VALUES ($1, 'Item', 1, 50, 1) RETURNING inventory_item_uuid`, "DRFT-SKU-"+suffix).Scan(&itemUUID); err != nil {
 		t.Fatalf("seed item: %v", err)
 	}
 	inv, err := invoice.Create(ctx, pool, invoice.CreateInvoiceInput{

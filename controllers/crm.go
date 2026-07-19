@@ -38,6 +38,8 @@ import (
 //	POST   /api/tenant/crm/records/{id}/convert             — convert to next stage
 //	POST   /api/tenant/crm/records/{id}/approve             — approve a Closed-Won customer
 //	GET    /api/tenant/crm/{workflowKey}/approvals/pending  — caller's approval queue
+//	GET    /api/tenant/crm/records/{id}/activities          — list activity log (CRMActivityOps)
+//	POST   /api/tenant/crm/records/{id}/activities          — log an activity (CRMActivityOps)
 type CRMOps struct{}
 
 // NewCRMOps constructs the handler group.

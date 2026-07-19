@@ -32,7 +32,7 @@ func employeeIDByIdentity(ctx context.Context, pool *pgxpool.Pool, identityID st
 // Search lists quotes under the caller's RBAC scope with filter/sort/global
 // search + keyset pagination. List rows omit line items to avoid an N+1 join.
 func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID string, req query.Request) (Page, error) {
-	where := []string{"est.quote_deleted_at IS NULL"}
+	where := []string{"qt.quote_deleted_at IS NULL"}
 	var args []any
 	nextIdx := 1
 	if scope == "own" || scope == "team" {
@@ -40,7 +40,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 		if !found {
 			return Page{}, nil
 		}
-		where = append(where, fmt.Sprintf("est.quote_owner_id = $%d", nextIdx))
+		where = append(where, fmt.Sprintf("qt.quote_owner_id = $%d", nextIdx))
 		args = append(args, empID)
 		nextIdx++
 	}
@@ -87,7 +87,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	return page, nil
 }
 
-// sortValue reads the effective sort field's value from an quote to mint
+// sortValue reads the effective sort field's value from a quote to mint
 // the next cursor.
 func sortValue(e Quote, field string) any {
 	switch field {

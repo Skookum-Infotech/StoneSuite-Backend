@@ -4079,3 +4079,76 @@ BEGIN
       CHECK (action IN ('create','transition','update'));
   END IF;
 END $$;
+
+-- -- 000034_sales_document_conversions ------------------------------------
+-- =====================================================================
+-- Tenant migration 34: document-to-document conversion chain
+-- (Estimate -> Quote -> Sales Order -> Invoice), full snapshot copy.
+--
+-- 1. Idempotency: a source document may only convert once. Unique indexes
+--    on the lineage columns/tables let Go detect "already converted" and
+--    return the existing target instead of creating a duplicate.
+-- 2. Widen sales_order_history / invoice_history action CHECKs to allow
+--    'convert' on the source document's own history trail (mirrors
+--    quote_history / estimate_history, which already allow it).
+-- 3. New crm_activity table -- a thin, append-mostly module (no lifecycle,
+--    no calc.go) logging calls/emails/meetings/notes/tasks against a
+--    CRM customer/lead/prospect record (they share the `customer` table).
+-- =====================================================================
+
+-- 1a. Quote.quote_estimate_id: one estimate converts to at most one live
+-- quote. NULLs (standalone quotes) are unaffected -- Postgres unique
+-- indexes never compare NULLs as equal.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_quote_estimate_once
+    ON quote (quote_estimate_id) WHERE quote_deleted_at IS NULL;
+
+-- 1b. quote_conversion.quote_id: one quote converts to at most one sales
+-- order (uq_quote_conversion_sales_order already guards the reverse
+-- direction -- one sales order traces back to at most one quote).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_quote_conversion_quote
+    ON quote_conversion (quote_id);
+
+-- 1c. invoice.invoice_sales_order_id: one sales order converts to at most
+-- one live invoice.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_sales_order_once
+    ON invoice (invoice_sales_order_id) WHERE invoice_deleted_at IS NULL;
+
+-- 2. Widen history action CHECKs so the source document's history row can
+-- record 'convert' (widening-only; existing rows remain valid).
+ALTER TABLE sales_order_history DROP CONSTRAINT IF EXISTS chk_sales_order_history_action;
+ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
+    CHECK (action IN ('create','transition','cancel','update','approve','convert'));
+
+ALTER TABLE invoice_history DROP CONSTRAINT IF EXISTS chk_invoice_history_action;
+ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
+    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert'));
+
+-- 3. CRM activity log (call | email | meeting | note | task).
+CREATE TABLE IF NOT EXISTS crm_activity (
+    crm_activity_id       SERIAL       PRIMARY KEY,
+    crm_activity_uuid     UUID         NOT NULL DEFAULT gen_random_uuid(),
+    customer_id           INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    activity_type         VARCHAR(10)  NOT NULL,
+    occurred_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    author_employee_id    INTEGER          NULL REFERENCES employee(employee_id),
+    subject                VARCHAR(200) NOT NULL DEFAULT '',
+    body                    TEXT        NOT NULL DEFAULT '',
+    created_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by              INTEGER          NULL REFERENCES employee(employee_id),
+    updated_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by              INTEGER          NULL REFERENCES employee(employee_id),
+    deleted_at              TIMESTAMP        NULL,
+    deleted_by               INTEGER         NULL REFERENCES employee(employee_id),
+    record_version            INTEGER     NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_crm_activity_uuid UNIQUE (crm_activity_uuid),
+    CONSTRAINT chk_crm_activity_type CHECK (activity_type IN ('call','email','meeting','note','task')),
+    CONSTRAINT chk_crm_activity_soft_delete CHECK (
+        (deleted_at IS NULL AND deleted_by IS NULL) OR
+        (deleted_at IS NOT NULL AND deleted_by IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_crm_activity_customer  ON crm_activity (customer_id)               WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_crm_activity_type       ON crm_activity (customer_id, activity_type) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_crm_activity_occurred   ON crm_activity (customer_id, occurred_at)   WHERE deleted_at IS NULL;

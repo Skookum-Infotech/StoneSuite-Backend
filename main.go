@@ -104,6 +104,7 @@ func main() {
 	var provisioner *provisioning.Provisioner
 	var cpPool *pgxpool.Pool     // control-plane pool; used by AIOps for cp_rag_chunks
 	var cp *tenancy.ControlPlane // control-plane handle; also used by AIOps for the reindex-help platform-admin check
+	var cipher *secret.Cipher    // field-level secret cipher; also used by SSOOps to encrypt client secrets
 	var ollamaLifecycle *services.OllamaLifecycle
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		var err error
@@ -130,7 +131,6 @@ func main() {
 
 		// Secret cipher (optional): when configured, tenant DSNs are encrypted
 		// at rest and decrypted on use; otherwise DSNs are stored in plaintext (dev).
-		var cipher *secret.Cipher
 		var dsnResolver tenancy.DSNResolver
 		if config.AppConfig.SecretEncryptionKey != "" {
 			cipher, err = secret.New(config.AppConfig.SecretEncryptionKey)
@@ -409,6 +409,29 @@ func main() {
 		// /accept is registered first so it is not consumed by the token catch-all.
 		mux.HandleFunc("POST /api/onboarding/user-invite/accept", userOps.AcceptUserInvite)
 		mux.HandleFunc("GET /api/onboarding/user-invite/{token}", userOps.GetUserInvite)
+
+		// Tenant configuration: SSO providers (control-plane backed, secrets
+		// encrypted at rest), gated on the sso_config catalog permission.
+		sso := controllers.NewSSOOps(cp, cipher)
+		mux.Handle("GET /api/tenant/sso-configs", tenantChain(sso.ListConfigs))
+		mux.Handle("POST /api/tenant/sso-configs", tenantChain(sso.CreateConfig))
+		mux.Handle("GET /api/tenant/sso-configs/{id}", tenantChain(sso.GetConfig))
+		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
+		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
+
+		// Tenant configuration: workspace teams + membership (team catalog perm).
+		team := controllers.NewTeamOps()
+		mux.Handle("GET /api/tenant/teams", tenantChain(team.ListTeams))
+		mux.Handle("POST /api/tenant/teams", tenantChain(team.CreateTeam))
+		mux.Handle("GET /api/tenant/teams/{id}", tenantChain(team.GetTeam))
+		mux.Handle("PUT /api/tenant/teams/{id}", tenantChain(team.UpdateTeam))
+		mux.Handle("DELETE /api/tenant/teams/{id}", tenantChain(team.DeleteTeam))
+		mux.Handle("POST /api/tenant/teams/{id}/members", tenantChain(team.AddMember))
+		mux.Handle("DELETE /api/tenant/teams/{id}/members/{userId}", tenantChain(team.RemoveMember))
+
+		// Tenant-wide audit-log browser (audit:read, scope-narrowed on the actor).
+		auditOps := controllers.NewAuditOps()
+		mux.Handle("GET /api/tenant/audit", tenantChain(auditOps.ListAudit))
 
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()

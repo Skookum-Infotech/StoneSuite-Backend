@@ -24,8 +24,8 @@ If the answer is not in the context, say "` + refusalPhrase + `" Cite sources by
 // and lexical (keyword, full-text) search arm — see ai/fuse.go for how the
 // two ranked lists are fused into one.
 type Retriever interface {
-	SearchScoped(ctx context.Context, queryVec []float32, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error)
-	SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error)
+	SearchScoped(ctx context.Context, queryVec []float32, scope, callerUserID string, k int) ([]Citation, error)
+	SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, k int) ([]Citation, error)
 	SearchHelp(ctx context.Context, queryVec []float32, k int) ([]Citation, error)
 	SearchHelpLexical(ctx context.Context, queryText string, k int) ([]Citation, error)
 }
@@ -41,13 +41,13 @@ type CombinedRetriever struct {
 }
 
 // SearchScoped delegates to the tenant store.
-func (c CombinedRetriever) SearchScoped(ctx context.Context, queryVec []float32, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error) {
-	return c.Tenant.SearchScoped(ctx, queryVec, scope, callerUserID, teamIDs, k)
+func (c CombinedRetriever) SearchScoped(ctx context.Context, queryVec []float32, scope, callerUserID string, k int) ([]Citation, error) {
+	return c.Tenant.SearchScoped(ctx, queryVec, scope, callerUserID, k)
 }
 
 // SearchScopedLexical delegates to the tenant store's full-text search.
-func (c CombinedRetriever) SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error) {
-	return c.Tenant.SearchScopedLexical(ctx, queryText, scope, callerUserID, teamIDs, k)
+func (c CombinedRetriever) SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, k int) ([]Citation, error) {
+	return c.Tenant.SearchScopedLexical(ctx, queryText, scope, callerUserID, k)
 }
 
 // SearchHelp delegates to the control-plane help store.
@@ -65,7 +65,6 @@ type AskRequest struct {
 	Question     string
 	Scope        string
 	CallerUserID string
-	TeamIDs      []string
 }
 
 // AskResult is the grounded answer + its citations.
@@ -143,14 +142,14 @@ func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, erro
 	qv := vecs[0]
 
 	// Vector arm: fatal on error, as before.
-	tVec, err := o.ret.SearchScoped(ctx, qv, req.Scope, req.CallerUserID, req.TeamIDs, tenantRetrievalK)
+	tVec, err := o.ret.SearchScoped(ctx, qv, req.Scope, req.CallerUserID, tenantRetrievalK)
 	if err != nil {
 		return AskResult{}, fmt.Errorf("retrieve: %w", err)
 	}
 	// Lexical arm: the ONE intentional non-fatal path — a full-text search
 	// hiccup degrades to vector-only retrieval instead of 502ing the whole
 	// assistant, since the vector arm alone is what today's behavior already is.
-	tLex, lerr := o.ret.SearchScopedLexical(ctx, req.Question, req.Scope, req.CallerUserID, req.TeamIDs, tenantRetrievalK)
+	tLex, lerr := o.ret.SearchScopedLexical(ctx, req.Question, req.Scope, req.CallerUserID, tenantRetrievalK)
 	if lerr != nil {
 		slog.Warn("lexical tenant search failed; using vector-only", "err", lerr)
 		tLex = nil

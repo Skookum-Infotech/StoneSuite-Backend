@@ -419,16 +419,6 @@ func main() {
 		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
 		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
 
-		// Tenant configuration: workspace teams + membership (team catalog perm).
-		team := controllers.NewTeamOps()
-		mux.Handle("GET /api/tenant/teams", tenantChain(team.ListTeams))
-		mux.Handle("POST /api/tenant/teams", tenantChain(team.CreateTeam))
-		mux.Handle("GET /api/tenant/teams/{id}", tenantChain(team.GetTeam))
-		mux.Handle("PUT /api/tenant/teams/{id}", tenantChain(team.UpdateTeam))
-		mux.Handle("DELETE /api/tenant/teams/{id}", tenantChain(team.DeleteTeam))
-		mux.Handle("POST /api/tenant/teams/{id}/members", tenantChain(team.AddMember))
-		mux.Handle("DELETE /api/tenant/teams/{id}/members/{userId}", tenantChain(team.RemoveMember))
-
 		// Tenant-wide audit-log browser (audit:read, scope-narrowed on the actor).
 		auditOps := controllers.NewAuditOps()
 		mux.Handle("GET /api/tenant/audit", tenantChain(auditOps.ListAudit))

@@ -1,8 +1,12 @@
 # Configuration API — Frontend Contract
 
-Endpoints added on `work-planner-tuesday-backend`: **SSO provider configs**,
-**teams & membership**, and the **audit-log browser**. This is the contract the
-frontend consumes — no Go reading required.
+Endpoints added on `work-planner-tuesday-backend`: **SSO provider configs** and
+the **audit-log browser**. This is the contract the frontend consumes — no Go
+reading required.
+
+> **RBAC scope model is now two-level: `all` and `own`.** The `team` scope has
+> been retired — there is no team management UI or API. Anywhere a scope is
+> displayed or selected (e.g. the role editor), offer only `all` and `own`.
 
 ## Conventions (all endpoints)
 - Base: all routes are under `/api/tenant/` and require the standard auth chain
@@ -75,54 +79,10 @@ to keep the stored secret; send a new value to replace it.
 
 ---
 
-## Teams & Membership
-Workspace teams. Stored in the tenant DB. Permission: `team:read` for GET,
-`team:configure` for mutations.
-
-### Objects
-```json
-// list item
-{ "id": "uuid", "name": "string", "member_count": 3, "created_at": "rfc3339" }
-
-// detail (GET by id) adds members
-{
-  "id": "uuid", "name": "string", "member_count": 2, "created_at": "rfc3339",
-  "members": [ { "user_id": "uuid", "email": "a@x.com", "full_name": "A B" } ]
-}
-```
-
-### `GET /api/tenant/teams`
-→ `200 { "success": true, "teams": [ <list item>, ... ] }`
-
-### `GET /api/tenant/teams/{id}`
-→ `200 { "success": true, "team": <detail> }` · `404` if not found.
-
-### `POST /api/tenant/teams`
-Body: `{ "name": "string" }` (required, non-blank).
-→ `201 { "success": true, "team": <list item> }` · `400` blank name.
-
-### `PUT /api/tenant/teams/{id}`
-Body: `{ "name": "string" }`. → `200 { "success": true, "team": <list item> }` ·
-`400` blank name · `404` not found.
-
-### `DELETE /api/tenant/teams/{id}`
-Deletes the team; membership rows cascade. → `200 { "success": true }` · `404`.
-
-### `POST /api/tenant/teams/{id}/members`
-Body: `{ "user_id": "uuid" }`. Idempotent (re-adding a member is a no-op).
-→ `200 { "success": true }`
-- `404` team not found · `400` user not found · `400` missing user_id.
-
-### `DELETE /api/tenant/teams/{id}/members/{userId}`
-Removing a non-member is a no-op success. → `200 { "success": true }` · `404` team not found.
-
----
-
 ## Audit-Log Browser
 Tenant-wide audit trail. Permission: `audit:read`. Results are **narrowed by the
-caller's scope** on the acting user: `all` = every entry; `team` = entries by
-users sharing a team with the caller (plus the caller); `own` = the caller's own
-entries only. Keyset (cursor) pagination — no offsets.
+caller's scope** on the acting user: `all` = every entry; anything else = the
+caller's own entries only. Keyset (cursor) pagination — no offsets.
 
 ### `GET /api/tenant/audit`
 Query params (all optional):

@@ -64,7 +64,7 @@ func (h *RefundOps) authRefundByUUID(w http.ResponseWriter, r *http.Request, uui
 		fail(w, http.StatusInternalServerError, "Failed to load refund.")
 		return nil, "", "", false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, rf.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, rf.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false
@@ -109,7 +109,7 @@ func (h *RefundOps) paymentInScopeForUpdate(w http.ResponseWriter, r *http.Reque
 		fail(w, http.StatusInternalServerError, "Failed to load payment.")
 		return false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, p.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, p.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return false
@@ -150,7 +150,7 @@ func (h *RefundOps) creditMemoInScopeForUpdate(w http.ResponseWriter, r *http.Re
 		fail(w, http.StatusInternalServerError, "Failed to load credit memo.")
 		return false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, cm.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, cm.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return false

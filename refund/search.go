@@ -20,7 +20,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	where := []string{"rfnd.refund_deleted_at IS NULL"}
 	args := []any{}
 	nextIdx := 1
-	if scope == string(authz.ScopeOwn) || scope == string(authz.ScopeTeam) {
+	if scope == string(authz.ScopeOwn) {
 		empID, found := workflow.EmployeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return Page{}, nil

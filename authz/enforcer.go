@@ -3,7 +3,7 @@ package authz
 import "context"
 
 // scopeRank orders scopes from broadest to narrowest for "best wins" resolution.
-var scopeRank = map[Scope]int{ScopeOwn: 1, ScopeTeam: 2, ScopeAll: 3}
+var scopeRank = map[Scope]int{ScopeOwn: 1, ScopeAll: 2}
 
 // ScopeRank exposes scopeRank to callers that need to compare scopes granted
 // across multiple resources (e.g. the AI assistant narrowing retrieval to the

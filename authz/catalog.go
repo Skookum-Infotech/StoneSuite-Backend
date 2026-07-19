@@ -27,7 +27,6 @@ const (
 	ResourceCRMActivity    Resource = "crm_activity"    // CRM activity log (calls/emails/meetings/notes/tasks)
 	ResourceUser           Resource = "user"            // tenant users
 	ResourceRole           Resource = "role"            // roles & permissions
-	ResourceTeam           Resource = "team"            // teams & membership
 	ResourceWorkflowConfig Resource = "workflow_config" // states/transitions/fields config
 	ResourceSSOConfig      Resource = "sso_config"      // per-tenant SSO settings
 	ResourceAudit          Resource = "audit"           // audit log
@@ -73,7 +72,6 @@ const (
 
 const (
 	ScopeAll  Scope = "all"  // every row in the tenant
-	ScopeTeam Scope = "team" // rows owned by the caller's team(s)
 	ScopeOwn  Scope = "own"  // only rows the caller owns
 )
 
@@ -240,8 +238,6 @@ var catalog = []Permission{
 	{ResourceRole, ActionUpdate},
 	{ResourceRole, ActionDelete},
 
-	{ResourceTeam, ActionRead},
-	{ResourceTeam, ActionConfigure},
 
 	{ResourceWorkflowConfig, ActionRead},
 	{ResourceWorkflowConfig, ActionConfigure},
@@ -263,7 +259,7 @@ func Catalog() []Permission {
 var (
 	validResources = buildResourceSet()
 	validActions   = buildActionSet()
-	validScopes    = map[Scope]bool{ScopeAll: true, ScopeTeam: true, ScopeOwn: true}
+	validScopes    = map[Scope]bool{ScopeAll: true, ScopeOwn: true}
 )
 
 func buildResourceSet() map[Resource]bool {

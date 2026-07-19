@@ -98,8 +98,8 @@ type Page struct {
 // caller-supplied filter, so a filter can only narrow the result set — never
 // reach records outside the caller's scope. defs are the workflow's custom
 // field definitions (drive the filter whitelist + casts).
-func ListRecordsFiltered(ctx context.Context, q Querier, workflowID, scope, callerUserID string, teamIDs []string, defs []FieldDefinition, req query.Request) (Page, error) {
-	sql, args, built, err := buildRecordQuery(workflowID, scope, callerUserID, teamIDs, defs, req)
+func ListRecordsFiltered(ctx context.Context, q Querier, workflowID, scope, callerUserID string, defs []FieldDefinition, req query.Request) (Page, error) {
+	sql, args, built, err := buildRecordQuery(workflowID, scope, callerUserID, defs, req)
 	if err != nil {
 		return Page{}, err // *query.InvalidFilterError -> 400 at the controller
 	}
@@ -135,17 +135,13 @@ func ListRecordsFiltered(ctx context.Context, q Querier, workflowID, scope, call
 // filtered record list. It is pure (no DB) so the scope-AND-never-widen
 // invariant and parameter ordering are unit-testable. $1 = workflow_id, then
 // scope params, then the filter builder's params.
-func buildRecordQuery(workflowID, scope, callerUserID string, teamIDs []string, defs []FieldDefinition, req query.Request) (string, []any, query.Built, error) {
+func buildRecordQuery(workflowID, scope, callerUserID string, defs []FieldDefinition, req query.Request) (string, []any, query.Built, error) {
 	where := []string{"workflow_id = $1"}
 	args := []any{workflowID}
 	nextIdx := 2
 	switch scope {
 	case "all":
 		// no narrowing
-	case "team":
-		where = append(where, "(owner_user_id = $2 OR team_id = ANY($3))")
-		args = append(args, nullIfEmpty(callerUserID), teamIDs)
-		nextIdx = 4
 	default: // own
 		where = append(where, "owner_user_id = $2")
 		args = append(args, nullIfEmpty(callerUserID))

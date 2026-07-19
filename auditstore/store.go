@@ -24,11 +24,10 @@ const (
 	DefaultLimit = 25
 )
 
-// Scope values narrow which actors' entries are visible. Precedence all>team>own.
+// Scope values narrow which actors' entries are visible. Precedence all>own.
 const (
-	ScopeAll  = "all"
-	ScopeTeam = "team"
-	ScopeOwn  = "own"
+	ScopeAll = "all"
+	ScopeOwn = "own"
 )
 
 // ErrInvalidCursor is returned when a pagination cursor cannot be decoded.
@@ -56,11 +55,9 @@ type Filter struct {
 	Cursor   string     // opaque keyset cursor from a previous page
 
 	// Scope narrows visible actors; CallerUserID is the tenant users.id of the
-	// requester (required for team/own scope). CallerTeamUserIDs, when non-nil,
-	// is the set of user ids sharing a team with the caller (team scope).
-	Scope             string
-	CallerUserID      string
-	CallerTeamUserIDs []string
+	// requester (required for own scope).
+	Scope        string
+	CallerUserID string
 }
 
 // List returns a page of audit entries newest-first and an opaque cursor for the
@@ -101,12 +98,6 @@ func List(ctx context.Context, pool *pgxpool.Pool, f Filter) ([]Entry, string, e
 	switch f.Scope {
 	case ScopeOwn:
 		conds = append(conds, "actor_user_id = "+param(f.CallerUserID))
-	case ScopeTeam:
-		ids := f.CallerTeamUserIDs
-		if len(ids) == 0 {
-			ids = []string{f.CallerUserID}
-		}
-		conds = append(conds, "actor_user_id = ANY("+param(ids)+")")
 	}
 
 	// Keyset: created_at DESC, id DESC. "after" the cursor means strictly less.

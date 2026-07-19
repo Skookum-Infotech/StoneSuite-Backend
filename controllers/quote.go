@@ -83,7 +83,7 @@ func (h *QuoteOps) authQuoteByUUID(w http.ResponseWriter, r *http.Request, uuid 
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {
-		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, qte.OwnerUserID, "")
+		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, qte.OwnerUserID)
 		if aerr != nil {
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, "", nil, false

@@ -71,8 +71,8 @@ const (
 )
 
 const (
-	ScopeAll  Scope = "all"  // every row in the tenant
-	ScopeOwn  Scope = "own"  // only rows the caller owns
+	ScopeAll Scope = "all" // every row in the tenant
+	ScopeOwn Scope = "own" // only rows the caller owns
 )
 
 // Permission is a single {resource, action} pair from the catalog.
@@ -237,7 +237,6 @@ var catalog = []Permission{
 	{ResourceRole, ActionRead},
 	{ResourceRole, ActionUpdate},
 	{ResourceRole, ActionDelete},
-
 
 	{ResourceWorkflowConfig, ActionRead},
 	{ResourceWorkflowConfig, ActionConfigure},

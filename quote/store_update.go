@@ -24,9 +24,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateQuote
 	var internalID, custInternalID int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT est.quote_id, est.quote_customer_id, rs.record_status_code
-		FROM quote est JOIN lkp_record_status rs ON rs.record_status_id = est.quote_status
-		WHERE est.quote_uuid = $1 AND est.quote_deleted_at IS NULL`, uuid,
+		SELECT qt.quote_id, qt.quote_customer_id, rs.record_status_code
+		FROM quote qt JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
+		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL`, uuid,
 	).Scan(&internalID, &custInternalID, &statusCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

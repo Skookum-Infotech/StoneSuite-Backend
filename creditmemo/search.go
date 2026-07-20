@@ -24,7 +24,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	where := []string{"cm.credit_memo_deleted_at IS NULL"}
 	args := []any{}
 	nextIdx := 1
-	if scope == string(authz.ScopeOwn) {
+	if scope != string(authz.ScopeAll) {
 		empID, found := workflow.EmployeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return Page{}, nil

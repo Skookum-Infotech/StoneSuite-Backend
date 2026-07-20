@@ -40,13 +40,15 @@ guess; verify first.
    must call `Require(resource, action)` (the enforcer) BEFORE mutating. A mutation
    path with no `Require(...)` is a permission bypass.
 
-4. **Every list/read applies scope filtering** (`all|team|own`) derived from the
-   caller's roles — not an unscoped query.
+4. **Every list/read applies scope filtering** (`all|own`) derived from the
+   caller's roles — not an unscoped query. The scope model is two-level and
+   fail-closed: `all` sees every row, anything unrecognized narrows to `own`. The
+   `team` scope was retired in `2dd211f` — flag any attempt to reintroduce it.
 
 5. **Single-record access enforces ownership scope (IDOR guard), not just the
    permission.** Every single-record GET/PATCH/DELETE/transition must call the scope
-   check: `recordInScope(ctx, pool, scope, identityID, ownerUserID, teamID)`
-   (controllers/scope.go), or go through `authCRMByRecordID` (CRM) or
+   check: `recordInScope(ctx, pool, scope, identityID, ownerUserID)`
+   (controllers/scope.go:29), or go through `authCRMByRecordID` (CRM) or
    `enforceRecordScope` (WorkflowOps). Holding `lead:read` scoped to `own` must permit
    reading ONLY your own records. **On scope denial the handler must return 404, not
    403**, so ids cannot be enumerated — flag any 403 on scope denial.

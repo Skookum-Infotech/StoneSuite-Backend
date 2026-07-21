@@ -84,7 +84,7 @@ func (h *SalesOrderOps) authSOByUUID(w http.ResponseWriter, r *http.Request, uui
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {
-		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, order.OwnerUserID, "")
+		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, order.OwnerUserID)
 		if aerr != nil {
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, "", nil, false

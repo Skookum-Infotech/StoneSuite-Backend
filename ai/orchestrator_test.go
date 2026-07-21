@@ -34,14 +34,14 @@ type fakeRetriever struct {
 	helpLex   []Citation // lexical-arm results; nil by default => vector-only behavior
 }
 
-func (f *fakeRetriever) SearchScoped(_ context.Context, _ []float32, _, _ string, _ []string, _ int) ([]Citation, error) {
+func (f *fakeRetriever) SearchScoped(_ context.Context, _ []float32, _, _ string, _ int) ([]Citation, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.tenant, nil
 }
 
-func (f *fakeRetriever) SearchScopedLexical(_ context.Context, _, _, _ string, _ []string, _ int) ([]Citation, error) {
+func (f *fakeRetriever) SearchScopedLexical(_ context.Context, _, _, _ string, _ int) ([]Citation, error) {
 	return f.tenantLex, nil
 }
 

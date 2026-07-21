@@ -63,7 +63,7 @@ func (h *CreditMemoOps) authCreditMemoByUUID(w http.ResponseWriter, r *http.Requ
 		fail(w, http.StatusInternalServerError, "Failed to load credit memo.")
 		return nil, "", "", false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, cm.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, cm.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false
@@ -108,7 +108,7 @@ func (h *CreditMemoOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.R
 		fail(w, http.StatusInternalServerError, "Failed to load invoice.")
 		return false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, inv.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, inv.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return false

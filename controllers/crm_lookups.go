@@ -185,7 +185,7 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		   AND c.customer_deleted_at IS NULL
 		   AND c.customer_name IS NOT NULL`
 	parentArgs := []any{}
-	if crmDecision.Scope == authz.ScopeOwn || crmDecision.Scope == authz.ScopeTeam {
+	if crmDecision.Scope == authz.ScopeOwn {
 		empID, found := workflow.EmployeeIDByIdentity(ctx, pool, payload.ID)
 		if found {
 			parentQuery += ` AND c.customer_crm_owner_user_id = $1`

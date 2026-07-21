@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     role_id   UUID        NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     resource  VARCHAR(64) NOT NULL,                    -- catalog resource, or '*' (wildcard)
     action    VARCHAR(32) NOT NULL,                    -- catalog action, or '*' (wildcard)
-    scope     VARCHAR(16) NOT NULL DEFAULT 'all',      -- all | team | own
+    scope     VARCHAR(16) NOT NULL DEFAULT 'all',      -- all | own ('team' retired)
+    -- 'team' is retained in the CHECK only so pre-existing rows stay valid; the
+    -- scope was retired and no code path grants or honours it (it fails closed).
     CONSTRAINT role_permissions_scope_chk CHECK (scope IN ('all', 'team', 'own')),
     CONSTRAINT role_permissions_unique UNIQUE (role_id, resource, action)
 );
@@ -79,8 +81,9 @@ CREATE TABLE IF NOT EXISTS user_roles (
 );
 CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id);
 
--- Teams give meaning to the 'team' permission scope (used by record visibility
--- in the Phase 3 workflow engine). Defined now so scope='team' is enforceable.
+-- VESTIGIAL: the 'team' permission scope was retired and no code reads these
+-- tables. They are kept because dropping them would be a destructive migration.
+-- Do not build on them without reinstating the team scope end to end.
 CREATE TABLE IF NOT EXISTS teams (
     id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     name       VARCHAR(128) NOT NULL,

@@ -128,7 +128,7 @@ func (h *AttachmentOps) attachAuth(
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 	if decision.Scope != authz.ScopeAll {
-		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, info.OwnerUserID, info.TeamID)
+		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, info.OwnerUserID)
 		if aerr != nil {
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, workflow.RecordAccessInfo{}, "", false

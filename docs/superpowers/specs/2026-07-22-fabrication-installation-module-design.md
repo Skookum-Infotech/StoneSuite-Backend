@@ -35,6 +35,7 @@ Two partial stubs exist and are **not** sufficient:
 | D2 | Add a **serialized `inventory_slab`** table | "Lock specific slabs" needs identity per physical slab; `inventory_stock` stays the aggregate rollup |
 | D3 | The 16 checklist items are **rows in `fabrication_job_step`**, seeded on job creation | Per-step operator/timestamp/notes capture without inflating the 16-status machine |
 | D4 | Reuse `authz.ResourceInstallation` | Already defined at `authz/catalog.go:39` **with all five grants seeded** (`authz/catalog.go:142-146`) |
+| D7 | `inventory_stock` for slab-tracked items is a **projection of an append-only `inventory_slab_ledger`**, never written ad-hoc | Without this the slab table and the stock table are two ledgers with no reconciliation — see §2.9. Makes double-counting structurally impossible rather than test-detectable |
 | D5 | Every slab carries the **supplier's own ID** (`slab_supplier_code` + `slab_vendor_id`) alongside our internal `slab_serial` | Stone arrives from the quarry/supplier already tagged. Supplier codes collide across vendors, so they cannot be our primary key — but they are what a defect recall is traced by |
 | D6 | A cut slab is **never resurrected**. Cutting mints a **child slab** with `slab_form='cut'`, `slab_status='available'` | Answers "release it so it can be reused, but inventory must say this stone is cut" without destroying the record of what was originally received. One slab can yield several usable pieces — a same-row status flip cannot represent that at all |
 
@@ -42,7 +43,7 @@ Two partial stubs exist and are **not** sufficient:
 
 | Existing thing | Location | Used for |
 |---|---|---|
-| `ResourceInstallation` + 5 seeded grants | `authz/catalog.go:39`, `:142-146` | All RBAC for this module. **No catalog change needed**, which keeps `controllers/rbac_catalog_drift_test.go` green |
+| `ResourceInstallation` + 5 seeded grants | `authz/catalog.go:39`, `:142-146` | All RBAC for this module. **No catalog change needed** |
 | `vendor` table | `schema.sql:3425` | `slab_vendor_id` FK — the supplier a slab was received from |
 | `recordInScope` | `controllers/scope.go:29` | Row-level IDOR guard |
 | `authSOByUUID` pattern | `controllers/salesorder.go:72` | Copy verbatim for `authFJByUUID` |
@@ -88,19 +89,37 @@ DRFT → ORCV → MALC → TMPL → TAPV → FRDY → CUTG → EDGP → QCPD →
 ```
 
 `QCPD` additionally may go **backwards to `EDGP`** (rework on a failed QC). This is the
-only backward edge in the machine and must be explicit in `allowedTransitions`.
+only backward edge **in `allowedTransitions`** and must be explicit there.
+
+> Resume (§1.2) also moves a job backwards, but it is **not** an entry in
+> `allowedTransitions` — see §1.2 for why it is validated separately.
 
 ### 1.2 `HOLD` is resumable, and the resume target is **not** caller-supplied
 
-`HOLD` is reachable from every non-terminal state. Resuming returns the job to the state
-it was in when held. That target cannot come from the static transition map, so it is
-stored: `fabrication_job.job_held_from_status_id`, written on entry to `HOLD` and cleared
-on resume.
+`HOLD` is reachable from every non-terminal state **except `HOLD` itself** — that is
+**13** source states, not 14.
+
+> **`HOLD → HOLD` must be rejected.** Re-holding a held job would overwrite
+> `job_held_from_status_id` with `HOLD`'s own id, making resume a self-loop and the job
+> **permanently unresumable**. This is a data-destroying self-edge, not a harmless no-op.
+
+Resuming returns the job to the state it was in when held, read from
+`fabrication_job.job_held_from_status_id` — written on entry to `HOLD`, cleared on resume.
 
 > **Security note.** Letting the caller name the resume target is a
 > privilege-escalation bug — a caller could resume from `HOLD` straight into `RSHP`
-> and skip the `QCPS` sign-off. **`POST /resume` therefore takes no body and no target
-> status at all.**
+> and skip the `QCPS` sign-off. **`POST /resume` takes no body and no target status.**
+
+**Resume is not an entry in `allowedTransitions`.** `allowedTransitions["HOLD"]` contains
+only `{CANC}`. Resume is a separate operation validated by its own rule:
+
+> The resume target is whatever `job_held_from_status_id` holds. It is never
+> caller-supplied, never validated against the transition map, and is guaranteed legal
+> because the job was in that state moments earlier.
+
+This keeps the static map minimal (§1.1's "only backward edge" claim stays true of the
+map) and makes §6.1's 16×16 matrix writable: the matrix tests `allowedTransitions` only,
+and resume gets its own tests in §6.3.
 
 ### 1.3 Terminal states
 
@@ -125,12 +144,29 @@ down-migration** — per CLAUDE.md, recovery is Neon PITR.
 
 New `lkp_record_type` row `FJOB`, then the 16 statuses.
 
-> The 16 status rows **must** be inserted with
-> `INSERT ... SELECT ... FROM lkp_record_type WHERE record_type_code = 'FJOB'` —
+> The 16 status rows **must** resolve the type id with
+> `(SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'FJOB')` —
 > **not** a hardcoded `record_status_record_type = 18`. The existing seed block at
 > `schema.sql:729` hardcodes ids 1–17; do not extend that pattern, it breaks on any
-> tenant whose lookup rows were seeded out of order. Precedent for the correct
-> subselect form is `schema.sql:2183`.
+> tenant whose lookup rows were seeded out of order.
+>
+> **There is no existing `INSERT ... SELECT` seed precedent for `lkp_record_status`
+> in this file** — `schema.sql:2183` is an `UPDATE ... WHERE ... IN (SELECT ...)`, not a
+> seed, and must not be copied as one. The new block has to combine the subselect with
+> the multi-row `VALUES` + `ON CONFLICT (record_status_code, record_status_record_type)
+> DO NOTHING` shape used at 729. Write it as:
+>
+> ```sql
+> INSERT INTO lkp_record_status (record_status_code, record_status_name,
+>     record_status_record_type, record_status_is_active, record_status_is_system,
+>     record_status_created_by)
+> SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+> FROM (VALUES ('DRFT','Draft'), ('ORCV','Order Received') /* … 16 rows … */)
+>      AS v(code, name)
+> CROSS JOIN lkp_record_type rt
+> WHERE rt.record_type_code = 'FJOB'
+> ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+> ```
 
 ### 2.1 `inventory_slab` — serialized physical slab
 
@@ -141,7 +177,8 @@ soft delete + CHECK constraint — copy the column conventions from `inventory_i
 | Column group | Columns |
 |---|---|
 | Identity (ours) | `inventory_slab_id` SERIAL PK, `inventory_slab_uuid` UUID, `slab_serial` VARCHAR(50) — our printed/barcoded tag |
-| Identity (supplier) | `slab_vendor_id` FK → `vendor` NULL, `slab_supplier_code` VARCHAR(80) — **the ID the supplier attached to the stone**, as printed |
+| Identity (supplier) | `slab_vendor_id` FK → `vendor` NULL, `slab_supplier_code` VARCHAR(80) **NOT NULL DEFAULT ''** — the ID the supplier attached to the stone, as printed |
+| Area | `slab_area` DECIMAL(14,3), `slab_area_unit_id` FK → `lkp_unit` — computed from the mm dimensions at create time, in the parent item's unit (§4.11.1) |
 | Receipt | `slab_received_at` DATE NULL, `slab_received_by` FK employee NULL, `slab_supplier_packing_ref` VARCHAR(80) |
 | Material | `inventory_item_id` FK (the material/colour this slab is an instance of), `warehouse_id` FK |
 | Vein-match grouping | `slab_bundle_id`, `slab_block_id`, `slab_lot` |
@@ -161,7 +198,12 @@ Constraints:
   cannot disagree
 - `CHECK (slab_parent_slab_id IS DISTINCT FROM inventory_slab_id)` — no self-parent
 - `CHECK (slab_supplier_code = '' OR slab_vendor_id IS NOT NULL)` — a supplier code is
-  meaningless without knowing which supplier issued it
+  meaningless without knowing which supplier issued it. **This is why the column is
+  `NOT NULL DEFAULT ''`:** were NULLs allowed, `NULL = ''` evaluates to NULL, the whole
+  expression is NULL, and PostgreSQL *passes* a CHECK that is not false — so a NULL code
+  with a NULL vendor would slip through. The same NULL would also silently fall out of
+  the `slab_supplier_code <> ''` index predicate below
+- `slab_parent_slab_id` is **immutable after insert** (enforced in the handler, §4.10)
 
 Indexes:
 - **Partial unique on `LOWER(slab_serial)` WHERE `deleted_at IS NULL`** — exactly like
@@ -222,7 +264,7 @@ Carries `piece_number`, `piece_name`, `piece_type`, finished dimensions,
 
 FK `fabrication_job_id`, `fabrication_job_item_id`, `inventory_slab_id`.
 `allocation_status` `CHECK IN ('reserved','consumed','released')`, `reserved_at/by`,
-`consumed_at/by`, `yield_sq_ft`.
+`consumed_at/by`, `yield_area` (in the item's unit — §4.11.1, never assumed ft²).
 
 **Disposition block** — what happened to the stone when a job was cancelled after
 cutting (§4.4):
@@ -232,9 +274,18 @@ cutting (§4.4):
 | `disposition` VARCHAR(20) NULL | `CHECK IN ('recovered','scrapped','delivered')` |
 | `disposition_recorded_at` / `_by` | NULL until declared |
 | `recovered_slab_id` FK → `inventory_slab` NULL | the offcut row minted by a `recovered` disposition |
-| `recovered_sq_ft` DECIMAL NULL | must be > 0 exactly when `disposition = 'recovered'` |
+| `recovered_area` DECIMAL(14,3) NULL | in the **item's own unit** (§4.11.1), never assumed ft² |
 
-`CHECK ((disposition = 'recovered') = (recovered_slab_id IS NOT NULL))`.
+Both halves of the invariant need a constraint — prose is not enforcement:
+
+```sql
+CHECK ((disposition = 'recovered') = (recovered_slab_id IS NOT NULL))
+CHECK ((disposition = 'recovered') = (recovered_area IS NOT NULL AND recovered_area > 0))
+```
+
+> Without the second CHECK a `recovered` disposition with a NULL or zero area passes the
+> database, and the only guard is application code — contrary to this section's own
+> doctrine that the DB is the backstop that holds under concurrency.
 
 > **Partial unique index on `(inventory_slab_id) WHERE allocation_status IN ('reserved','consumed')`.**
 > This index **is** the double-selling guard at the database layer. The
@@ -254,7 +305,72 @@ Seeded per job on creation.
 | `started_at/by`, `completed_at/by`, `step_notes` | operator + timing capture |
 | `step_payload` JSONB | **one column instead of 16 bespoke tables** — see §5 for the per-step contract |
 
-Unique `(fabrication_job_id, fabrication_job_item_id, step_code)`.
+**Uniqueness needs two partial indexes, not one constraint.**
+
+> `UNIQUE (fabrication_job_id, fabrication_job_item_id, step_code)` **enforces nothing
+> for job-grain steps.** PostgreSQL treats NULLs as distinct in a unique constraint, and
+> per §5 seven of the sixteen steps are job-grain with a NULL `fabrication_job_item_id`
+> — steps 1, 2, 10, 13, 14, 15, 16. Those are exactly the steps gating `ORCV`, `MALC`,
+> `QCPD`, `RSHP`, `TRAN`, `INST` and `COMP`, so unlimited duplicates would be allowed
+> on the highest-consequence rows.
+
+```sql
+CREATE UNIQUE INDEX ... ON fabrication_job_step (fabrication_job_id, fabrication_job_item_id, step_code)
+    WHERE fabrication_job_item_id IS NOT NULL;
+CREATE UNIQUE INDEX ... ON fabrication_job_step (fabrication_job_id, step_code)
+    WHERE fabrication_job_item_id IS NULL;
+```
+
+Two partial indexes rather than `NULLS NOT DISTINCT`, which needs PG15+; this form works
+on any supported version.
+
+### 2.9 `inventory_slab_ledger` — the only writer of slab-tracked stock
+
+**Without this table the design has two unreconciled ledgers.** `inventory_slab` rows
+record physical stones; `inventory_stock.quantity_on_hand` records a number. Nothing
+connects them, so stock gets spent down at `CUTG` and never stocked up on receipt —
+it drifts to the `CHECK (quantity_on_hand >= 0)` floor (`schema.sql:2419`) while slabs
+sit physically on the rack, and every consume then fails with a 400.
+
+Append-only, one row per stock-affecting slab event:
+
+| Column | Notes |
+|---|---|
+| `inventory_slab_ledger_id` SERIAL PK | |
+| `inventory_slab_id` FK, `inventory_item_id` FK, `warehouse_id` FK | |
+| `event` VARCHAR(20) | `CHECK IN ('received','consumed','recovered','scrapped','adjusted')` |
+| `quantity_delta` DECIMAL(14,3) | **signed**, in the item's own unit (§4.11) |
+| `fabrication_job_slab_id` FK NULL | the allocation that caused it, when there is one |
+| `occurred_at`, `actor_employee_id` | |
+
+**Invariant:** for any slab-tracked item,
+`inventory_stock.quantity_on_hand = SUM(quantity_delta)` over its ledger rows. Every
+write to `quantity_on_hand` is accompanied by exactly one ledger row **in the same
+transaction**, and no code path writes it any other way.
+
+**Idempotency by construction** — partial unique indexes make the double-count bugs
+unrepresentable rather than merely tested-against:
+
+- `UNIQUE (inventory_slab_id) WHERE event = 'received'` — a slab is received once
+- `UNIQUE (inventory_slab_id) WHERE event = 'consumed'` — consumed once, so a re-run
+  transition cannot deduct twice
+- `UNIQUE (inventory_slab_id) WHERE event = 'scrapped'` — scrapped once
+- `UNIQUE (fabrication_job_slab_id) WHERE event = 'recovered'` — one recovery per allocation
+
+Deltas per event:
+
+| Event | Delta | When |
+|---|---|---|
+| `received` | **+ slab area** | slab row created via catalog CRUD (§4.1a) |
+| `consumed` | **− slab area** | `CUTG` (§4.1) |
+| `recovered` | **+ recovered area** | offcut minted (§4.5) — note the offcut *also* gets its own `received` row, so recovery writes one or the other, never both |
+| `scrapped` | **− slab area** | only if the slab was still counted (§4.9) |
+
+> **`recovered` vs `received` — pick one.** An offcut is a new `inventory_slab` row, so
+> its creation would naturally emit `received`. That is the row to write. The
+> `recovered` event exists only for the `fabrication_job_slab` audit link and carries
+> `quantity_delta = 0` when a `received` row was written for the same stone. **Never
+> emit both with non-zero deltas** — that is C4-1's phantom stock.
 
 ### 2.6 `fabrication_job_history`
 
@@ -274,7 +390,7 @@ The seeded `installation` JSONB workflow (`schema.sql:1660`) is **left exactly a
 
 > This matches the actual precedent: when the relational Sales Order module superseded
 > the v1 `sales_order` JSONB workflow, that workflow was left enabled and simply unused
-> (`schema.sql:1623` seeds it `TRUE`; the comment at `schema.sql:2430` records the
+> (`schema.sql:1623` seeds it `TRUE`; the comment at `schema.sql:2432` records the
 > decision as "left in place, unused"). There is **no** precedent in this codebase for
 > disabling a superseded v1 workflow, and existing tenant records may reference it.
 >
@@ -345,6 +461,14 @@ Clone `soFail` (`controllers/salesorder.go:104`) as `fjFail`. All responses carr
 
 The most defect-prone part of this module. Ordering is specified explicitly.
 
+### 4.1a Receipt — where stock comes from
+
+**Creating an `inventory_slab` row increments `inventory_stock.quantity_on_hand` by the
+slab's area, and writes a `received` ledger row (§2.9), in the same transaction.**
+
+This is the only way slab-tracked stock ever goes up from outside a job. Omitting it is
+what makes the rest of the arithmetic a one-way ratchet to zero.
+
 ### 4.1 Reserve ≠ deduct
 
 Two distinct events, two distinct statuses:
@@ -361,8 +485,14 @@ Two distinct events, two distinct statuses:
 Inside the transition transaction, always in this order:
 
 1. `fabrication_job` — `FOR UPDATE`
-2. `inventory_slab` rows — `FOR UPDATE`, **ordered by `inventory_slab_id`**
-3. `inventory_stock` — `FOR UPDATE`
+2. `fabrication_job_slab` rows — `FOR UPDATE`, ordered by `inventory_slab_id`
+3. `inventory_slab` rows — `FOR UPDATE`, **ordered by `inventory_slab_id`**
+4. `inventory_stock` — `FOR UPDATE`
+5. `inventory_slab_ledger` — insert only, no lock needed (append-only, §2.9)
+
+> `fabrication_job_slab` belongs in this order and was missing from an earlier draft.
+> §4.3's availability rule reads it, and §2.4's partial unique index is enforced on it,
+> so a transaction that touches slabs without holding its rows can still interleave.
 
 Taking slab locks in id order is what stops two concurrent jobs reserving the same
 bundle from deadlocking. `salesorder.Reserve` (`salesorder/allocation.go:29`) is the
@@ -387,10 +517,16 @@ to prevent.
 | Job status when cancelled | Slab state | Action |
 |---|---|---|
 | `DRFT`, `ORCV` | none allocated | nothing to do |
-| `MALC` → `FRDY` | `reserved` | **Release:** `allocation_status='released'`, slab back to `'available'`. No stock change (nothing was ever deducted). Clone `salesorder/store_transition.go:80` |
+| `MALC` → `FRDY` | `reserved` | **Release:** `allocation_status='released'`, slab back to `'available'`. No stock change and **no ledger row** (nothing was ever deducted). Clone `salesorder/store_transition.go:80` |
 | `CUTG` → `RSHP` | `consumed` | **Disposition required** — see below |
 | `TRAN` | `consumed` | Disposition required (truck may return the material, or it may be written off) |
-| `INST`, `COMP` | `consumed` | Disposition required (typically `delivered` — stone is glued to the customer's cabinets) |
+| `INST` | `consumed` | Disposition required (typically `delivered` — stone is glued to the customer's cabinets) |
+| **`HOLD`** | **depends** | **Dispatch on `job_held_from_status_id`, not on `HOLD`.** Reservations survive a hold (§4.4.3), so a job held at `TMPL` still has `reserved` slabs and takes the release path, while one held at `EDGP` has `consumed` slabs and requires disposition. Reading the literal current status here would take the wrong branch every time |
+
+> **`COMP` is absent from this table on purpose.** §1.3 makes `COMP` terminal with an
+> empty transition set, so a completed job can never be cancelled and the row would be
+> unreachable. Material questions after completion are stock adjustments, not
+> cancellations — and those are out of scope (§8).
 
 > **The parent slab is never resurrected.** Once `slab_status='consumed'`, it stays
 > consumed forever. That row records a full slab that physically no longer exists.
@@ -405,7 +541,7 @@ explicit per-slab disposition, supplied by the operator:
 
 | `disposition` | Meaning | Effect |
 |---|---|---|
-| `recovered` | Usable material came back to the yard | **Mint a child slab** — `slab_form='cut'`, `slab_status='available'`, `slab_parent_slab_id` = the consumed slab, inheriting material, vendor, and **supplier code**. Increment `inventory_stock` by `recovered_sq_ft` |
+| `recovered` | Usable material came back to the yard | **Mint a child slab** — `slab_form='cut'`, `slab_status='available'`, `slab_parent_slab_id` = the consumed slab, inheriting material, vendor, and **supplier code**. Increment `inventory_stock` by `recovered_area` and write the §2.9 ledger row |
 | `scrapped` | Broken or unusable | No child row. Parent stays `consumed`. **No stock change** — it was already deducted at `CUTG` |
 | `delivered` | Already at the customer site | No child row, no stock change |
 
@@ -418,6 +554,23 @@ silently vanishing from inventory.
 Record disposition with `UPDATE ... WHERE fabrication_job_slab_id = $1 AND disposition IS NULL`.
 **Zero rows affected → 409**, never a second offcut. This is the guard against a
 double-submitted cancel minting duplicate inventory.
+
+#### 4.4.3 Disposition is only legal while cancelling
+
+The endpoint must be **gated on the job actually being on its way to `CANC`**, not
+callable at any time.
+
+> The trap: §4.4.1 rejects the cancel *until* dispositions exist, so the endpoint has to
+> be callable before the job is `CANC`. Left unguarded, an operator can record
+> `recovered` on a perfectly healthy job at `CUTG`, mint an offcut, inflate stock — and
+> then carry the job on to `COMP`, double-counting the stone. §4.4.2 makes it
+> unrepeatable and §8 puts correction out of scope, so **the error is permanent**.
+
+Required guard: the job must be in a `cancelling` intent state — set
+`fabrication_job.job_cancel_requested_at` when the cancel is first attempted and
+rejected for missing dispositions, and accept dispositions **only** while that is set.
+Clearing it (abandoning the cancel) is allowed **only** when no disposition has yet been
+recorded; once one has, the job is committed to cancellation.
 
 #### 4.4.3 `HOLD` does **not** release — a reversal from §1.2's first draft
 
@@ -443,7 +596,7 @@ from cancellation. Do not write it twice.
 
 | Trigger | When |
 |---|---|
-| **Normal yield** | At consume (`CUTG`), if `yield_sq_ft` < the slab's area, the leftover becomes an offcut |
+| **Normal yield** | At consume (`CUTG`), if `yield_area` < the slab's area, the leftover becomes an offcut |
 | **Cancellation recovery** | At `CANC` with `disposition='recovered'` (§4.4.1) |
 
 Both produce: child `inventory_slab`, `slab_form='cut'`, `slab_status='available'`,
@@ -452,10 +605,26 @@ Both produce: child `inventory_slab`, `slab_form='cut'`, `slab_status='available
 the triggering event.
 
 **Guards:**
-- Recovered area must be `> 0` and `<=` the parent's area → else **400**
+
+- **Recovered area is checked against the parent's *remaining* area, not its original
+  area.** This is the single most dangerous arithmetic error in the module:
+
+  > 50 ft² slab consumed at `CUTG` (stock −50). Normal yield 20 ft², so trigger 1 mints
+  > a 30 ft² offcut (stock +30). The job is then cancelled at `EDGP`; the parent is
+  > still `consumed`, so §4.4 demands a disposition. An operator declares `recovered`
+  > with 50 ft² — which passes a naive "≤ parent area" check — and stock goes +50.
+  > **Net result: +30 ft² of stone that does not exist.**
+
+  The guard is therefore:
+  `recovered_area <= parent_area - COALESCE(SUM(area of already-minted children), 0)`,
+  computed with the parent row locked `FOR UPDATE`. A parent whose remaining area is
+  already 0 can only be dispositioned `scrapped` or `delivered`.
+
+- Recovered area must be `> 0` → else **400**
 - Child dimensions must each be `<=` the parent's → else **400**
-- An offcut may itself be cut later (`slab_parent_slab_id` chains arbitrarily deep);
-  this is normal and needs no special handling beyond the self-reference CHECK
+- An offcut may itself be cut later; `slab_parent_slab_id` chains arbitrarily deep.
+  **The parent pointer is immutable after insert** — see §4.10 for why a mutable one
+  is a denial-of-service on the recall search.
 
 ### 4.6 Stock floor
 
@@ -472,6 +641,17 @@ which lets the order reach `PART`/`FILL` naturally.
 > **Guard:** `chk_soi_fulfilled` caps `line_fulfilled_quantity <= quantity`
 > (`schema.sql:2575`). Clamp before writing.
 
+**Clamping silently is not acceptable when several jobs share one SO line.** D1's whole
+rationale is that one order with four countertops becomes multiple `fabrication_job`
+rows, and §2.3 links pieces back to `sales_order_item_id`. If each job bumps the same
+line at `COMP`, a silent clamp discards the excess with no error and no record — and the
+sales order can read `FILL` purely from over-reporting.
+
+> Required: if the computed bump would exceed the line quantity, clamp **and** write a
+> `fabrication_job_history` row with `action = 'fulfillment_clamped'` recording the
+> requested and applied amounts. An operator must be able to find out why the numbers
+> disagree.
+
 ### 4.8 Over-allocation release at `COMP`
 
 A job may reserve 3 slabs and only cut 2. On reaching `COMP`, **any slab still
@@ -486,8 +666,9 @@ the module.
 
 | Scenario | Handling |
 |---|---|
-| Slab breaks in the yard, never allocated | `POST /inventory/slabs/{uuid}/scrap` → `slab_status='scrapped'`, decrement `inventory_stock`. Independent of any job |
-| Slab breaks **during** cutting | It is already `consumed` (stock deducted at `CUTG`). Record `disposition='scrapped'` on that `fabrication_job_slab`, then **allocate a replacement slab to the still-live job** |
+| Slab breaks in the yard, never allocated | `POST /inventory/slabs/{uuid}/scrap` → `slab_status='scrapped'`, `scrapped` ledger row, decrement stock |
+| Slab breaks while **reserved** to a live job | **Scrap must not blindly decrement.** The slab is still counted in stock, so scrapping decrements once — but it must **also release the reservation** (`allocation_status='released'`). Otherwise the row stays `reserved`, the job later reaches `CUTG`, and §4.1 deducts the *same physical slab a second time*, walking stock toward the §4.6 floor |
+| Slab breaks **during** cutting | Already `consumed`, stock already deducted at `CUTG`. Scrap here is a **no-op on stock** — the `UNIQUE (inventory_slab_id) WHERE event='consumed'` ledger index and the absence of a second delta are what prevent the double-decrement. Record `disposition='scrapped'`, then **allocate a replacement slab to the still-live job** |
 | Replacement allocation | `POST /fabrication-jobs/{uuid}/slabs` must therefore be legal at `CUTG` and later — **not only at `MALC`**. A clone that gates slab-add on `MALC` breaks every real breakage recovery |
 | Offcut breaks | Same as any slab: scrap it. Parent lineage is untouched |
 
@@ -501,6 +682,19 @@ the question a supplier defect notice actually poses:
 `POST /inventory/slabs/recall-search` takes `{vendorId, supplierCode}` and returns, via
 a **recursive CTE** over `slab_parent_slab_id`: every descendant slab, its current
 status, and every fabrication job and sales order that touched any of them.
+
+> **Cycle protection is mandatory.** `CHECK (slab_parent_slab_id IS DISTINCT FROM
+> inventory_slab_id)` blocks only 1-cycles. §3 exposes a generic
+> `PATCH /inventory/slabs/{uuid}`, so a 2-cycle (A→B, B→A) is otherwise reachable and
+> the recursive CTE **will not terminate** — a trivial denial of service on a
+> tenant-facing endpoint.
+>
+> Two required defences, both:
+> 1. **`slab_parent_slab_id` is immutable after insert.** The update handler must reject
+>    any attempt to change it (400), and it is omitted from the PATCH payload struct.
+> 2. The CTE carries a **`CYCLE slab_id SET is_cycle USING path`** clause (PG14+) *and*
+>    a depth cap, so a cycle introduced by a future migration or direct SQL degrades to
+>    a truncated result instead of a hung connection.
 
 This is why supplier code is inherited rather than blanked on offcuts, and why the
 `(slab_vendor_id, slab_supplier_code)` non-unique index exists.
@@ -525,6 +719,27 @@ obvious-looking choice for a stone item and it is the **wrong** one — it is
 naming the offending unit otherwise. No new lookup row is needed — `SQFT` and `SQM`
 already exist and `unit_category` already distinguishes them.
 
+#### 4.11.1 Area-vs-area is a second, subtler trap
+
+Passing the count-vs-area check is **not** sufficient. Both `SQFT` and `SQM` are
+`'area'`, and `inventory_stock.quantity_on_hand` is denominated in *the item's own unit*.
+
+> If the transfer columns are named `yield_sq_ft` / `recovered_sq_ft` and their values
+> are added to an `SQM`-configured item's `quantity_on_hand`, every recovery is wrong by
+> a factor of **10.764**.
+
+Two consequences for §2.1 and §2.4:
+
+1. **Name the columns `yield_area` and `recovered_area`, not `*_sq_ft`.** They are
+   denominated in the parent item's unit, and the name must not assert otherwise.
+2. **`inventory_slab` stores dimensions in mm but needs an explicit area.** Add
+   `slab_area` DECIMAL(14,3) plus `slab_area_unit_id` FK → `lkp_unit`, populated at
+   create time by converting mm² into the parent item's unit. Deriving area on the fly
+   from mm dimensions at each use site invites a different conversion in each one.
+
+All ledger `quantity_delta` values (§2.9) are in the item's unit. **No code path may mix
+units**; the conversion happens exactly once, at slab creation.
+
 ---
 
 ## 5. The 16 Fabrication Sub-Steps
@@ -538,6 +753,15 @@ already exist and `unit_category` already distinguishes them.
 
 `skipped` requires a non-empty `step_notes` — an auditable reason. Otherwise the
 checklist can be bypassed silently, which defeats the point of tracking it.
+
+**Rework must reopen steps, or the backward edge tracks nothing.** On `QCPD → EDGP`
+(§1.1), steps 7, 8, 9 and 11 are already `completed`, so without a reset the job can
+walk straight back to `QCPD` with no work recorded and the rework is invisible.
+
+> A `QCPD → EDGP` transition **resets steps 7–9 and 11 to `pending`** for the affected
+> pieces, in the same transaction, and writes a `fabrication_job_history` row with
+> `action = 'rework'`. Previous step rows are not deleted — their operator and timing
+> stay in history, which is the point of tracking rework at all.
 
 | # | Step | `step_code` | Gates status | Grain | `step_payload` contract |
 |---|---|---|---|---|---|
@@ -570,11 +794,11 @@ tag with `TEST_DATABASE_URL`, skipping cleanly when unset.
 
 ### 6.1 Pure / no DB — `fabrication/transitions_test.go`, `numbering_test.go`
 
-- [ ] Full 16×16 transition matrix: every legal edge allowed, every illegal edge rejected
+- [ ] Full 16×16 matrix over **`allowedTransitions` only** (resume is not in the map, §1.2)
 - [ ] `COMP` and `CANC` are terminal — no outbound edge
-- [ ] `HOLD` reachable from all 14 non-terminal states; `CANC` likewise
-- [ ] `QCPD→EDGP` rework edge allowed
-- [ ] `QCPD→RSHP` (skipping the `QCPS` gate) rejected
+- [ ] `HOLD` reachable from **13** non-terminal states — **`HOLD→HOLD` rejected** (§1.2); `CANC` reachable from all 14
+- [ ] `allowedTransitions["HOLD"] == {CANC}` exactly
+- [ ] `QCPD→EDGP` rework edge allowed; `QCPD→RSHP` (skipping `QCPS`) rejected
 - [ ] `FormatNumber` zero-padding → `FJOB-000001`
 
 ### 6.2 Deduction — `dbtest`
@@ -590,13 +814,13 @@ tag with `TEST_DATABASE_URL`, skipping cleanly when unset.
 - [ ] **`COMP` releases still-`reserved` (never cut) slabs** — the over-allocation leak (§4.8)
 
 **Disposition (§4.4.1)**
-- [ ] `recovered` mints exactly one child, `slab_form='cut'`, `slab_status='available'`, and increments stock by `recovered_sq_ft`
+- [ ] `recovered` mints exactly one child, `slab_form='cut'`, `slab_status='available'`, and increments stock by `recovered_area`
 - [ ] Child **inherits vendor + supplier code + material** from the parent
 - [ ] Child serial is `{parent}-R1`; a second recovery from the same parent yields `-R2`, not a collision
 - [ ] **Parent stays `consumed`** under every disposition — never resurrected
 - [ ] `scrapped` and `delivered` mint no child and change no stock
 - [ ] **Double-submit:** recording disposition twice → 409, exactly one offcut exists
-- [ ] `recovered_sq_ft` of 0, negative, or > parent area → 400
+- [ ] `recovered_area` of 0, negative, or > parent's **remaining** area → 400
 - [ ] Child dimensions exceeding the parent's → 400
 - [ ] An offcut can itself be allocated, cut, and recovered (chain depth ≥ 2)
 
@@ -609,11 +833,29 @@ tag with `TEST_DATABASE_URL`, skipping cleanly when unset.
 - [ ] `slab_form='cut'` with NULL parent, and `'full'` with a parent → both rejected
 - [ ] Self-parent → rejected
 
+**Ledger & stock reconciliation (§2.9, §4.1a)** — the critical class
+- [ ] **Creating a slab increments stock** and writes exactly one `received` row (§4.1a). Without this every other case passes while real stock ratchets to zero
+- [ ] For any item, `quantity_on_hand == SUM(ledger.quantity_delta)` — assert after every scenario below
+- [ ] **Double-recovery:** 50-unit slab, yield 20 → 30-unit offcut; cancel at `EDGP`; recovery of 50 → **400**, because remaining area is 0. Stock must not gain 30 phantom units (C4-1)
+- [ ] Recovery capped at `parent_area − SUM(children)`, not `parent_area`
+- [ ] A parent with 0 remaining area accepts only `scrapped` / `delivered`
+- [ ] Re-running a `CUTG` transition writes no second `consumed` row (unique index)
+- [ ] An offcut gets a `received` row **or** a non-zero `recovered` row, never both
+
 **Breakage & units (§4.9, §4.11)**
-- [ ] Scrapping an unallocated slab decrements stock; scrapping a `consumed` one does not double-decrement
+- [ ] Scrapping an **unallocated** slab decrements stock once
+- [ ] **Scrapping a `reserved` slab releases the allocation**, so the job reaching `CUTG` cannot deduct the same stone twice (C4-3)
+- [ ] Scrapping an already-`consumed` slab is a **no-op on stock**
 - [ ] **A replacement slab can be allocated at `CUTG`**, not only at `MALC`
 - [ ] Creating a slab whose item unit is `SLAB` (category `count`) → **400**; `SQFT` → accepted
+- [ ] **`SQM`-configured item:** recovery arithmetic stays in the item's unit — no ft²/m² mixing (§4.11.1)
 - [ ] `recall-search` returns the full descendant tree plus touching jobs/orders
+- [ ] **`PATCH` of `slab_parent_slab_id` → 400** (immutable), and a hand-inserted 2-cycle does not hang the CTE (§4.10)
+
+**Constraint-level (§2.1, §2.4, §2.5)** — these must fail at the DB, not just in Go
+- [ ] Two job-grain steps with the same `(job, step_code)` and NULL item → **rejected** by the partial index (§2.5). This is the one a single 3-column UNIQUE silently allows
+- [ ] `recovered` disposition with NULL or 0 `recovered_area` → **rejected** by CHECK
+- [ ] `slab_supplier_code` cannot be NULL (`NOT NULL DEFAULT ''`), so the vendor CHECK cannot be bypassed by a NULL
 
 ### 6.3 Status / approval — `dbtest`
 
@@ -623,6 +865,10 @@ tag with `TEST_DATABASE_URL`, skipping cleanly when unset.
 - [ ] Zero configured approvers = no gate
 - [ ] Hold → resume returns to `job_held_from_status_id`
 - [ ] **Resume endpoint rejects any caller-supplied target status** (§1.2)
+- [ ] **Cancel from `HOLD` dispatches on `job_held_from_status_id`**: held at `TMPL` → release path; held at `EDGP` → disposition required (§4.4)
+- [ ] **Disposition rejected on a live job** with no cancel requested (§4.4.3), then accepted once cancel has been attempted
+- [ ] `QCPD→EDGP` **resets steps 7–9 and 11 to `pending`** and logs `action='rework'` (§5)
+- [ ] Two jobs on one SO line over-reporting at `COMP` → clamped **and** `fulfillment_clamped` logged (§4.7)
 - [ ] Advancing past a gate with an incomplete prior step → 409
 - [ ] `skipped` without `step_notes` → 400
 - [ ] Reaching `COMP` bumps SO fulfilled quantities and clamps at line quantity
@@ -659,7 +905,8 @@ Sequenced by FK dependency. Nothing here is done yet.
 - [ ] 5. `fabrication_job_item` + partial unique on `(job_id, piece_number)`
 - [ ] 6. `fabrication_job_slab` + **partial unique double-sell guard** + disposition block (§2.4)
 - [ ] 7. `fabrication_job_step` + unique `(job, item, step_code)`
-- [ ] 8. `fabrication_job_history`
+- [ ] 8. `fabrication_job_history` (action CHECK must allow `rework` and `fulfillment_clamped`)
+- [ ] 8b. **`inventory_slab_ledger` + its 4 partial unique indexes** (§2.9) — the reconciliation backbone
 - [ ] 9. `fabrication_job_approver` / `fabrication_job_approval`
 - [ ] 10. Run the `migration-auditor` agent
 

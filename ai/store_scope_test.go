@@ -16,11 +16,10 @@ func TestBuildScopedSearch_ScopeNarrowsNeverWidens(t *testing.T) {
 		wantSQL string // substring that MUST be present
 	}{
 		{"all", "WHERE TRUE"},
-		{"team", "(owner_user_id = $2 OR team_id = ANY($3))"},
 		{"own", "owner_user_id = $2"},
 	}
 	for _, c := range cases {
-		sql, args := buildScopedSearch(c.scope, "user-1", []string{"team-1"}, 5)
+		sql, args := buildScopedSearch(c.scope, "user-1", 5)
 		if !strings.Contains(sql, c.wantSQL) {
 			t.Errorf("scope %s: sql missing %q\n%s", c.scope, c.wantSQL, sql)
 		}
@@ -40,21 +39,21 @@ func TestBuildScopedSearch_ScopeNarrowsNeverWidens(t *testing.T) {
 // TestBuildScopedSearch_UnknownScopeFailsClosed guards the default case: an
 // unrecognized scope must deny everything, never fall through to "all".
 func TestBuildScopedSearch_UnknownScopeFailsClosed(t *testing.T) {
-	sql, _ := buildScopedSearch("", "user-1", nil, 5)
+	sql, _ := buildScopedSearch("", "user-1", 5)
 	if !strings.Contains(sql, "WHERE FALSE") {
 		t.Errorf("empty/unknown scope must fail closed (WHERE FALSE), got:\n%s", sql)
 	}
 
-	sql2, _ := buildScopedSearch("bogus-scope", "user-1", nil, 5)
+	sql2, _ := buildScopedSearch("bogus-scope", "user-1", 5)
 	if !strings.Contains(sql2, "WHERE FALSE") {
 		t.Errorf("unrecognized scope must fail closed (WHERE FALSE), got:\n%s", sql2)
 	}
 }
 
-// TestBuildScopedSearch_OwnScopeOmitsTeamArg confirms "own" doesn't leak a
-// team-scoped arg slot it never binds — keeping $-numbering exact.
+// TestBuildScopedSearch_OwnScopeOmitsTeamArg confirms "own" binds exactly the
+// args it references, keeping $-numbering exact.
 func TestBuildScopedSearch_OwnScopeOmitsTeamArg(t *testing.T) {
-	sql, args := buildScopedSearch("own", "user-1", []string{"team-1", "team-2"}, 5)
+	sql, args := buildScopedSearch("own", "user-1", 5)
 	if strings.Contains(sql, "$3") {
 		t.Errorf("own scope must not reference $3, got:\n%s", sql)
 	}
@@ -77,11 +76,10 @@ func TestBuildScopedLexicalSearch_ScopeNarrowsNeverWidens(t *testing.T) {
 		wantSQL string // substring that MUST be present
 	}{
 		{"all", "WHERE TRUE"},
-		{"team", "(owner_user_id = $2 OR team_id = ANY($3))"},
 		{"own", "owner_user_id = $2"},
 	}
 	for _, c := range cases {
-		sql, args := buildScopedLexicalSearch(c.scope, "user-1", []string{"team-1"}, 5)
+		sql, args := buildScopedLexicalSearch(c.scope, "user-1", 5)
 		if !strings.Contains(sql, c.wantSQL) {
 			t.Errorf("scope %s: sql missing %q\n%s", c.scope, c.wantSQL, sql)
 		}
@@ -105,13 +103,28 @@ func TestBuildScopedLexicalSearch_ScopeNarrowsNeverWidens(t *testing.T) {
 // TestBuildScopedSearch_UnknownScopeFailsClosed for the lexical arm: an
 // unrecognized scope must deny everything, never fall through to "all".
 func TestBuildScopedLexicalSearch_UnknownScopeFailsClosed(t *testing.T) {
-	sql, _ := buildScopedLexicalSearch("", "user-1", nil, 5)
+	sql, _ := buildScopedLexicalSearch("", "user-1", 5)
 	if !strings.Contains(sql, "WHERE FALSE") {
 		t.Errorf("empty/unknown scope must fail closed (WHERE FALSE), got:\n%s", sql)
 	}
 
-	sql2, _ := buildScopedLexicalSearch("bogus-scope", "user-1", nil, 5)
+	sql2, _ := buildScopedLexicalSearch("bogus-scope", "user-1", 5)
 	if !strings.Contains(sql2, "WHERE FALSE") {
 		t.Errorf("unrecognized scope must fail closed (WHERE FALSE), got:\n%s", sql2)
+	}
+}
+
+// TestBuildScopedSearch_RetiredTeamScopeFailsClosed pins the migration
+// behaviour after the team scope was retired: a legacy "team" grant still
+// sitting in role_permissions must fall through to the fail-closed default and
+// deny, never widen a caller's visibility.
+func TestBuildScopedSearch_RetiredTeamScopeFailsClosed(t *testing.T) {
+	sql, _ := buildScopedSearch("team", "user-1", 5)
+	if !strings.Contains(sql, "WHERE FALSE") {
+		t.Errorf("retired team scope must fail closed (WHERE FALSE), got:\n%s", sql)
+	}
+	sql2, _ := buildScopedLexicalSearch("team", "user-1", 5)
+	if !strings.Contains(sql2, "WHERE FALSE") {
+		t.Errorf("retired team scope must fail closed on lexical arm, got:\n%s", sql2)
 	}
 }

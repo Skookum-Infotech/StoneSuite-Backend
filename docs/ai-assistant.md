@@ -13,7 +13,7 @@ the asking user is allowed to see.
    record, renders it to text, embeds the text, and upserts the vector into that
    tenant's `rag_chunks` table.
 3. A question to `POST /api/tenant/ai/ask` is embedded, then matched against
-   `rag_chunks` (RBAC-scoped to the caller's `all`/`team`/`own` permission) and
+   `rag_chunks` (RBAC-scoped to the caller's `all`/`own` permission) and
    against `cp_rag_chunks` (unscoped app-help docs, shared across all tenants).
    The LLM is instructed to answer only from that retrieved context. Questions
    over 2000 characters are rejected with `400` before embedding — well under
@@ -63,7 +63,7 @@ unsatisfying refusal, `POST /api/tenant/ai/ask` classifies the question first
 regex/keyword match for "how many" / "count of" / "number of" / "total"
 combined with a CRM type word (lead/prospect/customer, or "record(s)"/"crm"
 for all three). A match short-circuits straight to `crmstore.Store`'s new
-`CountRecords` method — the same RBAC scope (`all`/`team`/`own`) and caller
+`CountRecords` method — the same RBAC scope (`all`/`own`) and caller
 identity the RAG path would have used, just a `SELECT COUNT(*)` instead of
 retrieval — and returns a deterministic sentence with **zero LLM calls**: no
 generation latency, no hallucination risk, no cost.

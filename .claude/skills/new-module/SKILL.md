@@ -11,13 +11,17 @@ with **no shared abstraction** — no generic `Module[T]`, no store interface, n
 route-registration helper. The four shared files you edit are append-only and
 non-conflicting, so a module is cheap to add.
 
-**Do not `sed`-clone an existing module.** Cloning is how the current drift got
-here: `quote/` still uses estimate's `est` table alias, `quote/transitions.go`
-says *"converting the quote into a quote"*, and both `quote` and `estimate`
-silently dropped invoice's nil-guard on `custom_fields` (every PATCH omitting
-it returned 500 until it was fixed) and the `inventory_item_unit_id` column in
-their test seed. Work through the checklist instead; it encodes the corrected
-skeleton.
+**Do not `sed`-clone an existing module.** Cloning is how past drift got here:
+`quote/` carried estimate's `est` table alias, `quote/transitions.go` said
+*"converting the quote into a quote"*, and both `quote` and `estimate` silently
+dropped invoice's nil-guard on `custom_fields` (every PATCH omitting it returned
+500) and the `inventory_item_unit_id` column in their test seed. Those specific
+cases are fixed; the failure mode is not. Work through the checklist instead; it
+encodes the corrected skeleton.
+
+Cross-module references are legitimate **only** where a real relationship exists —
+quote converts from estimate, invoice from salesorder, refund applies against
+payment and creditmemo. A reference with no such relationship is a leftover.
 
 Pick your reference module by shape, not by recency:
 - **money + lines + approval + conversion** → `estimate/` or `quote/`
@@ -54,8 +58,11 @@ not up front.
 
 5. **Store.** `store.go` (shared helpers + `Get`) then one file per verb:
    `store_create.go`, `store_update.go`, `store_search.go`,
-   `store_transition.go`. Keep them split — `salesorder/store.go` is 42KB
-   unsplit and is the counter-example, not the model.
+   `store_transition.go`, `store_convert.go`. Keep them split from the start —
+   `salesorder/` was one 42KB `store.go` before it was broken up, and splitting
+   after the fact is far more work than starting that way. The repo cap is 300
+   lines per file; `vendors/store.go` (579) and `quote/store.go` (433) are the
+   current counter-examples, not the model.
 
 6. **Approval.** `approval.go` — mirror `estimate/approval.go` (AD-8).
 
@@ -125,5 +132,7 @@ not up front.
   (schema.sql, "-- 14. lkp tables") keys statuses to record types by
   **hardcoded integers**, relying on `SERIAL` assignment order. Insert out of
   order and every downstream status is silently mis-assigned. Append only.
-- **A new module package with zero tests.** `vendors/` is the only one, and it
-  is not a precedent.
+- **A new module package with zero tests.** Every document module now carries
+  table-driven tests for its pure functions (salesorder and invoice 9 files each,
+  down to vendors at 4). `inventory/` has 1 and is the outstanding gap — not a
+  precedent.

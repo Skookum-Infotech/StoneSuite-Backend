@@ -33,10 +33,9 @@ func TestNarrowestScope_PicksMostRestrictiveAmongGranted(t *testing.T) {
 			wantOK:    true,
 		},
 		{
-			name: "own beats team and all -- most restrictive wins",
+			name: "own beats all -- most restrictive wins",
 			decisions: []authz.Decision{
 				{Allowed: true, Scope: authz.ScopeAll},
-				{Allowed: true, Scope: authz.ScopeTeam},
 				{Allowed: true, Scope: authz.ScopeOwn},
 			},
 			wantScope: authz.ScopeOwn,

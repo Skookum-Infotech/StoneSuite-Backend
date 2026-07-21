@@ -60,8 +60,8 @@ func (s *workflowStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key
 	if err != nil {
 		return nil, err
 	}
-	callerUserID, teamIDs := s.scopeFilter(ctx, pool, scope, actorIdentityID)
-	return workflow.ListRecords(ctx, pool, wf.ID, scope, callerUserID, teamIDs)
+	callerUserID := s.scopeFilter(ctx, pool, scope, actorIdentityID)
+	return workflow.ListRecords(ctx, pool, wf.ID, scope, callerUserID)
 }
 
 // CountRecords returns how many records of key exist under scope, without
@@ -74,8 +74,8 @@ func (s *workflowStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, ke
 	if err != nil {
 		return 0, err
 	}
-	callerUserID, teamIDs := s.scopeFilter(ctx, pool, scope, actorIdentityID)
-	return workflow.CountRecords(ctx, pool, wf.ID, scope, callerUserID, teamIDs)
+	callerUserID := s.scopeFilter(ctx, pool, scope, actorIdentityID)
+	return workflow.CountRecords(ctx, pool, wf.ID, scope, callerUserID)
 }
 
 // SearchRecords delegates to the workflow engine's scope-safe filtered list.
@@ -91,8 +91,8 @@ func (s *workflowStore) SearchRecords(ctx context.Context, pool *pgxpool.Pool, k
 	if err != nil {
 		return workflow.Page{}, err
 	}
-	callerUserID, teamIDs := s.scopeFilter(ctx, pool, scope, actorIdentityID)
-	return workflow.ListRecordsFiltered(ctx, pool, wf.ID, scope, callerUserID, teamIDs, defs, req)
+	callerUserID := s.scopeFilter(ctx, pool, scope, actorIdentityID)
+	return workflow.ListRecordsFiltered(ctx, pool, wf.ID, scope, callerUserID, defs, req)
 }
 
 func (s *workflowStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error) {
@@ -276,19 +276,15 @@ func (s *workflowStore) defForKey(ctx context.Context, pool *pgxpool.Pool, key s
 	return workflow.LoadDefinition(ctx, pool, wf.ID)
 }
 
-func (s *workflowStore) scopeFilter(ctx context.Context, pool *pgxpool.Pool, scope, identityID string) (string, []string) {
+func (s *workflowStore) scopeFilter(ctx context.Context, pool *pgxpool.Pool, scope, identityID string) string {
 	if scope == string(authz.ScopeAll) {
-		return "", nil
+		return ""
 	}
 	uid, err := workflow.UserIDByIdentity(ctx, pool, identityID)
 	if err != nil {
-		return "", nil
+		return ""
 	}
-	if scope == string(authz.ScopeTeam) {
-		teams, _ := workflow.TeamIDsForUser(ctx, pool, uid)
-		return uid, teams
-	}
-	return uid, nil
+	return uid
 }
 
 func statusFromState(def *workflow.Definition, st workflow.State) workflow.StatusInfo {

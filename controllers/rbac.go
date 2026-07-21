@@ -60,7 +60,7 @@ func (h *RBACOps) Catalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"permissions": authz.Catalog(),
-		"scopes":      []authz.Scope{authz.ScopeAll, authz.ScopeTeam, authz.ScopeOwn},
+		"scopes":      []authz.Scope{authz.ScopeAll, authz.ScopeOwn},
 	})
 }
 

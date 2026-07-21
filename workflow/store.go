@@ -411,10 +411,9 @@ func GetRecord(ctx context.Context, q Querier, id string) (*Record, error) {
 }
 
 // ListRecords returns records for a workflow, filtered by the caller's scope.
-//   - "all":  every record in the workflow
-//   - "team": records the caller owns OR assigned to one of the caller's teams
-//   - "own":  records the caller owns
-func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string, teamIDs []string) ([]Record, error) {
+//   - "all": every record in the workflow
+//   - anything else: only records the caller owns (fail-closed default)
+func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string) ([]Record, error) {
 	var (
 		rows pgx.Rows
 		err  error
@@ -423,10 +422,6 @@ func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID
 	switch scope {
 	case "all":
 		rows, err = q.Query(ctx, base+` ORDER BY created_at DESC`, workflowID)
-	case "team":
-		rows, err = q.Query(ctx, base+`
-			AND (owner_user_id = $2 OR team_id = ANY($3)) ORDER BY created_at DESC`,
-			workflowID, nullIfEmpty(callerUserID), teamIDs)
 	default: // own (most restrictive)
 		rows, err = q.Query(ctx, base+`
 			AND owner_user_id = $2 ORDER BY created_at DESC`, workflowID, nullIfEmpty(callerUserID))
@@ -449,7 +444,7 @@ func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID
 // CountRecords returns how many records exist for a workflow under the
 // caller's scope — same RBAC narrowing as ListRecords (see its doc comment),
 // without fetching rows.
-func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string, teamIDs []string) (int, error) {
+func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string) (int, error) {
 	var (
 		n    int
 		err  error
@@ -458,9 +453,6 @@ func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserI
 	switch scope {
 	case "all":
 		err = q.QueryRow(ctx, base, workflowID).Scan(&n)
-	case "team":
-		err = q.QueryRow(ctx, base+` AND (owner_user_id = $2 OR team_id = ANY($3))`,
-			workflowID, nullIfEmpty(callerUserID), teamIDs).Scan(&n)
 	default: // own (most restrictive)
 		err = q.QueryRow(ctx, base+` AND owner_user_id = $2`, workflowID, nullIfEmpty(callerUserID)).Scan(&n)
 	}
@@ -517,24 +509,6 @@ func EmployeeIDByIdentity(ctx context.Context, q Querier, identityID string) (in
 		return 0, false
 	}
 	return id, true
-}
-
-// TeamIDsForUser lists the team ids a tenant user belongs to.
-func TeamIDsForUser(ctx context.Context, q Querier, userID string) ([]string, error) {
-	rows, err := q.Query(ctx, `SELECT team_id FROM team_members WHERE user_id = $1`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("teams for user: %w", err)
-	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan team id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 // UpdateRecordAllFields replaces both core_fields and custom_fields on a record.

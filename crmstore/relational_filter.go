@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/query"
 	"stonesuite-backend/workflow"
 )
@@ -87,10 +88,12 @@ var _ query.FieldResolver = relationalResolver{}
 
 // SearchRecords implements scope-safe filtering + keyset pagination for DesignV2.
 // The base predicate pins the record type and excludes soft-deleted rows; the
-// RBAC scope (own/team -> caller's owned rows) is ANDed before the client
-// filter. NOTE: the v2 customer table has no team column, so "team" scope
-// behaves like "own" (matching the existing ListRecords) until team support is
-// added to the relational design.
+// RBAC scope is ANDed before the client filter, so a filter can only narrow the
+// caller's permitted set — never widen it.
+//
+// Scope is two-level and FAIL-CLOSED: only "all" skips narrowing; every other
+// value (including the retired "team" and any unrecognized string) narrows to
+// the caller's own rows.
 func (s *relationalStore) SearchRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, req query.Request) (workflow.Page, error) {
 	code, ok := crmKeyToCode[key]
 	if !ok {
@@ -100,7 +103,7 @@ func (s *relationalStore) SearchRecords(ctx context.Context, pool *pgxpool.Pool,
 	where := []string{"rt.record_type_code = $1", "c.customer_deleted_at IS NULL"}
 	args := []any{code}
 	nextIdx := 2
-	if scope == "own" || scope == "team" {
+	if scope != string(authz.ScopeAll) {
 		empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return workflow.Page{}, nil // no employee row => no records in scope

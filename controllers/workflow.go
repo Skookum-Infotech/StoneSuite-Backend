@@ -356,8 +356,8 @@ func (h *WorkflowOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	callerUserID, teamIDs := h.callerScope(r, pool, identityID, scope)
-	records, err := workflow.ListRecords(r.Context(), pool, r.PathValue("id"), string(scope), callerUserID, teamIDs)
+	callerUserID := h.callerScope(r, pool, identityID, scope)
+	records, err := workflow.ListRecords(r.Context(), pool, r.PathValue("id"), string(scope), callerUserID)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to list records.")
 		return
@@ -392,8 +392,8 @@ func (h *WorkflowOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
 		return
 	}
-	callerUserID, teamIDs := h.callerScope(r, pool, identityID, scope)
-	page, err := workflow.ListRecordsFiltered(r.Context(), pool, def.Workflow.ID, string(scope), callerUserID, teamIDs, def.Fields, req)
+	callerUserID := h.callerScope(r, pool, identityID, scope)
+	page, err := workflow.ListRecordsFiltered(r.Context(), pool, def.Workflow.ID, string(scope), callerUserID, def.Fields, req)
 	if err != nil {
 		var ife *query.InvalidFilterError
 		if errors.As(err, &ife) {
@@ -654,7 +654,7 @@ func (h *WorkflowOps) PendingApprovalsQueue(w http.ResponseWriter, r *http.Reque
 // has already written a 404 (not 403, to avoid id enumeration) and logged the
 // attempt, so the caller should just return.
 func (h *WorkflowOps) enforceRecordScope(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, scope authz.Scope, identityID string, rec *workflow.Record, action authz.Action) bool {
-	allowed, err := recordInScope(r.Context(), pool, scope, identityID, rec.OwnerUserID, rec.TeamID)
+	allowed, err := recordInScope(r.Context(), pool, scope, identityID, rec.OwnerUserID)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return false
@@ -669,21 +669,17 @@ func (h *WorkflowOps) enforceRecordScope(w http.ResponseWriter, r *http.Request,
 	return true
 }
 
-// callerScope resolves the caller's tenant user id and team ids when needed for
-// team/own scope filtering. For "all" scope it returns empties (no filtering).
-func (h *WorkflowOps) callerScope(r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope) (string, []string) {
+// callerScope resolves the caller's tenant user id for own-scope filtering.
+// For "all" scope it returns empty (no filtering).
+func (h *WorkflowOps) callerScope(r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope) string {
 	if scope == authz.ScopeAll {
-		return "", nil
+		return ""
 	}
 	userID, err := workflow.UserIDByIdentity(r.Context(), pool, identityID)
 	if err != nil {
-		return "", nil
+		return ""
 	}
-	if scope == authz.ScopeTeam {
-		teams, _ := workflow.TeamIDsForUser(r.Context(), pool, userID)
-		return userID, teams
-	}
-	return userID, nil
+	return userID
 }
 
 // isWorkflowClientErr reports whether err is a caller-facing workflow error

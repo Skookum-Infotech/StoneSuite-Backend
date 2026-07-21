@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/workflow"
 )
 
@@ -406,7 +407,9 @@ func (s *relationalStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, k
 	}
 	q := recordSelect + ` WHERE rt.record_type_code = $1 AND c.customer_deleted_at IS NULL`
 	args := []any{code}
-	if scope == "own" || scope == "team" {
+	// Fail-closed: only "all" skips narrowing; every other scope value
+	// (including the retired "team") narrows to the caller's own rows.
+	if scope != string(authz.ScopeAll) {
 		empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return []workflow.Record{}, nil
@@ -445,7 +448,8 @@ func (s *relationalStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, 
 		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
 		WHERE rt.record_type_code = $1 AND c.customer_deleted_at IS NULL`
 	args := []any{code}
-	if scope == "own" || scope == "team" {
+	// Fail-closed: see ListRecords.
+	if scope != string(authz.ScopeAll) {
 		empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return 0, nil

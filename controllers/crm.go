@@ -220,7 +220,7 @@ func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
 			fail(w, http.StatusInternalServerError, "Failed to load record.")
 			return nil, nil, "", "", false
 		}
-		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, rec.OwnerUserID, rec.TeamID)
+		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, rec.OwnerUserID)
 		if aerr != nil {
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, nil, "", "", false

@@ -63,7 +63,7 @@ func (h *PaymentOps) authPaymentByUUID(w http.ResponseWriter, r *http.Request, u
 		fail(w, http.StatusInternalServerError, "Failed to load payment.")
 		return nil, "", "", false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, p.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, p.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false
@@ -107,7 +107,7 @@ func (h *PaymentOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.Requ
 		fail(w, http.StatusInternalServerError, "Failed to load invoice.")
 		return false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, inv.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, inv.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return false

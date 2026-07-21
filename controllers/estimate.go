@@ -31,6 +31,7 @@ import (
 //	DELETE /api/tenant/estimates/{uuid}               — soft delete
 //	POST   /api/tenant/estimates/{uuid}/transition    — status change
 //	POST   /api/tenant/estimates/{uuid}/approve       — approval sign-off
+//	POST   /api/tenant/estimates/{uuid}/convert       — convert to a Quote
 //	GET    /api/tenant/estimates/{uuid}/audit         — audit trail
 type EstimateOps struct{}
 

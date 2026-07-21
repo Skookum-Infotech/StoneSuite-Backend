@@ -168,7 +168,7 @@ func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
 	qv := nonZeroVec()
 
 	// own: A sees only A's chunk.
-	got, err := s.SearchScoped(ctx, qv, "own", userA, nil, 10)
+	got, err := s.SearchScoped(ctx, qv, "own", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,22 +176,18 @@ func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
 		t.Fatalf("own scope for A = %+v, want exactly A's chunk", got)
 	}
 
-	// team: A (in team X) sees A's + B's team-X chunk, but not B's teamless one.
-	got, err = s.SearchScoped(ctx, qv, "team", userA, []string{teamX}, 10)
+	// team: retired scope must fail closed, zero results (never narrows to own,
+	// never widens to all).
+	got, err = s.SearchScoped(ctx, qv, "team", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("team scope for A = %+v, want 2 (A's own + B's team-X chunk)", got)
-	}
-	for _, c := range got {
-		if c.SourceID == "10000000-0000-0000-0000-000000000003" {
-			t.Fatalf("team scope leaked B's teamless chunk: %+v", got)
-		}
+	if len(got) != 0 {
+		t.Fatalf("retired team scope = %+v, want 0 (fail closed)", got)
 	}
 
 	// all: sees everything regardless of owner/team.
-	got, err = s.SearchScoped(ctx, qv, "all", userA, nil, 10)
+	got, err = s.SearchScoped(ctx, qv, "all", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +196,7 @@ func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
 	}
 
 	// unknown/unset scope: fail closed, zero results (never falls through to all).
-	got, err = s.SearchScoped(ctx, qv, "", userA, nil, 10)
+	got, err = s.SearchScoped(ctx, qv, "", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +235,7 @@ func TestRagStoreSearchScopedLexicalEnforcesOwnership(t *testing.T) {
 	const term = "widget"
 
 	// own: A sees only A's chunk.
-	got, err := s.SearchScopedLexical(ctx, term, "own", userA, nil, 10)
+	got, err := s.SearchScopedLexical(ctx, term, "own", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,22 +243,18 @@ func TestRagStoreSearchScopedLexicalEnforcesOwnership(t *testing.T) {
 		t.Fatalf("own scope for A = %+v, want exactly A's chunk", got)
 	}
 
-	// team: A (in team X) sees A's + B's team-X chunk, but not B's teamless one.
-	got, err = s.SearchScopedLexical(ctx, term, "team", userA, []string{teamX}, 10)
+	// team: retired scope must fail closed, zero results (never narrows to own,
+	// never widens to all).
+	got, err = s.SearchScopedLexical(ctx, term, "team", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("team scope for A = %+v, want 2 (A's own + B's team-X chunk)", got)
-	}
-	for _, c := range got {
-		if c.SourceID == "20000000-0000-0000-0000-000000000003" {
-			t.Fatalf("team scope leaked B's teamless chunk: %+v", got)
-		}
+	if len(got) != 0 {
+		t.Fatalf("retired team scope = %+v, want 0 (fail closed)", got)
 	}
 
 	// all: sees everything matching the term regardless of owner/team.
-	got, err = s.SearchScopedLexical(ctx, term, "all", userA, nil, 10)
+	got, err = s.SearchScopedLexical(ctx, term, "all", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +263,7 @@ func TestRagStoreSearchScopedLexicalEnforcesOwnership(t *testing.T) {
 	}
 
 	// unknown/unset scope: fail closed, zero results (never falls through to all).
-	got, err = s.SearchScopedLexical(ctx, term, "", userA, nil, 10)
+	got, err = s.SearchScopedLexical(ctx, term, "", userA, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

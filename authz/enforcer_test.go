@@ -38,7 +38,6 @@ func TestDecide(t *testing.T) {
 			grants: []Grant{
 				{ResourceRecord, ActionRead, ScopeOwn},
 				{ResourceRecord, ActionRead, ScopeAll},
-				{ResourceRecord, ActionRead, ScopeTeam},
 			},
 			resource:    ResourceRecord,
 			action:      ActionRead,
@@ -55,11 +54,11 @@ func TestDecide(t *testing.T) {
 		},
 		{
 			name:        "resource wildcard with specific action",
-			grants:      []Grant{{ResourceAny, ActionRead, ScopeTeam}},
+			grants:      []Grant{{ResourceAny, ActionRead, ScopeOwn}},
 			resource:    ResourceUser,
 			action:      ActionRead,
 			wantAllowed: true,
-			wantScope:   ScopeTeam,
+			wantScope:   ScopeOwn,
 		},
 		{
 			name:        "resource wildcard does not grant other actions",

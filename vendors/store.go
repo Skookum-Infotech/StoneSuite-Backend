@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/query"
 	"stonesuite-backend/workflow"
 )
@@ -486,13 +487,12 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 // ----- Search --------------------------------------------------------------
 
 // Search lists vendors under the caller's RBAC scope with filter/sort/global
-// search + keyset pagination, mirroring salesorder.Search. Team scope
-// collapses to own — vendor has no team column, same as sales_order.
+// search + keyset pagination, mirroring salesorder.Search.
 func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID string, req query.Request) (Page, error) {
 	where := []string{"v.vendor_deleted_at IS NULL"}
 	var args []any
 	nextIdx := 1
-	if scope == "own" || scope == "team" {
+	if scope != string(authz.ScopeAll) {
 		empID, found := employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return Page{}, nil

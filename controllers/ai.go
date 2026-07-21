@@ -150,12 +150,6 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
-	teamIDs, err := workflow.TeamIDsForUser(r.Context(), pool, callerUserID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to resolve team membership.")
-		return
-	}
-
 	orch := ai.NewOrchestrator(h.queryEmbed, ai.CombinedRetriever{
 		Tenant: ai.NewRagStore(pool),
 		Help:   ai.NewCPHelpStore(h.cpPool),
@@ -164,7 +158,6 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		Question:     body.Question,
 		Scope:        string(scope),
 		CallerUserID: callerUserID,
-		TeamIDs:      teamIDs,
 	})
 	if err != nil {
 		slog.Error("ai ask failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)

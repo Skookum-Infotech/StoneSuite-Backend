@@ -20,7 +20,7 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── controllers/             # HTTP handlers + module route wiring (tenant, CRM, RBAC, onboarding)
 ├── middleware/              # JWT auth, tenancy resolver, request logging, recover, rate limiting
 ├── userstore/               # Tenant user store
-├── quote/ estimate/ salesorder/ invoice/ payment/ creditmemo/ vendors/
+├── quote/ estimate/ salesorder/ invoice/ payment/ creditmemo/ refund/ vendors/
 │                            # Relational document modules (clone twins) — see "Document Modules"
 ├── inventory/               # Inventory items module (relational)
 ├── ai/                      # Provider-agnostic RAG primitives (Embedder/LLMClient, orchestrator); dep-free of app pkgs
@@ -49,6 +49,35 @@ golangci-lint run          # lint (requires golangci-lint installed)
 ```
 
 **Note:** `gh` CLI may not be authenticated in this environment — if `gh pr create`/`gh auth login` fails, use the GitHub MCP connector tools (`mcp__github__create_pull_request`, etc.) instead.
+
+## Feature Pipeline
+
+`/feature <description>` (`.claude/commands/feature.md`) drives a feature end-to-end:
+classify → design + plan → **approval gate** → implement → verify → conditional review
+fan-out → capped fix loop → report. It stops with a dirty tree and a suggested commit
+message; it never commits, pushes, or opens a PR.
+
+| Stage | Runs as | Model |
+|---|---|---|
+| Orchestrate, design, plan, triage | main session | Opus 4.8 |
+| Implement a plan step / apply fixes | `go-implementer` | Sonnet 5 |
+| Tests + consolidated report | `go-verifier` | Sonnet 5 |
+| Drift / tenancy / migration / filter checks | the 4 existing agents | haiku |
+
+Design/plan/orchestration is `superpowers` (`brainstorming`, `writing-plans`,
+`dispatching-parallel-agents`) — do **not** build parallel design, planner, or reviewer
+agents; they duplicate it and pay a cold-start context tax at every handoff.
+
+**Push each new check to the cheapest layer that can catch it:**
+hooks (`.claude/hooks/`, zero tokens, deterministic only) → CI (zero tokens, needs real
+execution) → haiku agents (`.claude/agents/`, read-only, narrow judgement) → skills
+(`.claude/skills/`, domain knowledge, progressive disclosure via `references/`) →
+superpowers → `/feature`.
+
+Two rules learned the hard way: a guard that fires on known-good content gets ignored, so
+scope whole-file checks to what is *never* legitimate and diff-scope the rest; and an
+agent whose rules find nothing on known-drifted code is worthless, so write rules against
+measured drift, not principle.
 
 ## Deployment (Fly.io)
 
@@ -100,14 +129,14 @@ fly status
 
 ### RBAC (Permission Enforcement)
 1. **Every mutation (POST/PATCH/DELETE) must check `Require(resource, action)`** before executing.
-2. **Every list/read (GET) must apply scope filtering** (`all|team|own`) from the caller's roles.
-3. **Single-record access must enforce ownership scope, not just the permission (IDOR guard).** Use `recordInScope(ctx, pool, scope, identityID, ownerUserID, teamID)` (controllers/scope.go) on every single-record GET/PATCH/DELETE/transition. CRM record handlers get this for free via `authCRMByRecordID`; `WorkflowOps` uses `enforceRecordScope`. On scope denial return **404** (not 403) so ids can't be enumerated.
+2. **Every list/read (GET) must apply scope filtering** (`all|own`) from the caller's roles. The scope model is two-level and fail-closed — the `team` scope was retired in `2dd211f`, and anything unrecognized narrows to `own`.
+3. **Single-record access must enforce ownership scope, not just the permission (IDOR guard).** Use `recordInScope(ctx, pool, scope, identityID, ownerUserID)` (controllers/scope.go:29) on every single-record GET/PATCH/DELETE/transition. CRM record handlers get this for free via `authCRMByRecordID`; `WorkflowOps` uses `enforceRecordScope`. On scope denial return **404** (not 403) so ids can't be enumerated.
 4. **No permission bypass.** If a handler ever skips the enforcer, it's a bug.
 5. **System roles (super_admin, guest) are immutable** — cannot be deleted or modified by users.
 6. **Log security events.** Failed logins, permission denials, IDOR attempts, and rate-limit hits go through `logSecurityEvent(r, "<event>", kv...)` or `slog.Warn("security event", ...)` with a stable `security_event` key. Never log passwords or raw tokens.
 
 ### Document Modules (Clone Discipline)
-The relational document modules — `quote`, `estimate`, `salesorder`, `invoice`, `payment`, `creditmemo`, `vendors` — are structural **copy-paste twins** cloned from one skeleton (package + `tenant/schema.sql` tables + controller wired in `controllers/` + RBAC catalog entries + status/approval flow). There is no shared base, so a cross-cutting fix (auth chain, scope plumbing, `logSecurityEvent`, registration) must be **hand-ported to every module**.
+The relational document modules — `quote`, `estimate`, `salesorder`, `invoice`, `payment`, `creditmemo`, `refund`, `vendors` — are structural **copy-paste twins** cloned from one skeleton (package + `tenant/schema.sql` tables + controller wired in `controllers/` + RBAC catalog entries + status/approval flow). There is no shared base, so a cross-cutting fix (auth chain, scope plumbing, `logSecurityEvent`, registration) must be **hand-ported to every module**.
 1. **Scaffold new modules with the `new-module` skill** — it wires the full security chain; don't hand-roll.
 2. **After editing any module, run the `module-drift-checker` agent** to catch copy-paste leftovers and missing auth/scope/logging.
 3. A module's `store.go` should be split by verb (`store_create.go`/`store_update.go`/`store_transition.go`/`store_search.go` or `search.go`, naming varies by module vintage) once it grows large; `invoice/store_line_resolve.go` is the reference pattern for pulling out shared line-resolution helpers. Some existing "clean" siblings (`quote`, `estimate`) still exceed the 300-line file cap — known pre-existing drift, not a new problem to fix reflexively.

@@ -47,7 +47,7 @@ func TestIsValidPermission(t *testing.T) {
 }
 
 func TestIsValidScope(t *testing.T) {
-	for _, s := range []Scope{ScopeAll, ScopeTeam, ScopeOwn} {
+	for _, s := range []Scope{ScopeAll, ScopeOwn} {
 		if !IsValidScope(s) {
 			t.Fatalf("scope %q should be valid", s)
 		}

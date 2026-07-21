@@ -23,10 +23,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	var internalID, curStatusID int
 	var curStatusCode, approvalStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT est.quote_id, est.quote_status, rs.record_status_code, est.quote_approval_status
-		FROM quote est JOIN lkp_record_status rs ON rs.record_status_id = est.quote_status
-		WHERE est.quote_uuid = $1 AND est.quote_deleted_at IS NULL
-		FOR UPDATE OF est`, uuid,
+		SELECT qt.quote_id, qt.quote_status, rs.record_status_code, qt.quote_approval_status
+		FROM quote qt JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
+		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL
+		FOR UPDATE OF qt`, uuid,
 	).Scan(&internalID, &curStatusID, &curStatusCode, &approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

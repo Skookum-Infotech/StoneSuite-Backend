@@ -96,13 +96,13 @@ func (h *XOps) authXByUUID(w http.ResponseWriter, r *http.Request, uuid string, 
 }
 ```
 
-**On the last argument to `recordInScope`:** every existing relational module
-passes `""` for `teamID`. `controllers/scope.go:37` only matches teams when
-`teamID != ""`, so `ScopeTeam` currently degrades to owner-only everywhere.
-That is fail-closed — a team member cannot see their team's records, which is
-restrictive rather than permissive, so it is a functional gap and not a
-security hole. If your module carries a team, pass the real id and add a test.
-If it genuinely has no team concept, pass `""` deliberately.
+**On `recordInScope`'s signature:** it is
+`recordInScope(ctx, pool, scope, identityID, ownerUserID)` — five arguments, **no
+`teamID`**. The team RBAC scope was retired in `2dd211f`; the model is now
+two-level (`all` / `own`) and fail-closed, so an unrecognized scope narrows to
+owner-only. Older notes describing a sixth `teamID` argument are stale — passing
+one will not compile. `TeamID` still exists as a *record data field*
+(`crmstore/store.go`, `ai/chunk.go`); that is unrelated to RBAC scope.
 
 ### `xFail` — error → status mapping
 

@@ -63,7 +63,7 @@ func (h *InvoiceOps) authInvoiceByUUID(w http.ResponseWriter, r *http.Request, u
 		fail(w, http.StatusInternalServerError, "Failed to load invoice.")
 		return nil, "", "", false
 	}
-	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, inv.OwnerUserID, "")
+	allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, inv.OwnerUserID)
 	if aerr != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
 		return nil, "", "", false

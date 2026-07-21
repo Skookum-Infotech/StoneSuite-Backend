@@ -24,7 +24,8 @@ confirm — never flag on a fragment.
 
 ## The invariants (the ONLY things you check)
 
-1. **Filter ⨯ scope is ANDed, never OR.** The RBAC scope clause (`all|team|own`) and
+1. **Filter ⨯ scope is ANDed, never OR.** The RBAC scope clause (`all|own` — the
+   `team` scope was retired in `2dd211f`; unrecognized scopes fail closed to `own`) and
    the user filter must be composed with `AND`, so a filter can only NARROW the
    caller's permitted set. Any `OR` joining scope and filter, or a filter fragment
    that bypasses the scope clause, is a **CRITICAL** cross-scope leak. The

@@ -14,13 +14,10 @@ import (
 // text); scope params start at $2. The clause can only NARROW the caller's
 // rows (mirrors the Record Filter Engine invariant) — never interpolate a
 // value; only this fixed set of clause shapes is used.
-func scopeClause(scope, callerUserID string, teamIDs []string) (where string, args []any) {
+func scopeClause(scope, callerUserID string) (where string, args []any) {
 	args = []any{nil} // $1 reserved, filled by the caller
 	where = "TRUE"
 	switch scope {
-	case "team":
-		where = "(owner_user_id = $2 OR team_id = ANY($3))"
-		args = append(args, callerUserID, teamIDs)
 	case "own":
 		where = "owner_user_id = $2"
 		args = append(args, callerUserID)
@@ -37,8 +34,8 @@ func scopeClause(scope, callerUserID string, teamIDs []string) (where string, ar
 // params follow. The scope clause is ANDed onto the ORDER BY — it can only
 // narrow the caller's permitted rows (mirrors workflow.buildRecordQuery).
 // Never interpolate a value; only this fixed set of clause shapes is used.
-func buildScopedSearch(scope, callerUserID string, teamIDs []string, k int) (string, []any) {
-	where, args := scopeClause(scope, callerUserID, teamIDs)
+func buildScopedSearch(scope, callerUserID string, k int) (string, []any) {
+	where, args := scopeClause(scope, callerUserID)
 	sql := fmt.Sprintf(
 		`SELECT source_id, content, embedding <=> $1 AS distance FROM rag_chunks WHERE %s ORDER BY distance LIMIT %d`,
 		where, k)
@@ -50,8 +47,8 @@ func buildScopedSearch(scope, callerUserID string, teamIDs []string, k int) (str
 // the tsquery are returned, ranked by ts_rank_cd (term-frequency/proximity).
 // Same scope clause as buildScopedSearch — the lexical arm can never widen the
 // caller's permitted rows.
-func buildScopedLexicalSearch(scope, callerUserID string, teamIDs []string, k int) (string, []any) {
-	where, args := scopeClause(scope, callerUserID, teamIDs)
+func buildScopedLexicalSearch(scope, callerUserID string, k int) (string, []any) {
+	where, args := scopeClause(scope, callerUserID)
 	sql := fmt.Sprintf(
 		`SELECT source_id, content FROM rag_chunks WHERE %s AND content_tsv @@ websearch_to_tsquery('simple', $1) ORDER BY ts_rank_cd(content_tsv, websearch_to_tsquery('simple', $1)) DESC LIMIT %d`,
 		where, k)
@@ -99,8 +96,8 @@ func (s *RagStore) Delete(ctx context.Context, sourceID string) error {
 
 // SearchScoped returns up to k chunks most similar to queryVec that the
 // caller (granted `scope`) is permitted to read.
-func (s *RagStore) SearchScoped(ctx context.Context, queryVec []float32, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error) {
-	sql, args := buildScopedSearch(scope, callerUserID, teamIDs, k)
+func (s *RagStore) SearchScoped(ctx context.Context, queryVec []float32, scope, callerUserID string, k int) ([]Citation, error) {
+	sql, args := buildScopedSearch(scope, callerUserID, k)
 	args[0] = pgvector.NewVector(queryVec)
 	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -127,8 +124,8 @@ func (s *RagStore) SearchScoped(ctx context.Context, queryVec []float32, scope, 
 // the keyword arm of hybrid retrieval, fused with SearchScoped's vector arm
 // via RRF (see ai/fuse.go) — it catches exact identifiers / rare tokens
 // (record numbers, names, codes) that vector similarity alone can blur.
-func (s *RagStore) SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, teamIDs []string, k int) ([]Citation, error) {
-	sql, args := buildScopedLexicalSearch(scope, callerUserID, teamIDs, k)
+func (s *RagStore) SearchScopedLexical(ctx context.Context, queryText, scope, callerUserID string, k int) ([]Citation, error) {
+	sql, args := buildScopedLexicalSearch(scope, callerUserID, k)
 	args[0] = queryText
 	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {

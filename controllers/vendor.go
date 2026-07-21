@@ -83,7 +83,7 @@ func (h *VendorOps) authVendorByUUID(w http.ResponseWriter, r *http.Request, uui
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {
-		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, v.OwnerUserID, "")
+		allowed, aerr := recordInScope(r.Context(), pool, scope, identityID, v.OwnerUserID)
 		if aerr != nil {
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, "", nil, false

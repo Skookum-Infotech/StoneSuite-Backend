@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/query"
 )
 
@@ -35,7 +36,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	where := []string{"qt.quote_deleted_at IS NULL"}
 	var args []any
 	nextIdx := 1
-	if scope == "own" || scope == "team" {
+	if scope != string(authz.ScopeAll) {
 		empID, found := employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return Page{}, nil

@@ -31,6 +31,7 @@ import (
 //	DELETE /api/tenant/quotes/{uuid}               — soft delete
 //	POST   /api/tenant/quotes/{uuid}/transition    — status change
 //	POST   /api/tenant/quotes/{uuid}/approve       — approval sign-off
+//	POST   /api/tenant/quotes/{uuid}/convert       — convert to a Sales Order
 //	GET    /api/tenant/quotes/{uuid}/audit         — audit trail
 type QuoteOps struct{}
 

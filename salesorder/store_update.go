@@ -72,6 +72,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 		return nil, err
 	}
 
+	// sales_order_custom_fields is NOT NULL DEFAULT '{}'; a nil map encodes as
+	// SQL NULL and violates the constraint.
+	custom := in.CustomFields
+	if custom == nil {
+		custom = map[string]any{}
+	}
+
 	cv := []colVal{
 		{"sales_order_po_number", in.PONumber, ""},
 		{"sales_order_reference_number", in.ReferenceNumber, ""},
@@ -95,7 +102,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 		{"sales_order_adjustment", in.Adjustment, ""},
 		{"sales_order_grand_total", header.GrandTotal, ""},
 		{"sales_order_ship_same_as_bill", in.ShipSameAsBilling, ""},
-		{"sales_order_custom_fields", in.CustomFields, ""},
+		{"sales_order_custom_fields", custom, ""},
 	}
 	cv = append(cv, addrColVals("sales_order_bill", billing)...)
 	cv = append(cv, addrColVals("sales_order_ship", shipping)...)

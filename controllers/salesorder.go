@@ -29,6 +29,7 @@ import (
 //	PATCH  /api/tenant/sales-orders/{uuid}               — update
 //	DELETE /api/tenant/sales-orders/{uuid}               — soft delete
 //	POST   /api/tenant/sales-orders/{uuid}/transition    — status change
+//	POST   /api/tenant/sales-orders/{uuid}/convert       — convert to an Invoice
 //	GET    /api/tenant/sales-orders/{uuid}/inventory     — inventory tab
 //	GET    /api/tenant/sales-orders/{uuid}/audit         — audit trail
 type SalesOrderOps struct{}

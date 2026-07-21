@@ -479,6 +479,13 @@ func main() {
 		// Per-record audit trail.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/audit", tenantChain(crm.RecordAudit))
 
+		// Per-record activity log (calls/emails/meetings/notes/tasks).
+		crmActivity := controllers.NewCRMActivityOps()
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/activities", tenantChain(crmActivity.List))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/activities", tenantChain(crmActivity.Create))
+		mux.Handle("PATCH /api/tenant/crm/{workflowKey}/records/{id}/activities/{activityId}", tenantChain(crmActivity.Update))
+		mux.Handle("DELETE /api/tenant/crm/{workflowKey}/records/{id}/activities/{activityId}", tenantChain(crmActivity.Delete))
+
 		// CRM admin: switch the tenant's database design, and configure approvers.
 		mux.Handle("GET /api/tenant/admin/design-version", tenantChain(crmAdminOps.GetDesignVersion))
 		mux.Handle("POST /api/tenant/admin/design-version", tenantChain(crmAdminOps.SetDesignVersion))
@@ -507,6 +514,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/sales-orders/{uuid}", tenantChain(so.Delete))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/transition", tenantChain(so.Transition))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/approve", tenantChain(so.Approve))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/convert", tenantChain(so.Convert))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 
@@ -522,6 +530,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/estimates/{uuid}", tenantChain(est.Delete))
 		mux.Handle("POST /api/tenant/estimates/{uuid}/transition", tenantChain(est.Transition))
 		mux.Handle("POST /api/tenant/estimates/{uuid}/approve", tenantChain(est.Approve))
+		mux.Handle("POST /api/tenant/estimates/{uuid}/convert", tenantChain(est.Convert))
 		mux.Handle("GET /api/tenant/estimates/{uuid}/audit", tenantChain(est.Audit))
 
 		// Quote: dedicated v2 relational module (header + line items + approval),
@@ -535,6 +544,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/quotes/{uuid}", tenantChain(quo.Delete))
 		mux.Handle("POST /api/tenant/quotes/{uuid}/transition", tenantChain(quo.Transition))
 		mux.Handle("POST /api/tenant/quotes/{uuid}/approve", tenantChain(quo.Approve))
+		mux.Handle("POST /api/tenant/quotes/{uuid}/convert", tenantChain(quo.Convert))
 		mux.Handle("GET /api/tenant/quotes/{uuid}/audit", tenantChain(quo.Audit))
 
 		// Vendor: dedicated relational module (supplier/contractor directory,

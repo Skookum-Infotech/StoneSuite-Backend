@@ -24,6 +24,7 @@ const (
 	ResourceLead           Resource = "lead"            // CRM leads
 	ResourceProspect       Resource = "prospect"        // CRM prospects
 	ResourceCustomer       Resource = "customer"        // CRM customers
+	ResourceCRMActivity    Resource = "crm_activity"    // CRM activity log (calls/emails/meetings/notes/tasks)
 	ResourceUser           Resource = "user"            // tenant users
 	ResourceRole           Resource = "role"            // roles & permissions
 	ResourceTeam           Resource = "team"            // teams & membership
@@ -111,6 +112,11 @@ var catalog = []Permission{
 	{ResourceCustomer, ActionUpdate},
 	{ResourceCustomer, ActionDelete},
 	{ResourceCustomer, ActionTransition},
+
+	{ResourceCRMActivity, ActionCreate},
+	{ResourceCRMActivity, ActionRead},
+	{ResourceCRMActivity, ActionUpdate},
+	{ResourceCRMActivity, ActionDelete},
 
 	{ResourceInventoryItem, ActionCreate},
 	{ResourceInventoryItem, ActionRead},

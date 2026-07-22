@@ -531,6 +531,35 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 
+		// Fabrication & Installation: a production job spawned from a sales order,
+		// tracking a stone order through 16 shop-floor statuses with serialized
+		// slab allocation, a 16-step checklist, and dual approval gates. Guarded
+		// by installation:*; slab routes additionally require inventory_item:*.
+		fj := controllers.NewFabricationOps()
+		mux.Handle("GET /api/tenant/fabrication-jobs", tenantChain(fj.List))
+		mux.Handle("POST /api/tenant/fabrication-jobs/search", tenantChain(fj.Search))
+		mux.Handle("POST /api/tenant/fabrication-jobs", tenantChain(fj.Create))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/fabricate", tenantChain(fj.Fabricate))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Get))
+		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Update))
+		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Delete))
+		mux.Handle("PUT /api/tenant/fabrication-jobs/{uuid}/fabrication/status", tenantChain(fj.Transition))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/hold", tenantChain(fj.Hold))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/resume", tenantChain(fj.Resume))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/approve", tenantChain(fj.Approve))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/steps", tenantChain(fj.Steps))
+		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/steps/{stepCode}", tenantChain(fj.UpdateStep))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.JobSlabs))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.AllocateSlab))
+		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}", tenantChain(fj.DeallocateSlab))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition", tenantChain(fj.Disposition))
+
+		// Serialized slab catalog (physical instances of inventory items).
+		invSlab := controllers.NewInventorySlabOps()
+		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invSlab.Create))
+		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invSlab.Get))
+		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invSlab.Scrap))
+
 		// Estimate: dedicated v2 relational module (header + line items + approval),
 		// a sibling of Sales Order/Invoice — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.

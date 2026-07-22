@@ -4155,3 +4155,314 @@ CREATE TABLE IF NOT EXISTS crm_activity (
 CREATE INDEX IF NOT EXISTS idx_crm_activity_customer  ON crm_activity (customer_id)               WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_crm_activity_type       ON crm_activity (customer_id, activity_type) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_crm_activity_occurred   ON crm_activity (customer_id, occurred_at)   WHERE deleted_at IS NULL;
+
+-- -- 000035_fabrication_module ------------------------------------------------
+-- =====================================================================
+-- Tenant migration 035: Fabrication & Installation module (record type FJOB).
+-- A production job spawned from a sales order, tracking a stone order through
+-- 16 shop-floor statuses. Adds serialized physical slabs (inventory_slab) so a
+-- specific stone can be locked rather than quantity-reserved, an append-only
+-- stock ledger (inventory_slab_ledger) that is the single writer of
+-- slab-tracked stock, per-job pieces, slab allocations with disposition, the
+-- 16-step checklist, a status trail, and dual approval gates.
+-- Source: docs/superpowers/specs/2026-07-22-fabrication-installation-module-design.md
+-- FK order: lookups -> inventory_slab -> inventory_slab_ledger ->
+-- fabrication_job -> fabrication_job_item -> fabrication_job_slab ->
+-- fabrication_job_step -> fabrication_job_history -> approver/approval.
+-- =====================================================================
+
+-- Lookups: FJOB record type + its 16 statuses. The status id is resolved by
+-- subselect on the type code (NOT a hardcoded id) so it is robust to any
+-- tenant whose lookup rows were seeded out of order (spec §2.0).
+INSERT INTO lkp_record_type (record_type_code, record_type_code_full, record_type_name, record_type_is_active, record_type_is_system, record_type_created_by) VALUES
+    ('FJOB', 'fabricationjob', 'Fabrication Job', TRUE, TRUE, 1)
+ON CONFLICT (record_type_code) DO NOTHING;
+
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES
+    ('DRFT','Draft'), ('ORCV','Order Received'), ('MALC','Material Allocated'),
+    ('TMPL','Templating In Progress'), ('TAPV','Template Approved'), ('FRDY','Fabrication Ready'),
+    ('CUTG','Cutting In Progress'), ('EDGP','Edging and Polishing'), ('QCPD','Quality Control Pending'),
+    ('QCPS','Quality Control Passed'), ('RSHP','Ready For Shipping'), ('TRAN','In Transit'),
+    ('INST','Installation In Progress'), ('COMP','Completed'), ('HOLD','On Hold'), ('CANC','Cancelled')
+) AS v(code, name)
+CROSS JOIN lkp_record_type rt
+WHERE rt.record_type_code = 'FJOB'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- inventory_slab -- serialized physical slab (sibling of inventory_stock) -----
+CREATE TABLE IF NOT EXISTS inventory_slab (
+    inventory_slab_id        SERIAL        PRIMARY KEY,
+    inventory_slab_uuid      UUID          NOT NULL DEFAULT gen_random_uuid(),
+    slab_serial              VARCHAR(50)   NOT NULL,                 -- our printed tag
+    slab_vendor_id           INTEGER           NULL REFERENCES vendor(vendor_id),
+    slab_supplier_code       VARCHAR(80)   NOT NULL DEFAULT '',      -- supplier's own id, as printed
+    slab_received_at         DATE              NULL,
+    slab_received_by         INTEGER           NULL REFERENCES employee(employee_id),
+    slab_supplier_packing_ref VARCHAR(80)  NOT NULL DEFAULT '',
+    inventory_item_id        INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id) ON DELETE CASCADE,
+    warehouse_id             INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    slab_bundle_id           VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_block_id            VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_lot                 VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_length_mm           DECIMAL(10,2) NOT NULL,
+    slab_width_mm            DECIMAL(10,2) NOT NULL,
+    slab_thickness_mm        DECIMAL(10,2) NOT NULL,
+    slab_area                DECIMAL(14,3) NOT NULL,                 -- in the item's own unit (§4.11.1)
+    slab_area_unit_id        INTEGER       NOT NULL REFERENCES lkp_unit(unit_id),
+    slab_form                VARCHAR(10)   NOT NULL DEFAULT 'full',  -- full | cut
+    slab_parent_slab_id      INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id),
+    slab_status              VARCHAR(20)   NOT NULL DEFAULT 'available', -- available|reserved|consumed|scrapped
+    slab_grade               VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_finish              VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_photo_key           VARCHAR(200)  NOT NULL DEFAULT '',
+    slab_custom_fields       JSONB         NOT NULL DEFAULT '{}',
+    slab_created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    slab_created_by          INTEGER           NULL REFERENCES employee(employee_id),
+    slab_updated_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    slab_updated_by          INTEGER           NULL REFERENCES employee(employee_id),
+    slab_deleted_at          TIMESTAMP         NULL,
+    slab_deleted_by          INTEGER           NULL REFERENCES employee(employee_id),
+    slab_record_version      INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_slab_uuid UNIQUE (inventory_slab_uuid),
+    CONSTRAINT chk_slab_dims      CHECK (slab_length_mm > 0 AND slab_width_mm > 0 AND slab_thickness_mm > 0),
+    CONSTRAINT chk_slab_area      CHECK (slab_area > 0),
+    CONSTRAINT chk_slab_form      CHECK (slab_form IN ('full','cut')),
+    CONSTRAINT chk_slab_status    CHECK (slab_status IN ('available','reserved','consumed','scrapped')),
+    -- form and parentage cannot disagree; a slab cannot be its own parent
+    CONSTRAINT chk_slab_form_parent CHECK ((slab_form = 'cut') = (slab_parent_slab_id IS NOT NULL)),
+    CONSTRAINT chk_slab_not_self    CHECK (slab_parent_slab_id IS DISTINCT FROM inventory_slab_id),
+    -- a supplier code is meaningless without a supplier (NOT NULL DEFAULT '' so
+    -- the CHECK cannot be bypassed by a NULL that evaluates the whole to NULL)
+    CONSTRAINT chk_slab_supplier    CHECK (slab_supplier_code = '' OR slab_vendor_id IS NOT NULL),
+    CONSTRAINT chk_slab_soft_delete CHECK (
+        (slab_deleted_at IS NULL AND slab_deleted_by IS NULL) OR
+        (slab_deleted_at IS NOT NULL AND slab_deleted_by IS NOT NULL)
+    )
+);
+-- Serial unique among live rows only (case-insensitive) -- reusable after soft delete.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_serial_active
+    ON inventory_slab (LOWER(slab_serial)) WHERE slab_deleted_at IS NULL;
+-- Supplier code unique per vendor among live FULL slabs with a non-blank code
+-- (offcuts inherit the parent's code for recall, so full-only; blanks coexist).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_supplier_code_active
+    ON inventory_slab (slab_vendor_id, LOWER(slab_supplier_code))
+    WHERE slab_deleted_at IS NULL AND slab_form = 'full' AND slab_supplier_code <> '';
+CREATE INDEX IF NOT EXISTS idx_slab_recall  ON inventory_slab (slab_vendor_id, slab_supplier_code);
+CREATE INDEX IF NOT EXISTS idx_slab_item    ON inventory_slab (inventory_item_id, slab_status) WHERE slab_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_slab_parent  ON inventory_slab (slab_parent_slab_id);
+CREATE INDEX IF NOT EXISTS idx_slab_bundle  ON inventory_slab (slab_bundle_id);
+CREATE INDEX IF NOT EXISTS idx_slab_custom_gin ON inventory_slab USING GIN (slab_custom_fields);
+
+-- inventory_slab_ledger -- append-only, the ONLY writer of slab-tracked stock -
+-- Invariant: inventory_stock.quantity_on_hand = SUM(quantity_delta) per item.
+CREATE TABLE IF NOT EXISTS inventory_slab_ledger (
+    inventory_slab_ledger_id SERIAL        PRIMARY KEY,
+    inventory_slab_id        INTEGER       NOT NULL REFERENCES inventory_slab(inventory_slab_id),
+    inventory_item_id        INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    warehouse_id             INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    event                    VARCHAR(20)   NOT NULL,
+    quantity_delta           DECIMAL(14,3) NOT NULL,   -- signed, in the item's unit
+    fabrication_job_slab_id  INTEGER           NULL,   -- FK added after that table exists
+    occurred_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor_employee_id        INTEGER           NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_slab_ledger_event CHECK (event IN ('received','consumed','recovered','scrapped','adjusted'))
+);
+-- Each stock-affecting event is once-only, so a re-run transition cannot
+-- double-count -- the double-count bugs are made unrepresentable, not tested.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_received  ON inventory_slab_ledger (inventory_slab_id) WHERE event = 'received';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_consumed  ON inventory_slab_ledger (inventory_slab_id) WHERE event = 'consumed';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_scrapped  ON inventory_slab_ledger (inventory_slab_id) WHERE event = 'scrapped';
+CREATE INDEX IF NOT EXISTS idx_slab_ledger_item ON inventory_slab_ledger (inventory_item_id);
+
+-- fabrication_job -- header -------------------------------------------------
+CREATE TABLE IF NOT EXISTS fabrication_job (
+    fabrication_job_id        SERIAL        PRIMARY KEY,
+    fabrication_job_uuid      UUID          NOT NULL DEFAULT gen_random_uuid(),
+    fabrication_job_number    VARCHAR(20)       NULL,  -- 'FJOB-000001', set post-insert
+    record_type               INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = FJOB
+    fabrication_job_status    INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+    sales_order_id            INTEGER       NOT NULL REFERENCES sales_order(sales_order_id),
+    fabrication_job_customer_id INTEGER     NOT NULL REFERENCES customer(customer_id),
+    -- hold: the status the job was in when held, restored on resume (§1.2)
+    job_held_from_status_id   INTEGER           NULL REFERENCES lkp_record_status(record_status_id),
+    -- cancel intent: disposition is only legal while a cancel is in progress (§4.4.3)
+    job_cancel_requested_at   TIMESTAMP         NULL,
+    -- approval gates at TAPV and QCPS (§2.7), mirrors sales_order
+    job_approval_status       VARCHAR(10)   NOT NULL DEFAULT 'none',
+    job_approved_by           INTEGER           NULL REFERENCES employee(employee_id),
+    -- site snapshot (frozen at create)
+    job_site_customer_name    VARCHAR(150)  NOT NULL DEFAULT '',
+    job_site_addr_line1       VARCHAR(100)  NOT NULL DEFAULT '',
+    job_site_addr_line2       VARCHAR(100)  NOT NULL DEFAULT '',
+    job_site_addr_city        VARCHAR(100)  NOT NULL DEFAULT '',
+    job_site_addr_state       INTEGER           NULL REFERENCES lkp_state(state_id),
+    job_site_addr_zip         VARCHAR(10)   NOT NULL DEFAULT '',
+    job_site_phone            VARCHAR(30)   NOT NULL DEFAULT '',
+    -- scheduling
+    job_template_date         DATE              NULL,
+    job_fabrication_start     DATE              NULL,
+    job_promised_install_date DATE              NULL,
+    job_actual_install_date   DATE              NULL,
+    -- assignment
+    job_owner_id              INTEGER           NULL REFERENCES employee(employee_id),
+    job_templater_id          INTEGER           NULL REFERENCES employee(employee_id),
+    job_fabricator_id         INTEGER           NULL REFERENCES employee(employee_id),
+    job_install_crew_id       INTEGER           NULL REFERENCES employee(employee_id),
+    job_notes                 TEXT          NOT NULL DEFAULT '',
+    job_custom_fields         JSONB         NOT NULL DEFAULT '{}',
+    fabrication_job_created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fabrication_job_created_by INTEGER          NULL REFERENCES employee(employee_id),
+    fabrication_job_updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fabrication_job_updated_by INTEGER          NULL REFERENCES employee(employee_id),
+    fabrication_job_deleted_at TIMESTAMP        NULL,
+    fabrication_job_deleted_by INTEGER          NULL REFERENCES employee(employee_id),
+    fabrication_job_record_version INTEGER   NOT NULL DEFAULT 1,
+    CONSTRAINT uq_fabrication_job_uuid UNIQUE (fabrication_job_uuid),
+    CONSTRAINT chk_fj_approval CHECK (job_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_fj_soft_delete CHECK (
+        (fabrication_job_deleted_at IS NULL AND fabrication_job_deleted_by IS NULL) OR
+        (fabrication_job_deleted_at IS NOT NULL AND fabrication_job_deleted_by IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_fj_so       ON fabrication_job (sales_order_id)          WHERE fabrication_job_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fj_status   ON fabrication_job (fabrication_job_status)  WHERE fabrication_job_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fj_owner    ON fabrication_job (job_owner_id)            WHERE fabrication_job_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fj_customer ON fabrication_job (fabrication_job_customer_id) WHERE fabrication_job_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fj_created  ON fabrication_job (fabrication_job_created_at, fabrication_job_id) WHERE fabrication_job_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fj_custom_gin ON fabrication_job USING GIN (job_custom_fields);
+
+-- fabrication_job_item -- one row per fabricated piece ----------------------
+CREATE TABLE IF NOT EXISTS fabrication_job_item (
+    fabrication_job_item_id   SERIAL        PRIMARY KEY,
+    fabrication_job_item_uuid UUID          NOT NULL DEFAULT gen_random_uuid(),
+    fabrication_job_id        INTEGER       NOT NULL REFERENCES fabrication_job(fabrication_job_id) ON DELETE CASCADE,
+    sales_order_item_id       INTEGER           NULL REFERENCES sales_order_item(sales_order_item_id),
+    piece_number              INTEGER       NOT NULL,
+    piece_name                VARCHAR(150)  NOT NULL DEFAULT '',
+    piece_type                VARCHAR(50)   NOT NULL DEFAULT '',
+    piece_length_mm           DECIMAL(10,2) NOT NULL DEFAULT 0,
+    piece_width_mm            DECIMAL(10,2) NOT NULL DEFAULT 0,
+    piece_thickness_mm        DECIMAL(10,2) NOT NULL DEFAULT 0,
+    edge_profile_id           INTEGER           NULL,
+    sink_cutout_count         INTEGER       NOT NULL DEFAULT 0,
+    cooktop_cutout_count      INTEGER       NOT NULL DEFAULT 0,
+    seam_count                INTEGER       NOT NULL DEFAULT 0,
+    piece_status              VARCHAR(20)   NOT NULL DEFAULT 'pending',
+    item_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by           INTEGER           NULL REFERENCES employee(employee_id),
+    item_deleted_at           TIMESTAMP         NULL,
+    CONSTRAINT uq_fab_item_uuid UNIQUE (fabrication_job_item_uuid),
+    CONSTRAINT chk_fab_item_counts CHECK (sink_cutout_count >= 0 AND cooktop_cutout_count >= 0 AND seam_count >= 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fab_item_piece_active
+    ON fabrication_job_item (fabrication_job_id, piece_number) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fab_item_job ON fabrication_job_item (fabrication_job_id) WHERE item_deleted_at IS NULL;
+
+-- fabrication_job_slab -- reservation join + disposition --------------------
+CREATE TABLE IF NOT EXISTS fabrication_job_slab (
+    fabrication_job_slab_id   SERIAL        PRIMARY KEY,
+    fabrication_job_id        INTEGER       NOT NULL REFERENCES fabrication_job(fabrication_job_id) ON DELETE CASCADE,
+    fabrication_job_item_id   INTEGER           NULL REFERENCES fabrication_job_item(fabrication_job_item_id) ON DELETE SET NULL,
+    inventory_slab_id         INTEGER       NOT NULL REFERENCES inventory_slab(inventory_slab_id),
+    allocation_status         VARCHAR(20)   NOT NULL DEFAULT 'reserved', -- reserved|consumed|released
+    yield_area                DECIMAL(14,3)     NULL,   -- in the item's unit
+    reserved_at               TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reserved_by               INTEGER           NULL REFERENCES employee(employee_id),
+    consumed_at               TIMESTAMP         NULL,
+    consumed_by               INTEGER           NULL REFERENCES employee(employee_id),
+    -- disposition (declared when a job is cancelled after cutting, §4.4)
+    disposition               VARCHAR(20)       NULL,   -- recovered|scrapped|delivered
+    disposition_recorded_at   TIMESTAMP         NULL,
+    disposition_recorded_by   INTEGER           NULL REFERENCES employee(employee_id),
+    recovered_slab_id         INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id),
+    recovered_area            DECIMAL(14,3)     NULL,
+    CONSTRAINT chk_fab_slab_status CHECK (allocation_status IN ('reserved','consumed','released')),
+    CONSTRAINT chk_fab_slab_disp   CHECK (disposition IS NULL OR disposition IN ('recovered','scrapped','delivered')),
+    CONSTRAINT chk_fab_slab_recovered CHECK ((disposition = 'recovered') = (recovered_slab_id IS NOT NULL)),
+    CONSTRAINT chk_fab_slab_recovered_area CHECK ((disposition = 'recovered') = (recovered_area IS NOT NULL AND recovered_area > 0))
+);
+-- The double-selling guard at the DB layer: a slab has at most one live allocation.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fab_slab_live
+    ON fabrication_job_slab (inventory_slab_id) WHERE allocation_status IN ('reserved','consumed');
+CREATE INDEX IF NOT EXISTS idx_fab_slab_job  ON fabrication_job_slab (fabrication_job_id);
+CREATE INDEX IF NOT EXISTS idx_fab_slab_slab ON fabrication_job_slab (inventory_slab_id);
+
+-- Deferred FK: the ledger references the allocation that caused an event.
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
+                   WHERE constraint_name = 'fk_slab_ledger_fab_slab') THEN
+        ALTER TABLE inventory_slab_ledger
+            ADD CONSTRAINT fk_slab_ledger_fab_slab
+            FOREIGN KEY (fabrication_job_slab_id) REFERENCES fabrication_job_slab(fabrication_job_slab_id);
+    END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_recovered
+    ON inventory_slab_ledger (fabrication_job_slab_id) WHERE event = 'recovered';
+
+-- fabrication_job_step -- the 16 checklist rows, seeded per job -------------
+CREATE TABLE IF NOT EXISTS fabrication_job_step (
+    fabrication_job_step_id   SERIAL        PRIMARY KEY,
+    fabrication_job_id        INTEGER       NOT NULL REFERENCES fabrication_job(fabrication_job_id) ON DELETE CASCADE,
+    fabrication_job_item_id   INTEGER           NULL REFERENCES fabrication_job_item(fabrication_job_item_id) ON DELETE CASCADE,
+    step_code                 VARCHAR(24)   NOT NULL,
+    step_sequence             SMALLINT      NOT NULL,
+    step_status               VARCHAR(20)   NOT NULL DEFAULT 'pending',
+    step_started_at           TIMESTAMP         NULL,
+    step_started_by           INTEGER           NULL REFERENCES employee(employee_id),
+    step_completed_at         TIMESTAMP         NULL,
+    step_completed_by         INTEGER           NULL REFERENCES employee(employee_id),
+    step_notes                TEXT          NOT NULL DEFAULT '',
+    step_payload              JSONB         NOT NULL DEFAULT '{}',
+    CONSTRAINT chk_fab_step_status CHECK (step_status IN ('pending','in_progress','blocked','skipped','completed')),
+    CONSTRAINT chk_fab_step_seq    CHECK (step_sequence BETWEEN 1 AND 16)
+);
+-- Uniqueness needs two partial indexes: NULLs compare distinct, so a single
+-- 3-column UNIQUE would leave the seven job-grain (NULL item) steps unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fab_step_piece
+    ON fabrication_job_step (fabrication_job_id, fabrication_job_item_id, step_code)
+    WHERE fabrication_job_item_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fab_step_job
+    ON fabrication_job_step (fabrication_job_id, step_code)
+    WHERE fabrication_job_item_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fab_step_job ON fabrication_job_step (fabrication_job_id);
+
+-- fabrication_job_history -- from/to status trail ---------------------------
+CREATE TABLE IF NOT EXISTS fabrication_job_history (
+    fabrication_job_history_id SERIAL      PRIMARY KEY,
+    fabrication_job_id         INTEGER     NOT NULL REFERENCES fabrication_job(fabrication_job_id) ON DELETE CASCADE,
+    from_status_id             INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id               INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    action                     VARCHAR(32) NOT NULL DEFAULT 'transition',
+    actor_employee_id          INTEGER         NULL REFERENCES employee(employee_id),
+    snapshot                   JSONB       NOT NULL DEFAULT '{}',
+    at                         TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_fab_history_action CHECK (action IN ('create','transition','hold','resume','cancel','approve','update','rework','fulfillment_clamped'))
+);
+CREATE INDEX IF NOT EXISTS idx_fab_history_job ON fabrication_job_history (fabrication_job_id);
+
+-- fabrication_job_approver / _approval -- gates at TAPV and QCPS -------------
+CREATE TABLE IF NOT EXISTS fabrication_job_approver (
+    fabrication_job_approver_id SERIAL    PRIMARY KEY,
+    record_type_id             INTEGER    NOT NULL REFERENCES lkp_record_type(record_type_id),
+    record_status_id           INTEGER    NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER    NOT NULL REFERENCES employee(employee_id),
+    is_active                  BOOLEAN    NOT NULL DEFAULT TRUE,
+    created_at                 TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                 INTEGER        NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_fab_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fab_approver_lookup
+    ON fabrication_job_approver (record_type_id, record_status_id) WHERE is_active;
+
+CREATE TABLE IF NOT EXISTS fabrication_job_approval (
+    fabrication_job_approval_id SERIAL    PRIMARY KEY,
+    fabrication_job_id         INTEGER    NOT NULL REFERENCES fabrication_job(fabrication_job_id) ON DELETE CASCADE,
+    record_status_id           INTEGER    NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER    NOT NULL REFERENCES employee(employee_id),
+    approved_at                TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_fab_approval UNIQUE (fabrication_job_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fab_approval_job ON fabrication_job_approval (fabrication_job_id);

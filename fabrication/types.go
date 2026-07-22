@@ -68,6 +68,10 @@ type JobItem struct {
 	CooktopCutoutCount int     `json:"cooktopCutoutCount"`
 	SeamCount          int     `json:"seamCount"`
 	Status             string  `json:"status"`
+	// SalesOrderItemUUID is the linked sales-order line, when this piece has
+	// one — round-tripped so an edit that doesn't touch the link (frontend
+	// sends back whatever it read here) doesn't silently clear it.
+	SalesOrderItemUUID string `json:"salesOrderItemUuid,omitempty"`
 }
 
 // Step is one of the 16 checklist rows.

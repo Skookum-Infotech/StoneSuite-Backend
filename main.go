@@ -553,6 +553,9 @@ func main() {
 		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.AllocateSlab))
 		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}", tenantChain(fj.DeallocateSlab))
 		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition", tenantChain(fj.Disposition))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/pieces", tenantChain(fj.AddPiece))
+		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.UpdatePiece))
+		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.RemovePiece))
 
 		// Serialized slab catalog (physical instances of inventory items).
 		invSlab := controllers.NewInventorySlabOps()

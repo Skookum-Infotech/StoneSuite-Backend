@@ -146,3 +146,18 @@ func TestDeductsAtOrAfterCutting(t *testing.T) {
 		}
 	}
 }
+
+func TestCanEditPieces(t *testing.T) {
+	editable := map[string]bool{
+		StatusDraft: true, StatusOrderReceived: true, StatusMaterialAllocated: true,
+		StatusTemplating: true, StatusTemplateApproved: true, StatusFabricationReady: true,
+		StatusCutting: false, StatusEdging: false, StatusQCPending: false, StatusQCPassed: false,
+		StatusReadyForShipping: false, StatusInTransit: false, StatusInstalling: false,
+		StatusCompleted: false, StatusOnHold: false, StatusCancelled: false,
+	}
+	for _, s := range allStatuses {
+		if got := canEditPieces(s); got != editable[s] {
+			t.Errorf("canEditPieces(%s) = %v, want %v", s, got, editable[s])
+		}
+	}
+}

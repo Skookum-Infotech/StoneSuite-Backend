@@ -4439,9 +4439,17 @@ CREATE TABLE IF NOT EXISTS fabrication_job_history (
     actor_employee_id          INTEGER         NULL REFERENCES employee(employee_id),
     snapshot                   JSONB       NOT NULL DEFAULT '{}',
     at                         TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_fab_history_action CHECK (action IN ('create','transition','hold','resume','cancel','approve','update','rework','fulfillment_clamped'))
+    CONSTRAINT chk_fab_history_action CHECK (action IN ('create','transition','hold','resume','cancel','approve','update','rework','fulfillment_clamped','piece_add','piece_update','piece_remove'))
 );
 CREATE INDEX IF NOT EXISTS idx_fab_history_job ON fabrication_job_history (fabrication_job_id);
+
+-- Widen chk_fab_history_action for tenant DBs that already ran the CREATE
+-- TABLE above before piece add/update/remove started writing history rows
+-- (widening-only; existing rows remain valid) -- mirrors the
+-- chk_sales_order_history_action / chk_invoice_history_action widenings above.
+ALTER TABLE fabrication_job_history DROP CONSTRAINT IF EXISTS chk_fab_history_action;
+ALTER TABLE fabrication_job_history ADD CONSTRAINT chk_fab_history_action
+    CHECK (action IN ('create','transition','hold','resume','cancel','approve','update','rework','fulfillment_clamped','piece_add','piece_update','piece_remove'));
 
 -- fabrication_job_approver / _approval -- gates at TAPV and QCPS -------------
 CREATE TABLE IF NOT EXISTS fabrication_job_approver (

@@ -116,10 +116,16 @@ func UpdateStep(ctx context.Context, pool *pgxpool.Pool, jobUUID, stepCode, stat
 		payload = map[string]any{}
 	}
 	// Stamp start/complete timestamps as the status crosses those thresholds.
+	// $3 is cast explicitly here because it's also compared bare against string
+	// literals below (CASE WHEN $3 = 'in_progress' ...) — without one shared,
+	// explicit type Postgres deduces two different types for the same
+	// parameter (varchar from the column assign, text from the literal
+	// comparisons) and rejects the whole statement ("inconsistent types
+	// deduced for parameter $3").
 	var stepID int
 	err = tx.QueryRow(ctx, `
 		UPDATE fabrication_job_step SET
-			step_status = $3,
+			step_status = $3::VARCHAR,
 			step_notes = $4,
 			step_payload = $5,
 			step_started_at = CASE WHEN $3 = 'in_progress' AND step_started_at IS NULL THEN NOW() ELSE step_started_at END,

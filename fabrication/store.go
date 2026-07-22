@@ -138,9 +138,11 @@ func loadPieces(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]JobItem
 	rows, err := pool.Query(ctx, `
 		SELECT fi.fabrication_job_item_uuid, fi.piece_number, fi.piece_name, fi.piece_type,
 		       fi.piece_length_mm, fi.piece_width_mm, fi.piece_thickness_mm,
-		       fi.sink_cutout_count, fi.cooktop_cutout_count, fi.seam_count, fi.piece_status
+		       fi.sink_cutout_count, fi.cooktop_cutout_count, fi.seam_count, fi.piece_status,
+		       COALESCE(soi.sales_order_item_uuid::text, '')
 		FROM fabrication_job_item fi
 		JOIN fabrication_job fj ON fj.fabrication_job_id = fi.fabrication_job_id
+		LEFT JOIN sales_order_item soi ON soi.sales_order_item_id = fi.sales_order_item_id
 		WHERE fj.fabrication_job_uuid = $1 AND fi.item_deleted_at IS NULL
 		ORDER BY fi.piece_number`, uuid)
 	if err != nil {
@@ -152,7 +154,8 @@ func loadPieces(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]JobItem
 		var p JobItem
 		if err := rows.Scan(&p.ID, &p.PieceNumber, &p.PieceName, &p.PieceType,
 			&p.LengthMM, &p.WidthMM, &p.ThicknessMM,
-			&p.SinkCutoutCount, &p.CooktopCutoutCount, &p.SeamCount, &p.Status); err != nil {
+			&p.SinkCutoutCount, &p.CooktopCutoutCount, &p.SeamCount, &p.Status,
+			&p.SalesOrderItemUUID); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

@@ -91,3 +91,14 @@ func deductsAtOrAfter(code string) bool {
 	}
 	return false
 }
+
+// canEditPieces reports whether pieces may still be added, edited, or removed
+// on a job at this status. Legal before slabs are cut (!deductsAtOrAfter) —
+// once fabrication has consumed material the job's scope of work is locked
+// in. Also excludes HOLD: a held job's target status is opaque here (only
+// Resume knows it), so editing pieces while held could silently change what
+// resume unblocks. Terminal statuses are excluded by deductsAtOrAfter already
+// (COMP) or explicitly (CANC, which deductsAtOrAfter doesn't cover).
+func canEditPieces(code string) bool {
+	return !IsTerminal(code) && code != StatusOnHold && !deductsAtOrAfter(code)
+}

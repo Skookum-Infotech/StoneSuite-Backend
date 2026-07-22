@@ -39,6 +39,9 @@ import (
 //	POST   /api/tenant/fabrication-jobs/{uuid}/slabs            — allocate a slab (needs inventory_item:update)
 //	DELETE /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid} — deallocate (needs inventory_item:update)
 //	POST   /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition — declare fate on cancel
+//	POST   /api/tenant/fabrication-jobs/{uuid}/pieces            — add a piece (before Cutting only)
+//	PATCH  /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid} — edit a piece (before Cutting only)
+//	DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid} — remove a piece (before Cutting only)
 type FabricationOps struct{}
 
 // NewFabricationOps constructs the handler group.
@@ -132,7 +135,9 @@ func fjFail(w http.ResponseWriter, err error, serverMsg string) {
 	case errors.Is(err, fabrication.ErrInvalidTransition),
 		errors.Is(err, fabrication.ErrApprovalRequired),
 		errors.Is(err, fabrication.ErrApprovalNotRequired),
-		errors.Is(err, fabrication.ErrDispositionRequired):
+		errors.Is(err, fabrication.ErrDispositionRequired),
+		errors.Is(err, fabrication.ErrPiecesLocked),
+		errors.Is(err, fabrication.ErrPieceHasSlabs):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, fabrication.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())

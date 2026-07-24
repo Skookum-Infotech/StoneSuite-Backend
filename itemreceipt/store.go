@@ -79,14 +79,6 @@ func nullableInt(v int) any {
 	return v
 }
 
-// nullableDate returns the given "yyyy-mm-dd" string as a nullable date arg.
-func nullableDate(d string) any {
-	if d == "" {
-		return nil
-	}
-	return d
-}
-
 // orNow returns the given "yyyy-mm-dd" date string, or today when blank.
 func orNow(d string) string {
 	if d == "" {

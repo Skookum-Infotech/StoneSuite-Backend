@@ -153,49 +153,6 @@ func vendorSnapshot(ctx context.Context, q workflow.Querier, vendorUUID string) 
 	return id, name, nil
 }
 
-// overrideAddress layers a caller-supplied partial ship-to over a default,
-// preferring the override for any non-empty field.
-func overrideAddress(def, override AddressInput) AddressInput {
-	out := def
-	if override.Name != "" {
-		out.Name = override.Name
-	}
-	if override.Attention != "" {
-		out.Attention = override.Attention
-	}
-	if override.AddrLine1 != "" {
-		out.AddrLine1 = override.AddrLine1
-	}
-	if override.AddrLine2 != "" {
-		out.AddrLine2 = override.AddrLine2
-	}
-	if override.SuiteUnit != "" {
-		out.SuiteUnit = override.SuiteUnit
-	}
-	if override.City != "" {
-		out.City = override.City
-	}
-	if override.StateID != nil {
-		out.StateID = override.StateID
-	}
-	if override.Zip != "" {
-		out.Zip = override.Zip
-	}
-	if override.CountryID != nil {
-		out.CountryID = override.CountryID
-	}
-	if override.Phone != "" {
-		out.Phone = override.Phone
-	}
-	if override.Fax != "" {
-		out.Fax = override.Fax
-	}
-	if override.Email != "" {
-		out.Email = override.Email
-	}
-	return out
-}
-
 // addrColVals returns the 12 (column, value) pairs for the ship-to snapshot
 // block, in the exact column order the schema declares (state before zip).
 func addrColVals(a AddressInput) []colVal {

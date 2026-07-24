@@ -4474,3 +4474,195 @@ CREATE TABLE IF NOT EXISTS fabrication_job_approval (
     CONSTRAINT uq_fab_approval UNIQUE (fabrication_job_id, record_status_id, approver_employee_id)
 );
 CREATE INDEX IF NOT EXISTS idx_fab_approval_job ON fabrication_job_approval (fabrication_job_id);
+
+
+-- =====================================================================
+-- PURCHASE ORDER MODULE
+-- Spec: docs/superpowers/specs/2026-07-22-purchase-order-module-design.md
+-- Reuses (already seeded, do not recreate): lkp_record_type PORD (id 13),
+-- lkp_record_status rows for record_type=13 (DRFT/PAPV/APPV/SENT/PART/
+-- RCVD/CLSD/CANC), authz.ResourcePurchaseOrder, the 'purchase_order' JSONB
+-- workflow (custom-field definition host), vendor, inventory_item, lkp_*.
+-- Adds zero seed stanzas.
+-- =====================================================================
+
+-- purchase_order (header) -- mirrors estimate, with a vendor counterparty
+-- instead of a customer and a single ship-to (deliver-to) snapshot block
+-- (the bill-to is the tenant itself; POs have no billing/shipping pair).
+CREATE TABLE IF NOT EXISTS purchase_order (
+    purchase_order_id            SERIAL        PRIMARY KEY,
+    purchase_order_uuid          UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id               INTEGER           NULL,  -- platform owner stamp, no cross-DB FK (matches estimate/invoice)
+    purchase_order_number        VARCHAR(20)       NULL,  -- 'PORD-000001', generated post-insert in Go
+
+    -- Classification
+    record_type                  INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = PORD
+    purchase_order_status        INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (optional, configuration-driven -- AD-6, mirrors estimate_approval_status)
+    purchase_order_approval_status VARCHAR(10) NOT NULL DEFAULT 'none',  -- none | pending | approved
+    purchase_order_approved_by   INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Counterparty (AD-2: single vendor, name snapshotted at create/update)
+    purchase_order_vendor_id     INTEGER       NOT NULL REFERENCES vendor(vendor_id),
+    purchase_order_vendor_name   VARCHAR(150)  NOT NULL DEFAULT '',
+
+    -- Primary info
+    purchase_order_reference_number VARCHAR(50) NOT NULL DEFAULT '',  -- vendor's quote/reference
+    purchase_order_date          DATE          NOT NULL DEFAULT CURRENT_DATE,
+    purchase_order_expected_date DATE              NULL,  -- expected delivery
+    purchase_order_sales_tax_percent DECIMAL(6,4) NOT NULL DEFAULT 0,
+    purchase_order_memo          TEXT          NOT NULL DEFAULT '',
+    purchase_order_notes         TEXT          NOT NULL DEFAULT '',
+    purchase_order_internal_notes TEXT         NOT NULL DEFAULT '',
+    purchase_order_terms_conditions TEXT       NOT NULL DEFAULT '',
+
+    -- Assignment (IDOR scope owner)
+    purchase_order_owner_id      INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Terms / currency
+    purchase_order_payment_terms INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    purchase_order_currency      INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    purchase_order_exchange_rate DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored)
+    purchase_order_subtotal      DECIMAL(15,2) NOT NULL DEFAULT 0,
+    purchase_order_discount_total DECIMAL(15,2) NOT NULL DEFAULT 0,
+    purchase_order_tax_total     DECIMAL(15,2) NOT NULL DEFAULT 0,
+    purchase_order_shipping_charge DECIMAL(15,2) NOT NULL DEFAULT 0,
+    purchase_order_adjustment    DECIMAL(15,2) NOT NULL DEFAULT 0,
+    purchase_order_grand_total   DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Ship-to (deliver-to) snapshot -- the buyer's receiving address
+    purchase_order_ship_name     VARCHAR(150)  NOT NULL DEFAULT '',
+    purchase_order_ship_attention VARCHAR(150) NOT NULL DEFAULT '',
+    purchase_order_ship_addr_line1 VARCHAR(100) NOT NULL DEFAULT '',
+    purchase_order_ship_addr_line2 VARCHAR(100) NOT NULL DEFAULT '',
+    purchase_order_ship_addr_suitenum VARCHAR(20) NOT NULL DEFAULT '',
+    purchase_order_ship_addr_city VARCHAR(100) NOT NULL DEFAULT '',
+    purchase_order_ship_addr_state INTEGER         NULL REFERENCES lkp_state(state_id),
+    purchase_order_ship_addr_zip VARCHAR(10)   NOT NULL DEFAULT '',
+    purchase_order_ship_addr_country INTEGER       NULL REFERENCES lkp_country(country_id),
+    purchase_order_ship_phone    VARCHAR(20)   NOT NULL DEFAULT '',
+    purchase_order_ship_fax      VARCHAR(20)   NOT NULL DEFAULT '',
+    purchase_order_ship_email    VARCHAR(100)  NOT NULL DEFAULT '',
+
+    -- Dynamic + audit
+    purchase_order_custom_fields JSONB         NOT NULL DEFAULT '{}',
+    purchase_order_created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    purchase_order_created_by    INTEGER           NULL REFERENCES employee(employee_id),
+    purchase_order_updated_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    purchase_order_updated_by    INTEGER           NULL REFERENCES employee(employee_id),
+    purchase_order_deleted_at    TIMESTAMP         NULL,
+    purchase_order_deleted_by    INTEGER           NULL REFERENCES employee(employee_id),
+    purchase_order_record_version INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_purchase_order_uuid   UNIQUE (purchase_order_uuid),
+    CONSTRAINT uq_purchase_order_number UNIQUE (purchase_order_number),
+    CONSTRAINT chk_po_approval_status   CHECK (purchase_order_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_po_tax_percent       CHECK (purchase_order_sales_tax_percent >= 0 AND purchase_order_sales_tax_percent <= 100),
+    CONSTRAINT chk_po_totals_nonneg     CHECK (purchase_order_subtotal >= 0 AND purchase_order_grand_total >= 0),
+    CONSTRAINT chk_po_soft_delete       CHECK (
+        (purchase_order_deleted_at IS NULL AND purchase_order_deleted_by IS NULL) OR
+        (purchase_order_deleted_at IS NOT NULL AND purchase_order_deleted_by IS NOT NULL)
+    )
+);
+
+-- purchase_order_item (line items) -- mirrors estimate_item + the receiving
+-- hook (AD-4): qty_received is written only by the future Item Receipt
+-- module; stable ids let receipts reference po lines for 3-way match.
+CREATE TABLE IF NOT EXISTS purchase_order_item (
+    purchase_order_item_id    SERIAL        PRIMARY KEY,
+    purchase_order_item_uuid  UUID          NOT NULL DEFAULT gen_random_uuid(),
+    purchase_order_id         INTEGER       NOT NULL REFERENCES purchase_order(purchase_order_id) ON DELETE CASCADE,
+    line_number               INTEGER       NOT NULL,
+    inventory_item_id         INTEGER           NULL REFERENCES inventory_item(inventory_item_id),   -- NULL = free-text line
+
+    -- Snapshots (frozen at add time -- never re-read from catalog)
+    item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)   NOT NULL DEFAULT '',
+    description               TEXT          NOT NULL DEFAULT '',
+    unit_id                   INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                 VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                  DECIMAL(14,3) NOT NULL DEFAULT 0,
+    qty_received              DECIMAL(14,3) NOT NULL DEFAULT 0,  -- AD-4: written by Item Receipt postings
+    unit_price                DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent          DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    tax_rate_id               INTEGER           NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent               DECIMAL(6,4)  NOT NULL DEFAULT 0,
+
+    -- Stored line money
+    line_subtotal             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount             DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                  DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by           INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at           TIMESTAMP         NULL,
+    item_record_version       INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_po_item_uuid    UNIQUE (purchase_order_item_uuid),
+    CONSTRAINT chk_poi_qty        CHECK (quantity >= 0),
+    CONSTRAINT chk_poi_qty_received CHECK (qty_received >= 0 AND qty_received <= quantity),
+    CONSTRAINT chk_poi_unit_price CHECK (unit_price >= 0),
+    CONSTRAINT chk_poi_discount   CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_poi_tax        CHECK (tax_percent >= 0 AND tax_percent <= 100)
+);
+
+-- purchase_order_history -- status/action trail (mirrors estimate_history)
+CREATE TABLE IF NOT EXISTS purchase_order_history (
+    purchase_order_history_id SERIAL       PRIMARY KEY,
+    purchase_order_id         INTEGER      NOT NULL REFERENCES purchase_order(purchase_order_id) ON DELETE CASCADE,
+    from_status_id            INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id              INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                    VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | update | approve
+    actor_employee_id         INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                  JSONB        NOT NULL DEFAULT '{}',
+    at                        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- purchase_order_approver / purchase_order_approval (AD-6, exact structural
+-- copies of estimate_approver / estimate_approval)
+CREATE TABLE IF NOT EXISTS purchase_order_approver (
+    purchase_order_approver_id SERIAL      PRIMARY KEY,
+    record_type_id            INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = PORD
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                 BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_purchase_order_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS purchase_order_approval (
+    purchase_order_approval_id SERIAL     PRIMARY KEY,
+    purchase_order_id         INTEGER     NOT NULL REFERENCES purchase_order(purchase_order_id) ON DELETE CASCADE,
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at               TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_purchase_order_approval UNIQUE (purchase_order_id, record_status_id, approver_employee_id)
+);
+
+-- purchase_order indexes (listing/filtering -- all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_po_vendor        ON purchase_order (purchase_order_vendor_id) WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_status        ON purchase_order (purchase_order_status)    WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_date          ON purchase_order (purchase_order_date)      WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_expected_date ON purchase_order (purchase_order_expected_date) WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_owner         ON purchase_order (purchase_order_owner_id)  WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_created_id    ON purchase_order (purchase_order_created_at, purchase_order_id) WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_updated_id    ON purchase_order (purchase_order_updated_at, purchase_order_id) WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_grandtotal_id ON purchase_order (purchase_order_grand_total, purchase_order_id) WHERE purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_custom_gin    ON purchase_order USING GIN (purchase_order_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_poi_po   ON purchase_order_item (purchase_order_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_poi_item ON purchase_order_item (inventory_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_poi_line_active
+    ON purchase_order_item (purchase_order_id, line_number) WHERE item_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_po_history_po ON purchase_order_history (purchase_order_id);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_order_approver_lookup
+    ON purchase_order_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_purchase_order_approval_po ON purchase_order_approval (purchase_order_id);

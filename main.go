@@ -606,6 +606,21 @@ func main() {
 		mux.Handle("POST /api/tenant/vendors/{uuid}/transition", tenantChain(vnd.Transition))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/audit", tenantChain(vnd.Audit))
 
+		// Purchase Order: dedicated v2 relational module (header + line items +
+		// receiving progress + approval), the first Purchases document module —
+		// a sibling of Estimate/Quote/Invoice, addressed to a Vendor. Not served
+		// through the generic JSONB router.
+		poOps := controllers.NewPurchaseOrderOps()
+		mux.Handle("GET /api/tenant/purchase-orders", tenantChain(poOps.List))
+		mux.Handle("POST /api/tenant/purchase-orders/search", tenantChain(poOps.Search))
+		mux.Handle("POST /api/tenant/purchase-orders", tenantChain(poOps.Create))
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Get))
+		mux.Handle("PATCH /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Update))
+		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

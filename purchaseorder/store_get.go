@@ -37,15 +37,27 @@ const poSelect = `
 	       po.purchase_order_custom_fields,
 	       po.purchase_order_subtotal, po.purchase_order_discount_total, po.purchase_order_tax_total,
 	       po.purchase_order_shipping_charge, po.purchase_order_adjustment, po.purchase_order_grand_total,
-	       po.purchase_order_created_at, po.purchase_order_updated_at
+	       po.purchase_order_created_at, po.purchase_order_updated_at,
+	       po.purchase_order_status, po.purchase_order_vendor_id
 	FROM purchase_order po
 	JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 	JOIN vendor v ON v.vendor_id = po.purchase_order_vendor_id
 	LEFT JOIN employee oe ON oe.employee_id = po.purchase_order_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 
-func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, error) {
+// poMeta carries the internal numeric ids a purchase order row has but the API
+// response deliberately does not expose. Search needs them to mint a keyset
+// cursor for sorts that run on those columns (`status`, `vendor_id`) — without
+// this the cursor would be built from the wrong field and every page after the
+// first would be wrong. Mirrors invoice.invoiceMeta, which solved this first.
+type poMeta struct {
+	statusID int
+	vendorID int
+}
+
+func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, poMeta, error) {
 	var p PurchaseOrder
+	var meta poMeta
 	var customRaw []byte
 	if err := row.Scan(
 		&p.ID, &p.Number, &p.Status, &p.StatusCode, &p.ApprovalStatus,
@@ -63,13 +75,14 @@ func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, error) {
 		&p.Subtotal, &p.DiscountTotal, &p.TaxTotal,
 		&p.ShippingCharge, &p.Adjustment, &p.GrandTotal,
 		&p.CreatedAt, &p.UpdatedAt,
+		&meta.statusID, &meta.vendorID,
 	); err != nil {
-		return nil, err
+		return nil, poMeta{}, err
 	}
 	if len(customRaw) > 0 {
 		_ = json.Unmarshal(customRaw, &p.CustomFields)
 	}
-	return &p, nil
+	return &p, meta, nil
 }
 
 // itemSelect is the base SELECT for a purchase order's live lines. Column
@@ -124,7 +137,7 @@ func loadLines(ctx context.Context, q workflow.Querier, uuid string) ([]Line, er
 
 // Get loads a single live purchase order by its external uuid, including its lines.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*PurchaseOrder, error) {
-	p, err := scanPurchaseOrder(pool.QueryRow(ctx, poSelect+`
+	p, _, err := scanPurchaseOrder(pool.QueryRow(ctx, poSelect+`
 		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

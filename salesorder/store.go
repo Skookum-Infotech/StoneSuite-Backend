@@ -92,15 +92,27 @@ const orderSelect = `
 	       so.sales_order_custom_fields,
 	       so.sales_order_subtotal, so.sales_order_discount_total, so.sales_order_tax_total,
 	       so.sales_order_shipping_charge, so.sales_order_adjustment, so.sales_order_grand_total,
-	       so.sales_order_created_at, so.sales_order_updated_at
+	       so.sales_order_created_at, so.sales_order_updated_at,
+	       so.sales_order_status, so.sales_order_customer_id
 	FROM sales_order so
 	JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 	JOIN customer c ON c.customer_id = so.sales_order_customer_id
 	LEFT JOIN employee oe ON oe.employee_id = so.sales_order_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 
-func scanOrder(row pgx.Row) (*Order, error) {
+// orderMeta carries the internal numeric ids a sales order row has but the API
+// response does not expose. Search needs them to mint a keyset cursor for
+// sorts that run on those columns (`status`, `customer_id`); without it the
+// cursor is built from the wrong field and every page after the first is
+// wrong. Mirrors invoice.invoiceMeta.
+type orderMeta struct {
+	statusID   int
+	customerID int
+}
+
+func scanOrder(row pgx.Row) (*Order, orderMeta, error) {
 	var o Order
+	var meta orderMeta
 	var customRaw []byte
 	if err := row.Scan(
 		&o.ID, &o.Number, &o.Status, &o.StatusCode, &o.ApprovalStatus,
@@ -123,13 +135,14 @@ func scanOrder(row pgx.Row) (*Order, error) {
 		&o.Subtotal, &o.DiscountTotal, &o.TaxTotal,
 		&o.ShippingCharge, &o.Adjustment, &o.GrandTotal,
 		&o.CreatedAt, &o.UpdatedAt,
+		&meta.statusID, &meta.customerID,
 	); err != nil {
-		return nil, err
+		return nil, orderMeta{}, err
 	}
 	if len(customRaw) > 0 {
 		_ = json.Unmarshal(customRaw, &o.CustomFields)
 	}
-	return &o, nil
+	return &o, meta, nil
 }
 
 const itemSelect = `
@@ -161,7 +174,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 
 // Get loads a single live order by its external uuid, including its lines.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Order, error) {
-	o, err := scanOrder(pool.QueryRow(ctx, orderSelect+`
+	o, _, err := scanOrder(pool.QueryRow(ctx, orderSelect+`
 		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

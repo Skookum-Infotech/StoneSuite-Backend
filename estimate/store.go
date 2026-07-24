@@ -317,15 +317,27 @@ const estimateSelect = `
 	       est.estimate_custom_fields,
 	       est.estimate_subtotal, est.estimate_discount_total, est.estimate_tax_total,
 	       est.estimate_shipping_charge, est.estimate_adjustment, est.estimate_grand_total,
-	       est.estimate_created_at, est.estimate_updated_at
+	       est.estimate_created_at, est.estimate_updated_at,
+	       est.estimate_status, est.estimate_customer_id
 	FROM estimate est
 	JOIN lkp_record_status rs ON rs.record_status_id = est.estimate_status
 	JOIN customer c ON c.customer_id = est.estimate_customer_id
 	LEFT JOIN employee oe ON oe.employee_id = est.estimate_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 
-func scanEstimate(row pgx.Row) (*Estimate, error) {
+// estimateMeta carries the internal numeric ids an estimate row has but the
+// API response does not expose. Search needs them to mint a keyset cursor for
+// sorts that run on those columns (`status`, `customer_id`); without it the
+// cursor is built from the wrong field and every page after the first is
+// wrong. Mirrors invoice.invoiceMeta.
+type estimateMeta struct {
+	statusID   int
+	customerID int
+}
+
+func scanEstimate(row pgx.Row) (*Estimate, estimateMeta, error) {
 	var e Estimate
+	var meta estimateMeta
 	var customRaw []byte
 	if err := row.Scan(
 		&e.ID, &e.Number, &e.Status, &e.StatusCode, &e.ApprovalStatus,
@@ -348,13 +360,14 @@ func scanEstimate(row pgx.Row) (*Estimate, error) {
 		&e.Subtotal, &e.DiscountTotal, &e.TaxTotal,
 		&e.ShippingCharge, &e.Adjustment, &e.GrandTotal,
 		&e.CreatedAt, &e.UpdatedAt,
+		&meta.statusID, &meta.customerID,
 	); err != nil {
-		return nil, err
+		return nil, estimateMeta{}, err
 	}
 	if len(customRaw) > 0 {
 		_ = json.Unmarshal(customRaw, &e.CustomFields)
 	}
-	return &e, nil
+	return &e, meta, nil
 }
 
 // itemSelect is the base SELECT for an estimate's live lines. Column order
@@ -409,7 +422,7 @@ func loadLines(ctx context.Context, q workflow.Querier, uuid string) ([]Line, er
 
 // Get loads a single live estimate by its external uuid, including its lines.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Estimate, error) {
-	e, err := scanEstimate(pool.QueryRow(ctx, estimateSelect+`
+	e, _, err := scanEstimate(pool.QueryRow(ctx, estimateSelect+`
 		WHERE est.estimate_uuid = $1 AND est.estimate_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

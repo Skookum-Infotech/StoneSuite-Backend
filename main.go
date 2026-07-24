@@ -621,6 +621,25 @@ func main() {
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
+		// Item Receipt: the second Purchases document module — goods arriving
+		// against a purchase order. The only writer of
+		// purchase_order_item.qty_received, and the trigger for the order's
+		// SENT → PART → RCVD rollup. /post moves stock through the inventory
+		// ledger; /void reverses it.
+		irOps := controllers.NewItemReceiptOps()
+		mux.Handle("GET /api/tenant/item-receipts", tenantChain(irOps.List))
+		mux.Handle("POST /api/tenant/item-receipts/search", tenantChain(irOps.Search))
+		mux.Handle("POST /api/tenant/item-receipts", tenantChain(irOps.Create))
+		mux.Handle("GET /api/tenant/item-receipts/{uuid}", tenantChain(irOps.Get))
+		mux.Handle("PATCH /api/tenant/item-receipts/{uuid}", tenantChain(irOps.Update))
+		mux.Handle("DELETE /api/tenant/item-receipts/{uuid}", tenantChain(irOps.Delete))
+		mux.Handle("POST /api/tenant/item-receipts/{uuid}/post", tenantChain(irOps.Post))
+		mux.Handle("POST /api/tenant/item-receipts/{uuid}/void", tenantChain(irOps.Void))
+		mux.Handle("POST /api/tenant/item-receipts/{uuid}/transition", tenantChain(irOps.Transition))
+		mux.Handle("GET /api/tenant/item-receipts/{uuid}/audit", tenantChain(irOps.Audit))
+		// Receipts for one order — gated by the purchase order's own permission.
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

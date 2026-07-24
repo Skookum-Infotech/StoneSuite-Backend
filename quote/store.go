@@ -318,7 +318,8 @@ const quoteSelect = `
 	       qt.quote_custom_fields,
 	       qt.quote_subtotal, qt.quote_discount_total, qt.quote_tax_total,
 	       qt.quote_shipping_charge, qt.quote_adjustment, qt.quote_grand_total,
-	       qt.quote_created_at, qt.quote_updated_at
+	       qt.quote_created_at, qt.quote_updated_at,
+	       qt.quote_status, qt.quote_customer_id
 	FROM quote qt
 	JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
 	JOIN customer c ON c.customer_id = qt.quote_customer_id
@@ -326,8 +327,19 @@ const quoteSelect = `
 	LEFT JOIN employee oe ON oe.employee_id = qt.quote_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 
-func scanQuote(row pgx.Row) (*Quote, error) {
+// quoteMeta carries the internal numeric ids a quote row has but the API
+// response does not expose. Search needs them to mint a keyset cursor for
+// sorts that run on those columns (`status`, `customer_id`); without it the
+// cursor is built from the wrong field and every page after the first is
+// wrong. Mirrors invoice.invoiceMeta.
+type quoteMeta struct {
+	statusID   int
+	customerID int
+}
+
+func scanQuote(row pgx.Row) (*Quote, quoteMeta, error) {
 	var e Quote
+	var meta quoteMeta
 	var customRaw []byte
 	var estimateUUIDRaw string
 	if err := row.Scan(
@@ -352,8 +364,9 @@ func scanQuote(row pgx.Row) (*Quote, error) {
 		&e.Subtotal, &e.DiscountTotal, &e.TaxTotal,
 		&e.ShippingCharge, &e.Adjustment, &e.GrandTotal,
 		&e.CreatedAt, &e.UpdatedAt,
+		&meta.statusID, &meta.customerID,
 	); err != nil {
-		return nil, err
+		return nil, quoteMeta{}, err
 	}
 	if len(customRaw) > 0 {
 		_ = json.Unmarshal(customRaw, &e.CustomFields)
@@ -361,7 +374,7 @@ func scanQuote(row pgx.Row) (*Quote, error) {
 	if estimateUUIDRaw != "" {
 		e.EstimateUUID = &estimateUUIDRaw
 	}
-	return &e, nil
+	return &e, meta, nil
 }
 
 // itemSelect is the base SELECT for an quote's live lines. Column order
@@ -416,7 +429,7 @@ func loadLines(ctx context.Context, q workflow.Querier, uuid string) ([]Line, er
 
 // Get loads a single live quote by its external uuid, including its lines.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Quote, error) {
-	e, err := scanQuote(pool.QueryRow(ctx, quoteSelect+`
+	e, _, err := scanQuote(pool.QueryRow(ctx, quoteSelect+`
 		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

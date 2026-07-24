@@ -22,9 +22,14 @@ case "$file" in
 esac
 [ -f "$file" ] || exit 0
 
+# Keep this list in step with the module directories that actually exist. A
+# module missing here is silently unguarded, which is the worse failure mode:
+# purchaseorder, fabrication and itemreceipt were all built after this hook and
+# went unchecked until someone probed it.
 mod=$(basename "$(dirname "$file")")
 case "$mod" in
   quote|estimate|salesorder|invoice|payment|creditmemo|vendors|inventory|refund) ;;
+  purchaseorder|itemreceipt|fabrication) ;;
   *) exit 0 ;;
 esac
 

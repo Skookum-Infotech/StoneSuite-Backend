@@ -4605,7 +4605,12 @@ CREATE TABLE IF NOT EXISTS purchase_order_item (
 
     CONSTRAINT uq_po_item_uuid    UNIQUE (purchase_order_item_uuid),
     CONSTRAINT chk_poi_qty        CHECK (quantity >= 0),
-    CONSTRAINT chk_poi_qty_received CHECK (qty_received >= 0 AND qty_received <= quantity),
+    -- Only non-negativity is enforced here. The original upper bound
+    -- (qty_received <= quantity) was relaxed by migration 032 so the Item
+    -- Receipt module can record an over-delivery; the ordered-vs-received
+    -- ceiling is a business rule enforced in Go (itemreceipt.WithinTolerance
+    -- plus the item_receipt:approve override), not a storage constraint.
+    CONSTRAINT chk_poi_qty_received_nonneg CHECK (qty_received >= 0),
     CONSTRAINT chk_poi_unit_price CHECK (unit_price >= 0),
     CONSTRAINT chk_poi_discount   CHECK (discount_percent >= 0 AND discount_percent <= 100),
     CONSTRAINT chk_poi_tax        CHECK (tax_percent >= 0 AND tax_percent <= 100)
@@ -4666,3 +4671,234 @@ CREATE INDEX IF NOT EXISTS idx_po_history_po ON purchase_order_history (purchase
 CREATE INDEX IF NOT EXISTS idx_purchase_order_approver_lookup
     ON purchase_order_approver (record_type_id, record_status_id) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_purchase_order_approval_po ON purchase_order_approval (purchase_order_id);
+
+
+-- =====================================================================
+-- ITEM RECEIPT MODULE
+-- Spec: docs/superpowers/specs/2026-07-23-item-receipt-module-design.md
+-- Reuses (already seeded, do not recreate): lkp_record_type IRCT (id 14),
+-- lkp_record_status rows for record_type=14 (PEND/PART/RCVD/VOID),
+-- authz.ResourceItemReceipt, the 'item_receipt' JSONB workflow (custom-field
+-- definition host), purchase_order, purchase_order_item, vendor,
+-- inventory_item, inventory_stock, lkp_warehouse.
+-- Adds zero seed stanzas.
+--
+-- This block also relaxes one constraint shipped by the Purchase Order
+-- module (see the guarded stanza at the end) -- the only non-additive
+-- change in the migration.
+-- =====================================================================
+
+-- item_receipt (header) -- the document recording goods physically arriving
+-- against a finalized purchase order. Vendor and warehouse are snapshotted /
+-- fixed at create time; the receipt never re-derives them (AD-2 rule).
+CREATE TABLE IF NOT EXISTS item_receipt (
+    item_receipt_id              SERIAL        PRIMARY KEY,
+    item_receipt_uuid            UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id               INTEGER           NULL,  -- platform owner stamp, no cross-DB FK
+    item_receipt_number          VARCHAR(20)       NULL,  -- 'IRCT-000001', generated post-insert in Go
+
+    -- Classification
+    record_type                  INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = IRCT
+    item_receipt_status          INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Source document (AD-1: a receipt only ever exists against a PO)
+    purchase_order_id            INTEGER       NOT NULL REFERENCES purchase_order(purchase_order_id),
+
+    -- Counterparty, inherited from the PO and snapshotted
+    item_receipt_vendor_id       INTEGER       NOT NULL REFERENCES vendor(vendor_id),
+    item_receipt_vendor_name     VARCHAR(150)  NOT NULL DEFAULT '',
+
+    -- Destination (AD-4: the PO carries no warehouse, so the receipt supplies it)
+    warehouse_id                 INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+
+    -- Primary info
+    item_receipt_date            DATE          NOT NULL DEFAULT CURRENT_DATE,
+    item_receipt_packing_slip    VARCHAR(80)   NOT NULL DEFAULT '',
+    item_receipt_carrier         VARCHAR(80)   NOT NULL DEFAULT '',
+    item_receipt_tracking_number VARCHAR(80)   NOT NULL DEFAULT '',
+    item_receipt_bill_of_lading  VARCHAR(80)   NOT NULL DEFAULT '',
+    item_receipt_notes           TEXT          NOT NULL DEFAULT '',
+    item_receipt_internal_notes  TEXT          NOT NULL DEFAULT '',
+
+    -- Assignment (IDOR scope owner)
+    item_receipt_owner_id        INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Posting / void trail (AD-5: posted receipts are immutable; correction
+    -- is void-and-reissue, and voiding reverses stock + qty_received)
+    item_receipt_posted_at       TIMESTAMP         NULL,
+    item_receipt_posted_by       INTEGER           NULL REFERENCES employee(employee_id),
+    item_receipt_voided_at       TIMESTAMP         NULL,
+    item_receipt_voided_by       INTEGER           NULL REFERENCES employee(employee_id),
+    item_receipt_void_reason     TEXT          NOT NULL DEFAULT '',
+
+    -- AD-3: why an over-delivery beyond tolerance was waved through, captured
+    -- at post time alongside the item_receipt:approve grant that allowed it.
+    item_receipt_over_receipt_reason TEXT      NOT NULL DEFAULT '',
+
+    -- Dynamic + audit
+    item_receipt_custom_fields   JSONB         NOT NULL DEFAULT '{}',
+    item_receipt_created_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_receipt_created_by      INTEGER           NULL REFERENCES employee(employee_id),
+    item_receipt_updated_at      TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_receipt_updated_by      INTEGER           NULL REFERENCES employee(employee_id),
+    item_receipt_deleted_at      TIMESTAMP         NULL,
+    item_receipt_deleted_by      INTEGER           NULL REFERENCES employee(employee_id),
+    item_receipt_record_version  INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_item_receipt_uuid   UNIQUE (item_receipt_uuid),
+    CONSTRAINT uq_item_receipt_number UNIQUE (item_receipt_number),
+    CONSTRAINT chk_ir_soft_delete     CHECK (
+        (item_receipt_deleted_at IS NULL AND item_receipt_deleted_by IS NULL) OR
+        (item_receipt_deleted_at IS NOT NULL AND item_receipt_deleted_by IS NOT NULL)
+    ),
+    CONSTRAINT chk_ir_posted_pair     CHECK (
+        (item_receipt_posted_at IS NULL AND item_receipt_posted_by IS NULL) OR
+        (item_receipt_posted_at IS NOT NULL AND item_receipt_posted_by IS NOT NULL)
+    ),
+    CONSTRAINT chk_ir_void_pair       CHECK (
+        (item_receipt_voided_at IS NULL AND item_receipt_voided_by IS NULL) OR
+        (item_receipt_voided_at IS NOT NULL AND item_receipt_voided_by IS NOT NULL)
+    )
+);
+
+-- item_receipt_line -- one PO line's arrival. purchase_order_item_id is NOT
+-- NULL: a receipt line always traces to an ordered line (no ad-hoc receiving),
+-- which is also what makes the future Vendor Bill 3-way match possible.
+CREATE TABLE IF NOT EXISTS item_receipt_line (
+    item_receipt_line_id      SERIAL        PRIMARY KEY,
+    item_receipt_line_uuid    UUID          NOT NULL DEFAULT gen_random_uuid(),
+    item_receipt_id           INTEGER       NOT NULL REFERENCES item_receipt(item_receipt_id) ON DELETE CASCADE,
+    line_number               INTEGER       NOT NULL,
+    purchase_order_item_id    INTEGER       NOT NULL REFERENCES purchase_order_item(purchase_order_item_id),
+    inventory_item_id         INTEGER           NULL REFERENCES inventory_item(inventory_item_id),  -- NULL = free-text PO line
+
+    -- Snapshots (frozen at add time -- never re-read from the PO or catalog)
+    item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)   NOT NULL DEFAULT '',
+    description               TEXT          NOT NULL DEFAULT '',
+    unit_id                   INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                 VARCHAR(10)   NOT NULL DEFAULT '',
+
+    qty_received              DECIMAL(14,3) NOT NULL DEFAULT 0,
+    qty_rejected              DECIMAL(14,3) NOT NULL DEFAULT 0,  -- damaged/refused, never enters stock
+    line_notes                TEXT          NOT NULL DEFAULT '',
+
+    item_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by           INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at           TIMESTAMP         NULL,
+    item_record_version       INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_item_receipt_line_uuid UNIQUE (item_receipt_line_uuid),
+    CONSTRAINT chk_irl_qty CHECK (
+        qty_received >= 0 AND qty_rejected >= 0 AND qty_rejected <= qty_received
+    )
+);
+
+-- item_receipt_history -- status/action trail (mirrors purchase_order_history)
+CREATE TABLE IF NOT EXISTS item_receipt_history (
+    item_receipt_history_id   SERIAL       PRIMARY KEY,
+    item_receipt_id           INTEGER      NOT NULL REFERENCES item_receipt(item_receipt_id) ON DELETE CASCADE,
+    from_status_id            INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id              INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                    VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | update | post | void
+    actor_employee_id         INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                  JSONB        NOT NULL DEFAULT '{}',
+    at                        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- inventory_ledger -- append-only stock movement for NON-serialized items,
+-- the sibling of inventory_slab_ledger (which covers serialized slabs only).
+-- Before this table, plain inventory_stock.quantity_on_hand had no audit trail
+-- and no writer outside fabrication's slab path.
+--
+-- Invariant, identical to the slab ledger's:
+--   inventory_stock.quantity_on_hand = SUM(quantity_delta) per (item, warehouse).
+--
+-- source_record_id / source_line_id are deliberately FK-free: the ledger is
+-- polymorphic over source documents (item receipts today, vendor returns and
+-- adjustments later) and a real FK cannot point at more than one table.
+CREATE TABLE IF NOT EXISTS inventory_ledger (
+    inventory_ledger_id SERIAL        PRIMARY KEY,
+    inventory_item_id   INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    warehouse_id        INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    event               VARCHAR(20)   NOT NULL,
+    quantity_delta      DECIMAL(14,3) NOT NULL,   -- signed, in the item's own unit
+    source_record_type  INTEGER           NULL REFERENCES lkp_record_type(record_type_id),
+    source_record_id    INTEGER           NULL,
+    source_line_id      INTEGER           NULL,
+    occurred_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor_employee_id   INTEGER           NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_inventory_ledger_event CHECK (event IN ('received','returned','adjusted','consumed'))
+);
+
+-- A receipt line may be received exactly once. Re-posting the same receipt
+-- cannot double-count stock -- the bug is made unrepresentable, not tested
+-- (same technique as uq_slab_ledger_received).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_receipt_line
+    ON inventory_ledger (source_line_id)
+    WHERE event = 'received' AND source_line_id IS NOT NULL;
+-- ...and reversed exactly once, for the same reason.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_return_line
+    ON inventory_ledger (source_line_id)
+    WHERE event = 'returned' AND source_line_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_inventory_ledger_item_wh
+    ON inventory_ledger (inventory_item_id, warehouse_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_ledger_source
+    ON inventory_ledger (source_record_type, source_record_id);
+
+-- item_receipt indexes (listing/filtering -- all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_ir_po         ON item_receipt (purchase_order_id)        WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_vendor     ON item_receipt (item_receipt_vendor_id)   WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_status     ON item_receipt (item_receipt_status)      WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_warehouse  ON item_receipt (warehouse_id)             WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_owner      ON item_receipt (item_receipt_owner_id)    WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_date       ON item_receipt (item_receipt_date)        WHERE item_receipt_deleted_at IS NULL;
+-- Keyset-cursor pairs: the query/ engine orders by (sort key, id).
+CREATE INDEX IF NOT EXISTS idx_ir_created_id ON item_receipt (item_receipt_created_at, item_receipt_id) WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_updated_id ON item_receipt (item_receipt_updated_at, item_receipt_id) WHERE item_receipt_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ir_custom_gin ON item_receipt USING GIN (item_receipt_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_irl_ir   ON item_receipt_line (item_receipt_id)        WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_irl_poi  ON item_receipt_line (purchase_order_item_id);
+CREATE INDEX IF NOT EXISTS idx_irl_item ON item_receipt_line (inventory_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_irl_line_active
+    ON item_receipt_line (item_receipt_id, line_number) WHERE item_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ir_history_ir ON item_receipt_history (item_receipt_id);
+
+-- ---------------------------------------------------------------------
+-- Relax purchase_order_item.chk_poi_qty_received (Item Receipt AD-3).
+--
+-- The Purchase Order module shipped `qty_received <= quantity` as a storage
+-- constraint, which makes an over-delivery literally unrecordable. Receiving
+-- 102 of 100 ordered is a real warehouse event, so the ceiling moves into Go
+-- (itemreceipt.WithinTolerance + the item_receipt:approve override) and the
+-- column keeps only its non-negativity guarantee.
+--
+-- This is a RELAXATION: every row that satisfied the old constraint satisfies
+-- the new one, so it cannot fail on existing data and drops no data. The
+-- CREATE TABLE above already carries the new form for fresh databases; this
+-- guarded stanza converges databases provisioned before this migration.
+-- Idempotent and re-runnable (the DO $$ precedent is at line ~1364).
+-- ---------------------------------------------------------------------
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_poi_qty_received'
+          AND conrelid = 'purchase_order_item'::regclass
+    ) THEN
+        ALTER TABLE purchase_order_item DROP CONSTRAINT chk_poi_qty_received;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_poi_qty_received_nonneg'
+          AND conrelid = 'purchase_order_item'::regclass
+    ) THEN
+        ALTER TABLE purchase_order_item
+            ADD CONSTRAINT chk_poi_qty_received_nonneg CHECK (qty_received >= 0);
+    END IF;
+END $$;

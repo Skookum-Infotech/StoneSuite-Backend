@@ -69,12 +69,14 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	}
 	defer rows.Close()
 	out := []PurchaseOrder{}
+	metas := []poMeta{}
 	for rows.Next() {
-		p, err := scanPurchaseOrder(rows)
+		p, meta, err := scanPurchaseOrder(rows)
 		if err != nil {
 			return Page{}, err
 		}
 		out = append(out, *p)
+		metas = append(metas, meta)
 	}
 	if err := rows.Err(); err != nil {
 		return Page{}, fmt.Errorf("search purchase orders: %w", err)
@@ -83,16 +85,24 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	page := Page{Records: out}
 	if len(out) > built.EffLimit {
 		page.HasMore = true
-		last := out[built.EffLimit-1]
 		page.Records = out[:built.EffLimit]
-		page.NextCursor = query.NextCursor(last.ID, built.Sort, sortValue(last, built.Sort.Field))
+		lastIdx := built.EffLimit - 1
+		last, lastMeta := page.Records[lastIdx], metas[lastIdx]
+		page.NextCursor = query.NextCursor(last.ID, built.Sort, sortValue(last, lastMeta, built.Sort.Field))
 	}
 	return page, nil
 }
 
 // sortValue reads the effective sort field's value from a purchase order to
 // mint the next cursor.
-func sortValue(p PurchaseOrder, field string) any {
+//
+// Every key in resolver.go's sortableFields must appear here. A missing case
+// falls through to created_at, so the cursor is built from a different column
+// than the one the query ordered by — page 1 looks right and every page after
+// it is wrong. `status` and `vendor_id` sort on internal numeric ids the
+// response struct does not carry, which is what poMeta is for.
+// TestSortValueCoversEverySortableField guards the correspondence.
+func sortValue(p PurchaseOrder, meta poMeta, field string) any {
 	switch field {
 	case "updated_at":
 		return p.UpdatedAt
@@ -102,6 +112,10 @@ func sortValue(p PurchaseOrder, field string) any {
 		return p.OrderDate
 	case "document_number", "record_number":
 		return p.Number
+	case "status":
+		return meta.statusID
+	case "vendor_id":
+		return meta.vendorID
 	default: // created_at (default)
 		return p.CreatedAt
 	}

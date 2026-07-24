@@ -67,12 +67,14 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	}
 	defer rows.Close()
 	out := []Quote{}
+	metas := []quoteMeta{}
 	for rows.Next() {
-		e, err := scanQuote(rows)
+		e, meta, err := scanQuote(rows)
 		if err != nil {
 			return Page{}, err
 		}
 		out = append(out, *e)
+		metas = append(metas, meta)
 	}
 	if err := rows.Err(); err != nil {
 		return Page{}, fmt.Errorf("search quotes: %w", err)
@@ -81,16 +83,20 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	page := Page{Records: out}
 	if len(out) > built.EffLimit {
 		page.HasMore = true
-		last := out[built.EffLimit-1]
 		page.Records = out[:built.EffLimit]
-		page.NextCursor = query.NextCursor(last.ID, built.Sort, sortValue(last, built.Sort.Field))
+		lastIdx := built.EffLimit - 1
+		last, lastMeta := page.Records[lastIdx], metas[lastIdx]
+		page.NextCursor = query.NextCursor(last.ID, built.Sort, sortValue(last, lastMeta, built.Sort.Field))
 	}
 	return page, nil
 }
 
 // sortValue reads the effective sort field's value from a quote to mint
-// the next cursor.
-func sortValue(e Quote, field string) any {
+// the next cursor. Every key in resolver.go's sortableFields must appear here,
+// or the cursor is minted from the wrong column and pages after the first are
+// wrong. `status` and `customer_id` sort on internal numeric ids the response
+// struct does not carry — quoteMeta supplies them.
+func sortValue(e Quote, meta quoteMeta, field string) any {
 	switch field {
 	case "updated_at":
 		return e.UpdatedAt
@@ -100,6 +106,10 @@ func sortValue(e Quote, field string) any {
 		return e.QuoteDate
 	case "document_number", "record_number":
 		return e.Number
+	case "status":
+		return meta.statusID
+	case "customer_id":
+		return meta.customerID
 	default: // created_at (default)
 		return e.CreatedAt
 	}

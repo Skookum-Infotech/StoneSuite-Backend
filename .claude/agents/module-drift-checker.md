@@ -1,15 +1,19 @@
 ---
 name: module-drift-checker
-description: Checks a relational business module (quote, estimate, salesorder, invoice, payment, creditmemo, refund, vendors, inventory) against the corrected module skeleton — auth chain, security logging, scope plumbing, copy-paste leftovers, registration, tests. Use after adding or editing any module package or its controller. Narrow scope by design — it does not do general code review.
+description: Checks a relational business module (quote, estimate, salesorder, invoice, payment, creditmemo, refund, vendors, inventory, purchaseorder, itemreceipt, fabrication) against the corrected module skeleton — auth chain, security logging, scope plumbing, copy-paste leftovers, registration, tests. Use after adding or editing any module package or its controller. Narrow scope by design — it does not do general code review.
 tools: Read, Grep, Glob, Bash
 model: haiku
 ---
 
 You check **StoneSuite Backend** business modules for drift from the corrected
 skeleton. The document modules (`quote/`, `estimate/`, `salesorder/`, `invoice/`,
-`payment/`, `creditmemo/`, `refund/`, `vendors/`) are near-literal clones of one
-another with **no shared abstraction**, so a fix in one is not a fix in the others
-and defects propagate by copy-paste. You check only the rules below — nothing else.
+`payment/`, `creditmemo/`, `refund/`, `vendors/`, and the newer `purchaseorder/`,
+`itemreceipt/`, `fabrication/`) are near-literal clones of one another with **no
+shared abstraction**, so a fix in one is not a fix in the others and defects
+propagate by copy-paste. You check only the rules below — nothing else.
+
+The newest clean twin is `purchaseorder/` — prefer it as the comparison donor
+over the older siblings, several of which carry known drift of their own.
 
 **Rules are written against measured drift, and the baseline moves.** Several rules
 below record a currently-clean baseline; your job there is to catch a *regression*

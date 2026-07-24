@@ -531,6 +531,38 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
 
+		// Fabrication & Installation: a production job spawned from a sales order,
+		// tracking a stone order through 16 shop-floor statuses with serialized
+		// slab allocation, a 16-step checklist, and dual approval gates. Guarded
+		// by installation:*; slab routes additionally require inventory_item:*.
+		fj := controllers.NewFabricationOps()
+		mux.Handle("GET /api/tenant/fabrication-jobs", tenantChain(fj.List))
+		mux.Handle("POST /api/tenant/fabrication-jobs/search", tenantChain(fj.Search))
+		mux.Handle("POST /api/tenant/fabrication-jobs", tenantChain(fj.Create))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/fabricate", tenantChain(fj.Fabricate))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Get))
+		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Update))
+		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Delete))
+		mux.Handle("PUT /api/tenant/fabrication-jobs/{uuid}/fabrication/status", tenantChain(fj.Transition))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/hold", tenantChain(fj.Hold))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/resume", tenantChain(fj.Resume))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/approve", tenantChain(fj.Approve))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/steps", tenantChain(fj.Steps))
+		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/steps/{stepCode}", tenantChain(fj.UpdateStep))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.JobSlabs))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.AllocateSlab))
+		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}", tenantChain(fj.DeallocateSlab))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition", tenantChain(fj.Disposition))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/pieces", tenantChain(fj.AddPiece))
+		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.UpdatePiece))
+		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.RemovePiece))
+
+		// Serialized slab catalog (physical instances of inventory items).
+		invSlab := controllers.NewInventorySlabOps()
+		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invSlab.Create))
+		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invSlab.Get))
+		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invSlab.Scrap))
+
 		// Estimate: dedicated v2 relational module (header + line items + approval),
 		// a sibling of Sales Order/Invoice — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.
@@ -573,6 +605,21 @@ func main() {
 		mux.Handle("DELETE /api/tenant/vendors/{uuid}", tenantChain(vnd.Delete))
 		mux.Handle("POST /api/tenant/vendors/{uuid}/transition", tenantChain(vnd.Transition))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/audit", tenantChain(vnd.Audit))
+
+		// Purchase Order: dedicated v2 relational module (header + line items +
+		// receiving progress + approval), the first Purchases document module —
+		// a sibling of Estimate/Quote/Invoice, addressed to a Vendor. Not served
+		// through the generic JSONB router.
+		poOps := controllers.NewPurchaseOrderOps()
+		mux.Handle("GET /api/tenant/purchase-orders", tenantChain(poOps.List))
+		mux.Handle("POST /api/tenant/purchase-orders/search", tenantChain(poOps.Search))
+		mux.Handle("POST /api/tenant/purchase-orders", tenantChain(poOps.Create))
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Get))
+		mux.Handle("PATCH /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Update))
+		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()

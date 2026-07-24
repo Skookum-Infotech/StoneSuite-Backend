@@ -203,6 +203,13 @@ var catalog = []Permission{
 	{ResourceItemReceipt, ActionUpdate},
 	{ResourceItemReceipt, ActionDelete},
 	{ResourceItemReceipt, ActionTransition},
+	// Accepting a delivery beyond the over-receipt tolerance commits the
+	// business to goods it never ordered and to paying for them, so it is a
+	// distinct capability from posting a normal receipt: a warehouse role can
+	// hold create/read/update/transition without ever being able to wave an
+	// over-delivery through. Every other IRCT move uses ActionTransition
+	// (mirrors ResourceCreditMemo and ResourceRefund above).
+	{ResourceItemReceipt, ActionApprove},
 
 	{ResourceVendorBill, ActionCreate},
 	{ResourceVendorBill, ActionRead},

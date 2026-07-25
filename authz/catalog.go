@@ -52,6 +52,9 @@ const (
 	ResourceVendorCredit  Resource = "vendor_credit"
 	ResourceExpense       Resource = "expense"
 
+	// Finance
+	ResourceChartOfAccount Resource = "chart_of_account"
+
 	// ResourceAny is the wildcard resource. Granting it matches every resource;
 	// it is how the seeded super_admin role is expressed as a single row.
 	ResourceAny Resource = "*"
@@ -234,6 +237,12 @@ var catalog = []Permission{
 	{ResourceExpense, ActionUpdate},
 	{ResourceExpense, ActionDelete},
 	{ResourceExpense, ActionTransition},
+
+	{ResourceChartOfAccount, ActionCreate},
+	{ResourceChartOfAccount, ActionRead},
+	{ResourceChartOfAccount, ActionUpdate},
+	{ResourceChartOfAccount, ActionDelete},
+	{ResourceChartOfAccount, ActionConfigure},
 
 	{ResourceUser, ActionCreate},
 	{ResourceUser, ActionRead},

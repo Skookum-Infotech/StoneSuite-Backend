@@ -762,6 +762,7 @@ package chartofaccounts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -819,7 +820,7 @@ func BulkUpdate(ctx context.Context, pool *pgxpool.Pool, in BulkInput, employeeI
 // blocked the batch.
 func bulkOne(ctx context.Context, tx rowQuerier, uuid string, in BulkInput, employeeID int) (BulkResult, error) {
 	cur, err := loadCurrent(ctx, tx, uuid)
-	if err == ErrNotFound {
+	if errors.Is(err, ErrNotFound) {
 		return BulkResult{UUID: uuid, OK: false, Message: "Account not found."}, nil
 	}
 	if err != nil {

@@ -274,20 +274,19 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // rowQuerier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so store
-// helpers work identically inside and outside a transaction.
+// helpers work identically inside and outside a transaction. Callers inside a
+// transaction pass the tx, which is what keeps a mutation and its audit row in
+// the same transaction.
 type rowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	Exec(ctx context.Context, sql string, args ...any) (pgconnCommandTag, error)
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
-
-// pgconnCommandTag aliases the pgconn tag type so rowQuerier does not force an
-// extra import on every consumer.
-type pgconnCommandTag = pgconn.CommandTag
 
 // accountColumns is the shared projection. Every read path selects exactly
 // these, in this order, so scanAccount is the single scanner.
@@ -395,15 +394,7 @@ func takenCodes(ctx context.Context, q rowQuerier) ([]string, error) {
 var _ rowQuerier = (*pgxpool.Pool)(nil)
 ```
 
-- [ ] **Step 5: Add the missing pgconn import**
-
-`store.go` references `pgconn.CommandTag`. Add to its import block:
-
-```go
-	"github.com/jackc/pgx/v5/pgconn"
-```
-
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
 go build ./chartofaccounts/ && go test ./chartofaccounts/ -run TestResolver -v
@@ -411,7 +402,7 @@ go build ./chartofaccounts/ && go test ./chartofaccounts/ -run TestResolver -v
 
 Expected: build succeeds; all `TestResolver*` subtests PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add chartofaccounts/resolver.go chartofaccounts/store.go chartofaccounts/resolver_test.go
@@ -805,6 +796,77 @@ func TestBuildTreeEmptyInputs(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// AD-2: sub-category 9100 holds BS accounts (9101, 9102) AND PNL accounts
+// (9103-9107). It must appear under BOTH sections, each carrying only its own
+// accounts. Assigning the whole sub-category one side would file five P&L
+// accounts on the balance sheet -- the exact failure bs_pnl-per-account exists
+// to prevent.
+func TestBuildTreeSplitsMixedSubCategory(t *testing.T) {
+	cats := []Category{{ID: 9, Code: 9000, Name: "System & Control Accounts",
+		NormalBalance: "debit", SortOrder: 9}}
+	subs := []SubCategory{{ID: 17, CategoryID: 9, CategoryCode: 9000, Code: 9100,
+		Name: "System & Control Accounts", SortOrder: 1}}
+	accts := []*Account{
+		{ID: "u-9101", Code: "9101", Name: "Opening Balance Equity", SubCategoryID: 17,
+			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "BS",
+			IsActive: true, IsVisible: true, IsPostable: true},
+		{ID: "u-9102", Code: "9102", Name: "Suspense Account", SubCategoryID: 17,
+			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "BS",
+			IsActive: true, IsVisible: true, IsPostable: true},
+		{ID: "u-9103", Code: "9103", Name: "Rounding Adjustment", SubCategoryID: 17,
+			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "PNL",
+			IsActive: true, IsVisible: true, IsPostable: true},
+		{ID: "u-9104", Code: "9104", Name: "Inventory Adjustment", SubCategoryID: 17,
+			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "PNL",
+			IsActive: true, IsVisible: true, IsPostable: true},
+	}
+
+	got := BuildTree(cats, subs, accts, TreeOptions{})
+	require.Len(t, got, 2, "9100 must appear under both sections")
+
+	codesIn := func(sec TreeSection) []string {
+		var out []string
+		for _, c := range sec.Categories {
+			for _, s := range c.SubCategories {
+				for _, a := range s.Accounts {
+					out = append(out, a.Code)
+				}
+			}
+		}
+		return out
+	}
+	assert.Equal(t, "BS", got[0].BSPNL)
+	assert.ElementsMatch(t, []string{"9101", "9102"}, codesIn(got[0]))
+	assert.Equal(t, "PNL", got[1].BSPNL)
+	assert.ElementsMatch(t, []string{"9103", "9104"}, codesIn(got[1]),
+		"P&L accounts must not appear on the balance sheet")
+}
+
+// Ordering must not depend on Go's randomised map iteration.
+func TestBuildTreeIsDeterministic(t *testing.T) {
+	cats, subs, accts := treeFixture()
+	first := BuildTree(cats, subs, accts, TreeOptions{IncludeInactive: true})
+	for i := 0; i < 20; i++ {
+		again := BuildTree(cats, subs, accts, TreeOptions{IncludeInactive: true})
+		require.Len(t, again, len(first))
+		for s := range first {
+			assert.Equal(t, first[s].BSPNL, again[s].BSPNL)
+			require.Len(t, again[s].Categories, len(first[s].Categories))
+			for c := range first[s].Categories {
+				assert.Equal(t, first[s].Categories[c].Code, again[s].Categories[c].Code)
+				var wantSubs, gotSubs []int
+				for _, sc := range first[s].Categories[c].SubCategories {
+					wantSubs = append(wantSubs, sc.Code)
+				}
+				for _, sc := range again[s].Categories[c].SubCategories {
+					gotSubs = append(gotSubs, sc.Code)
+				}
+				assert.Equal(t, wantSubs, gotSubs)
+			}
+		}
+	}
+}
+
 func TestBuildTreeKeepsEmptySubCategories(t *testing.T) {
 	cats, subs, _ := treeFixture()
 	got := BuildTree(cats, subs, nil, TreeOptions{})
@@ -915,24 +977,48 @@ func BuildTree(cats []Category, subs []SubCategory, accts []*Account, opts TreeO
 	for _, c := range cats {
 		grouped := map[string]*TreeCategory{}
 		for _, s := range subsByCategory[c.ID] {
-			ts := &TreeSubCategory{ID: s.ID, Code: s.Code, Name: s.Name}
+			// Partition the sub-category's accounts by EACH ACCOUNT's own side,
+			// not by one side for the whole sub-category. Sub-category 9100
+			// holds both (9101/9102 are BS, 9103-9107 are PNL), and assigning
+			// it a single side would file five P&L accounts on the balance
+			// sheet -- the exact failure bs_pnl lives on the account to prevent
+			// (AD-2). Every other sub-category yields exactly one partition.
+			bySide := map[string][]*Account{}
 			for _, a := range sortByCode(rootsBySub[s.ID]) {
-				ts.Accounts = append(ts.Accounts, &TreeAccount{
-					Account:  a,
-					Children: wrap(sortByCode(childrenOf[a.ID])),
-				})
+				bySide[a.BSPNL] = append(bySide[a.BSPNL], a)
 			}
-			// A sub-category's side follows its accounts; with none, fall back
-			// to the category's own side via any seeded account's derivation.
-			side := sideOf(s.Code, ts.Accounts)
-			tc, ok := grouped[side]
-			if !ok {
-				tc = &TreeCategory{ID: c.ID, Code: c.Code, Name: c.Name, NormalBalance: c.NormalBalance}
-				grouped[side] = tc
+			if len(bySide) == 0 {
+				// No accounts, but the structure is still shown, on the side
+				// the sub-category is fixed to.
+				bySide[fixedSide(s.Code)] = nil
 			}
-			tc.SubCategories = append(tc.SubCategories, ts)
+
+			// Iterate the sides in fixed order; ranging a map would make the
+			// output order non-deterministic between runs.
+			for _, side := range []string{BalanceSheet, ProfitAndLoss} {
+				accts, present := bySide[side]
+				if !present {
+					continue
+				}
+				ts := &TreeSubCategory{ID: s.ID, Code: s.Code, Name: s.Name}
+				for _, a := range accts {
+					ts.Accounts = append(ts.Accounts, &TreeAccount{
+						Account:  a,
+						Children: wrap(sortByCode(childrenOf[a.ID])),
+					})
+				}
+				tc, ok := grouped[side]
+				if !ok {
+					tc = &TreeCategory{ID: c.ID, Code: c.Code, Name: c.Name, NormalBalance: c.NormalBalance}
+					grouped[side] = tc
+				}
+				tc.SubCategories = append(tc.SubCategories, ts)
+			}
 		}
 		for side, tc := range grouped {
+			sort.SliceStable(tc.SubCategories, func(i, j int) bool {
+				return tc.SubCategories[i].Code < tc.SubCategories[j].Code
+			})
 			byBSPNL[side] = append(byBSPNL[side], tc)
 		}
 	}
@@ -982,15 +1068,14 @@ func wrap(in []*Account) []*TreeAccount {
 	return out
 }
 
-// sideOf reports which section a sub-category belongs to. Sub-category 9100
-// mixes BS and PNL (AD-2), so its side is taken from the accounts actually
-// present; every other sub-category has a fixed side.
-func sideOf(subCategoryCode int, accts []*TreeAccount) string {
+// fixedSide reports the side an EMPTY sub-category is displayed under. It is
+// only consulted when a sub-category has no accounts to partition by; when it
+// has accounts, each account's own BSPNL decides. Sub-category 9100 has no
+// fixed side (DeriveBSPNL errors for it), so an empty 9100 shows under the
+// balance sheet.
+func fixedSide(subCategoryCode int) string {
 	if side, err := DeriveBSPNL(subCategoryCode, ""); err == nil {
 		return side
-	}
-	if len(accts) > 0 {
-		return accts[0].BSPNL
 	}
 	return BalanceSheet
 }
@@ -1002,9 +1087,9 @@ func sideOf(subCategoryCode int, accts []*TreeAccount) string {
 go test ./chartofaccounts/ -run TestBuildTree -v
 ```
 
-Expected: PASS — all 8 tree tests.
+Expected: PASS — all 10 tree tests.
 
-**If `TestBuildTreeGroupsBySection` fails on sub-category 9100 splitting a category across both sections:** that is intended behaviour, not a bug — 9000 System & Control legitimately appears under both Balance Sheet and Profit & Loss because its accounts do. Adjust the fixture expectation, not `sideOf`.
+`TestBuildTreeSplitsMixedSubCategory` is the important one: it is the only test that exercises AD-2's whole reason for existing. If it fails, the grouping is assigning one side per sub-category instead of partitioning by each account's own `BSPNL`.
 
 - [ ] **Step 5: Commit**
 

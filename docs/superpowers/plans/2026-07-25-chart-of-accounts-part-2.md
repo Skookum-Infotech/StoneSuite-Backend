@@ -159,7 +159,8 @@ func TestResolverSortExpr(t *testing.T) {
 	// NOT NULL, unique among live rows, so keyset pagination stays correct.
 	expr, dt, ok := resolver{}.SortExpr("code")
 	assert.True(t, ok)
-	assert.Equal(t, "coa_account_code", expr)
+	// Alias-qualified: the read query joins coa_account twice (a and p).
+	assert.Equal(t, "a.coa_account_code", expr)
 	assert.Equal(t, query.TypeString, dt)
 
 	_, _, ok = resolver{}.SortExpr("attributes")
@@ -237,8 +238,11 @@ func (resolver) Resolve(key string) (string, query.DataType, bool) {
 // and coa_account_code satisfies the same underlying requirement -- stable,
 // NOT NULL, and unique among live rows -- so keyset cursors stay correct.
 // query.SortResolver is the supported extension point for exactly this.
+// The expression MUST be alias-qualified: the read query LEFT JOINs
+// coa_account a second time as p (the parent), so a bare coa_account_code
+// would be ambiguous and Postgres would reject the ORDER BY.
 var sortableFields = map[string]resolved{
-	"code": {"coa_account_code", query.TypeString},
+	"code": {"a.coa_account_code", query.TypeString},
 }
 
 func (resolver) SortExpr(key string) (string, query.DataType, bool) {
@@ -502,24 +506,32 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Account, error)
 // Search runs filter + sort + global search + keyset pagination through the
 // shared query engine. The Filters clauses and the user's filters are ANDed --
 // a filter can only ever narrow the result set, never widen it.
+//
+// Mirrors inventory.Search: query.Build emits Where/Keyset/OrderBy separately,
+// and the store fetches EffLimit+1 rows to detect a further page.
 func Search(ctx context.Context, pool *pgxpool.Pool, req query.Request, f Filters) (Page, error) {
-	// Placeholder 1 is reserved for nothing here; query.Build starts at 1 and
-	// Filters continue from wherever it stops.
 	built, err := query.Build(req, resolver{}, 1)
 	if err != nil {
 		return Page{}, err // *query.InvalidFilterError -> 400 at the controller
 	}
 
 	conds := []string{liveOnly}
-	args := append([]any{}, built.Args...)
 	if built.Where != "" {
 		conds = append(conds, built.Where)
 	}
+	if built.Keyset != "" {
+		conds = append(conds, built.Keyset)
+	}
+	args := append([]any{}, built.Args...)
+
+	// Filters continue placeholder numbering where query.Build stopped.
 	frags, fargs := f.clauses(len(args) + 1)
 	conds = append(conds, frags...)
 	args = append(args, fargs...)
 
-	sql := accountSelect + ` WHERE ` + strings.Join(conds, " AND ") + ` ` + built.OrderLimit
+	sql := accountSelect + ` WHERE ` + strings.Join(conds, " AND ") +
+		` ORDER BY ` + built.OrderBy +
+		` LIMIT ` + strconv.Itoa(built.EffLimit+1)
 
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -527,7 +539,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, req query.Request, f Filter
 	}
 	defer rows.Close()
 
-	var out []*Account
+	out := []*Account{}
 	for rows.Next() {
 		acct, err := scanAccount(rows)
 		if err != nil {
@@ -540,13 +552,26 @@ func Search(ctx context.Context, pool *pgxpool.Pool, req query.Request, f Filter
 	}
 
 	page := Page{Records: out}
-	if len(out) > built.Limit {
-		page.Records = out[:built.Limit]
+	if len(out) > built.EffLimit {
 		page.HasMore = true
-		last := page.Records[len(page.Records)-1]
-		page.NextCursor = query.EncodeCursor(built.SortField, last.Code, last.ID)
+		last := out[built.EffLimit-1]
+		page.Records = out[:built.EffLimit]
+		page.NextCursor = query.NextCursor(last.ID, built.Sort, sortValue(last, built.Sort.Field))
 	}
 	return page, nil
+}
+
+// sortValue returns the account's value for the effective sort field, so the
+// cursor carries the same value the ORDER BY sorted on.
+func sortValue(a *Account, field string) any {
+	switch field {
+	case "code":
+		return a.Code
+	case "updated_at":
+		return a.UpdatedAt
+	default: // created_at is the engine's default sort
+		return a.CreatedAt
+	}
 }
 
 // Categories returns the fixed reference tree: 9 categories and 17
@@ -602,19 +627,26 @@ func Categories(ctx context.Context, pool *pgxpool.Pool) ([]Category, []SubCateg
 }
 ```
 
-- [ ] **Step 2: Reconcile with the real `query` API**
+- [ ] **Step 2: Confirm the imports**
 
-`query.Build` returns a `query.Built`. Before assuming the field names used above (`Where`, `Args`, `OrderLimit`, `Limit`, `SortField`) and the helper `query.EncodeCursor`, read the actual definitions:
+`store_get.go` needs `strconv` for the `LIMIT` clause and `strings` for `Join`. Its import block is:
 
-```bash
-sed -n '1,60p' query/builder.go && grep -n "type Built\|func EncodeCursor\|func encodeCursor" query/*.go
+```go
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/query"
+)
 ```
 
-Adjust the `Search` body to match the real field names and cursor helper. **Do not change `query/`** — it is shared by every module. If cursor encoding is unexported, copy the pattern used by `inventory.Search`:
-
-```bash
-sed -n '/^func Search/,/^}/p' inventory/store.go
-```
+The `query.Built` shape used above was verified against `query/builder.go:25-32` — `{Where, Keyset, OrderBy, Args, EffLimit, Sort}` — and the cursor helper against `query/cursor.go:62`, `query.NextCursor(id string, sort SortKey, value any) string`. **Do not change `query/`**; it is shared by every module. `inventory.Search` in `inventory/store.go` is the working reference if anything drifts.
 
 - [ ] **Step 3: Verify it compiles**
 

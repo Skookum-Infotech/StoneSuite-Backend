@@ -4902,3 +4902,77 @@ BEGIN
             ADD CONSTRAINT chk_poi_qty_received_nonneg CHECK (qty_received >= 0);
     END IF;
 END $$;
+
+-- ===========================================================================
+-- CHART OF ACCOUNTS -- Finance section master data.
+-- Spec: docs/superpowers/specs/2026-07-25-chart-of-accounts-design.md
+-- FK order: lkp_coa_category -> lkp_coa_subcategory -> coa_account
+--           -> coa_account_history -> coa_default_mapping
+-- ===========================================================================
+
+-- lkp_coa_category -- fixed, seeded, read-only (AD-1). 9 rows.
+CREATE TABLE IF NOT EXISTS lkp_coa_category (
+    category_id             SERIAL      PRIMARY KEY,
+    category_code           INTEGER     NOT NULL,
+    category_name           VARCHAR(60) NOT NULL,
+    category_range_low      INTEGER     NOT NULL,
+    category_range_high     INTEGER     NOT NULL,
+    category_normal_balance VARCHAR(6)  NOT NULL,
+    category_sort_order     INTEGER     NOT NULL DEFAULT 0,
+    CONSTRAINT uq_coa_category_code    UNIQUE (category_code),
+    CONSTRAINT chk_coa_category_balance CHECK (category_normal_balance IN ('debit','credit')),
+    CONSTRAINT chk_coa_category_range   CHECK (category_range_low < category_range_high)
+);
+
+-- lkp_coa_subcategory -- fixed, seeded, read-only (AD-1). 17 rows.
+CREATE TABLE IF NOT EXISTS lkp_coa_subcategory (
+    subcategory_id         SERIAL      PRIMARY KEY,
+    category_id            INTEGER     NOT NULL REFERENCES lkp_coa_category(category_id),
+    subcategory_code       INTEGER     NOT NULL,
+    subcategory_name       VARCHAR(60) NOT NULL,
+    subcategory_range_low  INTEGER     NOT NULL,
+    subcategory_range_high INTEGER     NOT NULL,
+    subcategory_sort_order INTEGER     NOT NULL DEFAULT 0,
+    CONSTRAINT uq_coa_subcategory_code  UNIQUE (subcategory_code),
+    CONSTRAINT chk_coa_subcategory_range CHECK (subcategory_range_low < subcategory_range_high)
+);
+CREATE INDEX IF NOT EXISTS idx_coa_subcat_category ON lkp_coa_subcategory (category_id);
+
+INSERT INTO lkp_coa_category
+    (category_code, category_name, category_range_low, category_range_high, category_normal_balance, category_sort_order) VALUES
+    (1000,'Assets',                    1000,1999,'debit', 1),
+    (2000,'Liabilities',               2000,2999,'credit',2),
+    (3000,'Equity',                    3000,3999,'credit',3),
+    (4000,'Revenue',                   4000,4999,'credit',4),
+    (5000,'Cost of Goods Sold',        5000,5999,'debit', 5),
+    (6000,'Operating Expenses',        6000,6999,'debit', 6),
+    (7000,'Finance Costs',             7000,7999,'debit', 7),
+    (8000,'Other Income',              8000,8999,'credit',8),
+    (9000,'System & Control Accounts', 9000,9999,'debit', 9)
+ON CONFLICT (category_code) DO NOTHING;
+
+-- Resolves category_id by code so it never depends on serial values.
+INSERT INTO lkp_coa_subcategory
+    (category_id, subcategory_code, subcategory_name, subcategory_range_low, subcategory_range_high, subcategory_sort_order)
+SELECT c.category_id, v.code, v.name, v.lo, v.hi, v.ord
+FROM (VALUES
+    (1000,1100,'Current Assets',                 1100,1199,1),
+    (1000,1200,'Fixed Assets',                   1200,1299,2),
+    (1000,1300,'Intangible Assets',              1300,1399,3),
+    (2000,2100,'Current Liabilities',            2100,2199,1),
+    (2000,2200,'Long-Term Liabilities',          2200,2299,2),
+    (3000,3100,'Equity',                         3100,3199,1),
+    (4000,4100,'Sales',                          4100,4199,1),
+    (4000,4200,'Returns, Discounts & Allowances',4200,4299,2),
+    (5000,5100,'Cost of Goods Sold',             5100,5199,1),
+    (6000,6100,'Payroll',                        6100,6199,1),
+    (6000,6200,'Administrative',                 6200,6299,2),
+    (6000,6300,'Sales & Marketing',              6300,6399,3),
+    (6000,6400,'Logistics',                      6400,6499,4),
+    (6000,6500,'Depreciation',                   6500,6599,5),
+    (7000,7100,'Finance Costs',                  7100,7199,1),
+    (8000,8100,'Other Income',                   8100,8199,1),
+    (9000,9100,'System & Control Accounts',      9100,9199,1)
+) AS v(cat_code, code, name, lo, hi, ord)
+JOIN lkp_coa_category c ON c.category_code = v.cat_code
+ON CONFLICT (subcategory_code) DO NOTHING;

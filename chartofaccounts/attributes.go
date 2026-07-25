@@ -55,7 +55,10 @@ func ValidAccountTypes() []string {
 // ValidateAttributes checks attrs against the fixed schema for accountType and
 // returns the normalised map. Every value must be a non-blank string. Unknown
 // keys, missing required keys, and non-string values are all ClientErrors so
-// the controller renders them as 400 naming the offending field.
+// the controller renders them as 400 naming the offending field. When attrs
+// carries more than one simultaneous violation, the caller's keys are walked
+// in sorted order so the error always names the alphabetically-first
+// offending field, making the reported message deterministic across runs.
 func ValidateAttributes(accountType string, attrs map[string]any) (map[string]any, error) {
 	schema, ok := attrSchema[accountType]
 	if !ok {
@@ -64,8 +67,15 @@ func ValidateAttributes(accountType string, attrs map[string]any) (map[string]an
 			accountType, strings.Join(ValidAccountTypes(), ", "))}
 	}
 
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	out := make(map[string]any, len(attrs))
-	for k, v := range attrs {
+	for _, k := range keys {
+		v := attrs[k]
 		if _, allowed := schema[k]; !allowed {
 			return nil, ClientError{Msg: fmt.Sprintf(
 				"Attribute %q is not valid for a %q account.", k, accountType)}

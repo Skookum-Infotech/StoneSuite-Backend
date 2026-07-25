@@ -105,6 +105,24 @@ func TestValidateAttributes(t *testing.T) {
 			attrs:       map[string]any{"bankName": "   ", "accountNumber": "123456"},
 			wantErr:     "bankName",
 		},
+		{
+			name:        "bank reports the alphabetically first of two missing required fields",
+			accountType: "bank",
+			attrs:       map[string]any{},
+			wantErr:     "accountNumber",
+		},
+		{
+			name:        "cash drops a whitespace-only optional value",
+			accountType: "cash",
+			attrs:       map[string]any{"location": "   "},
+			wantKeys:    []string{},
+		},
+		{
+			name:        "bank trims accepted values",
+			accountType: "bank",
+			attrs:       map[string]any{"bankName": "  HDFC  ", "accountNumber": "123456"},
+			wantKeys:    []string{"bankName", "accountNumber"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -125,10 +143,40 @@ func TestValidateAttributes(t *testing.T) {
 	}
 }
 
+// TestValidateAttributesTrimsAcceptedValues verifies the doc comment's claim
+// that accepted string values are normalised (trimmed), not just accepted.
+func TestValidateAttributesTrimsAcceptedValues(t *testing.T) {
+	got, err := ValidateAttributes("bank", map[string]any{
+		"bankName": "  HDFC  ", "accountNumber": "123456",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "HDFC", got["bankName"])
+}
+
+// TestValidateAttributesUnknownKeyErrorIsDeterministic proves that when two
+// unknown keys are present simultaneously, the error always names the
+// alphabetically-first one, across many runs, despite Go's randomised map
+// iteration order.
+func TestValidateAttributesUnknownKeyErrorIsDeterministic(t *testing.T) {
+	attrs := map[string]any{
+		"bankName":      "HDFC",
+		"accountNumber": "123456",
+		"iban":          "GB33BUKB",
+		"zzz":           "unexpected",
+	}
+	for i := 0; i < 20; i++ {
+		_, err := ValidateAttributes("bank", attrs)
+		require.Error(t, err)
+		assert.True(t, IsClientError(err), "want ClientError, got %T", err)
+		assert.Contains(t, err.Error(), "iban")
+		assert.NotContains(t, err.Error(), "zzz")
+	}
+}
+
 func TestValidAccountTypes(t *testing.T) {
-	// Must match chk_coa_type in tenant/schema.sql exactly.
-	assert.ElementsMatch(t, []string{
-		"general", "bank", "cash", "credit_card", "ar",
-		"ap", "tax", "inventory", "fixed_asset",
+	// Must match chk_coa_type in tenant/schema.sql exactly, and must be sorted.
+	assert.Equal(t, []string{
+		"ap", "ar", "bank", "cash", "credit_card",
+		"fixed_asset", "general", "inventory", "tax",
 	}, ValidAccountTypes())
 }

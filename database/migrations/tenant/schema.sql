@@ -4976,3 +4976,285 @@ FROM (VALUES
 ) AS v(cat_code, code, name, lo, hi, ord)
 JOIN lkp_coa_category c ON c.category_code = v.cat_code
 ON CONFLICT (subcategory_code) DO NOTHING;
+
+-- coa_account -- 127 seeded rows + everything users add.
+CREATE TABLE IF NOT EXISTS coa_account (
+    coa_account_id             SERIAL       PRIMARY KEY,
+    coa_account_uuid           UUID         NOT NULL DEFAULT gen_random_uuid(),
+    coa_account_code           VARCHAR(20)  NOT NULL,
+    coa_account_name           VARCHAR(150) NOT NULL,
+    coa_account_description    TEXT         NOT NULL DEFAULT '',
+    subcategory_id             INTEGER      NOT NULL REFERENCES lkp_coa_subcategory(subcategory_id),
+    parent_id                  INTEGER          NULL,
+    coa_account_depth          SMALLINT     NOT NULL DEFAULT 0,
+    coa_account_bs_pnl         VARCHAR(3)   NOT NULL,
+    coa_account_type           VARCHAR(20)  NOT NULL DEFAULT 'general',
+    coa_account_attributes     JSONB        NOT NULL DEFAULT '{}',
+    coa_account_is_postable    BOOLEAN      NOT NULL DEFAULT TRUE,
+    coa_account_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    coa_account_is_visible     BOOLEAN      NOT NULL DEFAULT TRUE,
+    coa_account_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    coa_account_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    coa_account_created_by     INTEGER          NULL REFERENCES employee(employee_id),
+    coa_account_updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    coa_account_updated_by     INTEGER          NULL REFERENCES employee(employee_id),
+    coa_account_deleted_at     TIMESTAMP        NULL,
+    coa_account_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    coa_account_record_version INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_coa_account_uuid       UNIQUE (coa_account_uuid),
+    -- AD-5: target of the composite self-FK below.
+    CONSTRAINT uq_coa_account_id_subcat  UNIQUE (coa_account_id, subcategory_id),
+    CONSTRAINT chk_coa_bs_pnl CHECK (coa_account_bs_pnl IN ('BS','PNL')),
+    CONSTRAINT chk_coa_type   CHECK (coa_account_type IN
+        ('general','bank','cash','credit_card','ar','ap','tax','inventory','fixed_asset')),
+    -- AD-4: two-level cap. CHECK cannot subquery the parent's depth, so depth
+    -- is a real column and depth 2 is unrepresentable.
+    CONSTRAINT chk_coa_depth        CHECK (coa_account_depth IN (0,1)),
+    CONSTRAINT chk_coa_depth_parent CHECK ((parent_id IS NULL) = (coa_account_depth = 0)),
+    CONSTRAINT chk_coa_not_self     CHECK (parent_id IS NULL OR parent_id <> coa_account_id),
+    -- AD-8: active implies visible.
+    CONSTRAINT chk_coa_visibility CHECK (NOT (coa_account_is_active AND NOT coa_account_is_visible)),
+    CONSTRAINT chk_coa_system_undeletable
+        CHECK (NOT (coa_account_is_system AND coa_account_deleted_at IS NOT NULL)),
+    CONSTRAINT chk_coa_soft_delete CHECK (
+        (coa_account_deleted_at IS NULL AND coa_account_deleted_by IS NULL) OR
+        (coa_account_deleted_at IS NOT NULL AND coa_account_deleted_by IS NOT NULL)
+    ),
+    -- AD-5: a child inherits its parent's sub-category, enforced by the database.
+    -- MATCH SIMPLE (the default) satisfies the constraint whenever parent_id IS
+    -- NULL, so top-level accounts are unaffected.
+    CONSTRAINT fk_coa_parent_subcat FOREIGN KEY (parent_id, subcategory_id)
+        REFERENCES coa_account (coa_account_id, subcategory_id)
+);
+
+-- AD-3: code unique among LIVE rows only. Name is deliberately NOT unique --
+-- 5107 and 9104 are both "Inventory Adjustment".
+CREATE UNIQUE INDEX IF NOT EXISTS uq_coa_account_code_live
+    ON coa_account (coa_account_code) WHERE coa_account_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_coa_account_subcat ON coa_account (subcategory_id)
+    WHERE coa_account_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_coa_account_parent ON coa_account (parent_id)
+    WHERE coa_account_deleted_at IS NULL;
+-- Serves the dropdown query: ?postable=true&active=true
+CREATE INDEX IF NOT EXISTS idx_coa_account_dropdown ON coa_account (coa_account_code)
+    WHERE coa_account_deleted_at IS NULL AND coa_account_is_active AND coa_account_is_postable;
+
+-- coa_account_history -- append-only. coa_account_id is NULLable so a slot
+-- repoint (not an account mutation) has somewhere to live.
+CREATE TABLE IF NOT EXISTS coa_account_history (
+    coa_account_history_id SERIAL      PRIMARY KEY,
+    coa_account_id         INTEGER         NULL REFERENCES coa_account(coa_account_id),
+    slot_key               VARCHAR(50)     NULL,
+    history_action         VARCHAR(20) NOT NULL,
+    history_field          VARCHAR(60) NOT NULL DEFAULT '',
+    history_old_value      TEXT        NOT NULL DEFAULT '',
+    history_new_value      TEXT        NOT NULL DEFAULT '',
+    history_at             TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    history_by             INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_coa_history_action CHECK (history_action IN
+        ('create','update','delete','activate','deactivate','show','hide','repoint_slot')),
+    CONSTRAINT chk_coa_history_target CHECK (coa_account_id IS NOT NULL OR slot_key IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_coa_history_account ON coa_account_history (coa_account_id, history_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coa_history_slot    ON coa_account_history (slot_key, history_at DESC);
+
+-- coa_default_mapping -- 19 named slots. The "points at a postable+active
+-- account" rule is enforced in the store, not here: a FK cannot express a
+-- predicate on the referenced row (AD-7).
+CREATE TABLE IF NOT EXISTS coa_default_mapping (
+    slot_key         VARCHAR(50)  PRIMARY KEY,
+    slot_label       VARCHAR(100) NOT NULL,
+    slot_description TEXT         NOT NULL DEFAULT '',
+    coa_account_id   INTEGER          NULL REFERENCES coa_account(coa_account_id),
+    slot_is_system   BOOLEAN      NOT NULL DEFAULT TRUE,
+    slot_sort_order  INTEGER      NOT NULL DEFAULT 0,
+    slot_updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    slot_updated_by  INTEGER          NULL REFERENCES employee(employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_coa_slot_account ON coa_default_mapping (coa_account_id);
+
+-- All seeded rows are top-level (parent_id NULL, depth 0), so there is no
+-- insert-ordering problem. created_by is employee 1, matching lkp_unit/lkp_warehouse.
+-- Note 'Partner''s Capital' doubles the apostrophe (correct SQL escaping), and
+-- 9106 seeds inactive (AD-11): meaningless under the single-subsidiary policy.
+INSERT INTO coa_account
+    (coa_account_code, coa_account_name, subcategory_id, coa_account_bs_pnl,
+     coa_account_type, coa_account_is_active, coa_account_is_system, coa_account_created_by)
+SELECT v.code, v.name, s.subcategory_id, v.bs_pnl, v.acct_type, v.active, TRUE, 1
+FROM (VALUES
+    -- Current Assets (1100) -- 19
+    ('1101','Cash on Hand',                1100,'BS','cash',       TRUE),
+    ('1102','Petty Cash',                  1100,'BS','cash',       TRUE),
+    ('1103','Bank Account - Operating',    1100,'BS','bank',       TRUE),
+    ('1104','Bank Account - Payroll',      1100,'BS','bank',       TRUE),
+    ('1105','Bank Account - Tax',          1100,'BS','bank',       TRUE),
+    ('1110','Undeposited Funds',           1100,'BS','general',    TRUE),
+    ('1120','Accounts Receivable',         1100,'BS','ar',         TRUE),
+    ('1121','Allowance for Doubtful Debts',1100,'BS','general',    TRUE),
+    ('1130','Employee Advances',           1100,'BS','general',    TRUE),
+    ('1135','Vendor Advances',             1100,'BS','general',    TRUE),
+    ('1140','Sales Tax Receivable',        1100,'BS','tax',        TRUE),
+    ('1141','Sales Tax Refund Receivable', 1100,'BS','tax',        TRUE),
+    ('1150','Prepaid Expenses',            1100,'BS','general',    TRUE),
+    ('1160','Accrued Income',              1100,'BS','general',    TRUE),
+    ('1170','Inventory - Raw Materials',   1100,'BS','inventory',  TRUE),
+    ('1171','Inventory - WIP',             1100,'BS','inventory',  TRUE),
+    ('1172','Inventory - Finished Goods',  1100,'BS','inventory',  TRUE),
+    ('1173','Inventory - Trading Goods',   1100,'BS','inventory',  TRUE),
+    ('1180','Short-term Investments',      1100,'BS','general',    TRUE),
+    -- Fixed Assets (1200) -- 9
+    ('1201','Land',                        1200,'BS','fixed_asset',TRUE),
+    ('1202','Building',                    1200,'BS','fixed_asset',TRUE),
+    ('1203','Office Equipment',            1200,'BS','fixed_asset',TRUE),
+    ('1204','Computers',                   1200,'BS','fixed_asset',TRUE),
+    ('1205','Furniture & Fixtures',        1200,'BS','fixed_asset',TRUE),
+    ('1206','Vehicles',                    1200,'BS','fixed_asset',TRUE),
+    ('1207','Plant & Machinery',           1200,'BS','fixed_asset',TRUE),
+    ('1208','Leasehold Improvements',      1200,'BS','fixed_asset',TRUE),
+    ('1210','Accumulated Depreciation',    1200,'BS','general',    TRUE),
+    -- Intangible Assets (1300) -- 6
+    ('1301','Software',                    1300,'BS','general',    TRUE),
+    ('1302','ERP Development Cost',        1300,'BS','general',    TRUE),
+    ('1303','Patents',                     1300,'BS','general',    TRUE),
+    ('1304','Trademark',                   1300,'BS','general',    TRUE),
+    ('1305','Goodwill',                    1300,'BS','general',    TRUE),
+    ('1310','Accumulated Amortization',    1300,'BS','general',    TRUE),
+    -- Current Liabilities (2100) -- 13
+    ('2101','Accounts Payable',            2100,'BS','ap',         TRUE),
+    ('2102','Credit Card Payable',         2100,'BS','credit_card',TRUE),
+    ('2110','Accrued Expenses',            2100,'BS','general',    TRUE),
+    ('2120','Salary Payable',              2100,'BS','general',    TRUE),
+    ('2121','Bonus Payable',               2100,'BS','general',    TRUE),
+    ('2122','Leave Encashment Payable',    2100,'BS','general',    TRUE),
+    ('2130','Payroll Taxes Payable',       2100,'BS','general',    TRUE),
+    ('2140','Sales Tax Payable',           2100,'BS','tax',        TRUE),
+    ('2141','Withholding Tax Payable',     2100,'BS','tax',        TRUE),
+    ('2150','Customer Advances',           2100,'BS','general',    TRUE),
+    ('2160','Deferred Revenue',            2100,'BS','general',    TRUE),
+    ('2170','Short-term Loan',             2100,'BS','general',    TRUE),
+    ('2180','Interest Payable',            2100,'BS','general',    TRUE),
+    -- Long-Term Liabilities (2200) -- 5
+    ('2201','Bank Loan',                   2200,'BS','general',    TRUE),
+    ('2202','Mortgage Loan',               2200,'BS','general',    TRUE),
+    ('2203','Lease Liability',             2200,'BS','general',    TRUE),
+    ('2204','Shareholder Loan',            2200,'BS','general',    TRUE),
+    ('2205','Deferred Tax Liability',      2200,'BS','general',    TRUE),
+    -- Equity (3100) -- 7
+    ('3101','Capital',                     3100,'BS','general',    TRUE),
+    ('3102','Partner''s Capital',          3100,'BS','general',    TRUE),
+    ('3103','Share Capital',               3100,'BS','general',    TRUE),
+    ('3110','Retained Earnings',           3100,'BS','general',    TRUE),
+    ('3120','Current Year Earnings',       3100,'BS','general',    TRUE),
+    ('3130','Additional Paid-in Capital',  3100,'BS','general',    TRUE),
+    ('3140','Dividend Distribution',       3100,'BS','general',    TRUE),
+    -- Sales (4100) -- 8
+    ('4101','Product Sales',               4100,'PNL','general',   TRUE),
+    ('4102','Service Revenue',             4100,'PNL','general',   TRUE),
+    ('4103','Consulting Revenue',          4100,'PNL','general',   TRUE),
+    ('4104','Subscription Revenue',        4100,'PNL','general',   TRUE),
+    ('4105','Maintenance Revenue',         4100,'PNL','general',   TRUE),
+    ('4106','Installation Revenue',        4100,'PNL','general',   TRUE),
+    ('4107','Export Sales',                4100,'PNL','general',   TRUE),
+    ('4108','Domestic Sales',              4100,'PNL','general',   TRUE),
+    -- Returns, Discounts & Allowances (4200) -- 3
+    ('4201','Sales Returns',               4200,'PNL','general',   TRUE),
+    ('4202','Sales Discount',              4200,'PNL','general',   TRUE),
+    ('4203','Sales Allowance',             4200,'PNL','general',   TRUE),
+    -- Cost of Goods Sold (5100) -- 8
+    ('5101','Opening Inventory',           5100,'PNL','general',   TRUE),
+    ('5102','Purchases',                   5100,'PNL','general',   TRUE),
+    ('5103','Direct Labor',                5100,'PNL','general',   TRUE),
+    ('5104','Direct Material',             5100,'PNL','general',   TRUE),
+    ('5105','Freight Inward',              5100,'PNL','general',   TRUE),
+    ('5106','Manufacturing Overheads',     5100,'PNL','general',   TRUE),
+    ('5107','Inventory Adjustment',        5100,'PNL','general',   TRUE),
+    ('5108','Closing Inventory',           5100,'PNL','general',   TRUE),
+    -- Payroll (6100) -- 5
+    ('6101','Salaries',                    6100,'PNL','general',   TRUE),
+    ('6102','Wages',                       6100,'PNL','general',   TRUE),
+    ('6103','Payroll Taxes',               6100,'PNL','general',   TRUE),
+    ('6104','Employee Benefits',           6100,'PNL','general',   TRUE),
+    ('6105','Recruitment',                 6100,'PNL','general',   TRUE),
+    -- Administrative (6200) -- 18
+    ('6201','Rent',                        6200,'PNL','general',   TRUE),
+    ('6202','Electricity',                 6200,'PNL','general',   TRUE),
+    ('6203','Internet',                    6200,'PNL','general',   TRUE),
+    ('6204','Telephone',                   6200,'PNL','general',   TRUE),
+    ('6205','Office Supplies',             6200,'PNL','general',   TRUE),
+    ('6206','Printing',                    6200,'PNL','general',   TRUE),
+    ('6207','Repairs & Maintenance',       6200,'PNL','general',   TRUE),
+    ('6208','Insurance',                   6200,'PNL','general',   TRUE),
+    ('6209','Professional Fees',           6200,'PNL','general',   TRUE),
+    ('6210','Audit Fees',                  6200,'PNL','general',   TRUE),
+    ('6211','Legal Fees',                  6200,'PNL','general',   TRUE),
+    ('6212','Bank Charges',                6200,'PNL','general',   TRUE),
+    ('6213','Software Subscription',       6200,'PNL','general',   TRUE),
+    ('6214','Travel',                      6200,'PNL','general',   TRUE),
+    ('6215','Meals & Entertainment',       6200,'PNL','general',   TRUE),
+    ('6216','Training',                    6200,'PNL','general',   TRUE),
+    ('6217','Licenses',                    6200,'PNL','general',   TRUE),
+    ('6218','Security',                    6200,'PNL','general',   TRUE),
+    -- Sales & Marketing (6300) -- 5
+    ('6301','Advertising',                 6300,'PNL','general',   TRUE),
+    ('6302','Digital Marketing',           6300,'PNL','general',   TRUE),
+    ('6303','Sales Commission',            6300,'PNL','general',   TRUE),
+    ('6304','Promotional Expenses',        6300,'PNL','general',   TRUE),
+    ('6305','Customer Gifts',              6300,'PNL','general',   TRUE),
+    -- Logistics (6400) -- 3
+    ('6401','Freight Outward',             6400,'PNL','general',   TRUE),
+    ('6402','Courier Charges',             6400,'PNL','general',   TRUE),
+    ('6403','Delivery Expenses',           6400,'PNL','general',   TRUE),
+    -- Depreciation (6500) -- 2
+    ('6501','Depreciation Expense',        6500,'PNL','general',   TRUE),
+    ('6502','Amortization Expense',        6500,'PNL','general',   TRUE),
+    -- Finance Costs (7100) -- 4
+    ('7101','Interest Expense',            7100,'PNL','general',   TRUE),
+    ('7102','Loan Processing Charges',     7100,'PNL','general',   TRUE),
+    ('7103','Foreign Exchange Loss',       7100,'PNL','general',   TRUE),
+    ('7104','Credit Card Charges',         7100,'PNL','general',   TRUE),
+    -- Other Income (8100) -- 5
+    ('8101','Interest Income',             8100,'PNL','general',   TRUE),
+    ('8102','Dividend Income',             8100,'PNL','general',   TRUE),
+    ('8103','Foreign Exchange Gain',       8100,'PNL','general',   TRUE),
+    ('8104','Gain on Asset Sale',          8100,'PNL','general',   TRUE),
+    ('8105','Miscellaneous Income',        8100,'PNL','general',   TRUE),
+    -- System & Control (9100) -- 7. The ONLY sub-category mixing BS and PNL (AD-2).
+    -- 9106 seeds INACTIVE: meaningless under the single-subsidiary policy.
+    ('9101','Opening Balance Equity',      9100,'BS','general',    TRUE),
+    ('9102','Suspense Account',            9100,'BS','general',    TRUE),
+    ('9103','Rounding Adjustment',         9100,'PNL','general',   TRUE),
+    ('9104','Inventory Adjustment',        9100,'PNL','general',   TRUE),
+    ('9105','Exchange Rate Adjustment',    9100,'PNL','general',   TRUE),
+    ('9106','Intercompany Clearing',       9100,'PNL','general',   FALSE),
+    ('9107','Cash Difference',             9100,'PNL','general',   TRUE)
+) AS v(code, name, subcat_code, bs_pnl, acct_type, active)
+JOIN lkp_coa_subcategory s ON s.subcategory_code = v.subcat_code
+ON CONFLICT DO NOTHING;
+
+-- Resolves the target account by code, so it stays independent of serial values.
+INSERT INTO coa_default_mapping (slot_key, slot_label, slot_description, coa_account_id, slot_is_system, slot_sort_order)
+SELECT v.key, v.label, v.descr, a.coa_account_id, TRUE, v.ord
+FROM (VALUES
+    ('default_ar',                  'Accounts Receivable',   'Customer balances owed to the company.',    '1120', 1),
+    ('default_ap',                  'Accounts Payable',      'Balances owed to vendors.',                 '2101', 2),
+    ('default_sales_revenue',       'Sales Revenue',         'Default revenue account for sales.',        '4101', 3),
+    ('default_sales_discount',      'Sales Discount',        'Discounts granted on sales.',               '4202', 4),
+    ('default_sales_returns',       'Sales Returns',         'Value of goods returned by customers.',     '4201', 5),
+    ('default_cogs',                'Cost of Goods Sold',    'Default COGS account.',                     '5104', 6),
+    ('default_inventory',           'Inventory',             'Default inventory asset account.',          '1172', 7),
+    ('default_bank',                'Bank',                  'Default bank account for receipts.',        '1103', 8),
+    ('default_undeposited_funds',   'Undeposited Funds',     'Holding account for uncleared receipts.',   '1110', 9),
+    ('default_sales_tax_payable',   'Sales Tax Payable',     'Sales tax collected and owed.',             '2140',10),
+    ('default_sales_tax_receivable','Sales Tax Receivable',  'Sales tax paid and recoverable.',           '1140',11),
+    ('default_deferred_revenue',    'Deferred Revenue',      'Revenue billed but not yet earned.',        '2160',12),
+    ('default_customer_advances',   'Customer Advances',     'Payments received before delivery.',        '2150',13),
+    ('default_freight_out',         'Freight Outward',       'Outbound shipping cost.',                   '6401',14),
+    ('default_bank_charges',        'Bank Charges',          'Bank fees.',                                '6212',15),
+    ('default_fx_gain',             'Foreign Exchange Gain', 'Gain on currency conversion.',              '8103',16),
+    ('default_fx_loss',             'Foreign Exchange Loss', 'Loss on currency conversion.',              '7103',17),
+    ('default_rounding',            'Rounding Adjustment',   'Absorbs sub-cent rounding differences.',    '9103',18),
+    ('default_suspense',            'Suspense',              'Holds entries pending correct classification.','9102',19)
+) AS v(key, label, descr, acct_code, ord)
+JOIN coa_account a ON a.coa_account_code = v.acct_code AND a.coa_account_deleted_at IS NULL
+ON CONFLICT (slot_key) DO NOTHING;

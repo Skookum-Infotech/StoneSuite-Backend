@@ -55,9 +55,18 @@ func (resolver) Resolve(key string) (string, query.DataType, bool) {
 // and coa_account_code satisfies the same underlying requirement -- stable,
 // NOT NULL, and unique among live rows -- so keyset cursors stay correct.
 // query.SortResolver is the supported extension point for exactly this.
-// The expression MUST be alias-qualified: the read query LEFT JOINs
-// coa_account a second time as p (the parent), so a bare coa_account_code
-// would be ambiguous and Postgres would reject the ORDER BY.
+// The expression MUST be alias-qualified. The read query LEFT JOINs
+// coa_account a second time as p (the parent), so coa_account_code is in
+// scope twice. ORDER BY alone would survive -- Postgres resolves an
+// unqualified ORDER BY name against the SELECT output columns first -- but
+// query.Build also emits the sort expression inside the KEYSET PREDICATE,
+// which is a WHERE clause where no output names exist:
+//
+//	WHERE coa_account_code > $1   ->  ERROR: column reference is ambiguous
+//
+// That predicate is only emitted once a cursor is present, so an unqualified
+// expression here would serve page 1 correctly and 500 on page 2. Verified
+// against Postgres 16.
 var sortableFields = map[string]resolved{
 	"code": {"a.coa_account_code", query.TypeString},
 }

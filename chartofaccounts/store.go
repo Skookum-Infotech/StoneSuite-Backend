@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -69,6 +70,18 @@ func scanAccount(row pgx.Row) (*Account, error) {
 	a.ParentID = parentUUID
 	a.Attributes = MaskAttributes(attrs)
 	return &a, nil
+}
+
+// uuidPattern matches the canonical 8-4-4-4-12 hex form. google/uuid is not a
+// dependency of this module, so validation is hand-rolled rather than adding
+// one for a single format check.
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// validAccountUUID reports whether s is a syntactically valid UUID. Callers
+// check this before querying so a malformed client string becomes a 400
+// ClientError instead of a 22P02 the controller can only render as 500.
+func validAccountUUID(s string) bool {
+	return uuidPattern.MatchString(s)
 }
 
 // nullableInt converts a non-positive employee id to SQL NULL, matching the

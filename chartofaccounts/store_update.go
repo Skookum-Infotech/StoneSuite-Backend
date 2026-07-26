@@ -2,12 +2,9 @@ package chartofaccounts
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/secret"
@@ -35,6 +32,10 @@ type currentAccount struct {
 // Any change that retires the account -- deactivate, hide, or un-post -- runs
 // guardRetire first (AD-7). is_postable never flips automatically (AD-6).
 func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid string, in UpdateInput, employeeID int) (*Account, error) {
+	if !validAccountUUID(uuid) {
+		return nil, ClientError{Msg: fmt.Sprintf("%q is not a valid account id.", uuid)}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update account: %w", err)
@@ -68,28 +69,39 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 	next := *cur
 	var audits []historyRow
 
-	if in.Name != nil && strings.TrimSpace(*in.Name) != cur.name {
-		if strings.TrimSpace(*in.Name) == "" {
+	if v, changed := changedString(in.Name, cur.name); changed {
+		if v == "" {
 			return nil, ClientError{Msg: "An account name is required."}
 		}
-		next.name = strings.TrimSpace(*in.Name)
+		next.name = v
 		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
 			Field: "name", OldValue: cur.name, NewValue: next.name, EmployeeID: employeeID})
 	}
-	if in.Description != nil {
-		trimmedDesc := strings.TrimSpace(*in.Description)
-		if trimmedDesc != cur.description {
-			next.description = trimmedDesc
-			audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
-				Field: "description", OldValue: cur.description, NewValue: next.description, EmployeeID: employeeID})
-		}
+	if v, changed := changedString(in.Description, cur.description); changed {
+		next.description = v
+		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
+			Field: "description", OldValue: cur.description, NewValue: next.description, EmployeeID: employeeID})
 	}
 	if in.Type != nil && *in.Type != cur.acctType {
+		if _, ok := attrSchema[*in.Type]; !ok {
+			return nil, ClientError{Msg: fmt.Sprintf(
+				"Unknown account type %q. Valid types: %s.",
+				*in.Type, strings.Join(ValidAccountTypes(), ", "))}
+		}
 		next.acctType = *in.Type
 		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
 			Field: "type", OldValue: cur.acctType, NewValue: next.acctType, EmployeeID: employeeID})
 	}
 	if in.Attributes != nil {
+		// Unlike the six sibling branches around it, this one is deliberately
+		// exempt from change detection: next.attrs holds ciphertext once a bank
+		// account number is set, and comparing ciphertext to ciphertext to
+		// decide "did this change" is meaningless (a fresh nonce makes a
+		// byte-identical resend look different anyway, and decrypting just to
+		// compare would defeat the point of never handling plaintext outside
+		// EncryptAttributes). So a resend of the same logical attributes still
+		// bumps coa_account_record_version and appends an audit row. That is an
+		// accepted, understood cost -- not a bug to fix with fuzzy comparison.
 		validated, err := ValidateAttributes(next.acctType, in.Attributes)
 		if err != nil {
 			return nil, err
@@ -124,6 +136,18 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 				"Changing type to %q requires attribute(s): %s. Include them in this request.",
 				next.acctType, strings.Join(missing, ", "))}
 		}
+		// Symmetric with the check above: the new type may also forbid keys the
+		// old type allowed (e.g. bank -> general keeps a stored, encrypted
+		// accountNumber). Reject rather than silently prune -- pruning would
+		// drop data with no audit row. The caller's escape hatch is an explicit
+		// "attributes" object in the same request (even {}), which takes the
+		// in.Attributes != nil branch above and clears the stale keys through
+		// ValidateAttributes/EncryptAttributes with a proper audit row.
+		if extra := disallowedAttrs(next.acctType, next.attrs); len(extra) > 0 {
+			return nil, ClientError{Msg: fmt.Sprintf(
+				"Changing type to %q does not allow attribute(s): %s. Send an explicit %q object in this request.",
+				next.acctType, strings.Join(extra, ", "), "attributes")}
+		}
 	}
 	if in.IsPostable != nil && *in.IsPostable != cur.isPostable {
 		next.isPostable = *in.IsPostable
@@ -140,6 +164,17 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 		audits = append(audits, historyRow{AccountID: &cur.id, Action: act,
 			Field: "is_active", OldValue: boolStr(cur.isActive),
 			NewValue: boolStr(next.isActive), EmployeeID: employeeID})
+	}
+	// AD-8: active implies visible. When the caller activates a hidden
+	// account without also specifying isVisible, that is an implicit un-hide,
+	// not a request to hide it -- without this, the check further down would
+	// reject the activation with a message describing the opposite
+	// transition ("Deactivate it before hiding it"), matching BulkUpdate.
+	if in.IsActive != nil && *in.IsActive && in.IsVisible == nil && !cur.isVisible {
+		next.isVisible = true
+		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionShow,
+			Field: "is_visible", OldValue: boolStr(cur.isVisible),
+			NewValue: boolStr(next.isVisible), EmployeeID: employeeID})
 	}
 	if in.IsVisible != nil && *in.IsVisible != cur.isVisible {
 		next.isVisible = *in.IsVisible
@@ -164,7 +199,10 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 		if err != nil {
 			return nil, fmt.Errorf("read back account: %w", err)
 		}
-		return acct, tx.Commit(ctx)
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit update account (no-op): %w", err)
+		}
+		return acct, nil
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -196,68 +234,4 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 		return nil, fmt.Errorf("commit update account: %w", err)
 	}
 	return acct, nil
-}
-
-// loadCurrent reads the pre-update snapshot, locking the row so two concurrent
-// updates cannot both pass the record-version check.
-func loadCurrent(ctx context.Context, q rowQuerier, uuid string) (*currentAccount, error) {
-	var c currentAccount
-	err := q.QueryRow(ctx, `
-		SELECT coa_account_id, coa_account_code, coa_account_name, coa_account_description,
-		       coa_account_type, coa_account_attributes, coa_account_is_postable,
-		       coa_account_is_active, coa_account_is_visible, coa_account_is_system,
-		       coa_account_record_version
-		FROM coa_account
-		WHERE coa_account_uuid = $1 AND coa_account_deleted_at IS NULL
-		FOR UPDATE`, uuid).
-		Scan(&c.id, &c.code, &c.name, &c.description, &c.acctType, &c.attrs,
-			&c.isPostable, &c.isActive, &c.isVisible, &c.isSystem, &c.version)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load account for update: %w", err)
-	}
-	if c.attrs == nil {
-		c.attrs = map[string]any{}
-	}
-	return &c, nil
-}
-
-// missingRequiredAttrs returns, sorted, every key attrSchema[accountType]
-// marks required that is absent from attrs or present but blank. It checks
-// presence and non-blankness only -- not the full ValidateAttributes rules
-// (unknown-key rejection, string-type enforcement) -- because it is used to
-// re-check an account's EXISTING stored attributes on a type change, and
-// those attrs may legitimately carry keys (accountNumberLast4) that
-// ValidateAttributes would reject outright. An unknown accountType (schema
-// absent) reports every field as satisfied; ValidateAttributes is the one
-// place that rejects an unknown type.
-func missingRequiredAttrs(accountType string, attrs map[string]any) []string {
-	schema := attrSchema[accountType]
-	var missing []string
-	for k, f := range schema {
-		if !f.required {
-			continue
-		}
-		v, ok := attrs[k]
-		if !ok {
-			missing = append(missing, k)
-			continue
-		}
-		s, isStr := v.(string)
-		if !isStr || strings.TrimSpace(s) == "" {
-			missing = append(missing, k)
-		}
-	}
-	sort.Strings(missing)
-	return missing
-}
-
-// boolStr renders a bool for the audit trail.
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }

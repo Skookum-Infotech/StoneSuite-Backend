@@ -13,6 +13,10 @@ import (
 //
 // Blocked by: a default slot pointing at the account (AD-7), or any live child.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, employeeID int) error {
+	if !validAccountUUID(uuid) {
+		return ClientError{Msg: fmt.Sprintf("%q is not a valid account id.", uuid)}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin delete account: %w", err)
@@ -44,6 +48,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, employeeID
 		UPDATE coa_account
 		SET coa_account_deleted_at = CURRENT_TIMESTAMP,
 		    coa_account_deleted_by = $2,
+		    coa_account_is_active = FALSE, coa_account_is_visible = FALSE,
 		    coa_account_record_version = coa_account_record_version + 1
 		WHERE coa_account_id = $1 AND coa_account_deleted_at IS NULL`,
 		cur.id, nullableInt(employeeID)); err != nil {

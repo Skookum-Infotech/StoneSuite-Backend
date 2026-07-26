@@ -5017,9 +5017,15 @@ CREATE TABLE IF NOT EXISTS coa_account (
     CONSTRAINT chk_coa_visibility CHECK (NOT (coa_account_is_active AND NOT coa_account_is_visible)),
     CONSTRAINT chk_coa_system_undeletable
         CHECK (NOT (coa_account_is_system AND coa_account_deleted_at IS NOT NULL)),
+    -- deleted_by is NULL when the actor could not be resolved to an employee
+    -- row. That is the app-wide convention for every other audit column
+    -- (history_by, updated_by), because employee.employee_user_id is not
+    -- populated by any current code path, so resolveEmployeeID legitimately
+    -- returns 0. Requiring it here would make soft delete impossible. The
+    -- half of the invariant that still means something is kept: a row may
+    -- never claim a deleter without also being deleted.
     CONSTRAINT chk_coa_soft_delete CHECK (
-        (coa_account_deleted_at IS NULL AND coa_account_deleted_by IS NULL) OR
-        (coa_account_deleted_at IS NOT NULL AND coa_account_deleted_by IS NOT NULL)
+        coa_account_deleted_by IS NULL OR coa_account_deleted_at IS NOT NULL
     ),
     -- AD-5: a child inherits its parent's sub-category, enforced by the database.
     -- MATCH SIMPLE (the default) satisfies the constraint whenever parent_id IS

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,14 +31,37 @@ func BulkUpdate(ctx context.Context, pool *pgxpool.Pool, in BulkInput, employeeI
 		return nil, ClientError{Msg: "Specify isActive, isVisible, or both."}
 	}
 
+	// Sort and dedupe before locking anything: two overlapping batches
+	// submitted in opposite client order otherwise acquire loadCurrent's
+	// FOR UPDATE row locks in opposite order and deadlock (Postgres aborts
+	// one with SQLSTATE 40P01). A single global lock order per transaction
+	// removes that regardless of request order. This is not cosmetic --
+	// leave it in.
+	seen := make(map[string]bool, len(in.UUIDs))
+	uuids := make([]string, 0, len(in.UUIDs))
+	for _, u := range in.UUIDs {
+		if seen[u] {
+			continue
+		}
+		seen[u] = true
+		uuids = append(uuids, u)
+	}
+	sort.Strings(uuids)
+
+	for _, uuid := range uuids {
+		if !validAccountUUID(uuid) {
+			return nil, ClientError{Msg: fmt.Sprintf("%q is not a valid account id.", uuid)}
+		}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin bulk update: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	results := make([]BulkResult, 0, len(in.UUIDs))
-	for _, uuid := range in.UUIDs {
+	results := make([]BulkResult, 0, len(uuids))
+	for _, uuid := range uuids {
 		res, err := bulkOne(ctx, tx, uuid, in, employeeID)
 		if err != nil {
 			return nil, err // hard failure: roll everything back
@@ -57,8 +82,11 @@ func BulkUpdate(ctx context.Context, pool *pgxpool.Pool, in BulkInput, employeeI
 
 // bulkOne applies the batch's flags to one account. A ConflictError becomes a
 // non-OK result rather than an error, so the caller can report which account
-// blocked the batch.
-func bulkOne(ctx context.Context, tx rowQuerier, uuid string, in BulkInput, employeeID int) (BulkResult, error) {
+// blocked the batch. It takes pgx.Tx, not the wider rowQuerier, so the
+// all-or-nothing guarantee is type-enforced rather than resting on the caller
+// happening to pass a transaction (a *pgxpool.Pool also satisfies rowQuerier
+// and would autocommit each row).
+func bulkOne(ctx context.Context, tx pgx.Tx, uuid string, in BulkInput, employeeID int) (BulkResult, error) {
 	cur, err := loadCurrent(ctx, tx, uuid)
 	if errors.Is(err, ErrNotFound) {
 		return BulkResult{UUID: uuid, OK: false, Message: "Account not found."}, nil
@@ -79,6 +107,17 @@ func bulkOne(ctx context.Context, tx rowQuerier, uuid string, in BulkInput, empl
 		audits = append(audits, historyRow{AccountID: &cur.id, Action: act,
 			Field: "is_active", OldValue: boolStr(cur.isActive),
 			NewValue: boolStr(next.isActive), EmployeeID: employeeID})
+	}
+	// AD-8: active implies visible. When the caller activates a hidden
+	// account without also specifying isVisible, that is an implicit un-hide,
+	// not a request to hide it -- without this, the check further down would
+	// reject the activation with a message describing the opposite
+	// transition ("must be deactivated before it can be hidden").
+	if in.IsActive != nil && *in.IsActive && in.IsVisible == nil && !cur.isVisible {
+		next.isVisible = true
+		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionShow,
+			Field: "is_visible", OldValue: boolStr(cur.isVisible),
+			NewValue: boolStr(next.isVisible), EmployeeID: employeeID})
 	}
 	if in.IsVisible != nil && *in.IsVisible != cur.isVisible {
 		next.isVisible = *in.IsVisible

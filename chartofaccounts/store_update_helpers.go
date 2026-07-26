@@ -70,17 +70,23 @@ func missingRequiredAttrs(accountType string, attrs map[string]any) []string {
 // attrSchema[accountType] does not permit. It is the symmetric counterpart to
 // missingRequiredAttrs, used on the same re-check of an account's EXISTING
 // stored attributes on a type change: the new type may allow fewer keys than
-// the old one did. accountNumberLast4Key is always skipped -- it is
-// server-derived (see EncryptAttributes), tracks BankAccountNumberKey, and is
-// deliberately absent from every type's allowed key set, so it would always
-// be reported here despite never being a caller-supplied violation. An
-// unknown accountType (schema absent) reports every key as disallowed, same
-// as ValidateAttributes would.
+// the old one did. An unknown accountType (schema absent) reports every key as
+// disallowed, same as ValidateAttributes would.
+//
+// accountNumberLast4Key is skipped only when it accompanies BankAccountNumberKey.
+// It is server-derived (see EncryptAttributes), tracks BankAccountNumberKey, and
+// is deliberately absent from every type's allowed key set, so reporting it
+// alongside its own source would be noise -- the change is already rejected on
+// accountNumber. Orphaned, it is a real violation: a row holding only the last-4
+// hint would otherwise pass bank -> general and keep a bank artefact on a type
+// that forbids it (AD-9). No current writer produces that shape, but seeded data
+// or a manual SQL repair can.
 func disallowedAttrs(accountType string, attrs map[string]any) []string {
 	schema := attrSchema[accountType]
+	_, hasAccountNumber := attrs[BankAccountNumberKey]
 	var extra []string
 	for k := range attrs {
-		if k == accountNumberLast4Key {
+		if k == accountNumberLast4Key && hasAccountNumber {
 			continue
 		}
 		if _, allowed := schema[k]; !allowed {

@@ -58,6 +58,9 @@ func (f Filters) clauses(startIdx int) ([]string, []any) {
 
 // Get returns one live account by public uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Account, error) {
+	if !validAccountUUID(uuid) {
+		return nil, ClientError{Msg: fmt.Sprintf("%q is not a valid account id.", uuid)}
+	}
 	row := pool.QueryRow(ctx,
 		accountSelect+` WHERE `+liveOnly+` AND a.coa_account_uuid = $1`, uuid)
 	acct, err := scanAccount(row)

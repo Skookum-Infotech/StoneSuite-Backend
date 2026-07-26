@@ -19,7 +19,10 @@ func TestValidAccountUUID(t *testing.T) {
 		{name: "well-formed uppercase uuid", in: "3FA85F64-5717-4562-B3FC-2C963F66AFA6", want: true},
 		{name: "empty string", in: "", want: false},
 		{name: "garbage string", in: "not-a-uuid", want: false},
+		// Postgres accepts both of these next two forms; rejecting them is a
+		// deliberate, uniform narrowing rather than an oversight, so pin it.
 		{name: "missing hyphens", in: "3fa85f6457174562b3fc2c963f66afa6", want: false},
+		{name: "brace-wrapped form Postgres would accept", in: "{3fa85f64-5717-4562-b3fc-2c963f66afa6}", want: false},
 		{name: "one character short", in: "3fa85f64-5717-4562-b3fc-2c963f66afa", want: false},
 		{name: "one character long", in: "3fa85f64-5717-4562-b3fc-2c963f66afa66", want: false},
 		{name: "non-hex character", in: "3fa85f64-5717-4562-b3fc-2c963f66afg6", want: false},

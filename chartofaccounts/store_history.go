@@ -59,6 +59,9 @@ func appendHistory(ctx context.Context, q rowQuerier, h historyRow) error {
 
 // History returns the audit trail for one account, newest first.
 func History(ctx context.Context, pool rowQuerier, uuid string, limit int) ([]HistoryEntry, error) {
+	if !validAccountUUID(uuid) {
+		return nil, ClientError{Msg: fmt.Sprintf("%q is not a valid account id.", uuid)}
+	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}

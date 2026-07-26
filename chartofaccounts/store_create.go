@@ -141,6 +141,11 @@ func resolveTarget(ctx context.Context, q rowQuerier, in CreateInput) (createTar
 		return t, nil
 	}
 
+	if !validAccountUUID(in.ParentID) {
+		return createTarget{}, ClientError{Msg: fmt.Sprintf(
+			"%q is not a valid account id.", in.ParentID)}
+	}
+
 	var (
 		t           createTarget
 		parentID    int

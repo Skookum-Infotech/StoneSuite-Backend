@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +14,33 @@ import (
 // maxBulkAccounts caps one bulk request. The tenant ships with 127 accounts,
 // so this comfortably covers "select all" while bounding the transaction.
 const maxBulkAccounts = 500
+
+// lockOrderedUUIDs lowercases, dedupes and sorts the requested ids so every
+// bulk transaction acquires loadCurrent's FOR UPDATE row locks in one global
+// order. Two overlapping batches submitted in opposite client order otherwise
+// lock the same rows in opposite order and deadlock, and Postgres aborts one
+// with SQLSTATE 40P01 -- surfaced as a 500 for what is really retryable
+// contention.
+//
+// The lowercasing is as load-bearing as the sort. Postgres compares uuid values
+// case-insensitively while Go's byte sort does not ('A' is 0x41, 'a' is 0x61),
+// so without it a case variant sorts to a different position than the twin row
+// it names and the "global" order is not global. It also collapses
+// ["bbbb-...-02","BBBB-...-02"] to one entry instead of visiting one row twice.
+func lockOrderedUUIDs(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, u := range in {
+		u = strings.ToLower(u)
+		if seen[u] {
+			continue
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // BulkUpdate toggles is_active / is_visible across many accounts in ONE
 // transaction. Any single failure rolls the whole batch back: a visibility
@@ -31,23 +59,7 @@ func BulkUpdate(ctx context.Context, pool *pgxpool.Pool, in BulkInput, employeeI
 		return nil, ClientError{Msg: "Specify isActive, isVisible, or both."}
 	}
 
-	// Sort and dedupe before locking anything: two overlapping batches
-	// submitted in opposite client order otherwise acquire loadCurrent's
-	// FOR UPDATE row locks in opposite order and deadlock (Postgres aborts
-	// one with SQLSTATE 40P01). A single global lock order per transaction
-	// removes that regardless of request order. This is not cosmetic --
-	// leave it in.
-	seen := make(map[string]bool, len(in.UUIDs))
-	uuids := make([]string, 0, len(in.UUIDs))
-	for _, u := range in.UUIDs {
-		if seen[u] {
-			continue
-		}
-		seen[u] = true
-		uuids = append(uuids, u)
-	}
-	sort.Strings(uuids)
-
+	uuids := lockOrderedUUIDs(in.UUIDs)
 	for _, uuid := range uuids {
 		if !validAccountUUID(uuid) {
 			return nil, ClientError{Msg: fmt.Sprintf("%q is not a valid account id.", uuid)}

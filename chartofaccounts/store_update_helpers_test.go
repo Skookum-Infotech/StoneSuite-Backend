@@ -155,6 +155,23 @@ func TestDisallowedAttrs(t *testing.T) {
 			attrs:       map[string]any{"bankName": "HDFC"},
 			want:        []string{"bankName"},
 		},
+		{
+			// An orphaned last4 -- no accountNumber to justify it -- is a real
+			// AD-9 violation: without this the row would pass bank -> general
+			// and keep a bank artefact on a type that forbids it.
+			name:        "orphaned accountNumberLast4 is disallowed on a type that has no schema for it",
+			accountType: "general",
+			attrs:       map[string]any{"accountNumberLast4": "4821"},
+			want:        []string{"accountNumberLast4"},
+		},
+		{
+			// Same shape, but bank does not allow the derived key either, so
+			// the skip is genuinely about the pair, not about the type.
+			name:        "orphaned accountNumberLast4 is disallowed even under bank",
+			accountType: "bank",
+			attrs:       map[string]any{"bankName": "HDFC", "accountNumberLast4": "4821"},
+			want:        []string{"accountNumberLast4"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

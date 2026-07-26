@@ -80,6 +80,13 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 // validAccountUUID reports whether s is a syntactically valid UUID. Callers
 // check this before querying so a malformed client string becomes a 400
 // ClientError instead of a 22P02 the controller can only render as 500.
+//
+// This accepts the canonical 8-4-4-4-12 form only. Postgres additionally
+// accepts hyphenless and brace-wrapped literals; rejecting those is deliberate,
+// not an oversight. Do not loosen it in one place -- every store entry point
+// that takes a public account id applies this same check, and the value of that
+// uniformity is that two routes can never disagree about whether an id is well
+// formed.
 func validAccountUUID(s string) bool {
 	return uuidPattern.MatchString(s)
 }

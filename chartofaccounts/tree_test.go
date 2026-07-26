@@ -201,3 +201,24 @@ func TestBuildTreeKeepsEmptySubCategories(t *testing.T) {
 	assert.Len(t, got[0].Categories[0].SubCategories, 2,
 		"structure is shown even when no accounts fall under it")
 }
+
+// Sub-category 9100 is the one sub-category with no fixed BS/PNL side --
+// DeriveBSPNL errors for it, since it mixes BS accounts (9101/9102) and PNL
+// accounts (9103-9107). fixedSide falls back to hardcoded BalanceSheet when
+// 9100 has zero accounts to derive a side from. This is a deliberate,
+// documented choice (tree.go fixedSide); this test pins it down so an empty
+// 9100 appears exactly once, under Balance Sheet, never under P&L.
+func TestBuildTreeEmpty9100FallsBackToBalanceSheet(t *testing.T) {
+	cats := []Category{{ID: 9, Code: 9000, Name: "System & Control Accounts",
+		NormalBalance: "debit", SortOrder: 9}}
+	subs := []SubCategory{{ID: 17, CategoryID: 9, CategoryCode: 9000, Code: 9100,
+		Name: "System & Control Accounts", SortOrder: 1}}
+
+	got := BuildTree(cats, subs, nil, TreeOptions{})
+	require.Len(t, got, 1, "9100 with no accounts must appear under exactly one section")
+	assert.Equal(t, BalanceSheet, got[0].BSPNL)
+	require.Len(t, got[0].Categories, 1)
+	require.Len(t, got[0].Categories[0].SubCategories, 1)
+	assert.Equal(t, 9100, got[0].Categories[0].SubCategories[0].Code)
+	assert.Empty(t, got[0].Categories[0].SubCategories[0].Accounts)
+}

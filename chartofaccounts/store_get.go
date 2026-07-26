@@ -130,6 +130,14 @@ func Search(ctx context.Context, pool *pgxpool.Pool, req query.Request, f Filter
 
 // sortValue returns the account's value for the effective sort field, so the
 // cursor carries the same value the ORDER BY sorted on.
+//
+// This switch must stay exhaustive against resolver.go's sortableFields (the
+// extra fields the module allows sorting by beyond the engine's built-in
+// created_at/updated_at): a key missing an explicit case here silently falls
+// through to the default and mints a cursor from the wrong field, quietly
+// corrupting pagination. TestSortValueCoversEverySortableField in
+// store_get_test.go enforces this -- it fails if resolver.go grows a
+// sortableFields entry without a matching case added here.
 func sortValue(a *Account, field string) any {
 	switch field {
 	case "code":

@@ -197,3 +197,50 @@ func TestCodeReuseAfterSoftDelete(t *testing.T) {
 	assert.Equal(t, freedCode, second.Code, "a live create must be able to reuse the freed code")
 	assert.NotEqual(t, first.ID, second.ID, "the reused code must belong to a brand new row")
 }
+
+// TestBulkConflictPreservesBlockingSlots: a bulk 409 must carry the same
+// BlockingSlots payload a single-account 409 does. It previously flattened
+// guardRetire's ConflictError into a bare message, so the UI could deep-link
+// the user to the default slot blocking a single retire but not the identical
+// one blocking a bulk retire.
+func TestBulkConflictPreservesBlockingSlots(t *testing.T) {
+	pool, ctx := testPool(t), context.Background()
+	cipher := testCipher(t)
+	subID := subcategoryID(t, ctx, pool, 1100)
+
+	acct, err := Create(ctx, pool, cipher,
+		CreateInput{Name: "T17 Bulk Slot Target", SubCategoryID: subID}, 1)
+	require.NoError(t, err)
+
+	const slotKey = "default_rounding"
+	origAccountID := slotAccountID(t, ctx, pool, slotKey)
+	t.Cleanup(func() { restoreSlot(t, ctx, pool, slotKey, origAccountID) })
+	_, err = RepointSlot(ctx, pool, slotKey, acct.ID, 1)
+	require.NoError(t, err)
+
+	_, err = BulkUpdate(ctx, pool, BulkInput{UUIDs: []string{acct.ID}, IsActive: boolPtr(false)}, 1)
+	requireBlockedBySlot(t, err, slotKey)
+
+	conflict, _ := IsConflict(err)
+	assert.Contains(t, conflict.Msg, "No accounts were changed.",
+		"the batch-level reason must be prefixed onto the underlying conflict")
+}
+
+// TestBulkNoOpReportsUnchanged: an account that already holds the requested
+// flags is reported with Changed=false rather than being silently
+// indistinguishable from one the batch really modified.
+func TestBulkNoOpReportsUnchanged(t *testing.T) {
+	pool, ctx := testPool(t), context.Background()
+	cipher := testCipher(t)
+	subID := subcategoryID(t, ctx, pool, 1100)
+
+	acct, err := Create(ctx, pool, cipher,
+		CreateInput{Name: "T17 Bulk NoOp", SubCategoryID: subID}, 1)
+	require.NoError(t, err)
+
+	results, err := BulkUpdate(ctx, pool, BulkInput{UUIDs: []string{acct.ID}, IsActive: boolPtr(true)}, 1)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, acct.ID, results[0].UUID)
+	assert.False(t, results[0].Changed, "an account already active must report Changed=false")
+}

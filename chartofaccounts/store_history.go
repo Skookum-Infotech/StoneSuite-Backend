@@ -33,11 +33,39 @@ type historyRow struct {
 	EmployeeID int
 }
 
+// valueSafeFields is the allowlist of history fields whose old/new values may
+// be written verbatim. Every one of them is a code, a name, a flag or a
+// free-text description -- nothing derived from an account's attributes.
+//
+// This is an allowlist rather than a denylist of sensitive names on purpose,
+// and it is the fail-closed half of AD-10. Redacting only when
+// Field == BankAccountNumberKey put the guarantee in the hands of every future
+// caller: one that recorded a bank number under any other field name would
+// write plaintext into the audit trail, and nothing would catch it. Inverting
+// it means a new field is redacted until someone deliberately adds it here,
+// which is the same posture as the RBAC scope model (unrecognised narrows).
+// It lists exactly the fields the store emits today and nothing speculative:
+// an entry nobody writes is an entry nobody reviews.
+var valueSafeFields = map[string]bool{
+	"code":           true,
+	"name":           true,
+	"description":    true,
+	"type":           true,
+	"is_postable":    true,
+	"is_active":      true,
+	"is_visible":     true,
+	"coa_account_id": true, // repoint_slot: old/new are account CODES, not ids
+}
+
 // appendHistory writes one audit row. It takes a rowQuerier so callers inside
 // a transaction record their history in that same transaction -- a rolled-back
 // mutation must not leave an audit row claiming it happened.
+//
+// Values for any field outside valueSafeFields are redacted. The row still
+// records that the field changed, who changed it and when -- only the before
+// and after values are withheld.
 func appendHistory(ctx context.Context, q rowQuerier, h historyRow) error {
-	if h.Field == BankAccountNumberKey {
+	if !valueSafeFields[h.Field] {
 		h.OldValue, h.NewValue = redactedValue, redactedValue
 	}
 	var slot any

@@ -56,6 +56,14 @@ func NextChildCode(parentCode string, taken []string) (string, error) {
 // given every code currently taken. Child codes (those containing a separator)
 // are ignored, since they never occupy an integer slot.
 func NextTopLevelCode(rangeLow, rangeHigh int, taken []string) (string, error) {
+	// An inverted or non-positive range is a programming error, not an
+	// exhausted range. Without this it falls through the loop and reports
+	// "No account codes remain in the range 1200-1100", which sends whoever
+	// reads it hunting for accounts that do not exist.
+	if rangeLow <= 0 || rangeHigh < rangeLow {
+		return "", fmt.Errorf("invalid account code range %d-%d", rangeLow, rangeHigh)
+	}
+
 	used := make(map[int]bool, len(taken))
 	for _, code := range taken {
 		if strings.Contains(code, childSeparator) {

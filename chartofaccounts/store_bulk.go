@@ -76,15 +76,18 @@ func BulkUpdate(ctx context.Context, pool *pgxpool.Pool, in BulkInput, employeeI
 	for _, uuid := range uuids {
 		res, err := bulkOne(ctx, tx, uuid, in, employeeID)
 		if err != nil {
-			return nil, err // hard failure: roll everything back
+			// Any blocked account fails the whole batch, so the caller never
+			// sees a partially applied change. Prefix the reason but keep the
+			// original error's type and payload -- guardRetire's ConflictError
+			// carries BlockingSlots, and the UI needs those to tell the user
+			// which default slots to repoint before retrying.
+			if conflict, ok := IsConflict(err); ok {
+				conflict.Msg = "No accounts were changed. " + conflict.Msg
+				return nil, conflict
+			}
+			return nil, err
 		}
 		results = append(results, res)
-		if !res.OK {
-			// A blocked account fails the whole batch, so the caller never sees
-			// a partially applied change.
-			return nil, ConflictError{Msg: fmt.Sprintf(
-				"No accounts were changed. %s", res.Message)}
-		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit bulk update: %w", err)
@@ -92,16 +95,19 @@ func BulkUpdate(ctx context.Context, pool *pgxpool.Pool, in BulkInput, employeeI
 	return results, nil
 }
 
-// bulkOne applies the batch's flags to one account. A ConflictError becomes a
-// non-OK result rather than an error, so the caller can report which account
-// blocked the batch. It takes pgx.Tx, not the wider rowQuerier, so the
-// all-or-nothing guarantee is type-enforced rather than resting on the caller
-// happening to pass a transaction (a *pgxpool.Pool also satisfies rowQuerier
-// and would autocommit each row).
+// bulkOne applies the batch's flags to one account, returning whether that
+// account actually changed. Anything that blocks the account is returned as an
+// error, not as a result: the batch is all-or-nothing, so a "failed" result
+// could never reach the caller anyway -- BulkUpdate aborts on the first one.
+//
+// It takes pgx.Tx, not the wider rowQuerier, so the all-or-nothing guarantee is
+// type-enforced rather than resting on the caller happening to pass a
+// transaction (a *pgxpool.Pool also satisfies rowQuerier and would autocommit
+// each row).
 func bulkOne(ctx context.Context, tx pgx.Tx, uuid string, in BulkInput, employeeID int) (BulkResult, error) {
 	cur, err := loadCurrent(ctx, tx, uuid)
 	if errors.Is(err, ErrNotFound) {
-		return BulkResult{UUID: uuid, OK: false, Message: "Account not found."}, nil
+		return BulkResult{}, ConflictError{Msg: fmt.Sprintf("Account %s was not found.", uuid)}
 	}
 	if err != nil {
 		return BulkResult{}, err
@@ -143,21 +149,21 @@ func bulkOne(ctx context.Context, tx pgx.Tx, uuid string, in BulkInput, employee
 	}
 
 	if len(audits) == 0 {
-		return BulkResult{UUID: uuid, OK: true, Message: "No change."}, nil
+		return BulkResult{UUID: uuid, Changed: false}, nil
 	}
 
 	retiring := (!next.isActive && cur.isActive) || (!next.isVisible && cur.isVisible)
 	if retiring {
+		// Returned as-is: guardRetire's ConflictError carries BlockingSlots,
+		// and flattening it to a message here is what used to strip that
+		// payload out of every bulk 409 response.
 		if err := guardRetire(ctx, tx, cur.id, cur.code, cur.name); err != nil {
-			if conflict, ok := IsConflict(err); ok {
-				return BulkResult{UUID: uuid, OK: false, Message: conflict.Msg}, nil
-			}
 			return BulkResult{}, err
 		}
 	}
 	if next.isActive && !next.isVisible {
-		return BulkResult{UUID: uuid, OK: false,
-			Message: fmt.Sprintf("Account %s must be deactivated before it can be hidden.", cur.code)}, nil
+		return BulkResult{}, ConflictError{Msg: fmt.Sprintf(
+			"Account %s must be deactivated before it can be hidden.", cur.code)}
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -174,5 +180,5 @@ func bulkOne(ctx context.Context, tx pgx.Tx, uuid string, in BulkInput, employee
 			return BulkResult{}, err
 		}
 	}
-	return BulkResult{UUID: uuid, OK: true}, nil
+	return BulkResult{UUID: uuid, Changed: true}, nil
 }

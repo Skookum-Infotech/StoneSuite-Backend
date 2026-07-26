@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -209,18 +210,56 @@ func (h *CRMAdminOps) DeleteApprover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Approver removed."})
 }
 
-// resolveEmployeeID best-effort maps the caller's identity to an employee_id.
+// resolveEmployeeID best-effort maps the caller's identity to an employee_id,
+// returning 0 when no employee row can be found.
+//
+// The employee_user_id link is the fast path, but nothing in the codebase ever
+// writes that column -- employee rows are seeded or created by hand, and every
+// users row is created by provisioning/userstore, which does not know about
+// employee. So the link is empty in practice and this used to return 0 for
+// every caller, which is why every audit column in every module recorded a NULL
+// actor. The email fallback below is what actually resolves the caller today.
+//
+// Matching on email is sound here rather than merely convenient: employee_email
+// carries a UNIQUE constraint and users.email a unique index on LOWER(email),
+// so within one tenant database an email identifies at most one of each. Both
+// tables are inside the tenant boundary, so this cannot reach across tenants.
 func resolveEmployeeID(r *http.Request, identityID string) int {
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		return 0
 	}
+	ctx := r.Context()
+
 	var id int
-	if err := pool.QueryRow(r.Context(), `
+	if err := pool.QueryRow(ctx, `
 		SELECT e.employee_id FROM employee e
 		JOIN users u ON u.id = e.employee_user_id
-		WHERE u.identity_id = $1 AND e.employee_deleted_at IS NULL`, identityID).Scan(&id); err != nil {
+		WHERE u.identity_id = $1 AND e.employee_deleted_at IS NULL`, identityID).Scan(&id); err == nil {
+		return id
+	}
+
+	// Fallback: match the caller's user row to an employee row by email, then
+	// backfill employee_user_id so subsequent calls take the fast path above.
+	var userID string
+	if err := pool.QueryRow(ctx, `
+		SELECT e.employee_id, u.id
+		FROM users u
+		JOIN employee e ON LOWER(e.employee_email) = LOWER(u.email)
+		WHERE u.identity_id = $1
+		  AND e.employee_deleted_at IS NULL
+		  AND e.employee_user_id IS NULL`, identityID).Scan(&id, &userID); err != nil {
 		return 0
+	}
+
+	// Best-effort backfill. idx_employee_user is UNIQUE on employee_user_id, so
+	// a concurrent request that wins this race makes ours a no-op; either way
+	// the id we already resolved is correct, so a failure here is not fatal.
+	if _, err := pool.Exec(ctx, `
+		UPDATE employee SET employee_user_id = $2
+		WHERE employee_id = $1 AND employee_user_id IS NULL`, id, userID); err != nil {
+		slog.WarnContext(ctx, "could not backfill employee_user_id",
+			"employee_id", id, "error", err)
 	}
 	return id
 }

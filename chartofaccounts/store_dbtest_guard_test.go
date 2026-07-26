@@ -219,7 +219,7 @@ func TestBulkActivateUnhidesHiddenAccount(t *testing.T) {
 	results, err := BulkUpdate(ctx, pool, BulkInput{UUIDs: []string{acct.ID}, IsActive: boolPtr(true)}, 1)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
-	assert.True(t, results[0].OK, results[0].Message)
+	assert.True(t, results[0].Changed, "the activation must be reported as a real change")
 
 	got, err := Get(ctx, pool, acct.ID)
 	require.NoError(t, err)

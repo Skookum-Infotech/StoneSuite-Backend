@@ -110,11 +110,14 @@ type BulkInput struct {
 	IsVisible *bool    `json:"isVisible"`
 }
 
-// BulkResult is the per-account outcome of a bulk update.
+// BulkResult is the per-account outcome of a bulk update. There is no failure
+// shape here on purpose: the batch is one transaction and aborts on the first
+// blocked account, so a caller either gets a 409 and no results at all, or a
+// full set of successes. Changed distinguishes an account the batch actually
+// modified from one that already held the requested flags.
 type BulkResult struct {
 	UUID    string `json:"uuid"`
-	OK      bool   `json:"ok"`
-	Message string `json:"message,omitempty"`
+	Changed bool   `json:"changed"`
 }
 
 // HistoryEntry is one audited change to an account or a default slot.

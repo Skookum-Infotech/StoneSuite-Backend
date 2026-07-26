@@ -2,7 +2,6 @@ package chartofaccounts
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 
@@ -98,22 +97,6 @@ func nullableInt(v int) any {
 		return nil
 	}
 	return v
-}
-
-// accountIDByUUID resolves a public uuid to the internal serial id, returning
-// ErrNotFound when the uuid matches nothing live.
-func accountIDByUUID(ctx context.Context, q rowQuerier, uuid string) (int, error) {
-	var id int
-	err := q.QueryRow(ctx,
-		`SELECT coa_account_id FROM coa_account
-		 WHERE coa_account_uuid = $1 AND coa_account_deleted_at IS NULL`, uuid).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("resolve account uuid: %w", err)
-	}
-	return id, nil
 }
 
 // takenCodes returns every live account code, for the numbering allocator.

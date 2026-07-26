@@ -92,11 +92,28 @@ func validAccountUUID(s string) bool {
 
 // nullableInt converts a non-positive employee id to SQL NULL, matching the
 // convention in crmstore and inventory (employee id 0/unresolved => NULL).
+// Not for *_deleted_by columns — use actorOrSystem there, so the written
+// value stays consistent with every other module.
 func nullableInt(v int) any {
 	if v <= 0 {
 		return nil
 	}
 	return v
+}
+
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
 }
 
 // takenCodes returns every live account code, for the numbering allocator.

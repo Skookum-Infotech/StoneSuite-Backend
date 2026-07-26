@@ -5017,13 +5017,15 @@ CREATE TABLE IF NOT EXISTS coa_account (
     CONSTRAINT chk_coa_visibility CHECK (NOT (coa_account_is_active AND NOT coa_account_is_visible)),
     CONSTRAINT chk_coa_system_undeletable
         CHECK (NOT (coa_account_is_system AND coa_account_deleted_at IS NOT NULL)),
-    -- deleted_by is NULL when the actor could not be resolved to an employee
-    -- row. That is the app-wide convention for every other audit column
-    -- (history_by, updated_by), because employee.employee_user_id is not
-    -- populated by any current code path, so resolveEmployeeID legitimately
-    -- returns 0. Requiring it here would make soft delete impossible. The
-    -- half of the invariant that still means something is kept: a row may
-    -- never claim a deleter without also being deleted.
+    -- Deliberately weaker than the chk_*_soft_delete on every other table,
+    -- which requires deleted_at and deleted_by to be set together. The app no
+    -- longer relies on that difference: an actor that resolveEmployeeID cannot
+    -- map to an employee row (id 0, the common case while
+    -- employee.employee_user_id goes unpopulated) now falls back to the seeded
+    -- system employee, so this column is written NOT NULL like the others.
+    -- The constraint stays relaxed only so already-provisioned tenants are not
+    -- forced through an ALTER; the half of the invariant that matters is kept:
+    -- a row may never claim a deleter without also being deleted.
     CONSTRAINT chk_coa_soft_delete CHECK (
         coa_account_deleted_by IS NULL OR coa_account_deleted_at IS NOT NULL
     ),

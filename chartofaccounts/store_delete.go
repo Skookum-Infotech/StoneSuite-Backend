@@ -51,7 +51,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, employeeID
 		    coa_account_is_active = FALSE, coa_account_is_visible = FALSE,
 		    coa_account_record_version = coa_account_record_version + 1
 		WHERE coa_account_id = $1 AND coa_account_deleted_at IS NULL`,
-		cur.id, nullableInt(employeeID)); err != nil {
+		cur.id, actorOrSystem(employeeID)); err != nil {
 		return fmt.Errorf("soft delete account: %w", err)
 	}
 

@@ -172,6 +172,11 @@ func TestSystemSubCategoryMixesBSAndPNL(t *testing.T) {
 // returns 0 for every current caller (employee.employee_user_id is never
 // populated), which nullableInt(0) turns into SQL NULL for deleted_by. Before
 // 9506209 this was a guaranteed 500 for every soft delete in the system.
+//
+// The unresolved actor now falls back to the seeded system employee, matching
+// every other module (see actorOrSystem). chk_coa_soft_delete stays relaxed --
+// it accepts either shape -- but the value this module writes is no longer the
+// odd one out.
 func TestSoftDeleteWithUnresolvedActor(t *testing.T) {
 	pool, ctx := testPool(t), context.Background()
 	cipher := testCipher(t)
@@ -191,7 +196,9 @@ func TestSoftDeleteWithUnresolvedActor(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `
 		SELECT coa_account_deleted_by, coa_account_deleted_at
 		FROM coa_account WHERE coa_account_uuid = $1`, acct.ID).Scan(&deletedBy, &deletedAt))
-	assert.Nil(t, deletedBy, "deleted_by must persist as NULL for an unresolved actor")
+	require.NotNil(t, deletedBy, "deleted_by must fall back to the system employee, not NULL")
+	assert.Equal(t, systemEmployeeID, *deletedBy,
+		"an unresolved actor must be recorded as the seeded system employee")
 	assert.NotNil(t, deletedAt)
 }
 

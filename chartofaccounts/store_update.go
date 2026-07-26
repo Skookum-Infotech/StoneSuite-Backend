@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -44,6 +45,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 	if err != nil {
 		return nil, err
 	}
+	// RecordVersion is a plain int, so an omitted field and an explicit 0 are
+	// indistinguishable, and both skip the check below. coa_account_record_version
+	// starts at 1, so 0 is never a real version -- this is a deliberate opt-in:
+	// a client that wants optimistic concurrency sends the version it read; one
+	// that does not, does not. Consequence: two concurrent callers who both omit
+	// it and change the same field will last-write-wins silently.
 	if in.RecordVersion != 0 && in.RecordVersion != cur.version {
 		return nil, ConflictError{Msg: "This account was changed by someone else. Reload and try again."}
 	}
@@ -69,10 +76,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
 			Field: "name", OldValue: cur.name, NewValue: next.name, EmployeeID: employeeID})
 	}
-	if in.Description != nil && *in.Description != cur.description {
-		next.description = strings.TrimSpace(*in.Description)
-		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
-			Field: "description", OldValue: cur.description, NewValue: next.description, EmployeeID: employeeID})
+	if in.Description != nil {
+		trimmedDesc := strings.TrimSpace(*in.Description)
+		if trimmedDesc != cur.description {
+			next.description = trimmedDesc
+			audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
+				Field: "description", OldValue: cur.description, NewValue: next.description, EmployeeID: employeeID})
+		}
 	}
 	if in.Type != nil && *in.Type != cur.acctType {
 		next.acctType = *in.Type
@@ -93,6 +103,27 @@ func Update(ctx context.Context, pool *pgxpool.Pool, c *secret.Cipher, uuid stri
 		// redacts this field, and only the fact of a change is recorded.
 		audits = append(audits, historyRow{AccountID: &cur.id, Action: actionUpdate,
 			Field: "attributes", EmployeeID: employeeID})
+	} else if next.acctType != cur.acctType {
+		// Type changed but no new attributes were supplied, so next.attrs is
+		// still cur.attrs exactly as loaded from the DB. We deliberately do NOT
+		// run that through ValidateAttributes: for a bank account it holds the
+		// ENCRYPTED account number plus the server-derived accountNumberLast4
+		// key (see EncryptAttributes/masking.go), and accountNumberLast4 is not
+		// in any type's allowed key set -- a full re-validation would reject a
+		// legitimately-stored account. Re-encrypting or otherwise touching
+		// already-encrypted data here would also be wrong. So we only check
+		// that every key the NEW type requires is still present (and non-blank)
+		// in the existing attributes; this can't be fooled by the encrypted
+		// value's shape because presence, not content, is all that matters for
+		// keys other than accountNumber, and the account number key itself is
+		// still present (as ciphertext) whenever it was ever set. A type change
+		// that would leave a required key missing is rejected so the caller can
+		// resupply attributes in the same request.
+		if missing := missingRequiredAttrs(next.acctType, next.attrs); len(missing) > 0 {
+			return nil, ClientError{Msg: fmt.Sprintf(
+				"Changing type to %q requires attribute(s): %s. Include them in this request.",
+				next.acctType, strings.Join(missing, ", "))}
+		}
 	}
 	if in.IsPostable != nil && *in.IsPostable != cur.isPostable {
 		next.isPostable = *in.IsPostable
@@ -191,6 +222,36 @@ func loadCurrent(ctx context.Context, q rowQuerier, uuid string) (*currentAccoun
 		c.attrs = map[string]any{}
 	}
 	return &c, nil
+}
+
+// missingRequiredAttrs returns, sorted, every key attrSchema[accountType]
+// marks required that is absent from attrs or present but blank. It checks
+// presence and non-blankness only -- not the full ValidateAttributes rules
+// (unknown-key rejection, string-type enforcement) -- because it is used to
+// re-check an account's EXISTING stored attributes on a type change, and
+// those attrs may legitimately carry keys (accountNumberLast4) that
+// ValidateAttributes would reject outright. An unknown accountType (schema
+// absent) reports every field as satisfied; ValidateAttributes is the one
+// place that rejects an unknown type.
+func missingRequiredAttrs(accountType string, attrs map[string]any) []string {
+	schema := attrSchema[accountType]
+	var missing []string
+	for k, f := range schema {
+		if !f.required {
+			continue
+		}
+		v, ok := attrs[k]
+		if !ok {
+			missing = append(missing, k)
+			continue
+		}
+		s, isStr := v.(string)
+		if !isStr || strings.TrimSpace(s) == "" {
+			missing = append(missing, k)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // boolStr renders a bool for the audit trail.

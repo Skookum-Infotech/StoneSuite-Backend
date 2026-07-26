@@ -86,14 +86,21 @@ type CreateInput struct {
 // UpdateInput is the payload for PATCHing an account. Nil fields are left
 // unchanged. Code, sub-category and parent are immutable after create.
 type UpdateInput struct {
-	Name          *string        `json:"name"`
-	Description   *string        `json:"description"`
-	Type          *string        `json:"type"`
-	Attributes    map[string]any `json:"attributes"`
-	IsPostable    *bool          `json:"isPostable"`
-	IsActive      *bool          `json:"isActive"`
-	IsVisible     *bool          `json:"isVisible"`
-	RecordVersion int            `json:"recordVersion"`
+	Name        *string        `json:"name"`
+	Description *string        `json:"description"`
+	Type        *string        `json:"type"`
+	Attributes  map[string]any `json:"attributes"`
+	IsPostable  *bool          `json:"isPostable"`
+	IsActive    *bool          `json:"isActive"`
+	IsVisible   *bool          `json:"isVisible"`
+	// RecordVersion is the optimistic-concurrency token: send back the version
+	// you last read and Update rejects a stale write with 409. It is a plain
+	// int, so an omitted field and an explicit 0 are indistinguishable, and
+	// coa_account_record_version starts at 1 -- so 0 deliberately means "no
+	// version check requested," not "expect version 0." A caller that omits it
+	// gets no concurrency protection: two concurrent callers who both omit it
+	// and change the same field will last-write-wins silently.
+	RecordVersion int `json:"recordVersion"`
 }
 
 // BulkInput toggles visibility flags across many accounts in one transaction.

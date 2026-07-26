@@ -175,7 +175,20 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	return Get(ctx, pool, id)
 }
 
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
 const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
+}
 
 // SoftDelete marks an invoice deleted (paired deleted_at/deleted_by). Blocked
 // (400-mapped ClientError) while any live payment_application OR
@@ -208,10 +221,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 		return ClientError{Msg: "Cannot delete an invoice with live credit memo applications; unapply them first."}
 	}
 
-	deletedBy := actorEmployeeID
-	if deletedBy == 0 {
-		deletedBy = systemEmployeeID
-	}
+	deletedBy := actorOrSystem(actorEmployeeID)
 	tag, err := pool.Exec(ctx, `
 		UPDATE invoice
 		SET invoice_deleted_at = NOW(), invoice_deleted_by = $1

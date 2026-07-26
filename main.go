@@ -515,6 +515,23 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/items/{uuid}", tenantChain(inv.Update))
 		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
 
+		// Chart of Accounts — Finance section master data.
+		{
+			coa := controllers.NewChartOfAccountsOps(cipher)
+			mux.Handle("GET /api/tenant/finance/accounts", tenantChain(coa.List))
+			mux.Handle("POST /api/tenant/finance/accounts/search", tenantChain(coa.Search))
+			mux.Handle("GET /api/tenant/finance/accounts/tree", tenantChain(coa.Tree))
+			mux.Handle("GET /api/tenant/finance/accounts/categories", tenantChain(coa.Categories))
+			mux.Handle("PATCH /api/tenant/finance/accounts/bulk", tenantChain(coa.BulkUpdate))
+			mux.Handle("POST /api/tenant/finance/accounts", tenantChain(coa.Create))
+			mux.Handle("GET /api/tenant/finance/accounts/{uuid}", tenantChain(coa.Get))
+			mux.Handle("PATCH /api/tenant/finance/accounts/{uuid}", tenantChain(coa.Update))
+			mux.Handle("DELETE /api/tenant/finance/accounts/{uuid}", tenantChain(coa.Delete))
+			mux.Handle("GET /api/tenant/finance/accounts/{uuid}/history", tenantChain(coa.History))
+			mux.Handle("GET /api/tenant/finance/account-defaults", tenantChain(coa.Defaults))
+			mux.Handle("PATCH /api/tenant/finance/account-defaults/{slotKey}", tenantChain(coa.RepointDefault))
+		}
+
 		// Sales Order: dedicated relational module (header + line items), a
 		// sibling of the CRM customer table — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.

@@ -4832,15 +4832,30 @@ CREATE TABLE IF NOT EXISTS inventory_ledger (
     CONSTRAINT chk_inventory_ledger_event CHECK (event IN ('received','returned','adjusted','consumed'))
 );
 
--- A receipt line may be received exactly once. Re-posting the same receipt
+-- A source line may be received exactly once. Re-posting the same receipt
 -- cannot double-count stock -- the bug is made unrepresentable, not tested
 -- (same technique as uq_slab_ledger_received).
-CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_receipt_line
-    ON inventory_ledger (source_line_id)
+--
+-- The key is (source_record_type, source_line_id), NOT source_line_id alone:
+-- this table is polymorphic over source documents (see the comment above), so
+-- a line id is only unique WITHIN a document type. Keying on the line id alone
+-- means the first non-item-receipt document to post 'received' collides with an
+-- unrelated item_receipt_line that happens to share an id -- and because
+-- itemreceipt/inventory_post.go maps unique violations to
+-- ErrMovementAlreadyApplied, the user is told a document they never posted was
+-- already applied while stock is silently never incremented.
+--
+-- COALESCE(...,0) rather than a NOT NULL predicate on the record type, because
+-- NULLs are DISTINCT in a unique index -- a NULL record type would silently
+-- drop the guarantee for exactly those rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_received
+    ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id)
     WHERE event = 'received' AND source_line_id IS NOT NULL;
--- ...and reversed exactly once, for the same reason.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_return_line
-    ON inventory_ledger (source_line_id)
+-- ...and reversed exactly once, for the same reason. Kept as a second index
+-- rather than folding 'event' into one key, so a line may be received once AND
+-- returned once.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_returned
+    ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id)
     WHERE event = 'returned' AND source_line_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_inventory_ledger_item_wh
@@ -5266,3 +5281,599 @@ FROM (VALUES
 ) AS v(key, label, descr, acct_code, ord)
 JOIN coa_account a ON a.coa_account_code = v.acct_code AND a.coa_account_deleted_at IS NULL
 ON CONFLICT (slot_key) DO NOTHING;
+
+
+-- ===========================================================================
+-- INVENTORY MANAGEMENT -- warehouse/bin locations, stone attributes on the
+-- item catalogue, and the generalisation of inventory_slab into a general
+-- serialized inventory unit.
+--
+-- Spec: docs/superpowers/specs/2026-07-26-inventory-module-design.md
+--
+-- This section is Phase 1 (schema) only. Phase 2 adds CRUD for the item stone
+-- attributes, warehouses, bins, units, bundles and the lkp_* vocabularies.
+-- Phase 3 (warehouse transfer, stock adjustment, cycle count) is a later
+-- branch; only its reason-code lookup and record types are seeded here (AD-6).
+--
+-- FK order below is load-bearing:
+--   lkp_* vocab -> inventory_bin -> inventory_bundle -> ALTERs on
+--   inventory_item / inventory_slab -> history -> ledger index repair ->
+--   record types -> RBAC backfill
+--
+-- Columns are added by ALTER ... ADD COLUMN IF NOT EXISTS, never by editing
+-- the existing CREATE TABLE bodies (lines 2376 and 4196): CREATE TABLE IF NOT
+-- EXISTS is a no-op on every existing tenant, so a column added there would
+-- reach fresh databases only and diverge permanently. See spec AD-7.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------
+-- 1. Controlled-vocabulary lookups. All follow the lkp_unit shape (line 2299).
+-- ---------------------------------------------------------------------
+
+-- lkp_material ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lkp_material (
+    material_id             SERIAL       PRIMARY KEY,
+    material_name           VARCHAR(60)  NOT NULL,
+    material_code           VARCHAR(10)  NOT NULL,
+    material_is_porous      BOOLEAN      NOT NULL DEFAULT TRUE,   -- drives the sealing step
+    material_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    material_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    material_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    material_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    material_updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    material_updated_by     INTEGER          NULL REFERENCES employee(employee_id),
+    material_deleted_at     TIMESTAMP        NULL,
+    material_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    material_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_material_code UNIQUE (material_code),
+    CONSTRAINT chk_material_soft_delete CHECK (
+        (material_deleted_at IS NULL AND material_deleted_by IS NULL) OR
+        (material_deleted_at IS NOT NULL AND material_deleted_by IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_material_active ON lkp_material (material_is_active)
+    WHERE material_deleted_at IS NULL;
+
+INSERT INTO lkp_material (material_name, material_code, material_is_porous, material_is_system, material_created_by) VALUES
+    ('Granite','GRAN',TRUE,TRUE,1),              ('Marble','MARB',TRUE,TRUE,1),
+    ('Quartz (Engineered)','QRTZ',FALSE,TRUE,1), ('Quartzite','QTZT',TRUE,TRUE,1),
+    ('Soapstone','SOAP',FALSE,TRUE,1),           ('Porcelain','PORC',FALSE,TRUE,1),
+    ('Sintered Stone','SINT',FALSE,TRUE,1),      ('Dolomite','DOLO',TRUE,TRUE,1),
+    ('Onyx','ONYX',TRUE,TRUE,1),                 ('Travertine','TRAV',TRUE,TRUE,1),
+    ('Limestone','LIME',TRUE,TRUE,1),            ('Slate','SLAT',TRUE,TRUE,1)
+ON CONFLICT (material_code) DO NOTHING;
+
+-- lkp_color ---------------------------------------------------------------
+-- Deliberately seeded EMPTY. Colour names are vendor catalogue names; a guessed
+-- seed set collides with the tenant's real import and leaves dead rows that no
+-- partial-unique index can distinguish from live ones.
+CREATE TABLE IF NOT EXISTS lkp_color (
+    color_id             SERIAL       PRIMARY KEY,
+    color_name           VARCHAR(80)  NOT NULL,
+    color_code           VARCHAR(20)  NOT NULL,
+    color_hex            VARCHAR(7)   NOT NULL DEFAULT '',   -- '#RRGGBB' swatch, '' = none
+    color_material_id    INTEGER          NULL REFERENCES lkp_material(material_id),
+    color_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    color_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    color_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    color_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    color_updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    color_updated_by     INTEGER          NULL REFERENCES employee(employee_id),
+    color_deleted_at     TIMESTAMP        NULL,
+    color_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    color_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_color_code UNIQUE (color_code),
+    CONSTRAINT chk_color_hex CHECK (color_hex = '' OR color_hex ~ '^#[0-9A-Fa-f]{6}$'),
+    CONSTRAINT chk_color_soft_delete CHECK (
+        (color_deleted_at IS NULL AND color_deleted_by IS NULL) OR
+        (color_deleted_at IS NOT NULL AND color_deleted_by IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_color_material ON lkp_color (color_material_id) WHERE color_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_color_name     ON lkp_color (LOWER(color_name));
+
+-- lkp_finish --------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS lkp_finish (
+    finish_id             SERIAL       PRIMARY KEY,
+    finish_name           VARCHAR(60)  NOT NULL,
+    finish_code           VARCHAR(10)  NOT NULL,
+    finish_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    finish_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    finish_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finish_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    finish_updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finish_updated_by     INTEGER          NULL REFERENCES employee(employee_id),
+    finish_deleted_at     TIMESTAMP        NULL,
+    finish_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    finish_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_finish_code UNIQUE (finish_code),
+    CONSTRAINT chk_finish_soft_delete CHECK (
+        (finish_deleted_at IS NULL AND finish_deleted_by IS NULL) OR
+        (finish_deleted_at IS NOT NULL AND finish_deleted_by IS NOT NULL))
+);
+INSERT INTO lkp_finish (finish_name, finish_code, finish_is_system, finish_created_by) VALUES
+    ('Polished','POL',TRUE,1), ('Honed','HON',TRUE,1),   ('Leathered','LEA',TRUE,1),
+    ('Brushed','BRU',TRUE,1),  ('Flamed','FLA',TRUE,1),  ('Sandblasted','SAND',TRUE,1),
+    ('Antiqued','ANT',TRUE,1), ('Sawn / Raw','SAW',TRUE,1)
+ON CONFLICT (finish_code) DO NOTHING;
+
+-- lkp_inventory_reason ----------------------------------------------------
+-- Phase 3 (adjustment/transfer/count) is the main writer; created now because
+-- it is a pure lookup with no workflow, and Phase 2's scrap and cut paths
+-- already need a reason code (AD-6).
+CREATE TABLE IF NOT EXISTS lkp_inventory_reason (
+    inventory_reason_id             SERIAL       PRIMARY KEY,
+    inventory_reason_name           VARCHAR(60)  NOT NULL,
+    inventory_reason_code           VARCHAR(10)  NOT NULL,
+    -- which document may cite it: adjustment | transfer | count | scrap | any
+    inventory_reason_applies_to     VARCHAR(12)  NOT NULL DEFAULT 'any',
+    -- which direction it may move stock: increase | decrease | both
+    inventory_reason_direction      VARCHAR(10)  NOT NULL DEFAULT 'both',
+    -- GL account when posting; NULL = fall back to the COA slot default_inventory
+    inventory_reason_coa_account_id INTEGER          NULL REFERENCES coa_account(coa_account_id),
+    inventory_reason_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    inventory_reason_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
+    inventory_reason_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_reason_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    inventory_reason_updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_reason_updated_by     INTEGER          NULL REFERENCES employee(employee_id),
+    inventory_reason_deleted_at     TIMESTAMP        NULL,
+    inventory_reason_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    inventory_reason_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_reason_code UNIQUE (inventory_reason_code),
+    CONSTRAINT chk_inv_reason_applies   CHECK (inventory_reason_applies_to IN
+        ('adjustment','transfer','count','scrap','any')),
+    CONSTRAINT chk_inv_reason_direction CHECK (inventory_reason_direction IN
+        ('increase','decrease','both')),
+    CONSTRAINT chk_inv_reason_soft_delete CHECK (
+        (inventory_reason_deleted_at IS NULL AND inventory_reason_deleted_by IS NULL) OR
+        (inventory_reason_deleted_at IS NOT NULL AND inventory_reason_deleted_by IS NOT NULL))
+);
+INSERT INTO lkp_inventory_reason (inventory_reason_name, inventory_reason_code,
+    inventory_reason_applies_to, inventory_reason_direction, inventory_reason_is_system, inventory_reason_created_by) VALUES
+    ('Damage',               'DMG',  'adjustment','decrease',TRUE,1),
+    ('Breakage',             'BRKG', 'scrap',     'decrease',TRUE,1),
+    ('Theft',                'THFT', 'adjustment','decrease',TRUE,1),
+    ('Shrinkage',            'SHRK', 'adjustment','decrease',TRUE,1),
+    ('Scrap',                'SCRP', 'scrap',     'decrease',TRUE,1),
+    ('Found',                'FOUND','adjustment','increase',TRUE,1),
+    ('Recount',              'RCNT', 'count',     'both',    TRUE,1),
+    ('Cycle Count Variance', 'CCV',  'count',     'both',    TRUE,1),
+    ('Warehouse Transfer',   'WHTR', 'transfer',  'both',    TRUE,1),
+    ('Data Entry Correction','CORR', 'adjustment','both',    TRUE,1)
+ON CONFLICT (inventory_reason_code) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- 2. inventory_bin -- a physical location inside a warehouse (AD-1).
+--
+-- Flat + typed + optionally self-nesting rather than a fixed zone/aisle/rack/
+-- shelf hierarchy, because a stone yard's depth is not uniform: an A-frame slot
+-- is 3 levels deep, a quartz shelf 2, receiving staging 1. A fixed hierarchy
+-- forces synthetic filler rows for every missing level.
+--
+-- Bins locate SERIALIZED units only (AD-2). inventory_stock is NOT re-keyed and
+-- stays UNIQUE(inventory_item_id, warehouse_id) -- so a bin move is stock-neutral
+-- by construction and writes NO ledger row, only an inventory_unit_history row.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_bin (
+    inventory_bin_id        SERIAL        PRIMARY KEY,
+    inventory_bin_uuid      UUID          NOT NULL DEFAULT gen_random_uuid(),
+    warehouse_id            INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    bin_code                VARCHAR(30)   NOT NULL,
+    bin_name                VARCHAR(100)  NOT NULL DEFAULT '',
+    bin_type                VARCHAR(20)   NOT NULL DEFAULT 'rack',
+    bin_parent_id           INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id),
+    -- Materialized ancestor path, '/'-joined codes incl. self: 'YARD-A/AF-03/SLOT-7'.
+    -- Maintained by inventory/bin_path.go so the common read needs no recursion.
+    bin_path                VARCHAR(200)  NOT NULL DEFAULT '',
+    bin_depth               SMALLINT      NOT NULL DEFAULT 0,   -- 0 = top level
+    -- Capacity hints, ADVISORY only: over-capacity warns, never blocks. A yard
+    -- crew that must physically put a slab somewhere cannot be blocked by a row
+    -- count, and a hard block guarantees they invent a junk bin to work around
+    -- it -- worse data than an accurate over-capacity flag.
+    bin_capacity_units      INTEGER       NOT NULL DEFAULT 0,   -- 0 = unlimited
+    bin_capacity_area       DECIMAL(14,3) NOT NULL DEFAULT 0,   -- 0 = unlimited
+    bin_capacity_unit_id    INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    bin_is_active           BOOLEAN       NOT NULL DEFAULT TRUE,
+    bin_is_system           BOOLEAN       NOT NULL DEFAULT FALSE,
+    bin_notes               TEXT          NOT NULL DEFAULT '',
+    bin_created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    bin_created_by          INTEGER           NULL REFERENCES employee(employee_id),
+    bin_updated_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    bin_updated_by          INTEGER           NULL REFERENCES employee(employee_id),
+    bin_deleted_at          TIMESTAMP         NULL,
+    bin_deleted_by          INTEGER           NULL REFERENCES employee(employee_id),
+    bin_record_version      INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_bin_uuid UNIQUE (inventory_bin_uuid),
+    CONSTRAINT chk_bin_type CHECK (bin_type IN
+        ('yard','rack','aframe','aisle','shelf','floor','staging')),
+    CONSTRAINT chk_bin_not_self CHECK (bin_parent_id IS DISTINCT FROM inventory_bin_id),
+    CONSTRAINT chk_bin_depth    CHECK (bin_depth >= 0 AND bin_depth <= 4),
+    CONSTRAINT chk_bin_capacity CHECK (bin_capacity_units >= 0 AND bin_capacity_area >= 0),
+    CONSTRAINT chk_bin_soft_delete CHECK (
+        (bin_deleted_at IS NULL AND bin_deleted_by IS NULL) OR
+        (bin_deleted_at IS NOT NULL AND bin_deleted_by IS NOT NULL))
+);
+-- Code unique per warehouse among LIVE rows only, matching
+-- uq_inventory_item_sku_active (line 2407): a code frees up on soft delete.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_bin_code_active
+    ON inventory_bin (warehouse_id, LOWER(bin_code)) WHERE bin_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_warehouse ON inventory_bin (warehouse_id, bin_is_active) WHERE bin_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_parent    ON inventory_bin (bin_parent_id)                WHERE bin_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_path      ON inventory_bin (bin_path varchar_pattern_ops) WHERE bin_deleted_at IS NULL;
+-- Keyset-cursor pairs for query/ (mirrors idx_ir_created_id at line 4861).
+CREATE INDEX IF NOT EXISTS idx_bin_created_id ON inventory_bin (bin_created_at, inventory_bin_id) WHERE bin_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_updated_id ON inventory_bin (bin_updated_at, inventory_bin_id) WHERE bin_deleted_at IS NULL;
+
+-- One staging bin in MAIN so receiving has a default destination. The warehouse
+-- id is resolved by subselect on warehouse_code, never a hardcoded integer.
+--
+-- WHERE NOT EXISTS rather than ON CONFLICT: the uniqueness above is a PARTIAL
+-- index, which cannot be named as a conflict target, so a targeted ON CONFLICT
+-- would error and an untargeted one would silently mask unrelated violations.
+--
+-- The guard is scoped to LIVE rows (bin_deleted_at IS NULL) so that it matches
+-- uq_inventory_bin_code_active exactly. Scoping it to all rows instead would
+-- mean that soft-deleting this system bin leaves the tenant permanently without
+-- a staging destination: the guard would keep finding the dead row and skip the
+-- insert on every subsequent boot. Matching the index's scope makes a deleted
+-- system row reappear on the next boot, which is the same behaviour the seeded
+-- chart of accounts already has (uq_coa_account_code_live, line 5041).
+-- Phase 2's bin delete path must additionally refuse to soft-delete a
+-- bin_is_system row, so this resurrection stays a backstop rather than the
+-- normal path.
+INSERT INTO inventory_bin (warehouse_id, bin_code, bin_name, bin_type, bin_path, bin_depth, bin_is_system)
+SELECT w.warehouse_id, 'STAGING', 'Receiving Staging', 'staging', 'STAGING', 0, TRUE
+FROM lkp_warehouse w
+WHERE w.warehouse_code = 'MAIN'
+  AND NOT EXISTS (SELECT 1 FROM inventory_bin b
+                  WHERE b.warehouse_id = w.warehouse_id
+                    AND LOWER(b.bin_code) = 'staging'
+                    AND b.bin_deleted_at IS NULL);
+
+-- ---------------------------------------------------------------------
+-- 3. inventory_bundle -- a shipping/handling group that moves as a set (AD-5).
+--
+-- A bundle has no area of its own and NEVER appears in inventory_slab_ledger;
+-- only its member slabs do. That is exactly why it is not an inventory_slab row
+-- with a 'bundle' unit_kind: chk_slab_dims and chk_slab_area (lines 4243-4244)
+-- demand length/width/thickness > 0 and area > 0 on a thing with no dimensions,
+-- and every stock/area/valuation query would have to remember
+-- "AND slab_unit_kind <> 'bundle'". One forgotten predicate silently doubles
+-- the on-hand area of the entire yard, and nothing would catch it.
+--
+-- Supersedes the free-text inventory_slab.slab_bundle_id (line 4216), which is
+-- retained for historical rows and back-filled from bundle_code on write.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_bundle (
+    inventory_bundle_id      SERIAL       PRIMARY KEY,
+    inventory_bundle_uuid    UUID         NOT NULL DEFAULT gen_random_uuid(),
+    bundle_code              VARCHAR(50)  NOT NULL,
+    bundle_vendor_id         INTEGER          NULL REFERENCES vendor(vendor_id),
+    bundle_supplier_code     VARCHAR(80)  NOT NULL DEFAULT '',
+    bundle_block_id          VARCHAR(50)  NOT NULL DEFAULT '',
+    bundle_lot               VARCHAR(50)  NOT NULL DEFAULT '',
+    inventory_item_id        INTEGER          NULL REFERENCES inventory_item(inventory_item_id),
+    warehouse_id             INTEGER      NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    inventory_bin_id         INTEGER          NULL REFERENCES inventory_bin(inventory_bin_id),
+    -- open   = members may be added/removed
+    -- sealed = members move together; a single-member move is refused
+    -- broken = deliberately split; members are independent again
+    bundle_status            VARCHAR(12)  NOT NULL DEFAULT 'open',
+    bundle_received_at       DATE             NULL,
+    bundle_notes             TEXT         NOT NULL DEFAULT '',
+    bundle_created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    bundle_created_by        INTEGER          NULL REFERENCES employee(employee_id),
+    bundle_updated_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    bundle_updated_by        INTEGER          NULL REFERENCES employee(employee_id),
+    bundle_deleted_at        TIMESTAMP        NULL,
+    bundle_deleted_by        INTEGER          NULL REFERENCES employee(employee_id),
+    bundle_record_version    INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_bundle_uuid UNIQUE (inventory_bundle_uuid),
+    CONSTRAINT chk_bundle_status   CHECK (bundle_status IN ('open','sealed','broken')),
+    CONSTRAINT chk_bundle_supplier CHECK (bundle_supplier_code = '' OR bundle_vendor_id IS NOT NULL),
+    CONSTRAINT chk_bundle_soft_delete CHECK (
+        (bundle_deleted_at IS NULL AND bundle_deleted_by IS NULL) OR
+        (bundle_deleted_at IS NOT NULL AND bundle_deleted_by IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_bundle_code_active
+    ON inventory_bundle (LOWER(bundle_code)) WHERE bundle_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bundle_wh  ON inventory_bundle (warehouse_id, bundle_status) WHERE bundle_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bundle_bin ON inventory_bundle (inventory_bin_id)            WHERE bundle_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bundle_created_id ON inventory_bundle (bundle_created_at, inventory_bundle_id) WHERE bundle_deleted_at IS NULL;
+
+-- ---------------------------------------------------------------------
+-- 4. Stone attributes on the item catalogue (AD-3).
+--
+-- Typed columns + lkp_* rather than the existing custom_fields JSONB, because
+-- these must be filterable, sortable, joinable and FK-validated -- none of which
+-- JSONB gives: its values are untyped text so "thickness_mm < 25" cannot be a
+-- numeric comparison, there is no FK so a typo creates a phantom colour, and the
+-- item picker cannot JOIN lkp_color for a swatch.
+--
+-- Added by ALTER, NOT by editing CREATE TABLE inventory_item at line 2376.
+-- ---------------------------------------------------------------------
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_tracking             VARCHAR(12)   NOT NULL DEFAULT 'quantity';
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_material_id          INTEGER           NULL REFERENCES lkp_material(material_id);
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_color_id             INTEGER           NULL REFERENCES lkp_color(color_id);
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_finish_id            INTEGER           NULL REFERENCES lkp_finish(finish_id);
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_thickness_mm         DECIMAL(10,2) NOT NULL DEFAULT 0;   -- 0 = not applicable
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_origin_country_id    INTEGER           NULL REFERENCES lkp_country(country_id);
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_barcode              VARCHAR(64)   NOT NULL DEFAULT '';
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
+    inventory_item_default_warehouse_id INTEGER           NULL REFERENCES lkp_warehouse(warehouse_id);
+
+-- inventory_item_tracking (AD-8) is the highest-value column here. Today nothing
+-- on inventory_item says whether an item is slab-tracked or quantity-tracked,
+-- yet inventory_slab_ledger (line 4261) and inventory_ledger (line 4821) BOTH
+-- drive the same inventory_stock row -- so nothing stops an item receiving stock
+-- through both paths and double-counting. Defaults to 'quantity', which is
+-- correct for every existing row.
+
+-- New CHECKs need the DO $$ guard: a bare ADD CONSTRAINT errors on the second
+-- boot and breaks every tenant. Precedent: lines 4877-4903.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname='chk_inventory_item_tracking' AND conrelid='inventory_item'::regclass) THEN
+        ALTER TABLE inventory_item ADD CONSTRAINT chk_inventory_item_tracking
+            CHECK (inventory_item_tracking IN ('quantity','serialized'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname='chk_inventory_item_thickness' AND conrelid='inventory_item'::regclass) THEN
+        ALTER TABLE inventory_item ADD CONSTRAINT chk_inventory_item_thickness
+            CHECK (inventory_item_thickness_mm >= 0);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_inv_item_material ON inventory_item (inventory_item_material_id) WHERE inventory_item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_item_color    ON inventory_item (inventory_item_color_id)    WHERE inventory_item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_item_tracking ON inventory_item (inventory_item_tracking)    WHERE inventory_item_deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_item_barcode_active
+    ON inventory_item (LOWER(inventory_item_barcode))
+    WHERE inventory_item_deleted_at IS NULL AND inventory_item_barcode <> '';
+-- Keyset pairs the resolver already implies but the schema never got.
+CREATE INDEX IF NOT EXISTS idx_inv_item_created_id ON inventory_item (inventory_item_created_at, inventory_item_id) WHERE inventory_item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_item_updated_id ON inventory_item (inventory_item_updated_at, inventory_item_id) WHERE inventory_item_deleted_at IS NULL;
+
+-- ---------------------------------------------------------------------
+-- 5. Generalise inventory_slab (line 4196) from "slab" to "serialized
+-- inventory unit". Extending the existing table rather than creating a parallel
+-- one keeps inventory_slab_ledger, fabrication_job_slab and every existing FK
+-- valid, and avoids two competing sources of truth for the same physical piece.
+-- ---------------------------------------------------------------------
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_unit_kind          VARCHAR(12)   NOT NULL DEFAULT 'slab';   -- slab | remnant
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    inventory_bin_id        INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id);
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_barcode            VARCHAR(64)   NOT NULL DEFAULT '';
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_finish_id          INTEGER           NULL REFERENCES lkp_finish(finish_id);
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    inventory_bundle_id     INTEGER           NULL REFERENCES inventory_bundle(inventory_bundle_id);
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_sequence_in_bundle SMALLINT      NOT NULL DEFAULT 0;
+-- Remnant tracking. A cut piece is only a *usable* remnant if it clears the
+-- shop's minimum useful rectangle; below that it is scrap. The flag is set at
+-- cut time by inventory/unit_cut.go and never derived on read, so a later change
+-- to the threshold cannot silently reclassify last year's inventory.
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_is_usable_remnant  BOOLEAN       NOT NULL DEFAULT FALSE;
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_remnant_reason_id  INTEGER           NULL REFERENCES lkp_inventory_reason(inventory_reason_id);
+-- Denormalised root ancestor: the original full slab a remnant descends from.
+-- Recall ("every piece from vendor lot X") becomes one indexed equality rather
+-- than a WITH RECURSIVE over slab_parent_slab_id.
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS
+    slab_root_slab_id       INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id);
+
+-- slab_finish (VARCHAR, line 4222) cannot be dropped, so both it and
+-- slab_finish_id exist forever. Store rule (AD-9): slab_finish_id is
+-- authoritative on write and the store ALSO writes slab_finish = finish_name,
+-- so fabrication/'s existing readers and historical rows keep working. Reads
+-- prefer the id and fall back to the string when it is NULL. If any writer sets
+-- only one, item search by finish silently misses rows.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname='chk_slab_unit_kind' AND conrelid='inventory_slab'::regclass) THEN
+        ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_unit_kind
+            CHECK (slab_unit_kind IN ('slab','remnant'));
+    END IF;
+    -- A remnant is by definition a cut piece, so it must agree with the existing
+    -- chk_slab_form_parent (line 4247). Trivially true for all existing rows,
+    -- which all default to unit_kind='slab'.
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname='chk_slab_remnant_is_cut' AND conrelid='inventory_slab'::regclass) THEN
+        ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_remnant_is_cut
+            CHECK (slab_unit_kind <> 'remnant' OR slab_form = 'cut');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname='chk_slab_root_not_self' AND conrelid='inventory_slab'::regclass) THEN
+        ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_root_not_self
+            CHECK (slab_root_slab_id IS DISTINCT FROM inventory_slab_id OR slab_form = 'full');
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_slab_bin       ON inventory_slab (inventory_bin_id)             WHERE slab_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_slab_kind_stat ON inventory_slab (slab_unit_kind, slab_status)  WHERE slab_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_slab_bundle_fk ON inventory_slab (inventory_bundle_id)          WHERE slab_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_slab_root      ON inventory_slab (slab_root_slab_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_barcode_active
+    ON inventory_slab (LOWER(slab_barcode))
+    WHERE slab_deleted_at IS NULL AND slab_barcode <> '';
+-- Remnant picker: "usable offcuts of this item, biggest first".
+CREATE INDEX IF NOT EXISTS idx_slab_remnant_pick
+    ON inventory_slab (inventory_item_id, slab_area DESC)
+    WHERE slab_deleted_at IS NULL AND slab_unit_kind='remnant'
+      AND slab_is_usable_remnant = TRUE AND slab_status='available';
+
+-- ---------------------------------------------------------------------
+-- 6. History tables. Sibling parity: customer_history (1225),
+-- coa_account_history (5053), item_receipt_history (4799).
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_item_history (
+    inventory_item_history_id SERIAL      PRIMARY KEY,
+    inventory_item_id         INTEGER     NOT NULL REFERENCES inventory_item(inventory_item_id),
+    history_action            VARCHAR(20) NOT NULL,
+    history_field             VARCHAR(60) NOT NULL DEFAULT '',
+    history_old_value         TEXT        NOT NULL DEFAULT '',
+    history_new_value         TEXT        NOT NULL DEFAULT '',
+    history_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    history_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_inv_item_history_action CHECK (history_action IN
+        ('create','update','delete','activate','deactivate'))
+);
+CREATE INDEX IF NOT EXISTS idx_inv_item_history ON inventory_item_history (inventory_item_id, history_at DESC);
+
+-- inventory_unit_history -- movement/status trail for a serialized unit.
+--
+-- Distinct from inventory_slab_ledger on purpose: the ledger is the FINANCIAL
+-- record (signed quantity deltas that must sum to inventory_stock) and carries
+-- partial unique indexes making each stock event once-only. This is the
+-- OPERATIONAL record -- bin moves, re-grades, photo swaps, cut events -- none of
+-- which change on-hand quantity and none of which may therefore touch the
+-- ledger (AD-2). Writing a bin move to the ledger with delta 0 would collide
+-- with the once-only indexes and pollute the audit trail with non-events.
+CREATE TABLE IF NOT EXISTS inventory_unit_history (
+    inventory_unit_history_id SERIAL      PRIMARY KEY,
+    inventory_slab_id         INTEGER     NOT NULL REFERENCES inventory_slab(inventory_slab_id),
+    history_action            VARCHAR(24) NOT NULL,
+    history_field             VARCHAR(60) NOT NULL DEFAULT '',
+    history_old_value         TEXT        NOT NULL DEFAULT '',
+    history_new_value         TEXT        NOT NULL DEFAULT '',
+    from_bin_id               INTEGER         NULL REFERENCES inventory_bin(inventory_bin_id),
+    to_bin_id                 INTEGER         NULL REFERENCES inventory_bin(inventory_bin_id),
+    from_warehouse_id         INTEGER         NULL REFERENCES lkp_warehouse(warehouse_id),
+    to_warehouse_id           INTEGER         NULL REFERENCES lkp_warehouse(warehouse_id),
+    inventory_reason_id       INTEGER         NULL REFERENCES lkp_inventory_reason(inventory_reason_id),
+    history_note              TEXT        NOT NULL DEFAULT '',
+    history_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    history_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_inv_unit_history_action CHECK (history_action IN
+        ('create','update','bin_move','warehouse_move','status_change',
+         'cut','remnant_created','scrap','photo','regrade','delete'))
+);
+CREATE INDEX IF NOT EXISTS idx_inv_unit_history     ON inventory_unit_history (inventory_slab_id, history_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inv_unit_history_bin ON inventory_unit_history (to_bin_id, history_at DESC);
+
+-- ---------------------------------------------------------------------
+-- 7. Repair uq_inventory_ledger_receipt_line / _return_line (line 4835).
+--
+-- Both indexes key on source_line_id ALONE, but inventory_ledger is explicitly
+-- polymorphic over source documents (line 4816) with source_record_type as the
+-- discriminator. Once a second document type writes 'received', its line id
+-- collides with an unrelated item_receipt_line id -- an independent SERIAL, so
+-- collision is near-certain rather than a corner case. The insert trips the
+-- unique index, itemreceipt/inventory_post.go:44 maps that to
+-- ErrMovementAlreadyApplied, and the user is told a document they never posted
+-- was already applied -- while stock is silently never incremented.
+--
+-- The key becomes (source_record_type, source_line_id). COALESCE(...,0) rather
+-- than a NOT NULL predicate, because NULLs are DISTINCT in a unique index, so a
+-- NULL record type would silently drop the guarantee for exactly those rows.
+--
+-- This is a RELAXATION: every pair rejected by the new index was rejected by
+-- the old one, so it cannot fail on existing data. Non-destructive -- indexes
+-- only; no table, column or row is touched.
+--
+-- The REPLACEMENT indexes are NOT created here. They are created at their
+-- original site (line 4838), whose definition has been corrected in place.
+-- That placement is load-bearing and was found the hard way: creating the new
+-- index here while leaving the old definition upstream means every boot
+-- re-creates the OLD index from line 4838 (IF NOT EXISTS does not skip it,
+-- because this section dropped it on the previous boot) and then drops it
+-- again down here. That churn is harmless on an empty table and FATAL once a
+-- tenant holds two legitimately-colliding rows: the upstream CREATE fails, the
+-- single-transaction apply aborts, and the tenant can no longer boot at all.
+-- A fresh-database apply cannot surface this -- only one with real data can.
+--
+-- So this stanza does exactly one thing: retire the legacy index names on
+-- tenants provisioned before this change. DROP INDEX IF EXISTS is a no-op on
+-- every subsequent boot.
+-- DROP INDEX CONCURRENTLY is unavailable: the whole file is one transaction.
+-- ---------------------------------------------------------------------
+DROP INDEX IF EXISTS uq_inventory_ledger_receipt_line;
+DROP INDEX IF EXISTS uq_inventory_ledger_return_line;
+
+-- ---------------------------------------------------------------------
+-- 8. Record types for the Phase 3 documents + their statuses.
+--
+-- The record_type_id is resolved by SUBSELECT on record_type_code, never a
+-- hardcoded id (pattern copied from the FJOB block at line 4177), because
+-- lkp_record_status keys statuses to types by SERIAL assignment order and a
+-- literal id would be wrong on any tenant whose lookups were seeded out of
+-- order -- silently mis-assigning every downstream status.
+-- ---------------------------------------------------------------------
+INSERT INTO lkp_record_type (record_type_code, record_type_code_full, record_type_name,
+    record_type_is_active, record_type_is_system, record_type_created_by) VALUES
+    ('IADJ','inventoryadjustment','Inventory Adjustment', TRUE,TRUE,1),
+    ('ITRF','inventorytransfer',  'Inventory Transfer',   TRUE,TRUE,1),
+    ('ICNT','inventorycyclecount','Inventory Cycle Count',TRUE,TRUE,1)
+ON CONFLICT (record_type_code) DO NOTHING;
+
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES ('DRFT','Draft'), ('PAPV','Pending Approval'), ('APPV','Approved'),
+             ('POST','Posted'), ('CANC','Cancelled')) AS v(code, name)
+CROSS JOIN lkp_record_type rt WHERE rt.record_type_code = 'IADJ'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- ITRF gets TRNS/RCVD rather than POST because a warehouse transfer is genuinely
+-- two-legged: stock leaves the source before it arrives, and in-transit must be
+-- representable.
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES ('DRFT','Draft'), ('PAPV','Pending Approval'), ('APPV','Approved'),
+             ('TRNS','In Transit'), ('RCVD','Received'), ('CANC','Cancelled')) AS v(code, name)
+CROSS JOIN lkp_record_type rt WHERE rt.record_type_code = 'ITRF'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- RVW_ uses the trailing-underscore padding convention already in the file
+-- (ACT_, INA_ at line 730).
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES ('DRFT','Draft'), ('CNTG','Counting'), ('RVW_','In Review'),
+             ('APPV','Approved'), ('POST','Posted'), ('CANC','Cancelled')) AS v(code, name)
+CROSS JOIN lkp_record_type rt WHERE rt.record_type_code = 'ICNT'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- 9. RBAC backfill for the inventory_item -> inventory_unit split (AD-10).
+--
+-- Phase 2 moves the serialized-unit routes off inventory_item:* onto a new
+-- inventory_unit:* resource. Without this backfill every CUSTOM tenant role
+-- holding inventory_item:* would silently start returning 403 on those routes
+-- the moment this deploys -- invisible until a user complains. super_admin is
+-- unaffected: it holds a single wildcard ('*','*','all') that the enforcer
+-- treats as match-all (line 47).
+--
+-- Idempotent via the role_permissions_unique constraint, so it converges on
+-- the next boot of every tenant and is a no-op thereafter.
+-- ---------------------------------------------------------------------
+INSERT INTO role_permissions (role_id, resource, action, scope)
+SELECT rp.role_id, 'inventory_unit', rp.action, rp.scope
+FROM role_permissions rp
+WHERE rp.resource = 'inventory_item'
+ON CONFLICT (role_id, resource, action) DO NOTHING;
+
+-- Anyone who could already read the item catalogue needs inventory_lookup:read
+-- as well, or their item form loses its unit/warehouse/material dropdowns --
+-- inventory_item_unit_id is NOT NULL (line 2382), so the form becomes
+-- unsubmittable. Read-only grant; the write actions are deliberately NOT
+-- backfilled and must be granted explicitly.
+INSERT INTO role_permissions (role_id, resource, action, scope)
+SELECT rp.role_id, 'inventory_lookup', 'read', rp.scope
+FROM role_permissions rp
+WHERE rp.resource = 'inventory_item' AND rp.action = 'read'
+ON CONFLICT (role_id, resource, action) DO NOTHING;

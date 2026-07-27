@@ -107,6 +107,20 @@ func CutUnit(ctx context.Context, pool *pgxpool.Pool, uuid string, in CutInput, 
 		// path. Cutting it here would deduct the same stone twice.
 		return nil, ClientError{Msg: "This unit is reserved for a job. Release the reservation before cutting it."}
 	}
+	// Same rule as MoveUnitToBin: a sealed bundle is physically banded, and the
+	// slab has to come off the pallet before a saw touches it. Cross-row, so no
+	// CHECK can express it.
+	if p.bundleID != nil {
+		var bundleStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT bundle_status FROM inventory_bundle WHERE inventory_bundle_id = $1`,
+			*p.bundleID).Scan(&bundleStatus); err != nil {
+			return nil, fmt.Errorf("read bundle status: %w", err)
+		}
+		if bundleStatus == BundleSealed {
+			return nil, ClientError{Msg: "This unit is in a sealed bundle. Break the bundle before cutting it."}
+		}
+	}
 
 	// Areas are computed from the millimetres into the ITEM's unit, never taken
 	// from the caller — the same rule as receipt.

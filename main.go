@@ -547,6 +547,22 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Update))
 		mux.Handle("DELETE /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Delete))
 
+		// Bundles: banded pallets of slabs that are handled as a set. Stock lives
+		// on the member units, never on the bundle, so none of these routes
+		// touches the ledger.
+		invBundle := controllers.NewInventoryBundleOps()
+		mux.Handle("GET /api/tenant/inventory/bundles", tenantChain(invBundle.List))
+		mux.Handle("POST /api/tenant/inventory/bundles", tenantChain(invBundle.Create))
+		mux.Handle("GET /api/tenant/inventory/bundles/{uuid}", tenantChain(invBundle.Get))
+		mux.Handle("PATCH /api/tenant/inventory/bundles/{uuid}", tenantChain(invBundle.Update))
+		mux.Handle("DELETE /api/tenant/inventory/bundles/{uuid}", tenantChain(invBundle.Delete))
+		mux.Handle("GET /api/tenant/inventory/bundles/{uuid}/members", tenantChain(invBundle.Members))
+		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/members", tenantChain(invBundle.AddMembers))
+		mux.Handle("DELETE /api/tenant/inventory/bundles/{uuid}/members", tenantChain(invBundle.RemoveMembers))
+		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/seal", tenantChain(invBundle.Seal))
+		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/break", tenantChain(invBundle.Break))
+		mux.Handle("PATCH /api/tenant/inventory/bundles/{uuid}/bin", tenantChain(invBundle.MoveBin))
+
 		// Chart of Accounts — Finance section master data.
 		{
 			coa := controllers.NewChartOfAccountsOps(cipher)

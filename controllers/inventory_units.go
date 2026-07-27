@@ -223,6 +223,30 @@ func (h *InventoryUnitOps) Scrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Unit scrapped."})
 }
 
+// Cut POST /api/tenant/inventory/units/{uuid}/cut — consume a unit and mint the
+// remnants kept from it.
+//
+// Requires update rather than create: the significant effect is destroying the
+// parent, and a role allowed to receive stock should not thereby be allowed to
+// cut up the yard.
+func (h *InventoryUnitOps) Cut(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, ok := h.authByUUID(w, r, authz.ActionUpdate)
+	if !ok {
+		return
+	}
+	var in inventory.CutInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	res, err := inventory.CutUnit(r.Context(), pool, r.PathValue("uuid"), in, resolveEmployeeID(r, identityID))
+	if err != nil {
+		inventoryFail(w, err, "Failed to cut unit.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "result": res})
+}
+
 // History GET /api/tenant/inventory/units/{uuid}/history — the operational
 // trail (bin moves, re-grades, cuts, scrap), distinct from the stock ledger.
 func (h *InventoryUnitOps) History(w http.ResponseWriter, r *http.Request) {

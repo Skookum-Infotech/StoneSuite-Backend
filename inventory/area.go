@@ -92,10 +92,22 @@ type CutOutcome struct {
 //
 // Area is NOT conserved by a cut and pretending otherwise is the bug this
 // function exists to prevent: a saw kerf removes 3-5mm on every pass and small
-// offcuts get dropped. So the parent's full area is consumed, each retained
-// child is recovered at its own measured area, and the difference is recorded
-// as scrap. SUM(ledger deltas) therefore still reconciles with on-hand instead
-// of silently drifting down by the kerf on every cut.
+// offcuts get dropped. The parent's full area is consumed and each retained
+// child is recovered at its own measured area.
+//
+// ScrappedArea is the difference, and it is REPORTING ONLY — it must never
+// become a ledger row. The loss is already fully expressed by consuming more
+// than is recovered:
+//
+//	received  +45.208  -> on-hand 45.208
+//	consumed  -45.208  -> on-hand 0
+//	recovered +42.500  -> on-hand 42.500   correct
+//	scrapped   -2.708  -> on-hand 39.792   WRONG, the kerf counted twice
+//
+// Writing that fourth row is the obvious-looking mistake here, and nothing in
+// the schema would catch it: SUM(ledger deltas) and inventory_stock would agree
+// with each other while both drifting away from the physical yard. The shortfall
+// belongs in inventory_unit_history, which is the operational record.
 func PlanCut(parentArea float64, childAreas []float64) (CutOutcome, error) {
 	if parentArea <= 0 {
 		return CutOutcome{}, ClientError{Msg: "The piece being cut has no recorded area."}

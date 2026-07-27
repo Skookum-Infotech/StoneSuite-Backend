@@ -617,6 +617,7 @@ func main() {
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}", tenantChain(invUnit.Get))
 		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/cut", tenantChain(invUnit.Cut))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
 
 		// The original /inventory/slabs/* paths, served by the same handlers so

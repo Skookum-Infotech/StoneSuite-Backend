@@ -606,11 +606,25 @@ func main() {
 		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.UpdatePiece))
 		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.RemovePiece))
 
-		// Serialized slab catalog (physical instances of inventory items).
-		invSlab := controllers.NewInventorySlabOps()
-		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invSlab.Create))
-		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invSlab.Get))
-		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invSlab.Scrap))
+		// Serialized physical stock — individual slabs and the remnants cut from
+		// them. Guarded by inventory_unit:*, which tenant/schema.sql backfills
+		// from inventory_item:* so no existing role loses access.
+		invUnit := controllers.NewInventoryUnitOps()
+		mux.Handle("GET /api/tenant/inventory/units", tenantChain(invUnit.List))
+		mux.Handle("POST /api/tenant/inventory/units/search", tenantChain(invUnit.Search))
+		mux.Handle("GET /api/tenant/inventory/units/remnants", tenantChain(invUnit.Remnants))
+		mux.Handle("POST /api/tenant/inventory/units", tenantChain(invUnit.Create))
+		mux.Handle("GET /api/tenant/inventory/units/{uuid}", tenantChain(invUnit.Get))
+		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
+		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
+
+		// The original /inventory/slabs/* paths, served by the same handlers so
+		// the frontend can migrate to /units without a flag day. Remove once it
+		// has.
+		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invUnit.Create))
+		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invUnit.Get))
+		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invUnit.Scrap))
 
 		// Estimate: dedicated v2 relational module (header + line items + approval),
 		// a sibling of Sales Order/Invoice — not served through the generic

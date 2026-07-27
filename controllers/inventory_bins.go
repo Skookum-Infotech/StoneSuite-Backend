@@ -57,8 +57,13 @@ func (h *InventoryBinOps) auth(w http.ResponseWriter, r *http.Request, action au
 	return pool, payload.ID, true
 }
 
-// authByUUID adds the existence guard for single-record routes, 404ing rather
-// than 403ing so bin ids cannot be enumerated.
+// authByUUID adds the existence guard for single-record MUTATIONS, 404ing
+// rather than 403ing so bin ids cannot be enumerated.
+//
+// Read handlers deliberately do not call it: GetBin already returns ErrNotFound
+// for a missing or malformed uuid and inventoryFail maps that to 404, so the
+// guard would fetch the same row twice for no gain. Bins are tenant-global with
+// no owner column, so there is no ownership state to leak on a read.
 func (h *InventoryBinOps) authByUUID(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
 	pool, identityID, ok := h.auth(w, r, action)
 	if !ok {

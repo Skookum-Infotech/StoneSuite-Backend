@@ -54,10 +54,14 @@ func (h *InventoryWarehouseOps) auth(w http.ResponseWriter, r *http.Request, act
 	return pool, payload.ID, true
 }
 
-// authByUUID adds the existence guard for single-record routes. Warehouses are
-// tenant-global with no owner, so this is an existence check rather than an
+// authByUUID adds the existence guard for single-record MUTATIONS. Warehouses
+// are tenant-global with no owner, so this is an existence check rather than an
 // ownership check — but it still 404s, because the reason (not letting ids be
 // enumerated) is the same.
+//
+// Read handlers deliberately do not call it: GetWarehouse already returns
+// ErrNotFound for a missing or malformed uuid and inventoryFail maps that to
+// 404, so the guard would only fetch the same row twice.
 func (h *InventoryWarehouseOps) authByUUID(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
 	pool, identityID, ok := h.auth(w, r, action)
 	if !ok {

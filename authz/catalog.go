@@ -52,6 +52,21 @@ const (
 	ResourceVendorCredit  Resource = "vendor_credit"
 	ResourceExpense       Resource = "expense"
 
+	// Inventory module resources. inventory_item (above, under Sales) is the
+	// catalogue; these cover the physical side of the warehouse.
+	//
+	// inventory_unit is deliberately separate from inventory_item so a yard or
+	// warehouse clerk can be granted stock handling without also being granted
+	// catalogue edit rights. Splitting them retires a permission that slab
+	// routes used to sit under, so tenant/schema.sql carries a one-time backfill
+	// granting inventory_unit:<action> to every role that already held
+	// inventory_item:<action> — without it every custom role silently 403s.
+	ResourceInventoryUnit   Resource = "inventory_unit"   // serialized units: slabs and remnants
+	ResourceInventoryBin    Resource = "inventory_bin"    // bin/location master
+	ResourceInventoryBundle Resource = "inventory_bundle" // bundles that move as a set
+	ResourceWarehouse       Resource = "warehouse"        // lkp_warehouse master
+	ResourceInventoryLookup Resource = "inventory_lookup" // material/colour/finish/reason vocabularies
+
 	// Finance
 	ResourceChartOfAccount Resource = "chart_of_account"
 
@@ -123,6 +138,37 @@ var catalog = []Permission{
 	{ResourceInventoryItem, ActionRead},
 	{ResourceInventoryItem, ActionUpdate},
 	{ResourceInventoryItem, ActionDelete},
+
+	// Inventory: physical stock. No ActionTransition on any of these — none is
+	// a status document with a workflow. The Phase 3 adjustment/transfer/count
+	// documents will each need transition and approve.
+	{ResourceInventoryUnit, ActionCreate},
+	{ResourceInventoryUnit, ActionRead},
+	{ResourceInventoryUnit, ActionUpdate},
+	{ResourceInventoryUnit, ActionDelete},
+
+	{ResourceInventoryBin, ActionCreate},
+	{ResourceInventoryBin, ActionRead},
+	{ResourceInventoryBin, ActionUpdate},
+	{ResourceInventoryBin, ActionDelete},
+
+	{ResourceInventoryBundle, ActionCreate},
+	{ResourceInventoryBundle, ActionRead},
+	{ResourceInventoryBundle, ActionUpdate},
+	{ResourceInventoryBundle, ActionDelete},
+
+	{ResourceWarehouse, ActionCreate},
+	{ResourceWarehouse, ActionRead},
+	{ResourceWarehouse, ActionUpdate},
+	{ResourceWarehouse, ActionDelete},
+
+	// Read is separated from the write actions here on purpose: every inventory
+	// form needs the vocabularies to populate its dropdowns, so a bin clerk
+	// needs inventory_lookup:read without any right to edit the vocabulary.
+	{ResourceInventoryLookup, ActionCreate},
+	{ResourceInventoryLookup, ActionRead},
+	{ResourceInventoryLookup, ActionUpdate},
+	{ResourceInventoryLookup, ActionDelete},
 
 	{ResourceEstimate, ActionCreate},
 	{ResourceEstimate, ActionRead},

@@ -514,6 +514,38 @@ func main() {
 		mux.Handle("GET /api/tenant/inventory/items/{uuid}", tenantChain(inv.Get))
 		mux.Handle("PATCH /api/tenant/inventory/items/{uuid}", tenantChain(inv.Update))
 		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
+		mux.Handle("GET /api/tenant/inventory/items/{uuid}/history", tenantChain(inv.History))
+
+		// Inventory vocabularies. Registered BEFORE the {uuid} routes above
+		// would matter only if they shared a prefix — they do not, but the
+		// lookups routes are what unblock every inventory form, since nothing
+		// in the app previously returned lkp_unit or lkp_warehouse and
+		// inventory_item_unit_id is NOT NULL.
+		invLookup := controllers.NewInventoryLookupOps()
+		mux.Handle("GET /api/tenant/inventory/lookups", tenantChain(invLookup.All))
+		mux.Handle("GET /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.List))
+		mux.Handle("POST /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.Create))
+		mux.Handle("PATCH /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Update))
+		mux.Handle("DELETE /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Delete))
+
+		// Warehouses: master data that has existed in lkp_warehouse since the
+		// sales-order migration but never had a route.
+		invWh := controllers.NewInventoryWarehouseOps()
+		mux.Handle("GET /api/tenant/inventory/warehouses", tenantChain(invWh.List))
+		mux.Handle("POST /api/tenant/inventory/warehouses", tenantChain(invWh.Create))
+		mux.Handle("GET /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Get))
+		mux.Handle("PATCH /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Update))
+		mux.Handle("DELETE /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Delete))
+		mux.Handle("POST /api/tenant/inventory/warehouses/{uuid}/set-default", tenantChain(invWh.SetDefault))
+
+		// Bins: yards, racks, A-frames, aisles and shelves inside a warehouse.
+		invBin := controllers.NewInventoryBinOps()
+		mux.Handle("GET /api/tenant/inventory/bins", tenantChain(invBin.List))
+		mux.Handle("GET /api/tenant/inventory/bins/tree", tenantChain(invBin.Tree))
+		mux.Handle("POST /api/tenant/inventory/bins", tenantChain(invBin.Create))
+		mux.Handle("GET /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Get))
+		mux.Handle("PATCH /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Update))
+		mux.Handle("DELETE /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Delete))
 
 		// Chart of Accounts — Finance section master data.
 		{

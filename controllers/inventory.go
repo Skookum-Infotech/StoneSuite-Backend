@@ -52,6 +52,8 @@ func (h *InventoryOps) authInventory(w http.ResponseWriter, r *http.Request, act
 		return nil, "", false
 	}
 	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", payload.ID, "resource", string(authz.ResourceInventoryItem), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" inventory items.")
 		return nil, "", false
 	}
@@ -169,6 +171,21 @@ func (h *InventoryOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Item updated."})
+}
+
+// History GET /api/tenant/inventory/items/{uuid}/history — the catalogue audit
+// trail. Distinct from a unit's history, which tracks physical movement.
+func (h *InventoryOps) History(w http.ResponseWriter, r *http.Request) {
+	pool, _, ok := h.authInventory(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	entries, err := inventory.ItemHistory(r.Context(), pool, r.PathValue("uuid"))
+	if err != nil {
+		inventoryFail(w, err, "Failed to load item history.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": entries})
 }
 
 // Delete DELETE /api/tenant/inventory/items/{uuid}

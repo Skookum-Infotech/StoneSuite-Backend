@@ -31,7 +31,8 @@
 - `journal/types.go` — `LineInput`, `CreateEntryInput`, `JournalEntryLine`, `JournalEntry`
 - `journal/numbering.go` + `_test.go` — `JE-000001` formatter
 - `journal/period.go` + `_test.go` — `isClosed` (pure) + `IsPeriodClosed` (DB read)
-- `journal/store.go` + `_test.go` (dbtest) — local `querier` interface, `nullableInt`, `round2`, `ErrUnbalancedEntry`, `ErrInvalidLine`, `validateLines`, `CreateEntry`
+- `journal/store.go` + `_test.go` (pure `TestValidateLines`) — local `querier` interface, `nullableInt`, `round2`, `ErrUnbalancedEntry`, `ErrInvalidLine`, `validateLines`, `CreateEntry`
+- `journal/store_dbtest_test.go` (dbtest) — the spec §7-equivalent integration tests for `journal/`
 - `journal/reverse.go` — `ReverseEntry`
 - `cashtransfer/types.go` — `AccountRef`, `CashTransfer`, `CreateInput`, `UpdateInput`, `Page`
 - `cashtransfer/errors.go` — `ErrNotFound`, `ErrInvalidTransition`, `ErrAlreadyPosted`, `ErrNotPosted`, `ErrPeriodClosed`, `ClientError`
@@ -2427,8 +2428,8 @@ Match the exact indentation of the surrounding block (tabs, nested inside the sa
 
 ## Phase 7 — Database-backed integration tests
 
-### Task 7.1: `journal/store_test.go`
-- [ ] **Step 1:** Implement `journal/store_test.go` (mirrors `itemreceipt/store_test.go`'s `//go:build dbtest` + skip-guard shape):
+### Task 7.1: `journal/store_dbtest_test.go`
+- [ ] **Step 1:** `journal/store_test.go` already exists (Task 2.4 — pure, untagged `TestValidateLines`). Do **not** reuse that filename: put the dbtest suite in `journal/store_dbtest_test.go` instead, following the `_dbtest_test.go` naming this repo already uses to keep pure and dbtest-tagged tests apart when they'd otherwise share a base name (see `chartofaccounts/store_dbtest_test.go`, `store_dbtest_guard_test.go`, `store_dbtest_misc_test.go`). Implement `journal/store_dbtest_test.go` (mirrors `itemreceipt/store_test.go`'s `//go:build dbtest` + skip-guard shape):
 
 ```go
 //go:build dbtest

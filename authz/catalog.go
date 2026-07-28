@@ -67,6 +67,17 @@ const (
 	ResourceWarehouse       Resource = "warehouse"        // lkp_warehouse master
 	ResourceInventoryLookup Resource = "inventory_lookup" // material/colour/finish/reason vocabularies
 
+	// Phase 3 stock documents. Each is a status document, so each carries
+	// ActionTransition and ActionApprove on top of CRUD.
+	//
+	// They are separate resources rather than actions on inventory_unit because
+	// the authority differs in kind: a yard clerk moves and receives stone all
+	// day, but writing stock off or signing off a count variance is a
+	// controller's job. One resource would make those inseparable.
+	ResourceInventoryAdjustment Resource = "inventory_adjustment" // manual stock correction
+	ResourceInventoryTransfer   Resource = "inventory_transfer"   // warehouse-to-warehouse movement
+	ResourceInventoryCount      Resource = "inventory_count"      // cycle count / stock take
+
 	// Finance
 	ResourceChartOfAccount Resource = "chart_of_account"
 
@@ -139,9 +150,9 @@ var catalog = []Permission{
 	{ResourceInventoryItem, ActionUpdate},
 	{ResourceInventoryItem, ActionDelete},
 
-	// Inventory: physical stock. No ActionTransition on any of these — none is
-	// a status document with a workflow. The Phase 3 adjustment/transfer/count
-	// documents will each need transition and approve.
+	// Inventory: physical stock. No ActionTransition on the four master-data
+	// resources below — none is a status document with a workflow. The three
+	// Phase 3 documents further down do carry transition and approve.
 	{ResourceInventoryUnit, ActionCreate},
 	{ResourceInventoryUnit, ActionRead},
 	{ResourceInventoryUnit, ActionUpdate},
@@ -161,6 +172,32 @@ var catalog = []Permission{
 	{ResourceWarehouse, ActionRead},
 	{ResourceWarehouse, ActionUpdate},
 	{ResourceWarehouse, ActionDelete},
+
+	// The three Phase 3 stock documents. ActionApprove gates the move into the
+	// approved state and is deliberately distinct from ActionTransition: the
+	// point of an approval step is that the person who raised a write-off is
+	// not the person who signs it off, and one shared action would collapse
+	// that into a single grant.
+	{ResourceInventoryAdjustment, ActionCreate},
+	{ResourceInventoryAdjustment, ActionRead},
+	{ResourceInventoryAdjustment, ActionUpdate},
+	{ResourceInventoryAdjustment, ActionDelete},
+	{ResourceInventoryAdjustment, ActionTransition},
+	{ResourceInventoryAdjustment, ActionApprove},
+
+	{ResourceInventoryTransfer, ActionCreate},
+	{ResourceInventoryTransfer, ActionRead},
+	{ResourceInventoryTransfer, ActionUpdate},
+	{ResourceInventoryTransfer, ActionDelete},
+	{ResourceInventoryTransfer, ActionTransition},
+	{ResourceInventoryTransfer, ActionApprove},
+
+	{ResourceInventoryCount, ActionCreate},
+	{ResourceInventoryCount, ActionRead},
+	{ResourceInventoryCount, ActionUpdate},
+	{ResourceInventoryCount, ActionDelete},
+	{ResourceInventoryCount, ActionTransition},
+	{ResourceInventoryCount, ActionApprove},
 
 	// Read is separated from the write actions here on purpose: every inventory
 	// form needs the vocabularies to populate its dropdowns, so a bin clerk

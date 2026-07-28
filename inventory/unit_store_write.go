@@ -144,8 +144,13 @@ func MoveUnitToBin(ctx context.Context, pool *pgxpool.Pool, uuid string, in Move
 	if err != nil {
 		return err
 	}
-	if u.status == "consumed" || u.status == "scrapped" {
+	if u.status == StatusConsumed || u.status == StatusScrapped {
 		return ClientError{Msg: "A consumed or scrapped unit cannot be moved."}
+	}
+	if u.status == StatusInTransit {
+		// It is on a truck between two warehouses and holds no bin at all, so a
+		// bin move here would file it into a rack it has not reached.
+		return ClientError{Msg: "This unit is in transit. Receive its transfer before moving it to a bin."}
 	}
 	// A sealed bundle is physically banded to a pallet: moving one member means
 	// cutting the bands. Cross-row, so no CHECK can express it.
@@ -162,6 +167,12 @@ func MoveUnitToBin(ctx context.Context, pool *pgxpool.Pool, uuid string, in Move
 
 	newBin, err := resolveUnitBin(ctx, tx, in.BinUUID, u.warehouseID)
 	if err != nil {
+		return err
+	}
+	// BOTH ends are checked against a live cycle count. Guarding only the source
+	// would still let stock be moved INTO a frozen bin, which corrupts that
+	// bin's count just as thoroughly as moving stock out of it.
+	if err := checkBinMoveNotFrozen(ctx, tx, u.warehouseID, u.binID, newBin); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -201,8 +212,13 @@ func ScrapUnit(ctx context.Context, pool *pgxpool.Pool, uuid string, reasonID *i
 	if err != nil {
 		return err
 	}
-	if u.status == "scrapped" {
+	if u.status == StatusScrapped {
 		return ClientError{Msg: "This unit is already scrapped."}
+	}
+	if u.status == StatusInTransit {
+		// Writing it off mid-transfer would deduct stock the ship leg has already
+		// deducted, and leave the receive leg with nothing to land.
+		return ClientError{Msg: "This unit is in transit. Receive or cancel its transfer before scrapping it."}
 	}
 
 	if u.status == "reserved" {

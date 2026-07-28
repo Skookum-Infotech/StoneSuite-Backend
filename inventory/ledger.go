@@ -31,16 +31,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Ledger events. Both ledgers constrain these with a CHECK; 'adjusted' is legal
-// on each and is written by nothing yet — the future stock-adjustment document
-// is its intended writer.
+// Ledger events. Both ledgers constrain these with a CHECK.
+//
+// 'adjusted' is written by the adjustment and cycle-count documents;
+// 'transferred' by the two legs of a warehouse transfer. Keeping transfers off
+// 'adjusted' is what stops every shrinkage report counting routine
+// yard-to-yard movement as loss.
 const (
-	EventReceived  = "received"
-	EventReturned  = "returned"
-	EventConsumed  = "consumed"
-	EventRecovered = "recovered"
-	EventScrapped  = "scrapped"
-	EventAdjusted  = "adjusted"
+	EventReceived    = "received"
+	EventReturned    = "returned"
+	EventConsumed    = "consumed"
+	EventRecovered   = "recovered"
+	EventScrapped    = "scrapped"
+	EventAdjusted    = "adjusted"
+	EventTransferred = "transferred"
 )
 
 // Sentinels returned by applyStockDelta so each caller can attach its own

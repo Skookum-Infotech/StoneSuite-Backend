@@ -140,6 +140,9 @@ func MoveBundle(ctx context.Context, pool *pgxpool.Pool, uuid string, in MoveBun
 	if err != nil {
 		return err
 	}
+	if err := checkBinMoveNotFrozen(ctx, tx, b.warehouseID, b.binID, newBin); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_bundle SET inventory_bin_id = $2, bundle_updated_at = NOW(),
 		       bundle_updated_by = $3, bundle_record_version = bundle_record_version + 1

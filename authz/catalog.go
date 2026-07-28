@@ -54,6 +54,7 @@ const (
 
 	// Finance
 	ResourceChartOfAccount Resource = "chart_of_account"
+	ResourceCashTransfer   Resource = "cash_transfer"
 
 	// ResourceAny is the wildcard resource. Granting it matches every resource;
 	// it is how the seeded super_admin role is expressed as a single row.
@@ -243,6 +244,12 @@ var catalog = []Permission{
 	{ResourceChartOfAccount, ActionUpdate},
 	{ResourceChartOfAccount, ActionDelete},
 	{ResourceChartOfAccount, ActionConfigure},
+
+	{ResourceCashTransfer, ActionCreate},
+	{ResourceCashTransfer, ActionRead},
+	{ResourceCashTransfer, ActionUpdate},
+	{ResourceCashTransfer, ActionDelete},
+	{ResourceCashTransfer, ActionTransition},
 
 	{ResourceUser, ActionCreate},
 	{ResourceUser, ActionRead},

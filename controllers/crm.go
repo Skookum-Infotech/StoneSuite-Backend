@@ -86,6 +86,8 @@ func resourceForKey(key string) authz.Resource {
 		return authz.ResourceVendorCredit
 	case "expense":
 		return authz.ResourceExpense
+	case "cash_transfer":
+		return authz.ResourceCashTransfer
 	default:
 		return authz.ResourceRecord
 	}

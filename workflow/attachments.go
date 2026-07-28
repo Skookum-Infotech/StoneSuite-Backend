@@ -171,6 +171,23 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 		return RecordAccessInfo{}, fmt.Errorf("lookup sales order: %w", err)
 	}
 
+	// cash_transfer: dedicated relational module (Cash Transfer spec), owner
+	// resolved the same way (employee -> users.id); no team column.
+	var ctOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM cash_transfer ct
+		LEFT JOIN employee e ON e.employee_id = ct.cash_transfer_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE ct.cash_transfer_uuid = $1::uuid AND ct.cash_transfer_deleted_at IS NULL`,
+		recordID).Scan(&ctOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "cash_transfer", OwnerUserID: ctOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup cash transfer: %w", err)
+	}
+
 	return RecordAccessInfo{}, ErrRecordNotFound
 }
 

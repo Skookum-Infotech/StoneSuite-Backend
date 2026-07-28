@@ -532,6 +532,23 @@ func main() {
 			mux.Handle("PATCH /api/tenant/finance/account-defaults/{slotKey}", tenantChain(coa.RepointDefault))
 		}
 
+		// Cash Transfer: second module of the Finance section — moves funds
+		// between two Cash/Bank GL accounts. /post creates a balanced journal
+		// entry (debit destination, credit source) and updates both accounts'
+		// running balances; /reverse creates the reversing entry. Neither can
+		// run twice (spec docs/superpowers/specs/2026-07-28-cash-transfer-design.md).
+		ctOps := controllers.NewCashTransferOps()
+		mux.Handle("GET /api/tenant/finance/cash-transfers", tenantChain(ctOps.List))
+		mux.Handle("POST /api/tenant/finance/cash-transfers/search", tenantChain(ctOps.Search))
+		mux.Handle("POST /api/tenant/finance/cash-transfers", tenantChain(ctOps.Create))
+		mux.Handle("GET /api/tenant/finance/cash-transfers/{uuid}", tenantChain(ctOps.Get))
+		mux.Handle("PATCH /api/tenant/finance/cash-transfers/{uuid}", tenantChain(ctOps.Update))
+		mux.Handle("DELETE /api/tenant/finance/cash-transfers/{uuid}", tenantChain(ctOps.Delete))
+		mux.Handle("POST /api/tenant/finance/cash-transfers/{uuid}/transition", tenantChain(ctOps.Transition))
+		mux.Handle("POST /api/tenant/finance/cash-transfers/{uuid}/post", tenantChain(ctOps.Post))
+		mux.Handle("POST /api/tenant/finance/cash-transfers/{uuid}/reverse", tenantChain(ctOps.Reverse))
+		mux.Handle("GET /api/tenant/finance/cash-transfers/{uuid}/audit", tenantChain(ctOps.Audit))
+
 		// Sales Order: dedicated relational module (header + line items), a
 		// sibling of the CRM customer table — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.

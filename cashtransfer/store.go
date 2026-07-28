@@ -177,3 +177,32 @@ func resolveAccount(ctx context.Context, pool *pgxpool.Pool, accountUUID, label 
 	}
 	return id, nil
 }
+
+// checkAccountEligible re-validates that accountID (already resolved at
+// Create/Update time) is still a live, active, postable Bank or Cash account
+// at the moment of posting (spec AD-7) -- the account may have been
+// deactivated, retyped, or un-posted after this transfer was created or
+// approved, so Post must not trust resolveAccount's answer from an earlier
+// step. label is "Source" or "Destination", used in the error message.
+func checkAccountEligible(ctx context.Context, q workflow.Querier, accountID int, label string) error {
+	var acctType string
+	var active, postable bool
+	err := q.QueryRow(ctx, `
+		SELECT coa_account_type, coa_account_is_active, coa_account_is_postable
+		FROM coa_account
+		WHERE coa_account_id = $1 AND coa_account_deleted_at IS NULL`, accountID,
+	).Scan(&acctType, &active, &postable)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ClientError{Msg: fmt.Sprintf("%s account no longer exists.", label)}
+	}
+	if err != nil {
+		return fmt.Errorf("check %s account eligibility: %w", label, err)
+	}
+	if acctType != "bank" && acctType != "cash" {
+		return ClientError{Msg: fmt.Sprintf("%s account is no longer a Bank or Cash account.", label)}
+	}
+	if !active || !postable {
+		return ClientError{Msg: fmt.Sprintf("%s account is no longer active and postable.", label)}
+	}
+	return nil
+}

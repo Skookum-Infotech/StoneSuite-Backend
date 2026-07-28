@@ -23,6 +23,14 @@ func TestResolverResolve(t *testing.T) {
 		{"cf:department", true},
 		{"cf:INVALID KEY", false},
 		{"not_a_real_field", false},
+		// Anything not whitelisted must be rejected — an unresolved key is a
+		// 400, never interpolated SQL.
+		{"raw column name is not a key", false},
+		{"id; DROP TABLE cash_transfer", false},
+		{"cf:foo'bar", false},
+		{"cf:1foo", false},
+		{"cf:Foo", false},
+		{"cf:", false},
 	}
 	for _, tt := range tests {
 		if _, _, ok := r.Resolve(tt.key); ok != tt.wantOK {

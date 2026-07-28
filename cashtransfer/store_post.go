@@ -60,6 +60,13 @@ func Post(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID 
 		return nil, ErrPeriodClosed
 	}
 
+	if err := checkAccountEligible(ctx, tx, fromAccountID, "Source"); err != nil {
+		return nil, err
+	}
+	if err := checkAccountEligible(ctx, tx, toAccountID, "Destination"); err != nil {
+		return nil, err
+	}
+
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, recordTypeCode)
 	if err != nil {
 		return nil, fmt.Errorf("resolve CTRF record type: %w", err)

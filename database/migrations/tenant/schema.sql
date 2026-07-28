@@ -5877,3 +5877,553 @@ SELECT rp.role_id, 'inventory_lookup', 'read', rp.scope
 FROM role_permissions rp
 WHERE rp.resource = 'inventory_item' AND rp.action = 'read'
 ON CONFLICT (role_id, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- INVENTORY MANAGEMENT -- PHASE 3: TRANSFER, ADJUSTMENT, CYCLE COUNT
+-- =====================================================================
+--
+-- Spec: docs/superpowers/specs/2026-07-26-inventory-module-design.md
+--
+-- The three documents AD-6 deferred. Their record types (IADJ/ITRF/ICNT),
+-- statuses and lkp_inventory_reason were seeded in the Phase 1 section, so this
+-- section adds only tables, three CHECK widenings and the once-only indexes.
+--
+-- All three handle BOTH stock models. A line carries an optional
+-- inventory_slab_id: set means "this specific slab", unset means "this many of
+-- a quantity-tracked item". That keeps one document per business event instead
+-- of a serialized document and a bulk document that would inevitably drift.
+--
+-- Bin transfer is NOT here. Bins locate serialized units and inventory_stock is
+-- keyed (item, warehouse), so moving a unit between bins is stock-neutral by
+-- construction and shipped in Phase 2 as PATCH /units/{uuid}/bin (AD-2).
+--
+-- FK order below is load-bearing:
+--   CHECK widenings -> slab ledger source columns -> adjustment -> transfer ->
+--   count -> once-only ledger indexes
+--
+
+-- ---------------------------------------------------------------------
+-- 1. Widen three CHECK constraints.
+--
+-- Each is a pure RELAXATION: every value accepted by the old constraint is
+-- accepted by the new one, so no existing row can fail revalidation and the
+-- rewrite cannot break a tenant holding real data. That is what makes
+-- DROP + ADD acceptable here where it would not be for a narrowing change.
+--
+-- DROP CONSTRAINT IF EXISTS followed by an unconditional ADD is idempotent on
+-- its own -- the drop makes the add safe on every boot -- so these need no
+-- pg_constraint existence guard, unlike a bare ADD CONSTRAINT.
+-- ---------------------------------------------------------------------
+
+-- 'transferred' distinguishes the two legs of a warehouse transfer from an
+-- 'adjusted' write-off. Recording a transfer as an adjustment would make every
+-- shrinkage report count routine yard-to-yard movement as loss.
+DO $$
+BEGIN
+    ALTER TABLE inventory_ledger DROP CONSTRAINT IF EXISTS chk_inventory_ledger_event;
+    ALTER TABLE inventory_ledger ADD CONSTRAINT chk_inventory_ledger_event
+        CHECK (event IN ('received','returned','adjusted','consumed','transferred'));
+END $$;
+
+DO $$
+BEGIN
+    ALTER TABLE inventory_slab_ledger DROP CONSTRAINT IF EXISTS chk_slab_ledger_event;
+    ALTER TABLE inventory_slab_ledger ADD CONSTRAINT chk_slab_ledger_event
+        CHECK (event IN ('received','consumed','recovered','scrapped','adjusted','transferred'));
+END $$;
+
+-- 'in_transit' is what makes a two-legged transfer honest. Stock leaves the
+-- source before it reaches the destination, and without this state a slab in a
+-- truck would have to be recorded as still standing in the yard it left --
+-- so a cycle count of that yard would report it missing and write it off.
+DO $$
+BEGIN
+    ALTER TABLE inventory_slab DROP CONSTRAINT IF EXISTS chk_slab_status;
+    ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_status
+        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit'));
+END $$;
+
+-- ---------------------------------------------------------------------
+-- 2. Source-document columns on inventory_slab_ledger.
+--
+-- The bulk ledger has carried these since it was created; the slab ledger never
+-- did, so "which document moved this slab?" was unanswerable. They also give
+-- the transfer legs a once-only key, which the existing per-(slab,event) unique
+-- indexes cannot: a slab may legitimately be transferred many times over its
+-- life, so uniqueness has to be per source LINE, not per slab.
+-- ---------------------------------------------------------------------
+ALTER TABLE inventory_slab_ledger ADD COLUMN IF NOT EXISTS
+    source_record_type  INTEGER NULL REFERENCES lkp_record_type(record_type_id);
+ALTER TABLE inventory_slab_ledger ADD COLUMN IF NOT EXISTS
+    source_record_id    INTEGER NULL;
+ALTER TABLE inventory_slab_ledger ADD COLUMN IF NOT EXISTS
+    source_line_id      INTEGER NULL;
+CREATE INDEX IF NOT EXISTS idx_slab_ledger_source
+    ON inventory_slab_ledger (source_record_type, source_record_id);
+
+-- ---------------------------------------------------------------------
+-- 3. inventory_adjustment -- manual reconciliation, damage, shrinkage.
+--
+-- Statuses (seeded above): DRFT -> PAPV -> APPV -> POST, or CANC.
+-- Approval is enforced by RBAC (inventory_adjustment:approve gates PAPV->APPV)
+-- and trailed in inventory_adjustment_history, rather than by the named-approver
+-- pair fabrication_job_approver/_approval. Those two tables exist to ROUTE an
+-- approval to specific people; nothing here asks for routing, and adding them
+-- unused would be exactly the speculative drift AD-6 warns about.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_adjustment (
+    inventory_adjustment_id       SERIAL        PRIMARY KEY,
+    inventory_adjustment_uuid     UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id                INTEGER           NULL,  -- platform owner stamp, no cross-DB FK
+    adjustment_number             VARCHAR(20)       NULL,  -- 'IADJ-000001', generated post-insert in Go
+
+    record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = IADJ
+    adjustment_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    warehouse_id                  INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    adjustment_date               DATE          NOT NULL DEFAULT CURRENT_DATE,
+    -- Header reason is the default a line inherits when it names none. A line
+    -- reason is still required at post time -- see chk_iadjl_reason.
+    inventory_reason_id           INTEGER           NULL REFERENCES lkp_inventory_reason(inventory_reason_id),
+    adjustment_notes              TEXT          NOT NULL DEFAULT '',
+    adjustment_internal_notes     TEXT          NOT NULL DEFAULT '',
+
+    adjustment_owner_id           INTEGER           NULL REFERENCES employee(employee_id),
+
+    adjustment_posted_at          TIMESTAMP         NULL,
+    adjustment_posted_by          INTEGER           NULL REFERENCES employee(employee_id),
+    adjustment_cancelled_at       TIMESTAMP         NULL,
+    adjustment_cancelled_by       INTEGER           NULL REFERENCES employee(employee_id),
+    adjustment_cancel_reason      TEXT          NOT NULL DEFAULT '',
+
+    adjustment_custom_fields      JSONB         NOT NULL DEFAULT '{}',
+    adjustment_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    adjustment_created_by         INTEGER           NULL REFERENCES employee(employee_id),
+    adjustment_updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    adjustment_updated_by         INTEGER           NULL REFERENCES employee(employee_id),
+    adjustment_deleted_at         TIMESTAMP         NULL,
+    adjustment_deleted_by         INTEGER           NULL REFERENCES employee(employee_id),
+    adjustment_record_version     INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_inventory_adjustment_uuid   UNIQUE (inventory_adjustment_uuid),
+    CONSTRAINT uq_inventory_adjustment_number UNIQUE (adjustment_number),
+    CONSTRAINT chk_iadj_soft_delete CHECK (
+        (adjustment_deleted_at IS NULL AND adjustment_deleted_by IS NULL) OR
+        (adjustment_deleted_at IS NOT NULL AND adjustment_deleted_by IS NOT NULL)),
+    CONSTRAINT chk_iadj_posted_pair CHECK (
+        (adjustment_posted_at IS NULL AND adjustment_posted_by IS NULL) OR
+        (adjustment_posted_at IS NOT NULL AND adjustment_posted_by IS NOT NULL)),
+    CONSTRAINT chk_iadj_cancel_pair CHECK (
+        (adjustment_cancelled_at IS NULL AND adjustment_cancelled_by IS NULL) OR
+        (adjustment_cancelled_at IS NOT NULL AND adjustment_cancelled_by IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_iadj_status     ON inventory_adjustment (adjustment_status)  WHERE adjustment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_iadj_warehouse  ON inventory_adjustment (warehouse_id)       WHERE adjustment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_iadj_owner      ON inventory_adjustment (adjustment_owner_id) WHERE adjustment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_iadj_created_id ON inventory_adjustment (adjustment_created_at, inventory_adjustment_id) WHERE adjustment_deleted_at IS NULL;
+
+-- inventory_adjustment_line -- one item's correction.
+--
+-- qty_delta is SIGNED and in the item's own unit: negative writes stock off,
+-- positive puts it back. For a serialized line it is derived from the slab's
+-- area at post time and never taken from the caller, the same rule that governs
+-- receipt and cutting -- nothing forces slab_area_unit_id to equal the item's
+-- unit, so a trusted client value is how a SQM measurement lands against a
+-- SQFT item, wrong by 10.76x with no constraint to catch it.
+CREATE TABLE IF NOT EXISTS inventory_adjustment_line (
+    inventory_adjustment_line_id   SERIAL        PRIMARY KEY,
+    inventory_adjustment_line_uuid UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_adjustment_id        INTEGER       NOT NULL REFERENCES inventory_adjustment(inventory_adjustment_id) ON DELETE CASCADE,
+    line_number                    INTEGER       NOT NULL,
+
+    inventory_item_id              INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    -- NULL = quantity-tracked line; set = this one physical slab.
+    inventory_slab_id              INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id),
+    inventory_reason_id            INTEGER       NOT NULL REFERENCES lkp_inventory_reason(inventory_reason_id),
+
+    item_name                      VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                            VARCHAR(50)   NOT NULL DEFAULT '',
+    unit_id                        INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                      VARCHAR(10)   NOT NULL DEFAULT '',
+    slab_serial                    VARCHAR(80)   NOT NULL DEFAULT '',
+
+    qty_delta                      DECIMAL(14,3) NOT NULL,
+    line_notes                     TEXT          NOT NULL DEFAULT '',
+
+    line_created_at                TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_created_by                INTEGER           NULL REFERENCES employee(employee_id),
+    line_updated_at                TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_deleted_at                TIMESTAMP         NULL,
+    line_record_version            INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_iadjl_uuid UNIQUE (inventory_adjustment_line_uuid),
+    -- A zero adjustment is a no-op that would still consume a reason code and a
+    -- ledger row, so it is refused rather than silently ignored.
+    CONSTRAINT chk_iadjl_delta  CHECK (qty_delta <> 0),
+    CONSTRAINT chk_iadjl_reason CHECK (inventory_reason_id IS NOT NULL),
+    -- A serialized line carries the serial it froze, so the document still reads
+    -- correctly after the slab is consumed and its row moves on.
+    CONSTRAINT chk_iadjl_serial CHECK (inventory_slab_id IS NULL OR slab_serial <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_iadjl_parent ON inventory_adjustment_line (inventory_adjustment_id) WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_iadjl_item   ON inventory_adjustment_line (inventory_item_id)       WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_iadjl_slab   ON inventory_adjustment_line (inventory_slab_id)       WHERE line_deleted_at IS NULL;
+-- One live line per slab per document: adjusting the same slab twice on one
+-- document would post two write-offs for one physical event.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_iadjl_slab_once
+    ON inventory_adjustment_line (inventory_adjustment_id, inventory_slab_id)
+    WHERE inventory_slab_id IS NOT NULL AND line_deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS inventory_adjustment_history (
+    inventory_adjustment_history_id SERIAL      PRIMARY KEY,
+    inventory_adjustment_id         INTEGER     NOT NULL REFERENCES inventory_adjustment(inventory_adjustment_id) ON DELETE CASCADE,
+    from_status_id                  INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                    INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    action                          VARCHAR(32) NOT NULL DEFAULT 'transition',
+    actor_employee_id               INTEGER         NULL REFERENCES employee(employee_id),
+    snapshot                        JSONB       NOT NULL DEFAULT '{}',
+    at                              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_iadj_history ON inventory_adjustment_history (inventory_adjustment_id, at DESC);
+
+-- ---------------------------------------------------------------------
+-- 4. inventory_transfer -- stock moving between warehouses.
+--
+-- Statuses (seeded above): DRFT -> PAPV -> APPV -> TRNS -> RCVD, or CANC.
+--
+-- Genuinely two-legged, which is why it has TRNS/RCVD where the adjustment has
+-- a single POST: stock leaves the source at ship and arrives at the destination
+-- at receive, and between those two moments it is in neither warehouse.
+-- inventory_stock therefore UNDERSTATES total on-hand while a transfer is in
+-- transit, by design -- the in-transit quantity is the document, and pretending
+-- otherwise would need a phantom warehouse row that every stock query would
+-- have to learn to exclude.
+--
+-- Receive is all-or-nothing. The seeded ITRF status set has no partial state,
+-- and a qty_received column that only ever equals qty would be dead weight
+-- inviting a half-built partial-receipt path later.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_transfer (
+    inventory_transfer_id      SERIAL        PRIMARY KEY,
+    inventory_transfer_uuid    UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id             INTEGER           NULL,
+    transfer_number            VARCHAR(20)       NULL,  -- 'ITRF-000001'
+
+    record_type                INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = ITRF
+    transfer_status            INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    from_warehouse_id          INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    to_warehouse_id            INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    -- Destination bin is optional and applies to serialized lines only. Bins
+    -- belong to a warehouse, so the SOURCE bin is never carried: it is
+    -- meaningless at the destination and is cleared on arrival.
+    to_bin_id                  INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id),
+
+    transfer_date              DATE          NOT NULL DEFAULT CURRENT_DATE,
+    transfer_expected_date     DATE              NULL,
+    transfer_carrier           VARCHAR(80)   NOT NULL DEFAULT '',
+    transfer_tracking_number   VARCHAR(80)   NOT NULL DEFAULT '',
+    transfer_notes             TEXT          NOT NULL DEFAULT '',
+    transfer_internal_notes    TEXT          NOT NULL DEFAULT '',
+
+    transfer_owner_id          INTEGER           NULL REFERENCES employee(employee_id),
+
+    transfer_shipped_at        TIMESTAMP         NULL,
+    transfer_shipped_by        INTEGER           NULL REFERENCES employee(employee_id),
+    transfer_received_at       TIMESTAMP         NULL,
+    transfer_received_by       INTEGER           NULL REFERENCES employee(employee_id),
+    transfer_cancelled_at      TIMESTAMP         NULL,
+    transfer_cancelled_by      INTEGER           NULL REFERENCES employee(employee_id),
+    transfer_cancel_reason     TEXT          NOT NULL DEFAULT '',
+
+    transfer_custom_fields     JSONB         NOT NULL DEFAULT '{}',
+    transfer_created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    transfer_created_by        INTEGER           NULL REFERENCES employee(employee_id),
+    transfer_updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    transfer_updated_by        INTEGER           NULL REFERENCES employee(employee_id),
+    transfer_deleted_at        TIMESTAMP         NULL,
+    transfer_deleted_by        INTEGER           NULL REFERENCES employee(employee_id),
+    transfer_record_version    INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_inventory_transfer_uuid   UNIQUE (inventory_transfer_uuid),
+    CONSTRAINT uq_inventory_transfer_number UNIQUE (transfer_number),
+    -- A transfer to the warehouse it left is not a transfer. Row-local, so a
+    -- CHECK can express it and no code path has to remember.
+    CONSTRAINT chk_itrf_distinct_wh CHECK (from_warehouse_id <> to_warehouse_id),
+    CONSTRAINT chk_itrf_soft_delete CHECK (
+        (transfer_deleted_at IS NULL AND transfer_deleted_by IS NULL) OR
+        (transfer_deleted_at IS NOT NULL AND transfer_deleted_by IS NOT NULL)),
+    CONSTRAINT chk_itrf_shipped_pair CHECK (
+        (transfer_shipped_at IS NULL AND transfer_shipped_by IS NULL) OR
+        (transfer_shipped_at IS NOT NULL AND transfer_shipped_by IS NOT NULL)),
+    CONSTRAINT chk_itrf_received_pair CHECK (
+        (transfer_received_at IS NULL AND transfer_received_by IS NULL) OR
+        (transfer_received_at IS NOT NULL AND transfer_received_by IS NOT NULL)),
+    -- Arrival cannot precede departure, and cannot happen without one.
+    CONSTRAINT chk_itrf_receive_after_ship CHECK (
+        transfer_received_at IS NULL OR
+        (transfer_shipped_at IS NOT NULL AND transfer_received_at >= transfer_shipped_at)),
+    CONSTRAINT chk_itrf_cancel_pair CHECK (
+        (transfer_cancelled_at IS NULL AND transfer_cancelled_by IS NULL) OR
+        (transfer_cancelled_at IS NOT NULL AND transfer_cancelled_by IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_itrf_status   ON inventory_transfer (transfer_status)   WHERE transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_itrf_from_wh  ON inventory_transfer (from_warehouse_id) WHERE transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_itrf_to_wh    ON inventory_transfer (to_warehouse_id)   WHERE transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_itrf_owner    ON inventory_transfer (transfer_owner_id) WHERE transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_itrf_created_id ON inventory_transfer (transfer_created_at, inventory_transfer_id) WHERE transfer_deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS inventory_transfer_line (
+    inventory_transfer_line_id   SERIAL        PRIMARY KEY,
+    inventory_transfer_line_uuid UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_transfer_id        INTEGER       NOT NULL REFERENCES inventory_transfer(inventory_transfer_id) ON DELETE CASCADE,
+    line_number                  INTEGER       NOT NULL,
+
+    inventory_item_id            INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    inventory_slab_id            INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id),
+
+    item_name                    VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                          VARCHAR(50)   NOT NULL DEFAULT '',
+    unit_id                      INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                    VARCHAR(10)   NOT NULL DEFAULT '',
+    slab_serial                  VARCHAR(80)   NOT NULL DEFAULT '',
+
+    -- Always POSITIVE: direction is the leg, not the sign. Ship writes -qty at
+    -- the source and receive writes +qty at the destination, so a signed
+    -- quantity here would let one document both add and remove at each end.
+    qty                          DECIMAL(14,3) NOT NULL,
+    line_notes                   TEXT          NOT NULL DEFAULT '',
+
+    line_created_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_created_by              INTEGER           NULL REFERENCES employee(employee_id),
+    line_updated_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_deleted_at              TIMESTAMP         NULL,
+    line_record_version          INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_itrfl_uuid   UNIQUE (inventory_transfer_line_uuid),
+    CONSTRAINT chk_itrfl_qty    CHECK (qty > 0),
+    CONSTRAINT chk_itrfl_serial CHECK (inventory_slab_id IS NULL OR slab_serial <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_itrfl_parent ON inventory_transfer_line (inventory_transfer_id) WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_itrfl_item   ON inventory_transfer_line (inventory_item_id)     WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_itrfl_slab   ON inventory_transfer_line (inventory_slab_id)     WHERE line_deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_itrfl_slab_once
+    ON inventory_transfer_line (inventory_transfer_id, inventory_slab_id)
+    WHERE inventory_slab_id IS NOT NULL AND line_deleted_at IS NULL;
+-- NOTE: "a slab may be on only one IN-FLIGHT transfer" is deliberately NOT an
+-- index. The predicate would have to read inventory_transfer.transfer_status,
+-- and a partial index may only reference columns of its own table (no joins,
+-- no subqueries) -- so it is unrepresentable here however it is written.
+--
+-- The guard is the slab's own status instead, which is stronger than an index
+-- would have been: ship moves the slab to 'in_transit' under FOR UPDATE, and
+-- every ship path refuses a slab that is not 'available'. A second crew
+-- shipping the same slab blocks on the lock and is then refused, so the slab
+-- cannot depart twice or arrive at two warehouses.
+
+CREATE TABLE IF NOT EXISTS inventory_transfer_history (
+    inventory_transfer_history_id SERIAL      PRIMARY KEY,
+    inventory_transfer_id         INTEGER     NOT NULL REFERENCES inventory_transfer(inventory_transfer_id) ON DELETE CASCADE,
+    from_status_id                INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                  INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    action                        VARCHAR(32) NOT NULL DEFAULT 'transition',
+    actor_employee_id             INTEGER         NULL REFERENCES employee(employee_id),
+    snapshot                      JSONB       NOT NULL DEFAULT '{}',
+    at                            TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_itrf_history ON inventory_transfer_history (inventory_transfer_id, at DESC);
+
+-- ---------------------------------------------------------------------
+-- 5. inventory_count -- cycle counting and physical stock takes.
+--
+-- Statuses (seeded above): DRFT -> CNTG -> RVW_ -> APPV -> POST, or CANC.
+--
+-- Freezing (DRFT -> CNTG) snapshots the system quantity onto every line and
+-- records count_frozen_at. The snapshot is the whole point: a variance is only
+-- meaningful against the number the system believed AT THE MOMENT COUNTING
+-- STARTED. Recomputing it at post time would silently absorb every movement
+-- that happened while the crew walked the yard, so a genuine shortage would
+-- reconcile itself to zero and the write-off would never be raised.
+--
+-- Counting is scoped to a warehouse and optionally one bin subtree. While a
+-- count is CNTG, inventory/count_freeze.go refuses unit moves inside that
+-- scope -- stock cannot move under the counters' feet.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_count (
+    inventory_count_id       SERIAL        PRIMARY KEY,
+    inventory_count_uuid     UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id           INTEGER           NULL,
+    count_number             VARCHAR(20)       NULL,  -- 'ICNT-000001'
+
+    record_type              INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = ICNT
+    count_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    warehouse_id             INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    -- NULL = the whole warehouse. Set = this bin and everything under it,
+    -- matched on inventory_bin.bin_path so a subtree is one prefix scan.
+    inventory_bin_id         INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id),
+
+    count_date               DATE          NOT NULL DEFAULT CURRENT_DATE,
+    count_frozen_at          TIMESTAMP         NULL,
+    count_frozen_by          INTEGER           NULL REFERENCES employee(employee_id),
+    count_notes              TEXT          NOT NULL DEFAULT '',
+    count_internal_notes     TEXT          NOT NULL DEFAULT '',
+
+    count_owner_id           INTEGER           NULL REFERENCES employee(employee_id),
+
+    count_posted_at          TIMESTAMP         NULL,
+    count_posted_by          INTEGER           NULL REFERENCES employee(employee_id),
+    count_cancelled_at       TIMESTAMP         NULL,
+    count_cancelled_by       INTEGER           NULL REFERENCES employee(employee_id),
+    count_cancel_reason      TEXT          NOT NULL DEFAULT '',
+
+    count_custom_fields      JSONB         NOT NULL DEFAULT '{}',
+    count_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    count_created_by         INTEGER           NULL REFERENCES employee(employee_id),
+    count_updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    count_updated_by         INTEGER           NULL REFERENCES employee(employee_id),
+    count_deleted_at         TIMESTAMP         NULL,
+    count_deleted_by         INTEGER           NULL REFERENCES employee(employee_id),
+    count_record_version     INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_inventory_count_uuid   UNIQUE (inventory_count_uuid),
+    CONSTRAINT uq_inventory_count_number UNIQUE (count_number),
+    CONSTRAINT chk_icnt_soft_delete CHECK (
+        (count_deleted_at IS NULL AND count_deleted_by IS NULL) OR
+        (count_deleted_at IS NOT NULL AND count_deleted_by IS NOT NULL)),
+    CONSTRAINT chk_icnt_frozen_pair CHECK (
+        (count_frozen_at IS NULL AND count_frozen_by IS NULL) OR
+        (count_frozen_at IS NOT NULL AND count_frozen_by IS NOT NULL)),
+    CONSTRAINT chk_icnt_posted_pair CHECK (
+        (count_posted_at IS NULL AND count_posted_by IS NULL) OR
+        (count_posted_at IS NOT NULL AND count_posted_by IS NOT NULL)),
+    -- Posting without a freeze would mean posting variances against a snapshot
+    -- that was never taken.
+    CONSTRAINT chk_icnt_post_needs_freeze CHECK (
+        count_posted_at IS NULL OR count_frozen_at IS NOT NULL),
+    CONSTRAINT chk_icnt_cancel_pair CHECK (
+        (count_cancelled_at IS NULL AND count_cancelled_by IS NULL) OR
+        (count_cancelled_at IS NOT NULL AND count_cancelled_by IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_icnt_status    ON inventory_count (count_status)   WHERE count_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_icnt_warehouse ON inventory_count (warehouse_id)   WHERE count_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_icnt_owner     ON inventory_count (count_owner_id) WHERE count_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_icnt_created_id ON inventory_count (count_created_at, inventory_count_id) WHERE count_deleted_at IS NULL;
+-- The freeze guard's hot path: "is anything counting this warehouse right now?"
+CREATE INDEX IF NOT EXISTS idx_icnt_active_scope
+    ON inventory_count (warehouse_id, count_status) WHERE count_deleted_at IS NULL AND count_frozen_at IS NOT NULL;
+
+-- inventory_count_line -- one countable thing and what the crew found.
+--
+-- count_variance is a GENERATED column, not a value any writer supplies. A
+-- variance that can disagree with the two numbers it is derived from is worse
+-- than no variance at all, because it is the number the write-off posts from.
+-- NULL counted_qty (not yet counted) yields NULL variance, which is correct and
+-- is what separates "counted zero" from "not counted" -- collapsing those two
+-- would write off every shelf the crew simply had not reached yet.
+CREATE TABLE IF NOT EXISTS inventory_count_line (
+    inventory_count_line_id   SERIAL        PRIMARY KEY,
+    inventory_count_line_uuid UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_count_id        INTEGER       NOT NULL REFERENCES inventory_count(inventory_count_id) ON DELETE CASCADE,
+    line_number               INTEGER       NOT NULL,
+
+    inventory_item_id         INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    inventory_slab_id         INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id),
+    inventory_bin_id          INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id),
+    -- Required only once a variance exists; enforced at post time, not here,
+    -- because a line is created at freeze with no variance and no reason yet.
+    inventory_reason_id       INTEGER           NULL REFERENCES lkp_inventory_reason(inventory_reason_id),
+
+    item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)   NOT NULL DEFAULT '',
+    unit_id                   INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                 VARCHAR(10)   NOT NULL DEFAULT '',
+    slab_serial               VARCHAR(80)   NOT NULL DEFAULT '',
+
+    system_qty                DECIMAL(14,3) NOT NULL DEFAULT 0,
+    counted_qty               DECIMAL(14,3)     NULL,
+    count_variance            DECIMAL(14,3) GENERATED ALWAYS AS (counted_qty - system_qty) STORED,
+    -- TRUE when the crew found something the frozen snapshot did not contain.
+    -- It still counts as a variance, but it is worth surfacing separately: an
+    -- unexpected slab is usually a misfiled location, not found stone.
+    is_unexpected             BOOLEAN       NOT NULL DEFAULT FALSE,
+    counted_at                TIMESTAMP         NULL,
+    counted_by                INTEGER           NULL REFERENCES employee(employee_id),
+    line_notes                TEXT          NOT NULL DEFAULT '',
+
+    line_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_updated_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_deleted_at           TIMESTAMP         NULL,
+    line_record_version       INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_icntl_uuid    UNIQUE (inventory_count_line_uuid),
+    CONSTRAINT chk_icntl_counted CHECK (counted_qty IS NULL OR counted_qty >= 0),
+    CONSTRAINT chk_icntl_serial  CHECK (inventory_slab_id IS NULL OR slab_serial <> ''),
+    CONSTRAINT chk_icntl_counted_pair CHECK (
+        (counted_qty IS NULL AND counted_at IS NULL) OR counted_qty IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_icntl_parent ON inventory_count_line (inventory_count_id) WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_icntl_item   ON inventory_count_line (inventory_item_id)  WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_icntl_slab   ON inventory_count_line (inventory_slab_id)  WHERE line_deleted_at IS NULL;
+-- The review screen's query: every line whose count disagrees with the system.
+CREATE INDEX IF NOT EXISTS idx_icntl_variance
+    ON inventory_count_line (inventory_count_id) WHERE line_deleted_at IS NULL AND count_variance <> 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_icntl_slab_once
+    ON inventory_count_line (inventory_count_id, inventory_slab_id)
+    WHERE inventory_slab_id IS NOT NULL AND line_deleted_at IS NULL;
+-- A bulk item appears at most once per count: two lines for one (item,
+-- warehouse) would post two variances against a single system quantity.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_icntl_bulk_once
+    ON inventory_count_line (inventory_count_id, inventory_item_id)
+    WHERE inventory_slab_id IS NULL AND line_deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS inventory_count_history (
+    inventory_count_history_id SERIAL      PRIMARY KEY,
+    inventory_count_id         INTEGER     NOT NULL REFERENCES inventory_count(inventory_count_id) ON DELETE CASCADE,
+    from_status_id             INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id               INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    action                     VARCHAR(32) NOT NULL DEFAULT 'transition',
+    actor_employee_id          INTEGER         NULL REFERENCES employee(employee_id),
+    snapshot                   JSONB       NOT NULL DEFAULT '{}',
+    at                         TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_icnt_history ON inventory_count_history (inventory_count_id, at DESC);
+
+-- ---------------------------------------------------------------------
+-- 6. Once-only indexes for the new ledger events.
+--
+-- Same technique and the same reasoning as uq_inventory_ledger_src_line_received
+-- (line 4851), including AD-11's correction: the key MUST carry
+-- source_record_type, because IADJ and ICNT both write 'adjusted' rows and
+-- their line ids come from independent SERIALs. Keyed on source_line_id alone,
+-- adjustment line 512 and count line 512 would collide -- and the second
+-- document's post would be reported as "already applied" while its stock never
+-- moved.
+--
+-- COALESCE(source_record_type, 0) keeps NULL from making every row distinct,
+-- which would defeat the index entirely.
+-- ---------------------------------------------------------------------
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_adjusted
+    ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id)
+    WHERE event = 'adjusted' AND source_line_id IS NOT NULL;
+
+-- A transfer line writes TWO 'transferred' rows -- one out of the source, one
+-- into the destination -- so warehouse_id is part of the key. Without it the
+-- arrival leg would collide with the departure leg and be rejected as a
+-- duplicate, leaving stock permanently deducted from the source and never
+-- added at the destination.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_transferred
+    ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id, warehouse_id)
+    WHERE event = 'transferred' AND source_line_id IS NOT NULL;
+
+-- The slab ledger's existing once-only indexes key on (slab, event), which
+-- cannot express a transfer: a slab may legitimately be transferred many times
+-- over its life. These key on the source LINE instead, and carry warehouse_id
+-- for the same two-legged reason as above.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_src_line_transferred
+    ON inventory_slab_ledger (COALESCE(source_record_type, 0), source_line_id, warehouse_id)
+    WHERE event = 'transferred' AND source_line_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_src_line_adjusted
+    ON inventory_slab_ledger (COALESCE(source_record_type, 0), source_line_id)
+    WHERE event = 'adjusted' AND source_line_id IS NOT NULL;

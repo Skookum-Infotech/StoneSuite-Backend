@@ -258,7 +258,7 @@ func DeleteWarehouse(ctx context.Context, pool *pgxpool.Pool, uuid string, actor
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE lkp_warehouse SET warehouse_deleted_at = NOW(), warehouse_deleted_by = $2
-		WHERE warehouse_id = $1`, id, nullableInt(actorEmployeeID)); err != nil {
+		WHERE warehouse_id = $1`, id, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete warehouse: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -257,7 +257,7 @@ func DeleteBundle(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmp
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_bundle SET bundle_deleted_at = NOW(), bundle_deleted_by = $2
-		WHERE inventory_bundle_id = $1`, cur.id, nullableInt(actorEmployeeID)); err != nil {
+		WHERE inventory_bundle_id = $1`, cur.id, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete bundle: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

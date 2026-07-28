@@ -47,11 +47,34 @@ func scanItem(row pgx.Row) (*Item, error) {
 
 // nullableInt converts a non-positive id to SQL NULL, matching crmstore's
 // convention (employee id 0/unresolved => NULL).
+//
+// NOT for *_deleted_by columns — use actorOrSystem there. See below.
 func nullableInt(v int) any {
 	if v <= 0 {
 		return nil
 	}
 	return v
+}
+
+// systemEmployeeID is the seeded fallback actor.
+const systemEmployeeID = 1
+
+// actorOrSystem returns the actor, or the system employee when it is unresolved.
+//
+// Every *_deleted_by column in this package is paired with its *_deleted_at by
+// a strict CHECK, so writing NULL there is not a lost attribution — it is a
+// constraint violation, and therefore a 500 on every soft delete. That matters
+// more than it looks: resolveEmployeeID returns 0 for callers whose
+// employee_user_id has never been populated, which is most of them, so the
+// failure is the common case rather than an edge one.
+//
+// This is the convention chartofaccounts adopted in 5b3e10f for exactly the
+// same reason; inventory was still the odd one out.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID <= 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
 }
 
 // nullableIntPtr passes a nil or non-positive optional id through as SQL NULL.

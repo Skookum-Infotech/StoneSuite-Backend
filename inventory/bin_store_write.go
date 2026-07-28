@@ -265,7 +265,7 @@ func DeleteBin(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmploy
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_bin SET bin_deleted_at = NOW(), bin_deleted_by = $2
-		WHERE inventory_bin_id = $1`, cur.id, nullableInt(actorEmployeeID)); err != nil {
+		WHERE inventory_bin_id = $1`, cur.id, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete bin: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

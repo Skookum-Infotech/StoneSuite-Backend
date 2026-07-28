@@ -563,6 +563,19 @@ func main() {
 		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/break", tenantChain(invBundle.Break))
 		mux.Handle("PATCH /api/tenant/inventory/bundles/{uuid}/bin", tenantChain(invBundle.MoveBin))
 
+		// Phase 3 stock documents. Each is a status document: draft, approval,
+		// then a post that is the only move touching stock.
+		invAdj := controllers.NewInventoryAdjustmentOps()
+		mux.Handle("GET /api/tenant/inventory/adjustments", tenantChain(invAdj.List))
+		mux.Handle("POST /api/tenant/inventory/adjustments/search", tenantChain(invAdj.Search))
+		mux.Handle("POST /api/tenant/inventory/adjustments", tenantChain(invAdj.Create))
+		mux.Handle("GET /api/tenant/inventory/adjustments/{uuid}", tenantChain(invAdj.Get))
+		mux.Handle("PATCH /api/tenant/inventory/adjustments/{uuid}", tenantChain(invAdj.Update))
+		mux.Handle("DELETE /api/tenant/inventory/adjustments/{uuid}", tenantChain(invAdj.Delete))
+		mux.Handle("POST /api/tenant/inventory/adjustments/{uuid}/transition", tenantChain(invAdj.Transition))
+		mux.Handle("POST /api/tenant/inventory/adjustments/{uuid}/post", tenantChain(invAdj.Post))
+		mux.Handle("GET /api/tenant/inventory/adjustments/{uuid}/history", tenantChain(invAdj.History))
+
 		// Chart of Accounts — Finance section master data.
 		{
 			coa := controllers.NewChartOfAccountsOps(cipher)

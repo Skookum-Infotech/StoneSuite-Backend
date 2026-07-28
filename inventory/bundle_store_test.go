@@ -294,3 +294,32 @@ func TestSealBundle_RefusesAnEmptyPallet(t *testing.T) {
 		t.Error("expected sealing an empty bundle to be refused")
 	}
 }
+
+// Soft delete with an unresolved actor was a guaranteed 500 across this whole
+// package: resolveEmployeeID returns 0 whenever the caller's employee_user_id
+// has never been populated (most callers), and every *_deleted_by column here
+// is paired with its timestamp by a strict CHECK — so writing NULL is a
+// constraint violation, not a missing name.
+func TestSoftDeleteSurvivesAnUnresolvedActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	// Short prefix: bin_code is VARCHAR(30) and uniq appends a 19-digit nano.
+	binUUID := seedBin(t, pool, uniq("DB"))
+	if err := DeleteBin(ctx, pool, binUUID, 0); err != nil {
+		t.Errorf("DeleteBin with an unresolved actor: %v", err)
+	}
+
+	bundle, err := CreateBundle(ctx, pool, BundleInput{Code: uniq("DBTEST-DELB"), WarehouseID: 1}, 0)
+	if err != nil {
+		t.Fatalf("CreateBundle: %v", err)
+	}
+	if err := DeleteBundle(ctx, pool, bundle.ID, 0); err != nil {
+		t.Errorf("DeleteBundle with an unresolved actor: %v", err)
+	}
+
+	item := seedAreaItem(t, pool, uniq("DBTEST-DELITEM"))
+	if err := SoftDelete(ctx, pool, item, 0); err != nil {
+		t.Errorf("SoftDelete item with an unresolved actor: %v", err)
+	}
+}

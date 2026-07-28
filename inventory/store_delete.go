@@ -52,7 +52,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		UPDATE inventory_item
 		SET inventory_item_deleted_at = NOW(), inventory_item_deleted_by = $2
 		WHERE inventory_item_id = $1 AND inventory_item_deleted_at IS NULL`,
-		id, nullableInt(actorEmployeeID))
+		id, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete inventory item: %w", err)
 	}

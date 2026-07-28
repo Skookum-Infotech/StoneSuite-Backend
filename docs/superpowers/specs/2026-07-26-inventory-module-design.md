@@ -65,6 +65,18 @@ The requested `schema.org/Product` → `schema.org/IndividualProduct` split **al
 
 **AD-13 — A bundle's first member fixes its item, and the rest are held to it.** `inventory_item_id` on `inventory_bundle` is nullable, so a clerk can register a pallet before scanning it. The first attached unit adopts its item onto the bundle; every later one must match. Without this, a bundle's `TotalArea` would sum `slab_area` across two different units of measure (SQFT and SQM) and report a plausible, wrong number that no constraint would catch — the same class of failure as AD-5. It also makes the domain rule explicit: a banded pallet is sawn from one block. The adoption has one non-obvious consequence, handled in `UpdateBundle`: because the *server* set the item, a PATCH that omits `inventoryItemId` must leave it alone rather than clear it — otherwise the first edit after adoption trips the "remove the units before changing its item" guard and the bundle becomes permanently uneditable. `binId` gets the same treatment for the same reason (`MoveBundle` rewrites it).
 
+**AD-14 — One line table per document handles BOTH stock models.** A line carries an optional `inventory_slab_id`: set means "this specific slab", unset means "this many of a quantity-tracked item", and a CHECK on the item's `inventory_item_tracking` keeps the two from being mixed up. The alternative — a serialized document and a bulk document per business event — is six modules instead of three, and they would have drifted apart within a release exactly as the existing clone twins did. A serialized line takes only its **sign** from the caller; the magnitude is the slab's own area, re-read under lock at post time, because the line snapshot can be days old and the slab may have been cut since.
+
+**AD-15 — Three CHECKs are widened by `DROP CONSTRAINT IF EXISTS` + `ADD`.** `chk_inventory_ledger_event` and `chk_slab_ledger_event` gain `'transferred'`; `chk_slab_status` gains `'in_transit'`. This is idempotent without a `pg_constraint` guard — the conditional drop is what makes the unconditional add safe on every boot — and each is a pure **relaxation**, so no existing row can fail revalidation and the rewrite cannot break a tenant holding real data. That is what makes DROP+ADD acceptable here where it would not be for a narrowing change. Keeping transfers off `'adjusted'` is not cosmetic: it stops every shrinkage report counting routine yard-to-yard movement as loss. And `'in_transit'` is what makes a two-legged transfer honest — without it a slab on a truck would have to be recorded as still standing in the yard it left, so a cycle count of that yard would report it missing and write it off.
+
+**AD-16 — A warehouse transfer is two-legged, and `inventory_stock` deliberately understates the total while stock is in transit.** Ship deducts at the source; receive adds at the destination; in between the stock is in neither. A phantom in-transit warehouse row would have to be excluded by every stock, valuation and reorder query, and the first one that forgets silently overstates on-hand. `GET /transfers/in-transit` recovers the quantity instead. **`TRNS → CANC` is not on the machine**, for a ledger reason rather than a squeamish one: the return leg would have to write at the source, the same `(record type, line, warehouse)` key the departure row already occupies, so it would be rejected as a duplicate — leaving stock deducted, added nowhere, and a document saying "cancelled" to explain it. *Known limitation:* a truck that turns around must be received and sent back on a second transfer.
+
+**AD-17 — A cycle count's freeze is the document.** Freezing snapshots the system quantity onto every line and blocks movement in the counted scope until the count posts or is cancelled. Recomputing at post time would absorb every movement made while the crew walked the yard, so a genuine shortage would reconcile itself to zero. `count_variance` is a **GENERATED** column so it cannot disagree with its inputs, and a NULL `counted_qty` yields a NULL variance — which is what separates "counted zero" from "not counted". Collapsing those two would write off every shelf the crew simply had not reached, so moving to review refuses while any line is uncounted. Bulk stock is snapshotted for **warehouse-wide counts only**: bins locate serialized units and `inventory_stock` is keyed `(item, warehouse)`, so a bulk quantity cannot be attributed to one bin.
+
+**AD-18 — Approval is RBAC + history, not approver/approval tables; and `ActionApprove` is checked separately from `ActionTransition`.** `fabrication_job_approver`/`_approval` exist to *route* an approval to named people; nothing here asks for routing, and six unused tables would be exactly the speculative drift AD-6 warns against. The trail lives in each document's `_history`. The load-bearing detail is in the controller: moving into the approved status checks `:approve` **on top of** `:transition`. Without that second check anyone with plain transition rights could sign off their own write-off — and the handler would still look correct in review, because it does check a permission.
+
+**AD-19 — `docflow` is extracted, but only the part with no table names in it.** CLAUDE.md records that the existing document modules are copy-paste twins whose cross-cutting fixes must be hand-ported to every one; three more twins is a cost worth not paying. Shared: record type/status resolution and transition-map validation. Deliberately **not** shared: history writing and status updates, which would need the module's own table and column names — generalising them means assembling SQL from identifier strings, trading a little duplication for a class of bug that duplication cannot cause.
+
 ---
 
 ## 3. Schema
@@ -204,8 +216,18 @@ DB-backed tests carry `//go:build dbtest` on line 1 **and** the `TEST_DATABASE_U
 
 ## 9. Out of Scope
 
-Warehouse transfer, stock adjustment and cycle count — three document modules, each needing header/line/history/approver/approval tables, numbering and transitions (AD-6).
+Phase 3 is now **built** (adjustment, transfer, cycle count). What remains out of
+scope on this branch:
 
-**Note for that author:** because bins locate serialized units only and `inventory_stock` is keyed `(item, warehouse)` (AD-2), a **bin transfer is stock-neutral** — one history row, no ledger row, no document, no approval. It ships here as `PATCH /inventory/units/{uuid}/bin`. Only *warehouse* transfer, adjustment and count are genuine documents. That removes roughly a third of the anticipated Phase 3 work.
-
-Also out of scope: GL posting of inventory adjustments (the COA accounts `1172`, `5107`, `9104` and the `default_inventory` slot are seeded and waiting, but nothing posts to them), multi-UOM conversion factors, and reorder-point automation (`inventory_stock.reorder_point` exists and is read by nothing).
+- **Costing and GL posting.** `lkp_inventory_reason.inventory_reason_coa_account_id`
+  exists and is unread: no document posts a journal entry yet. Inventory moves in
+  quantity and area, never in money.
+- **Partial receipt of a transfer.** The seeded ITRF status set has no partial
+  state, so receive is all-or-nothing (AD-16).
+- **Returning an in-transit transfer to its source** — see the known limitation
+  in AD-16.
+- **Named-approver routing.** Approval is a permission plus a history row
+  (AD-18); routing an approval to specific people would need the
+  approver/approval table pair.
+- **Vendor Bill / 3-way match**, which is what `item_receipt`'s
+  `purchase_order_item_id` link was built to make possible.

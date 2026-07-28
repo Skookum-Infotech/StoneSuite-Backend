@@ -589,6 +589,20 @@ func main() {
 		mux.Handle("POST /api/tenant/inventory/transfers/{uuid}/receive", tenantChain(invTrf.Receive))
 		mux.Handle("GET /api/tenant/inventory/transfers/{uuid}/history", tenantChain(invTrf.History))
 
+		invCnt := controllers.NewInventoryCountOps()
+		mux.Handle("GET /api/tenant/inventory/counts", tenantChain(invCnt.List))
+		mux.Handle("POST /api/tenant/inventory/counts/search", tenantChain(invCnt.Search))
+		mux.Handle("POST /api/tenant/inventory/counts", tenantChain(invCnt.Create))
+		mux.Handle("GET /api/tenant/inventory/counts/{uuid}", tenantChain(invCnt.Get))
+		mux.Handle("PATCH /api/tenant/inventory/counts/{uuid}", tenantChain(invCnt.Update))
+		mux.Handle("DELETE /api/tenant/inventory/counts/{uuid}", tenantChain(invCnt.Delete))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/freeze", tenantChain(invCnt.Freeze))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/counts", tenantChain(invCnt.RecordCounts))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/unexpected", tenantChain(invCnt.AddUnexpected))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/transition", tenantChain(invCnt.Transition))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/post", tenantChain(invCnt.Post))
+		mux.Handle("GET /api/tenant/inventory/counts/{uuid}/history", tenantChain(invCnt.History))
+
 		// Chart of Accounts — Finance section master data.
 		{
 			coa := controllers.NewChartOfAccountsOps(cipher)

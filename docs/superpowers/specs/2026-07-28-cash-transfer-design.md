@@ -248,20 +248,20 @@ Every file stays under the 300-line cap.
 
 ## 5. API Surface
 
-All routes `/api/tenant/cash-transfers/...`, behind the mandatory JWT + `TenantResolver` + `authz.Check` chain (`tenantChain`, `main.go:370`).
+All routes `/api/tenant/finance/cash-transfers/...`, behind the mandatory JWT + `TenantResolver` + `authz.Check` chain (`tenantChain`, `main.go:370`). This nests under the same `/finance/` prefix Chart of Accounts established for itself ("the first module of the Finance section", CoA spec §6) — Cash Transfer is the second, and the one that makes CoA's balances real, so it belongs in that section rather than sitting flat alongside the CRM/sales document modules.
 
 | Method | Route | Permission | Notes |
 |---|---|---|---|
-| `GET` | `/cash-transfers` | `read` | keyset list |
-| `POST` | `/cash-transfers/search` | `read` | filter+sort+paginate via `query/` |
-| `POST` | `/cash-transfers` | `create` | Draft only |
-| `GET` | `/cash-transfers/{uuid}` | `read` | |
-| `PATCH` | `/cash-transfers/{uuid}` | `update` | 409 unless status = Draft |
-| `DELETE` | `/cash-transfers/{uuid}` | `delete` | soft delete, Draft only (AD-9) |
-| `POST` | `/cash-transfers/{uuid}/transition` | `transition` | Approve (DRFT→APPR), Cancel (→CANC) |
-| `POST` | `/cash-transfers/{uuid}/post` | `transition` | APPR→POST; creates journal entry, updates balances |
-| `POST` | `/cash-transfers/{uuid}/reverse` | `transition` | POST→RVSD; creates reversing entry, updates balances |
-| `GET` | `/cash-transfers/{uuid}/audit` | `read` | history |
+| `GET` | `/finance/cash-transfers` | `read` | keyset list |
+| `POST` | `/finance/cash-transfers/search` | `read` | filter+sort+paginate via `query/` |
+| `POST` | `/finance/cash-transfers` | `create` | Draft only |
+| `GET` | `/finance/cash-transfers/{uuid}` | `read` | |
+| `PATCH` | `/finance/cash-transfers/{uuid}` | `update` | 409 unless status = Draft |
+| `DELETE` | `/finance/cash-transfers/{uuid}` | `delete` | soft delete, Draft only (AD-9) |
+| `POST` | `/finance/cash-transfers/{uuid}/transition` | `transition` | Approve (DRFT→APPR), Cancel (→CANC) |
+| `POST` | `/finance/cash-transfers/{uuid}/post` | `transition` | APPR→POST; creates journal entry, updates balances |
+| `POST` | `/finance/cash-transfers/{uuid}/reverse` | `transition` | POST→RVSD; creates reversing entry, updates balances |
+| `GET` | `/finance/cash-transfers/{uuid}/audit` | `read` | history |
 
 Attachments and Notes have **no dedicated routes** — Attachments reuse `/api/tenant/records/{id}/attachments/*` (via the `ResolveRecordAccess` extension below); Notes are plain fields returned/updated through `Get`/`Update`.
 

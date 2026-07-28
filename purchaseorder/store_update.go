@@ -121,7 +121,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL
 		  AND rs.record_status_id = po.purchase_order_status
 		  AND rs.record_status_code IN ('DRFT','CANC')`,
-		uuid, nullableInt(actorEmployeeID))
+		uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete purchase order: %w", err)
 	}

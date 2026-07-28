@@ -65,7 +65,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	}
 	ct, err := pool.Exec(ctx, `
 		UPDATE fabrication_job SET fabrication_job_deleted_at = NOW(), fabrication_job_deleted_by = $2
-		WHERE fabrication_job_uuid = $1 AND fabrication_job_deleted_at IS NULL`, uuid, nullableInt(actorEmployeeID))
+		WHERE fabrication_job_uuid = $1 AND fabrication_job_deleted_at IS NULL`, uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("soft delete fabrication job: %w", err)
 	}

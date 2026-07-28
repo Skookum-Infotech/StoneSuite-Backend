@@ -319,3 +319,33 @@ func TestSearch_ReturnsCreatedPurchaseOrder(t *testing.T) {
 		t.Errorf("Search(%q) did not include the created purchase order", created.Number)
 	}
 }
+
+// TestSoftDelete_UnresolvedActor is the regression for the module-wide
+// soft-delete defect: resolveEmployeeID returns 0 whenever the caller has no
+// linked employee row, and binding that through nullableInt wrote SQL NULL
+// into purchase_order_deleted_by, which chk_po_soft_delete rejects.
+func TestSoftDelete_UnresolvedActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	vendorUUID, itemUUID := seedVendorAndItem(t, pool)
+
+	created, err := Create(ctx, pool, CreatePurchaseOrderInput{
+		VendorUUID:          vendorUUID,
+		purchaseOrderFields: purchaseOrderFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := SoftDelete(ctx, pool, created.ID, 0); err != nil {
+		t.Fatalf("SoftDelete with unresolved actor: %v", err)
+	}
+	var deletedBy int
+	if err := pool.QueryRow(ctx,
+		`SELECT purchase_order_deleted_by FROM purchase_order WHERE purchase_order_uuid = $1`, created.ID,
+	).Scan(&deletedBy); err != nil {
+		t.Fatalf("read purchase_order_deleted_by: %v", err)
+	}
+	if deletedBy != systemEmployeeID {
+		t.Errorf("purchase_order_deleted_by = %d, want %d (system employee)", deletedBy, systemEmployeeID)
+	}
+}

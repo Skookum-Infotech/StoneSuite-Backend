@@ -68,11 +68,28 @@ func scanItem(row pgx.Row) (*Item, error) {
 
 // nullableInt converts a non-positive employee id to SQL NULL, matching
 // crmstore's nullableInt convention (employee id 0/unresolved => NULL).
+// Not for *_deleted_by columns — those are CHECK-constrained NOT NULL
+// alongside *_deleted_at; use actorOrSystem there.
 func nullableInt(v int) any {
 	if v <= 0 {
 		return nil
 	}
 	return v
+}
+
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
 }
 
 // validateCustom validates custom fields against the "inventory_item"
@@ -209,7 +226,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		UPDATE inventory_item
 		SET inventory_item_deleted_at = NOW(), inventory_item_deleted_by = $2
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL`,
-		uuid, nullableInt(actorEmployeeID))
+		uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete inventory item: %w", err)
 	}

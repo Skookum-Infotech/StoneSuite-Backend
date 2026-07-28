@@ -1,8 +1,10 @@
 # Inventory Management Module — Backend Design Spec
 
-**Date:** 2026-07-26
-**Status:** Approved, not yet implemented. Branch `feat/inventory-module` (cut from `feat/chart-of-accounts`).
-**Scope:** Warehouse/bin locations, stone attributes on the item catalogue, and the generalisation of `inventory_slab` into a general serialized inventory unit. Phase 1 (schema) and Phase 2 (CRUD) only. **Warehouse transfer, stock adjustment and cycle count are explicitly out of scope** and become a separate spec (AD-6).
+**Date:** 2026-07-26 (Phases 1–2), extended 2026-07-27 (Phase 3)
+**Status:** Implemented on branch `feat/inventory-module` (cut from `feat/chart-of-accounts`).
+**Scope:** Warehouse/bin locations, bundles, stone attributes on the item catalogue, the generalisation of `inventory_slab` into a general serialized unit, and the three stock documents — adjustment, warehouse transfer and cycle count.
+
+> **AD-6 deferred Phase 3 and has since been carried out.** Its reasoning still stands and is worth keeping: the document tables were designed against a real spec rather than guessed at, and the three record types plus `lkp_inventory_reason` seeded in Phase 1 were the only things Phase 3 needed that were not new. AD-14 to AD-19 record the Phase 3 decisions.
 
 ---
 

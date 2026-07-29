@@ -3,8 +3,11 @@ package inventory
 // warehouse_store.go — CRUD for lkp_warehouse.
 //
 // The table has existed since migration 027 with its own uuid, but no package,
-// controller or route ever served it. Warehouses are addressed by
-// warehouse_uuid, never by the SERIAL.
+// controller or route ever served it. Every mutation route still addresses a
+// warehouse by warehouse_uuid, never by the SERIAL — but every document write
+// contract elsewhere (units, bundles, adjustments, transfers, counts) takes
+// the SERIAL as a foreign key, and had no way to learn it. Warehouse.WarehouseID
+// below is that: the only place a client can resolve uuid -> SERIAL.
 
 import (
 	"context"
@@ -18,17 +21,18 @@ import (
 
 // Warehouse is a physical site holding stock.
 type Warehouse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Code      string `json:"code"`
-	AddrLine1 string `json:"addrLine1"`
-	AddrLine2 string `json:"addrLine2"`
-	AddrCity  string `json:"addrCity"`
-	AddrState *int   `json:"addrStateId,omitempty"`
-	AddrZip   string `json:"addrZip"`
-	IsDefault bool   `json:"isDefault"`
-	IsActive  bool   `json:"isActive"`
-	IsSystem  bool   `json:"isSystem"`
+	WarehouseID int    `json:"warehouseId"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Code        string `json:"code"`
+	AddrLine1   string `json:"addrLine1"`
+	AddrLine2   string `json:"addrLine2"`
+	AddrCity    string `json:"addrCity"`
+	AddrState   *int   `json:"addrStateId,omitempty"`
+	AddrZip     string `json:"addrZip"`
+	IsDefault   bool   `json:"isDefault"`
+	IsActive    bool   `json:"isActive"`
+	IsSystem    bool   `json:"isSystem"`
 }
 
 // WarehouseInput is the write shape.
@@ -44,7 +48,7 @@ type WarehouseInput struct {
 }
 
 const warehouseSelect = `
-	SELECT warehouse_uuid, warehouse_name, warehouse_code,
+	SELECT warehouse_id, warehouse_uuid, warehouse_name, warehouse_code,
 	       warehouse_addr_line1, warehouse_addr_line2, warehouse_addr_city,
 	       warehouse_addr_state, warehouse_addr_zip,
 	       warehouse_is_default, warehouse_is_active, warehouse_is_system
@@ -52,7 +56,7 @@ const warehouseSelect = `
 
 func scanWarehouse(row pgx.Row) (*Warehouse, error) {
 	var w Warehouse
-	if err := row.Scan(&w.ID, &w.Name, &w.Code, &w.AddrLine1, &w.AddrLine2,
+	if err := row.Scan(&w.WarehouseID, &w.ID, &w.Name, &w.Code, &w.AddrLine1, &w.AddrLine2,
 		&w.AddrCity, &w.AddrState, &w.AddrZip, &w.IsDefault, &w.IsActive, &w.IsSystem); err != nil {
 		return nil, err
 	}

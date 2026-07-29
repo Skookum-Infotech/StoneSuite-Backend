@@ -171,3 +171,33 @@ func TestSearch_ReturnsCreatedVendor(t *testing.T) {
 		t.Errorf("Search(%q) did not include the created vendor", created.Number)
 	}
 }
+
+// TestSoftDelete_UnresolvedActor is the regression for the module-wide
+// soft-delete defect: resolveEmployeeID (controllers/crm_admin.go) is
+// best-effort and returns 0 whenever the caller has no linked employee row —
+// the common case, since nothing populates employee.employee_user_id. Binding
+// that 0 through nullableInt wrote SQL NULL into vendor_deleted_by, which
+// chk_vendor_soft_delete rejects, so delete failed with a wrapped 500.
+func TestSoftDelete_UnresolvedActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	created, err := Create(ctx, pool, CreateVendorInput{
+		VendorType:   "Organization",
+		vendorFields: vendorFields{LegalName: "Unresolved Actor LLC"},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := SoftDelete(ctx, pool, created.ID, 0); err != nil {
+		t.Fatalf("SoftDelete with unresolved actor: %v", err)
+	}
+	var deletedBy int
+	if err := pool.QueryRow(ctx,
+		`SELECT vendor_deleted_by FROM vendor WHERE vendor_uuid = $1`, created.ID,
+	).Scan(&deletedBy); err != nil {
+		t.Fatalf("read vendor_deleted_by: %v", err)
+	}
+	if deletedBy != systemEmployeeID {
+		t.Errorf("vendor_deleted_by = %d, want %d (system employee)", deletedBy, systemEmployeeID)
+	}
+}

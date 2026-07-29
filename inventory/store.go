@@ -65,6 +65,21 @@ func mapItemWriteErr(err error, verb string) error {
 	return fmt.Errorf("%s inventory item: %w", verb, err)
 }
 
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
+}
+
 // validateCustom validates custom fields against the "inventory_item"
 // workflow's field definitions when one is configured; inventory_item is a
 // dedicated relational domain (not a v1 JSONB workflow), so in practice no

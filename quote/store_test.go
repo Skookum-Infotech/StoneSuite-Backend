@@ -274,3 +274,33 @@ func TestSearch_ReturnsCreatedQuote(t *testing.T) {
 		t.Errorf("Search(%q) did not include the created quote", created.Number)
 	}
 }
+
+// TestSoftDelete_UnresolvedActor is the regression for the module-wide
+// soft-delete defect: resolveEmployeeID returns 0 whenever the caller has no
+// linked employee row, and binding that through nullableInt wrote SQL NULL
+// into quote_deleted_by, which chk_quo_soft_delete rejects.
+func TestSoftDelete_UnresolvedActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, itemUUID := seedCustomerAndItem(t, pool)
+
+	created, err := Create(ctx, pool, CreateQuoteInput{
+		CustomerUUID: custUUID,
+		quoteFields:  quoteFields{Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := SoftDelete(ctx, pool, created.ID, 0); err != nil {
+		t.Fatalf("SoftDelete with unresolved actor: %v", err)
+	}
+	var deletedBy int
+	if err := pool.QueryRow(ctx,
+		`SELECT quote_deleted_by FROM quote WHERE quote_uuid = $1`, created.ID,
+	).Scan(&deletedBy); err != nil {
+		t.Fatalf("read quote_deleted_by: %v", err)
+	}
+	if deletedBy != systemEmployeeID {
+		t.Errorf("quote_deleted_by = %d, want %d (system employee)", deletedBy, systemEmployeeID)
+	}
+}

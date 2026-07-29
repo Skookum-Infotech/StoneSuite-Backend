@@ -512,3 +512,37 @@ func TestCreate_RejectsDuplicateOrderLine(t *testing.T) {
 		t.Fatalf("Create with a duplicated order line = %v, want ClientError", err)
 	}
 }
+
+// TestSoftDelete_UnresolvedActor is the regression for the module-wide
+// soft-delete defect. itemreceipt bound the raw actor id rather than
+// nullableInt, so an unresolved actor wrote a literal 0 into
+// item_receipt_deleted_by — not a CHECK violation but an FK violation against
+// employee(employee_id), which has no row 0. Same root cause, same fix.
+func TestSoftDelete_UnresolvedActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, poLineUUID, _ := seedSentPO(t, pool, 100)
+
+	r, err := Create(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		itemReceiptFields: itemReceiptFields{
+			PackingSlip: "PS-unresolved",
+			Items:       []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 10}},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := SoftDelete(ctx, pool, r.ID, 0); err != nil {
+		t.Fatalf("SoftDelete with unresolved actor: %v", err)
+	}
+	var deletedBy int
+	if err := pool.QueryRow(ctx,
+		`SELECT item_receipt_deleted_by FROM item_receipt WHERE item_receipt_uuid = $1`, r.ID,
+	).Scan(&deletedBy); err != nil {
+		t.Fatalf("read item_receipt_deleted_by: %v", err)
+	}
+	if deletedBy != systemEmployeeID {
+		t.Errorf("item_receipt_deleted_by = %d, want %d (system employee)", deletedBy, systemEmployeeID)
+	}
+}

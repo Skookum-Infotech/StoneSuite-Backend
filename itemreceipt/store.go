@@ -79,6 +79,21 @@ func nullableInt(v int) any {
 	return v
 }
 
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
+}
+
 // orNow returns the given "yyyy-mm-dd" date string, or today when blank.
 func orNow(d string) string {
 	if d == "" {

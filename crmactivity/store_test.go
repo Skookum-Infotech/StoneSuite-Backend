@@ -178,3 +178,33 @@ func TestUpdate_RejectsMismatchedParent(t *testing.T) {
 		t.Fatalf("Update via wrong parent: err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestSoftDelete_UnresolvedActor is the regression for the module-wide
+// soft-delete defect: resolveEmployeeID returns 0 whenever the caller has no
+// linked employee row, and binding that through nullableInt wrote SQL NULL
+// into crm_activity.deleted_by, which chk_crm_activity_soft_delete rejects.
+func TestSoftDelete_UnresolvedActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID := seedCustomer(t, pool)
+
+	in := CreateActivityInput{}
+	in.ActivityType = "task"
+	in.Subject = "Unresolved actor delete"
+	created, err := Create(ctx, pool, custUUID, in, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := SoftDelete(ctx, pool, custUUID, created.ID, 0); err != nil {
+		t.Fatalf("SoftDelete with unresolved actor: %v", err)
+	}
+	var deletedBy int
+	if err := pool.QueryRow(ctx,
+		`SELECT deleted_by FROM crm_activity WHERE crm_activity_uuid = $1`, created.ID,
+	).Scan(&deletedBy); err != nil {
+		t.Fatalf("read crm_activity.deleted_by: %v", err)
+	}
+	if deletedBy != systemEmployeeID {
+		t.Errorf("crm_activity.deleted_by = %d, want %d (system employee)", deletedBy, systemEmployeeID)
+	}
+}

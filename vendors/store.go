@@ -169,6 +169,21 @@ func nullableInt(v int) any {
 	return v
 }
 
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
+}
+
 // nullableDate returns the given "yyyy-mm-dd" date string, or SQL NULL when blank.
 func nullableDate(d string) any {
 	if d == "" {
@@ -419,7 +434,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		UPDATE vendor
 		SET vendor_deleted_at = NOW(), vendor_deleted_by = $2
 		WHERE vendor_uuid = $1 AND vendor_deleted_at IS NULL`,
-		uuid, nullableInt(actorEmployeeID))
+		uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete vendor: %w", err)
 	}

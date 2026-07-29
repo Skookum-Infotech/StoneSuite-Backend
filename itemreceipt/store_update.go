@@ -126,9 +126,10 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 // so it has to stay. Voiding first is the way to remove a posted receipt from
 // the working set.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	if actorEmployeeID <= 0 {
-		return ClientError{Msg: "A deleting employee is required."}
-	}
+	// No guard on an unresolved actor: resolveEmployeeID is best-effort and
+	// returns 0 for any caller without a linked employee row, so rejecting
+	// here made deletion unreachable for every real user. The actor falls back
+	// to the system employee below, as it does in every other module.
 	var curStatusCode string
 	err := pool.QueryRow(ctx, `
 		SELECT rs.record_status_code
@@ -148,7 +149,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	tag, err := pool.Exec(ctx, `
 		UPDATE item_receipt
 		SET item_receipt_deleted_at = NOW(), item_receipt_deleted_by = $2
-		WHERE item_receipt_uuid = $1 AND item_receipt_deleted_at IS NULL`, uuid, actorEmployeeID)
+		WHERE item_receipt_uuid = $1 AND item_receipt_deleted_at IS NULL`, uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete item receipt: %w", err)
 	}

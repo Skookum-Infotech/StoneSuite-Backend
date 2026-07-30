@@ -70,12 +70,3 @@ func nullableIntPtr(v *int) any {
 	}
 	return *v
 }
-
-// trimmedOrEmpty is used for the optional VARCHAR columns that are
-// NOT NULL DEFAULT ” — they must never receive SQL NULL.
-func trimmedOrEmpty(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}

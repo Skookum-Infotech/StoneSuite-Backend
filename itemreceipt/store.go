@@ -109,22 +109,6 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (code 23505). The inventory ledger's partial unique indexes turn a
-// double-post into this, rather than into double-counted stock.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-// isCheckViolation reports whether err is a PostgreSQL CHECK-constraint
-// violation (code 23514) — chiefly inventory_stock's quantity_on_hand >= 0,
-// which a reversal can hit when the goods have already been consumed.
-func isCheckViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23514"
-}
-
 // recordTypeIDByCode resolves a lkp_record_type code to its internal id.
 func recordTypeIDByCode(ctx context.Context, q workflow.Querier, code string) (int, error) {
 	var id int

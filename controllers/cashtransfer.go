@@ -89,6 +89,8 @@ func ctFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, cashtransfer.ErrPeriodClosed):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, cashtransfer.ErrVersionMismatch):
+		fail(w, http.StatusConflict, "This cash transfer was changed by someone else. Reload and try again.")
 	default:
 		var ce cashtransfer.ClientError
 		if errors.As(err, &ce) {

@@ -68,6 +68,13 @@ type UpdateInput struct {
 	InternalNotes   string         `json:"internalNotes"`
 	OwnerEmployeeID *int           `json:"ownerEmployeeId,omitempty"`
 	CustomFields    map[string]any `json:"customFields"`
+	// RecordVersion is the optimistic-concurrency token: send back the version
+	// you last read and Update rejects a stale write with ErrVersionMismatch
+	// (409). It is a plain int, so an omitted field and an explicit 0 are
+	// indistinguishable, and cash_transfer_record_version starts at 1 -- so 0
+	// deliberately means "no version check requested," not "expect version 0."
+	// Mirrors chartofaccounts.UpdateInput.RecordVersion.
+	RecordVersion int `json:"recordVersion"`
 }
 
 // Page is one keyset-paginated slice of cash transfers.

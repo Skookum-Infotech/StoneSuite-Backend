@@ -79,6 +79,21 @@ func nullableInt(v int) any {
 	return v
 }
 
+// systemEmployeeID is the fallback actor for soft-delete columns that must
+// never be NULL when their paired *_deleted_at timestamp is set (enforced by
+// a CHECK constraint) — used when the caller has no resolvable employee id.
+const systemEmployeeID = 1
+
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
+// (0). Use this — never nullableInt — for any *_deleted_by column paired
+// with a NOT NULL *_deleted_at via a CHECK constraint.
+func actorOrSystem(actorEmployeeID int) int {
+	if actorEmployeeID == 0 {
+		return systemEmployeeID
+	}
+	return actorEmployeeID
+}
+
 // orNow returns the given "yyyy-mm-dd" date string, or today when blank.
 func orNow(d string) string {
 	if d == "" {
@@ -92,22 +107,6 @@ func orNow(d string) string {
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
-}
-
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (code 23505). The inventory ledger's partial unique indexes turn a
-// double-post into this, rather than into double-counted stock.
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-// isCheckViolation reports whether err is a PostgreSQL CHECK-constraint
-// violation (code 23514) — chiefly inventory_stock's quantity_on_hand >= 0,
-// which a reversal can hit when the goods have already been consumed.
-func isCheckViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23514"
 }
 
 // recordTypeIDByCode resolves a lkp_record_type code to its internal id.

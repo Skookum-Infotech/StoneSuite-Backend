@@ -130,7 +130,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		UPDATE quote
 		SET quote_deleted_at = NOW(), quote_deleted_by = $2
 		WHERE quote_uuid = $1 AND quote_deleted_at IS NULL`,
-		uuid, nullableInt(actorEmployeeID))
+		uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete quote: %w", err)
 	}

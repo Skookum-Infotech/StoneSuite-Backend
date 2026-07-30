@@ -130,7 +130,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		UPDATE estimate
 		SET estimate_deleted_at = NOW(), estimate_deleted_by = $2
 		WHERE estimate_uuid = $1 AND estimate_deleted_at IS NULL`,
-		uuid, nullableInt(actorEmployeeID))
+		uuid, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("delete estimate: %w", err)
 	}

@@ -47,15 +47,15 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID, curStatusID int
+	var internalID, curStatusID, curVersion int
 	var curStatusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT ct.cash_transfer_id, ct.cash_transfer_status, rs.record_status_code
+		SELECT ct.cash_transfer_id, ct.cash_transfer_status, rs.record_status_code, ct.cash_transfer_record_version
 		FROM cash_transfer ct
 		JOIN lkp_record_status rs ON rs.record_status_id = ct.cash_transfer_status
 		WHERE ct.cash_transfer_uuid = $1 AND ct.cash_transfer_deleted_at IS NULL
 		FOR UPDATE OF ct`, uuid,
-	).Scan(&internalID, &curStatusID, &curStatusCode)
+	).Scan(&internalID, &curStatusID, &curStatusCode, &curVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -64,6 +64,10 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 	}
 	if curStatusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft cash transfer can be edited."}
+	}
+	// See UpdateInput.RecordVersion: 0 opts out of the check entirely.
+	if in.RecordVersion != 0 && in.RecordVersion != curVersion {
+		return nil, ErrVersionMismatch
 	}
 
 	if _, err := tx.Exec(ctx, `

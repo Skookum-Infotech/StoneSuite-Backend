@@ -196,6 +196,46 @@ func TestReverse_OnlyValidWhenPosted(t *testing.T) {
 	}
 }
 
+func TestUpdate_RejectsStaleRecordVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	from := seedAccount(t, pool, "9930", "VerFrom", true, true)
+	to := seedAccount(t, pool, "9931", "VerTo", true, true)
+
+	ct, err := Create(ctx, pool, CreateInput{FromAccountUUID: from, ToAccountUUID: to, Amount: 50}, 0)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if ct.RecordVersion != 1 {
+		t.Fatalf("new record version = %d, want 1", ct.RecordVersion)
+	}
+
+	// A stale version is rejected with ErrVersionMismatch (409), not applied.
+	if _, err := Update(ctx, pool, ct.ID, UpdateInput{
+		FromAccountUUID: from, ToAccountUUID: to, Amount: 60, RecordVersion: 99,
+	}, 0); !errors.Is(err, ErrVersionMismatch) {
+		t.Errorf("Update() with stale version error = %v, want ErrVersionMismatch", err)
+	}
+
+	// The version last read succeeds and advances the counter.
+	updated, err := Update(ctx, pool, ct.ID, UpdateInput{
+		FromAccountUUID: from, ToAccountUUID: to, Amount: 60, RecordVersion: ct.RecordVersion,
+	}, 0)
+	if err != nil {
+		t.Fatalf("Update() with correct version: %v", err)
+	}
+	if updated.RecordVersion != ct.RecordVersion+1 {
+		t.Errorf("record version after update = %d, want %d", updated.RecordVersion, ct.RecordVersion+1)
+	}
+
+	// Omitting the version (0) opts out of the check entirely.
+	if _, err := Update(ctx, pool, ct.ID, UpdateInput{
+		FromAccountUUID: from, ToAccountUUID: to, Amount: 70,
+	}, 0); err != nil {
+		t.Errorf("Update() with omitted version = %v, want nil", err)
+	}
+}
+
 func TestPost_RejectsWhenPeriodClosed(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

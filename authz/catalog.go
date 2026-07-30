@@ -52,6 +52,32 @@ const (
 	ResourceVendorCredit  Resource = "vendor_credit"
 	ResourceExpense       Resource = "expense"
 
+	// Inventory module resources. inventory_item (above, under Sales) is the
+	// catalogue; these cover the physical side of the warehouse.
+	//
+	// inventory_unit is deliberately separate from inventory_item so a yard or
+	// warehouse clerk can be granted stock handling without also being granted
+	// catalogue edit rights. Splitting them retires a permission that slab
+	// routes used to sit under, so tenant/schema.sql carries a one-time backfill
+	// granting inventory_unit:<action> to every role that already held
+	// inventory_item:<action> — without it every custom role silently 403s.
+	ResourceInventoryUnit   Resource = "inventory_unit"   // serialized units: slabs and remnants
+	ResourceInventoryBin    Resource = "inventory_bin"    // bin/location master
+	ResourceInventoryBundle Resource = "inventory_bundle" // bundles that move as a set
+	ResourceWarehouse       Resource = "warehouse"        // lkp_warehouse master
+	ResourceInventoryLookup Resource = "inventory_lookup" // material/colour/finish/reason vocabularies
+
+	// Phase 3 stock documents. Each is a status document, so each carries
+	// ActionTransition and ActionApprove on top of CRUD.
+	//
+	// They are separate resources rather than actions on inventory_unit because
+	// the authority differs in kind: a yard clerk moves and receives stone all
+	// day, but writing stock off or signing off a count variance is a
+	// controller's job. One resource would make those inseparable.
+	ResourceInventoryAdjustment Resource = "inventory_adjustment" // manual stock correction
+	ResourceInventoryTransfer   Resource = "inventory_transfer"   // warehouse-to-warehouse movement
+	ResourceInventoryCount      Resource = "inventory_count"      // cycle count / stock take
+
 	// Finance
 	ResourceChartOfAccount Resource = "chart_of_account"
 
@@ -123,6 +149,63 @@ var catalog = []Permission{
 	{ResourceInventoryItem, ActionRead},
 	{ResourceInventoryItem, ActionUpdate},
 	{ResourceInventoryItem, ActionDelete},
+
+	// Inventory: physical stock. No ActionTransition on the four master-data
+	// resources below — none is a status document with a workflow. The three
+	// Phase 3 documents further down do carry transition and approve.
+	{ResourceInventoryUnit, ActionCreate},
+	{ResourceInventoryUnit, ActionRead},
+	{ResourceInventoryUnit, ActionUpdate},
+	{ResourceInventoryUnit, ActionDelete},
+
+	{ResourceInventoryBin, ActionCreate},
+	{ResourceInventoryBin, ActionRead},
+	{ResourceInventoryBin, ActionUpdate},
+	{ResourceInventoryBin, ActionDelete},
+
+	{ResourceInventoryBundle, ActionCreate},
+	{ResourceInventoryBundle, ActionRead},
+	{ResourceInventoryBundle, ActionUpdate},
+	{ResourceInventoryBundle, ActionDelete},
+
+	{ResourceWarehouse, ActionCreate},
+	{ResourceWarehouse, ActionRead},
+	{ResourceWarehouse, ActionUpdate},
+	{ResourceWarehouse, ActionDelete},
+
+	// The three Phase 3 stock documents. ActionApprove gates the move into the
+	// approved state and is deliberately distinct from ActionTransition: the
+	// point of an approval step is that the person who raised a write-off is
+	// not the person who signs it off, and one shared action would collapse
+	// that into a single grant.
+	{ResourceInventoryAdjustment, ActionCreate},
+	{ResourceInventoryAdjustment, ActionRead},
+	{ResourceInventoryAdjustment, ActionUpdate},
+	{ResourceInventoryAdjustment, ActionDelete},
+	{ResourceInventoryAdjustment, ActionTransition},
+	{ResourceInventoryAdjustment, ActionApprove},
+
+	{ResourceInventoryTransfer, ActionCreate},
+	{ResourceInventoryTransfer, ActionRead},
+	{ResourceInventoryTransfer, ActionUpdate},
+	{ResourceInventoryTransfer, ActionDelete},
+	{ResourceInventoryTransfer, ActionTransition},
+	{ResourceInventoryTransfer, ActionApprove},
+
+	{ResourceInventoryCount, ActionCreate},
+	{ResourceInventoryCount, ActionRead},
+	{ResourceInventoryCount, ActionUpdate},
+	{ResourceInventoryCount, ActionDelete},
+	{ResourceInventoryCount, ActionTransition},
+	{ResourceInventoryCount, ActionApprove},
+
+	// Read is separated from the write actions here on purpose: every inventory
+	// form needs the vocabularies to populate its dropdowns, so a bin clerk
+	// needs inventory_lookup:read without any right to edit the vocabulary.
+	{ResourceInventoryLookup, ActionCreate},
+	{ResourceInventoryLookup, ActionRead},
+	{ResourceInventoryLookup, ActionUpdate},
+	{ResourceInventoryLookup, ActionDelete},
 
 	{ResourceEstimate, ActionCreate},
 	{ResourceEstimate, ActionRead},

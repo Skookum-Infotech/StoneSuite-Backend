@@ -7,14 +7,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/inventory"
 )
 
 // Ledger event codes (inventory_slab_ledger.event) — see spec §2.9.
+// Defined in terms of the inventory package's constants so the two cannot
+// drift apart; the local names are kept because this module reads better with
+// them.
 const (
-	ledgerReceived  = "received"
-	ledgerConsumed  = "consumed"
-	ledgerRecovered = "recovered"
-	ledgerScrapped  = "scrapped"
+	ledgerReceived  = inventory.EventReceived
+	ledgerConsumed  = inventory.EventConsumed
+	ledgerRecovered = inventory.EventRecovered
+	ledgerScrapped  = inventory.EventScrapped
 )
 
 // AllocateSlab reserves a specific physical slab against a job, row-locking the
@@ -222,45 +227,21 @@ func releaseReservedSlabs(ctx context.Context, tx pgx.Tx, jobInternalID int) err
 	return nil
 }
 
-// ledgerAndStock writes one ledger row and applies its signed delta to
+// ledgerAndStock writes one slab ledger row and applies its signed delta to
 // inventory_stock in the same transaction — the invariant that stock equals the
 // ledger sum (§2.9). A negative delta that would drive stock below zero surfaces
 // as a ClientError (400), never a raw CHECK 500 (§4.6).
+//
+// The implementation now lives in inventory.SlabLedgerAndStock, shared with the
+// serialized-unit store. This wrapper exists only to translate that package's
+// ClientError into this module's, so fabrication's callers and its HTTP error
+// mapping are unchanged.
 func ledgerAndStock(ctx context.Context, tx pgx.Tx, slabID, itemID, warehouseID int, event string, delta float64, fabSlabID *int, actorEmployeeID int) error {
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO inventory_slab_ledger (inventory_slab_id, inventory_item_id, warehouse_id, event, quantity_delta, fabrication_job_slab_id, actor_employee_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		slabID, itemID, warehouseID, event, delta, fabSlabID, nullableInt(actorEmployeeID)); err != nil {
-		// A duplicate event (e.g. re-running consume) is a no-op, not an error.
-		if isUniqueViolation(err) {
-			return nil
-		}
-		return fmt.Errorf("write ledger row: %w", err)
+	err := inventory.SlabLedgerAndStock(ctx, tx, slabID, itemID, warehouseID, event, delta, fabSlabID, actorEmployeeID)
+	if err != nil && inventory.IsClientError(err) {
+		return ClientError{Msg: err.Error()}
 	}
-	// Upsert the stock row and apply the delta.
-	tag, err := tx.Exec(ctx, `
-		UPDATE inventory_stock SET quantity_on_hand = quantity_on_hand + $3, stock_updated_at = NOW()
-		WHERE inventory_item_id = $1 AND warehouse_id = $2`, itemID, warehouseID, delta)
-	if err != nil {
-		if isCheckViolation(err) {
-			return ClientError{Msg: "This action would drive stock below zero; the reservation math is inconsistent."}
-		}
-		return fmt.Errorf("apply stock delta: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		// No stock row yet — only valid for a positive (received/recovered) delta.
-		if delta < 0 {
-			return ClientError{Msg: "No stock on hand for this item at its warehouse."}
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO inventory_stock (inventory_item_id, warehouse_id, quantity_on_hand)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (inventory_item_id, warehouse_id) DO UPDATE SET quantity_on_hand = inventory_stock.quantity_on_hand + $3`,
-			itemID, warehouseID, delta); err != nil {
-			return fmt.Errorf("seed stock row: %w", err)
-		}
-	}
-	return nil
+	return err
 }
 
 // InventoryForJob lists the slabs allocated to a job (any status), for the

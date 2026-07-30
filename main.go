@@ -514,6 +514,111 @@ func main() {
 		mux.Handle("GET /api/tenant/inventory/items/{uuid}", tenantChain(inv.Get))
 		mux.Handle("PATCH /api/tenant/inventory/items/{uuid}", tenantChain(inv.Update))
 		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
+		mux.Handle("GET /api/tenant/inventory/items/{uuid}/history", tenantChain(inv.History))
+
+		// Inventory vocabularies. Registered BEFORE the {uuid} routes above
+		// would matter only if they shared a prefix — they do not, but the
+		// lookups routes are what unblock every inventory form, since nothing
+		// in the app previously returned lkp_unit or lkp_warehouse and
+		// inventory_item_unit_id is NOT NULL.
+		invLookup := controllers.NewInventoryLookupOps()
+		mux.Handle("GET /api/tenant/inventory/lookups", tenantChain(invLookup.All))
+		mux.Handle("GET /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.List))
+		mux.Handle("POST /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.Create))
+		mux.Handle("PATCH /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Update))
+		mux.Handle("DELETE /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Delete))
+
+		// Warehouses: master data that has existed in lkp_warehouse since the
+		// sales-order migration but never had a route.
+		invWh := controllers.NewInventoryWarehouseOps()
+		mux.Handle("GET /api/tenant/inventory/warehouses", tenantChain(invWh.List))
+		mux.Handle("POST /api/tenant/inventory/warehouses", tenantChain(invWh.Create))
+		mux.Handle("GET /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Get))
+		mux.Handle("PATCH /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Update))
+		mux.Handle("DELETE /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Delete))
+		mux.Handle("POST /api/tenant/inventory/warehouses/{uuid}/set-default", tenantChain(invWh.SetDefault))
+
+		// Bins: yards, racks, A-frames, aisles and shelves inside a warehouse.
+		invBin := controllers.NewInventoryBinOps()
+		mux.Handle("GET /api/tenant/inventory/bins", tenantChain(invBin.List))
+		mux.Handle("GET /api/tenant/inventory/bins/tree", tenantChain(invBin.Tree))
+		mux.Handle("POST /api/tenant/inventory/bins", tenantChain(invBin.Create))
+		mux.Handle("GET /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Get))
+		mux.Handle("PATCH /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Update))
+		mux.Handle("DELETE /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Delete))
+
+		// Bundles: banded pallets of slabs that are handled as a set. Stock lives
+		// on the member units, never on the bundle, so none of these routes
+		// touches the ledger.
+		invBundle := controllers.NewInventoryBundleOps()
+		mux.Handle("GET /api/tenant/inventory/bundles", tenantChain(invBundle.List))
+		mux.Handle("POST /api/tenant/inventory/bundles", tenantChain(invBundle.Create))
+		mux.Handle("GET /api/tenant/inventory/bundles/{uuid}", tenantChain(invBundle.Get))
+		mux.Handle("PATCH /api/tenant/inventory/bundles/{uuid}", tenantChain(invBundle.Update))
+		mux.Handle("DELETE /api/tenant/inventory/bundles/{uuid}", tenantChain(invBundle.Delete))
+		mux.Handle("GET /api/tenant/inventory/bundles/{uuid}/members", tenantChain(invBundle.Members))
+		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/members", tenantChain(invBundle.AddMembers))
+		mux.Handle("DELETE /api/tenant/inventory/bundles/{uuid}/members", tenantChain(invBundle.RemoveMembers))
+		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/seal", tenantChain(invBundle.Seal))
+		mux.Handle("POST /api/tenant/inventory/bundles/{uuid}/break", tenantChain(invBundle.Break))
+		mux.Handle("PATCH /api/tenant/inventory/bundles/{uuid}/bin", tenantChain(invBundle.MoveBin))
+
+		// Phase 3 stock documents. Each is a status document: draft, approval,
+		// then a post that is the only move touching stock.
+		invAdj := controllers.NewInventoryAdjustmentOps()
+		mux.Handle("GET /api/tenant/inventory/adjustments", tenantChain(invAdj.List))
+		mux.Handle("POST /api/tenant/inventory/adjustments/search", tenantChain(invAdj.Search))
+		mux.Handle("POST /api/tenant/inventory/adjustments", tenantChain(invAdj.Create))
+		mux.Handle("GET /api/tenant/inventory/adjustments/{uuid}", tenantChain(invAdj.Get))
+		mux.Handle("PATCH /api/tenant/inventory/adjustments/{uuid}", tenantChain(invAdj.Update))
+		mux.Handle("DELETE /api/tenant/inventory/adjustments/{uuid}", tenantChain(invAdj.Delete))
+		mux.Handle("POST /api/tenant/inventory/adjustments/{uuid}/transition", tenantChain(invAdj.Transition))
+		mux.Handle("POST /api/tenant/inventory/adjustments/{uuid}/post", tenantChain(invAdj.Post))
+		mux.Handle("GET /api/tenant/inventory/adjustments/{uuid}/history", tenantChain(invAdj.History))
+
+		invTrf := controllers.NewInventoryTransferOps()
+		mux.Handle("GET /api/tenant/inventory/transfers", tenantChain(invTrf.List))
+		mux.Handle("POST /api/tenant/inventory/transfers/search", tenantChain(invTrf.Search))
+		mux.Handle("GET /api/tenant/inventory/transfers/in-transit", tenantChain(invTrf.InTransit))
+		mux.Handle("POST /api/tenant/inventory/transfers", tenantChain(invTrf.Create))
+		mux.Handle("GET /api/tenant/inventory/transfers/{uuid}", tenantChain(invTrf.Get))
+		mux.Handle("PATCH /api/tenant/inventory/transfers/{uuid}", tenantChain(invTrf.Update))
+		mux.Handle("DELETE /api/tenant/inventory/transfers/{uuid}", tenantChain(invTrf.Delete))
+		mux.Handle("POST /api/tenant/inventory/transfers/{uuid}/transition", tenantChain(invTrf.Transition))
+		mux.Handle("POST /api/tenant/inventory/transfers/{uuid}/ship", tenantChain(invTrf.Ship))
+		mux.Handle("POST /api/tenant/inventory/transfers/{uuid}/receive", tenantChain(invTrf.Receive))
+		mux.Handle("GET /api/tenant/inventory/transfers/{uuid}/history", tenantChain(invTrf.History))
+
+		invCnt := controllers.NewInventoryCountOps()
+		mux.Handle("GET /api/tenant/inventory/counts", tenantChain(invCnt.List))
+		mux.Handle("POST /api/tenant/inventory/counts/search", tenantChain(invCnt.Search))
+		mux.Handle("POST /api/tenant/inventory/counts", tenantChain(invCnt.Create))
+		mux.Handle("GET /api/tenant/inventory/counts/{uuid}", tenantChain(invCnt.Get))
+		mux.Handle("PATCH /api/tenant/inventory/counts/{uuid}", tenantChain(invCnt.Update))
+		mux.Handle("DELETE /api/tenant/inventory/counts/{uuid}", tenantChain(invCnt.Delete))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/freeze", tenantChain(invCnt.Freeze))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/counts", tenantChain(invCnt.RecordCounts))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/unexpected", tenantChain(invCnt.AddUnexpected))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/transition", tenantChain(invCnt.Transition))
+		mux.Handle("POST /api/tenant/inventory/counts/{uuid}/post", tenantChain(invCnt.Post))
+		mux.Handle("GET /api/tenant/inventory/counts/{uuid}/history", tenantChain(invCnt.History))
+
+		// Chart of Accounts — Finance section master data.
+		{
+			coa := controllers.NewChartOfAccountsOps(cipher)
+			mux.Handle("GET /api/tenant/finance/accounts", tenantChain(coa.List))
+			mux.Handle("POST /api/tenant/finance/accounts/search", tenantChain(coa.Search))
+			mux.Handle("GET /api/tenant/finance/accounts/tree", tenantChain(coa.Tree))
+			mux.Handle("GET /api/tenant/finance/accounts/categories", tenantChain(coa.Categories))
+			mux.Handle("PATCH /api/tenant/finance/accounts/bulk", tenantChain(coa.BulkUpdate))
+			mux.Handle("POST /api/tenant/finance/accounts", tenantChain(coa.Create))
+			mux.Handle("GET /api/tenant/finance/accounts/{uuid}", tenantChain(coa.Get))
+			mux.Handle("PATCH /api/tenant/finance/accounts/{uuid}", tenantChain(coa.Update))
+			mux.Handle("DELETE /api/tenant/finance/accounts/{uuid}", tenantChain(coa.Delete))
+			mux.Handle("GET /api/tenant/finance/accounts/{uuid}/history", tenantChain(coa.History))
+			mux.Handle("GET /api/tenant/finance/account-defaults", tenantChain(coa.Defaults))
+			mux.Handle("PATCH /api/tenant/finance/account-defaults/{slotKey}", tenantChain(coa.RepointDefault))
+		}
 
 		// Chart of Accounts — Finance section master data.
 		{
@@ -574,11 +679,26 @@ func main() {
 		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.UpdatePiece))
 		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.RemovePiece))
 
-		// Serialized slab catalog (physical instances of inventory items).
-		invSlab := controllers.NewInventorySlabOps()
-		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invSlab.Create))
-		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invSlab.Get))
-		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invSlab.Scrap))
+		// Serialized physical stock — individual slabs and the remnants cut from
+		// them. Guarded by inventory_unit:*, which tenant/schema.sql backfills
+		// from inventory_item:* so no existing role loses access.
+		invUnit := controllers.NewInventoryUnitOps()
+		mux.Handle("GET /api/tenant/inventory/units", tenantChain(invUnit.List))
+		mux.Handle("POST /api/tenant/inventory/units/search", tenantChain(invUnit.Search))
+		mux.Handle("GET /api/tenant/inventory/units/remnants", tenantChain(invUnit.Remnants))
+		mux.Handle("POST /api/tenant/inventory/units", tenantChain(invUnit.Create))
+		mux.Handle("GET /api/tenant/inventory/units/{uuid}", tenantChain(invUnit.Get))
+		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/cut", tenantChain(invUnit.Cut))
+		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
+
+		// The original /inventory/slabs/* paths, served by the same handlers so
+		// the frontend can migrate to /units without a flag day. Remove once it
+		// has.
+		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invUnit.Create))
+		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invUnit.Get))
+		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invUnit.Scrap))
 
 		// Estimate: dedicated v2 relational module (header + line items + approval),
 		// a sibling of Sales Order/Invoice — not served through the generic

@@ -139,7 +139,13 @@ type Page struct {
 	HasMore    bool
 }
 
-// Slab is the API response for a serialized physical slab.
+// Slab is a serialized physical slab AS SEEN FROM A FABRICATION JOB — returned
+// only by InventoryForJob.
+//
+// Its Status is the job's allocation_status (reserved | consumed | released),
+// NOT the slab's own slab_status, which is why this stays a fabrication type
+// rather than reusing inventory.Unit. Slab CRUD itself moved to the inventory
+// package, where a physical piece of stock belongs.
 type Slab struct {
 	ID              string  `json:"id"`
 	Serial          string  `json:"serial"`

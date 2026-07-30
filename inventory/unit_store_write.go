@@ -54,6 +54,10 @@ func CreateUnit(ctx context.Context, pool *pgxpool.Pool, in CreateUnitInput, act
 	if err != nil {
 		return nil, err
 	}
+	vendorID, err := resolveUnitVendor(ctx, tx, in.VendorUUID)
+	if err != nil {
+		return nil, err
+	}
 
 	var (
 		unitID  int
@@ -70,7 +74,7 @@ func CreateUnit(ctx context.Context, pool *pgxpool.Pool, in CreateUnitInput, act
 		VALUES ($1,$2,$3,$4,$5, CURRENT_DATE,$6, $7,$8,$9,$10, $11,$12,$13,
 			$14,$15,$16,$17,$18, 'full','available',$19,$20,$21,$6)
 		RETURNING inventory_slab_id, inventory_slab_uuid`,
-		in.Serial, UnitKindSlab, nullableIntPtr(in.VendorID), in.SupplierCode, in.Barcode,
+		in.Serial, UnitKindSlab, vendorID, in.SupplierCode, in.Barcode,
 		nullableInt(actorEmployeeID),
 		item.itemID, in.WarehouseID, binID, bundleID,
 		in.BundleID, in.BlockID, in.Lot,
@@ -123,6 +127,24 @@ func resolveUnitBundle(ctx context.Context, tx pgx.Tx, bundleUUID *string) (*int
 		WHERE inventory_bundle_uuid = $1 AND bundle_deleted_at IS NULL`, *bundleUUID).Scan(&id)
 	if err != nil {
 		return nil, ClientError{Msg: "Unknown bundle."}
+	}
+	return &id, nil
+}
+
+// resolveUnitVendor mirrors purchaseorder's vendorSnapshot: the client only
+// ever knows a vendor by its uuid (vendors/types.go never exposes the
+// internal SERIAL), so this is the only place that resolves one to the
+// vendor_id inventory_slab actually stores.
+func resolveUnitVendor(ctx context.Context, tx pgx.Tx, vendorUUID *string) (*int, error) {
+	if vendorUUID == nil || strings.TrimSpace(*vendorUUID) == "" {
+		return nil, nil
+	}
+	var id int
+	err := tx.QueryRow(ctx, `
+		SELECT vendor_id FROM vendor
+		WHERE vendor_uuid = $1 AND vendor_deleted_at IS NULL`, *vendorUUID).Scan(&id)
+	if err != nil {
+		return nil, ClientError{Msg: "Unknown vendor."}
 	}
 	return &id, nil
 }

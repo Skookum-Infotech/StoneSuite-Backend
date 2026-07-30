@@ -60,7 +60,7 @@ type Unit struct {
 // area from the parent.
 type CreateUnitInput struct {
 	Serial            string  `json:"serial"`
-	VendorID          *int    `json:"vendorId"`
+	VendorUUID        *string `json:"vendorId"`
 	SupplierCode      string  `json:"supplierCode"`
 	Barcode           string  `json:"barcode"`
 	InventoryItemUUID string  `json:"inventoryItemId"`

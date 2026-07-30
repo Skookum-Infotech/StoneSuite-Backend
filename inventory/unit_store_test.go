@@ -6,7 +6,6 @@ package inventory
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -19,20 +18,6 @@ import (
 // a reason that has nothing to do with the code under test.
 func uniq(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
-}
-
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping DB-backed test")
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("connect test db: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
 }
 
 // seedAreaItem creates a catalogue item denominated in square feet — the only

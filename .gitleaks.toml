@@ -1,0 +1,17 @@
+title = "StoneSuite Backend gitleaks config"
+
+[extend]
+useDefault = true
+
+# The generic-api-key rule's entropy heuristic false-positives on fake bank
+# account numbers used to exercise Chart of Accounts masking behavior — the
+# variable name "BankAccountNumberKey" plus a high-entropy digit string trips
+# it, but there is no real credential in either path. Path-based allowlist
+# entries apply to every commit gitleaks scans (not just the current tree),
+# so this also clears the historical findings in these files' past revisions.
+[allowlist]
+description = "Chart of Accounts masking test fixtures (fake bank account numbers, not credentials)"
+paths = [
+  '''chartofaccounts/masking_test\.go''',
+  '''docs/superpowers/plans/2026-07-25-chart-of-accounts\.md''',
+]

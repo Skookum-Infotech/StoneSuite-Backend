@@ -24,13 +24,13 @@ type Adjustment struct {
 	WarehouseID   int    `json:"warehouseId"`
 	WarehouseName string `json:"warehouseName,omitempty"`
 
-	Date          string  `json:"date"`
-	ReasonID      *int    `json:"reasonId,omitempty"`
-	ReasonName    string  `json:"reasonName,omitempty"`
-	Notes         string  `json:"notes,omitempty"`
-	InternalNotes string  `json:"internalNotes,omitempty"`
-	OwnerID       *int    `json:"ownerId,omitempty"`
-	OwnerName     string  `json:"ownerName,omitempty"`
+	Date          string `json:"date"`
+	ReasonID      *int   `json:"reasonId,omitempty"`
+	ReasonName    string `json:"reasonName,omitempty"`
+	Notes         string `json:"notes,omitempty"`
+	InternalNotes string `json:"internalNotes,omitempty"`
+	OwnerID       *int   `json:"ownerId,omitempty"`
+	OwnerName     string `json:"ownerName,omitempty"`
 
 	PostedAt     *string `json:"postedAt,omitempty"`
 	CancelledAt  *string `json:"cancelledAt,omitempty"`

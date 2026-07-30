@@ -5097,6 +5097,138 @@ CREATE TABLE IF NOT EXISTS coa_default_mapping (
 );
 CREATE INDEX IF NOT EXISTS idx_coa_slot_account ON coa_default_mapping (coa_account_id);
 
+-- ── Cash Transfer module + GL foundation (journal/) ────────────────────
+
+-- accounting_settings -- singleton; the entire "closed period" concept --------
+CREATE TABLE IF NOT EXISTS accounting_settings (
+    accounting_settings_id      SMALLINT     PRIMARY KEY DEFAULT 1,
+    books_closed_through        DATE             NULL,
+    accounting_settings_updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accounting_settings_updated_by INTEGER       NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_accounting_settings_singleton CHECK (accounting_settings_id = 1)
+);
+INSERT INTO accounting_settings (accounting_settings_id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- journal_entry -- the GL posting header --------------------------------------
+CREATE TABLE IF NOT EXISTS journal_entry (
+    journal_entry_id          SERIAL       PRIMARY KEY,
+    journal_entry_uuid        UUID         NOT NULL DEFAULT gen_random_uuid(),
+    journal_entry_number      VARCHAR(20)      NULL,
+    entry_date                 DATE         NOT NULL,
+    memo                       TEXT         NOT NULL DEFAULT '',
+    source_type                 VARCHAR(30)  NOT NULL,
+    source_id                    UUID         NOT NULL,
+    is_reversal                   BOOLEAN      NOT NULL DEFAULT FALSE,
+    reverses_journal_entry_id      INTEGER          NULL REFERENCES journal_entry(journal_entry_id),
+    journal_entry_created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    journal_entry_created_by         INTEGER          NULL REFERENCES employee(employee_id),
+
+    CONSTRAINT uq_je_uuid   UNIQUE (journal_entry_uuid),
+    CONSTRAINT uq_je_number UNIQUE (journal_entry_number)
+);
+CREATE INDEX IF NOT EXISTS idx_je_source ON journal_entry (source_type, source_id);
+
+-- journal_entry_line -- one debit or credit leg -------------------------------
+CREATE TABLE IF NOT EXISTS journal_entry_line (
+    journal_entry_line_id SERIAL        PRIMARY KEY,
+    journal_entry_id       INTEGER       NOT NULL REFERENCES journal_entry(journal_entry_id),
+    line_number              INTEGER       NOT NULL,
+    coa_account_id             INTEGER       NOT NULL REFERENCES coa_account(coa_account_id),
+    debit                        DECIMAL(15,2) NOT NULL DEFAULT 0,
+    credit                        DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    CONSTRAINT uq_jel_line      UNIQUE (journal_entry_id, line_number),
+    CONSTRAINT chk_jel_nonneg   CHECK (debit >= 0 AND credit >= 0),
+    CONSTRAINT chk_jel_one_side CHECK (NOT (debit > 0 AND credit > 0)),
+    CONSTRAINT chk_jel_nonzero  CHECK (debit > 0 OR credit > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_jel_account ON journal_entry_line (coa_account_id);
+CREATE INDEX IF NOT EXISTS idx_jel_entry   ON journal_entry_line (journal_entry_id);
+
+-- coa_account running balance -------------------------------------------------
+ALTER TABLE coa_account ADD COLUMN IF NOT EXISTS coa_account_balance DECIMAL(15,2) NOT NULL DEFAULT 0;
+
+-- New record type for Cash Transfer, appended as its own statement -----------
+INSERT INTO lkp_record_type (record_type_code, record_type_code_full, record_type_name, record_type_is_active, record_type_is_system, record_type_created_by) VALUES
+    ('CTRF', 'cashtransfer', 'Cash Transfer', TRUE, TRUE, 1)
+ON CONFLICT (record_type_code) DO NOTHING;
+
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES
+    ('DRFT','Draft'), ('APPR','Approved'), ('POST','Posted'),
+    ('CANC','Cancelled'), ('RVSD','Reversed')
+) AS v(code, name)
+CROSS JOIN lkp_record_type rt
+WHERE rt.record_type_code = 'CTRF'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- cash_transfer -- header ------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cash_transfer (
+    cash_transfer_id            SERIAL       PRIMARY KEY,
+    cash_transfer_uuid           UUID         NOT NULL DEFAULT gen_random_uuid(),
+    cash_transfer_number          VARCHAR(20)      NULL,
+    record_type                    INTEGER      NOT NULL REFERENCES lkp_record_type(record_type_id),
+    cash_transfer_status             INTEGER      NOT NULL REFERENCES lkp_record_status(record_status_id),
+    cash_transfer_date                 DATE         NOT NULL DEFAULT CURRENT_DATE,
+    from_account_id                      INTEGER      NOT NULL REFERENCES coa_account(coa_account_id),
+    to_account_id                          INTEGER      NOT NULL REFERENCES coa_account(coa_account_id),
+    cash_transfer_amount                    DECIMAL(15,2) NOT NULL,
+    cash_transfer_reference                   VARCHAR(100) NOT NULL DEFAULT '',
+    cash_transfer_notes                         TEXT         NOT NULL DEFAULT '',
+    cash_transfer_internal_notes                  TEXT         NOT NULL DEFAULT '',
+    cash_transfer_custom_fields                     JSONB        NOT NULL DEFAULT '{}',
+    cash_transfer_owner_id                            INTEGER          NULL REFERENCES employee(employee_id),
+    journal_entry_id                                    INTEGER          NULL REFERENCES journal_entry(journal_entry_id),
+    reversal_journal_entry_id                             INTEGER          NULL REFERENCES journal_entry(journal_entry_id),
+    cash_transfer_posted_at                                 TIMESTAMP        NULL,
+    cash_transfer_posted_by                                   INTEGER          NULL REFERENCES employee(employee_id),
+    cash_transfer_reversed_at                                   TIMESTAMP        NULL,
+    cash_transfer_reversed_by                                     INTEGER          NULL REFERENCES employee(employee_id),
+    cash_transfer_created_at                                       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cash_transfer_created_by                                         INTEGER          NULL REFERENCES employee(employee_id),
+    cash_transfer_updated_at                                           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cash_transfer_updated_by                                             INTEGER          NULL REFERENCES employee(employee_id),
+    cash_transfer_deleted_at                                               TIMESTAMP        NULL,
+    cash_transfer_deleted_by                                                 INTEGER          NULL REFERENCES employee(employee_id),
+    cash_transfer_record_version                                               INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_cash_transfer_uuid   UNIQUE (cash_transfer_uuid),
+    CONSTRAINT uq_cash_transfer_number UNIQUE (cash_transfer_number),
+    CONSTRAINT chk_ct_diff_accounts CHECK (from_account_id <> to_account_id),
+    CONSTRAINT chk_ct_amount_positive CHECK (cash_transfer_amount > 0),
+    CONSTRAINT chk_ct_posted_pair   CHECK ((cash_transfer_posted_at IS NULL) = (journal_entry_id IS NULL)),
+    CONSTRAINT chk_ct_reversed_pair CHECK ((cash_transfer_reversed_at IS NULL) = (reversal_journal_entry_id IS NULL)),
+    CONSTRAINT chk_ct_soft_delete CHECK (
+        (cash_transfer_deleted_at IS NULL AND cash_transfer_deleted_by IS NULL) OR
+        (cash_transfer_deleted_at IS NOT NULL AND cash_transfer_deleted_by IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_ct_status  ON cash_transfer (cash_transfer_status) WHERE cash_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ct_from    ON cash_transfer (from_account_id)      WHERE cash_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ct_to      ON cash_transfer (to_account_id)        WHERE cash_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ct_owner   ON cash_transfer (cash_transfer_owner_id) WHERE cash_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ct_custom_gin ON cash_transfer USING GIN (cash_transfer_custom_fields);
+CREATE INDEX IF NOT EXISTS idx_ct_created_keyset ON cash_transfer (cash_transfer_created_at, cash_transfer_id) WHERE cash_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ct_updated_keyset ON cash_transfer (cash_transfer_updated_at, cash_transfer_id) WHERE cash_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_ct_number_keyset  ON cash_transfer (cash_transfer_number, cash_transfer_id)     WHERE cash_transfer_deleted_at IS NULL;
+
+-- cash_transfer_history -- status trail ---------------------------------------
+CREATE TABLE IF NOT EXISTS cash_transfer_history (
+    cash_transfer_history_id SERIAL      PRIMARY KEY,
+    cash_transfer_id           INTEGER     NOT NULL REFERENCES cash_transfer(cash_transfer_id),
+    from_status_id               INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                   INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    history_action                   VARCHAR(20) NOT NULL,
+    history_at                         TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    history_by                           INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_ct_history_action CHECK (history_action IN
+        ('create','update','transition','post','reverse','delete'))
+);
+CREATE INDEX IF NOT EXISTS idx_ct_history_record ON cash_transfer_history (cash_transfer_id, history_at DESC);
+
 -- All seeded rows are top-level (parent_id NULL, depth 0), so there is no
 -- insert-ordering problem. created_by is employee 1, matching lkp_unit/lkp_warehouse.
 -- Note 'Partner''s Capital' doubles the apostrophe (correct SQL escaping), and

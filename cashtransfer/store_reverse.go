@@ -48,12 +48,10 @@ func Reverse(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployee
 	}
 
 	reversalDate := time.Now()
-	closed, err := journal.IsPeriodClosed(ctx, tx, reversalDate)
-	if err != nil {
-		return nil, fmt.Errorf("check accounting period: %w", err)
-	}
-	if closed {
-		return nil, ErrPeriodClosed
+	// See the note in store_post.go: journal.CreateEntry enforces this anyway
+	// (ReverseEntry routes through it); checking here yields the better error.
+	if err := journal.CheckPeriodOpen(ctx, tx, reversalDate); err != nil {
+		return nil, translatePeriodError(err)
 	}
 
 	reversingEntry, err := journal.ReverseEntry(ctx, tx, *journalEntryID, reversalDate,

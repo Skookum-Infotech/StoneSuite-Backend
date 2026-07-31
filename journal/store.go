@@ -32,6 +32,17 @@ var ErrUnbalancedEntry = errors.New("journal entry is not balanced")
 // does not have exactly one of debit/credit populated and positive.
 var ErrInvalidLine = errors.New("invalid journal entry line")
 
+// ErrPeriodClosed is returned when an entry's effective date falls in a closed
+// accounting period — either an accounting_period row marked closed, or (for
+// tenants with no fiscal calendar) a date at or before books_closed_through.
+var ErrPeriodClosed = errors.New("accounting period is closed for this date")
+
+// ErrNoAccountingPeriod is returned when a tenant HAS a fiscal calendar but no
+// period covers the entry's effective date — typically posting past the last
+// generated fiscal year. Distinct from ErrPeriodClosed because the remedy is
+// different: generate the next fiscal year, not reopen a period.
+var ErrNoAccountingPeriod = errors.New("no accounting period exists for this date")
+
 func round2(x float64) float64 { return math.Round(x*100) / 100 }
 
 func nullableInt(v int) any {
@@ -65,20 +76,75 @@ func validateLines(lines []LineInput) error {
 	return nil
 }
 
-// IsPeriodClosed reports whether effectiveDate falls within the tenant's
-// closed accounting period (spec AD-4: a single "books closed through" date).
-// A nil books_closed_through means nothing is closed.
+// lookupPeriod reads, in one round trip, everything verdictFor needs: the
+// status of the accounting_period covering effectiveDate (if any), whether the
+// tenant has a fiscal calendar at all, and the two accounting_settings dates.
+//
+// The period table is queried with raw SQL rather than through the
+// accountingperiod package on purpose: journal imports zero stonesuite-backend
+// packages, the same discipline query/ and ai/ follow, and it already reads
+// accounting_settings the same way.
+func lookupPeriod(ctx context.Context, q querier, effectiveDate time.Time) (periodLookup, error) {
+	var (
+		status *string
+		l      periodLookup
+	)
+	err := q.QueryRow(ctx, `
+		SELECT (SELECT ap.accounting_period_status
+		          FROM accounting_period ap
+		         WHERE $1::date BETWEEN ap.period_start AND ap.period_end),
+		       EXISTS (SELECT 1 FROM accounting_period),
+		       s.base_period_start,
+		       s.books_closed_through
+		FROM accounting_settings s
+		WHERE s.accounting_settings_id = 1`, effectiveDate,
+	).Scan(&status, &l.CalendarExists, &l.BasePeriodStart, &l.ClosedThrough)
+	if err != nil {
+		return periodLookup{}, fmt.Errorf("load accounting period for %s: %w",
+			effectiveDate.Format(time.DateOnly), err)
+	}
+	if status != nil {
+		l.Found, l.Status = true, *status
+	}
+	return l, nil
+}
+
+// CheckPeriodOpen returns nil when effectiveDate may be posted to, and
+// ErrPeriodClosed or ErrNoAccountingPeriod when it may not.
+//
+// This is the single choke point for period enforcement: CreateEntry calls it
+// on every GL write, so a posting module cannot forget the check. Modules may
+// still call it early — before doing expensive work or mutating a header — to
+// fail with a friendlier, document-specific message; cashtransfer does.
+func CheckPeriodOpen(ctx context.Context, q querier, effectiveDate time.Time) error {
+	l, err := lookupPeriod(ctx, q, effectiveDate)
+	if err != nil {
+		return err
+	}
+	switch verdictFor(effectiveDate, l) {
+	case verdictClosed:
+		return ErrPeriodClosed
+	case verdictNoPeriod:
+		return ErrNoAccountingPeriod
+	default:
+		return nil
+	}
+}
+
+// IsPeriodClosed reports whether effectiveDate falls within a closed
+// accounting period.
+//
+// Retained for backward compatibility with callers written against the
+// original single "books closed through" date (spec AD-4). It now resolves
+// through the full period rules, so a missing period reads as closed — a
+// caller asking a yes/no question gets the fail-closed answer. Prefer
+// CheckPeriodOpen, which distinguishes the two cases.
 func IsPeriodClosed(ctx context.Context, q querier, effectiveDate time.Time) (bool, error) {
-	var closedThrough *time.Time
-	if err := q.QueryRow(ctx,
-		`SELECT books_closed_through FROM accounting_settings WHERE accounting_settings_id = 1`,
-	).Scan(&closedThrough); err != nil {
-		return false, fmt.Errorf("load accounting settings: %w", err)
+	l, err := lookupPeriod(ctx, q, effectiveDate)
+	if err != nil {
+		return false, err
 	}
-	if closedThrough == nil {
-		return false, nil
-	}
-	return isClosed(effectiveDate, *closedThrough), nil
+	return verdictFor(effectiveDate, l) != verdictOpen, nil
 }
 
 // CreateEntry inserts a balanced journal entry and applies each line's signed
@@ -88,6 +154,14 @@ func IsPeriodClosed(ctx context.Context, q querier, effectiveDate time.Time) (bo
 // (spec AD-1, AD-3).
 func CreateEntry(ctx context.Context, q querier, in CreateEntryInput) (*JournalEntry, error) {
 	if err := validateLines(in.Lines); err != nil {
+		return nil, err
+	}
+
+	// The period guard lives here, at the choke point, rather than in each
+	// posting module: every GL write goes through CreateEntry (ReverseEntry
+	// included), so a module cannot post into a closed period by forgetting to
+	// check. Callers that check earlier for a better message still land here.
+	if err := CheckPeriodOpen(ctx, q, in.EntryDate); err != nil {
 		return nil, err
 	}
 

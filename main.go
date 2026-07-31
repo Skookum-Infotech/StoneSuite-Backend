@@ -637,6 +637,23 @@ func main() {
 		mux.Handle("POST /api/tenant/finance/cash-transfers/{uuid}/reverse", tenantChain(ctOps.Reverse))
 		mux.Handle("GET /api/tenant/finance/cash-transfers/{uuid}/audit", tenantChain(ctOps.Audit))
 
+		// Accounting Periods: the fiscal calendar that gates every GL write.
+		// The enforcement itself lives in journal.CreateEntry, not here — these
+		// routes only open and close the periods it consults. Close/reopen take
+		// a list, so the single-period case is the one-element call
+		// (spec docs/superpowers/specs/2026-07-31-accounting-period-management-design.md).
+		apOps := controllers.NewAccountingPeriodOps()
+		mux.Handle("GET /api/tenant/finance/accounting-calendar", tenantChain(apOps.Calendar))
+		mux.Handle("POST /api/tenant/finance/accounting-calendar/setup", tenantChain(apOps.Setup))
+		mux.Handle("GET /api/tenant/finance/fiscal-years", tenantChain(apOps.FiscalYears))
+		mux.Handle("POST /api/tenant/finance/fiscal-years", tenantChain(apOps.GenerateYear))
+		mux.Handle("GET /api/tenant/finance/accounting-periods", tenantChain(apOps.List))
+		mux.Handle("GET /api/tenant/finance/accounting-periods/current", tenantChain(apOps.Current))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/close", tenantChain(apOps.Close))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/reopen", tenantChain(apOps.Reopen))
+		mux.Handle("GET /api/tenant/finance/accounting-periods/{uuid}", tenantChain(apOps.Get))
+		mux.Handle("GET /api/tenant/finance/accounting-periods/{uuid}/history", tenantChain(apOps.History))
+
 		// Sales Order: dedicated relational module (header + line items), a
 		// sibling of the CRM customer table — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.

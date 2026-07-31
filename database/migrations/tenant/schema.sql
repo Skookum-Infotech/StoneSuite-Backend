@@ -6559,3 +6559,135 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_src_line_transferred
 CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_src_line_adjusted
     ON inventory_slab_ledger (COALESCE(source_record_type, 0), source_line_id)
     WHERE event = 'adjusted' AND source_line_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Accounting Period Management (accountingperiod/)
+--
+-- Replaces accounting_settings.books_closed_through as the *authoritative*
+-- period concept, without retiring it: the column stays, and is recomputed
+-- from the contiguous closed prefix on every close/reopen so anything still
+-- reading it -- including journal's own fallback path for tenants who have
+-- not configured a calendar -- keeps getting a correct answer.
+--
+-- Spec: docs/superpowers/specs/2026-07-31-accounting-period-management-design.md
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- 1. Fiscal calendar configuration on the existing accounting_settings
+--    singleton. Appended as ALTER ... ADD COLUMN IF NOT EXISTS, never by
+--    editing the CREATE TABLE body above -- that body is a no-op on every
+--    existing tenant, so an inline edit would reach fresh databases only.
+ALTER TABLE accounting_settings
+    ADD COLUMN IF NOT EXISTS fiscal_year_start_month SMALLINT NULL;
+ALTER TABLE accounting_settings
+    ADD COLUMN IF NOT EXISTS base_period_start DATE NULL;
+ALTER TABLE accounting_settings
+    ADD COLUMN IF NOT EXISTS accounting_calendar_configured_at TIMESTAMP NULL;
+
+-- ADD CONSTRAINT is not idempotent -- a bare one errors on the second boot
+-- and breaks every tenant -- so each new CHECK is guarded on pg_constraint.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_acct_settings_fy_start_month') THEN
+        ALTER TABLE accounting_settings
+            ADD CONSTRAINT chk_acct_settings_fy_start_month
+            CHECK (fiscal_year_start_month IS NULL
+                   OR (fiscal_year_start_month >= 1 AND fiscal_year_start_month <= 12));
+    END IF;
+END $$;
+
+-- 2. fiscal_year -- 12 accounting_period rows hang off each one.
+--
+-- fiscal_year_status is DERIVED, never set directly by a caller: the store
+-- recomputes it in the same transaction as every period status change
+-- ('closed' when all 12 periods are closed, 'open' otherwise). That removes
+-- the drift case where a year claims closed while a period under it is open.
+CREATE TABLE IF NOT EXISTS fiscal_year (
+    fiscal_year_id          SERIAL       PRIMARY KEY,
+    fiscal_year_uuid        UUID         NOT NULL DEFAULT gen_random_uuid(),
+    fiscal_year_name        VARCHAR(20)  NOT NULL,
+    fiscal_year_start       DATE         NOT NULL,
+    fiscal_year_end         DATE         NOT NULL,
+    fiscal_year_status      VARCHAR(10)  NOT NULL DEFAULT 'open',
+    fiscal_year_created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fiscal_year_created_by  INTEGER          NULL REFERENCES employee(employee_id),
+    fiscal_year_updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fiscal_year_updated_by  INTEGER          NULL REFERENCES employee(employee_id),
+
+    CONSTRAINT uq_fiscal_year_uuid  UNIQUE (fiscal_year_uuid),
+    CONSTRAINT uq_fiscal_year_name  UNIQUE (fiscal_year_name),
+    CONSTRAINT uq_fiscal_year_start UNIQUE (fiscal_year_start),
+    CONSTRAINT chk_fy_range  CHECK (fiscal_year_end > fiscal_year_start),
+    CONSTRAINT chk_fy_status CHECK (fiscal_year_status IN ('open','closed'))
+);
+
+-- 3. accounting_period -- always a calendar month; 12 per fiscal year.
+--
+-- is_base_period marks the go-live boundary. Periods ending before the base
+-- period start are created 'closed' and can never be reopened: they stand for
+-- books closed in whatever system the tenant used before StoneSuite.
+CREATE TABLE IF NOT EXISTS accounting_period (
+    accounting_period_id         SERIAL       PRIMARY KEY,
+    accounting_period_uuid       UUID         NOT NULL DEFAULT gen_random_uuid(),
+    fiscal_year_id               INTEGER      NOT NULL REFERENCES fiscal_year(fiscal_year_id),
+    accounting_period_name       VARCHAR(30)  NOT NULL,
+    period_number                SMALLINT     NOT NULL,
+    period_start                 DATE         NOT NULL,
+    period_end                   DATE         NOT NULL,
+    accounting_period_status     VARCHAR(10)  NOT NULL DEFAULT 'open',
+    is_base_period               BOOLEAN      NOT NULL DEFAULT FALSE,
+    accounting_period_closed_at  TIMESTAMP        NULL,
+    accounting_period_closed_by  INTEGER          NULL REFERENCES employee(employee_id),
+    accounting_period_created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accounting_period_created_by INTEGER          NULL REFERENCES employee(employee_id),
+    accounting_period_updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accounting_period_updated_by INTEGER          NULL REFERENCES employee(employee_id),
+
+    CONSTRAINT uq_ap_uuid      UNIQUE (accounting_period_uuid),
+    CONSTRAINT uq_ap_fy_number UNIQUE (fiscal_year_id, period_number),
+    CONSTRAINT uq_ap_start     UNIQUE (period_start),
+    CONSTRAINT chk_ap_range    CHECK (period_end >= period_start),
+    CONSTRAINT chk_ap_number   CHECK (period_number >= 1 AND period_number <= 12),
+    CONSTRAINT chk_ap_status   CHECK (accounting_period_status IN ('open','closed')),
+    -- closed_at pairs with the STATUS, not with closed_by: the actor may
+    -- legitimately be NULL when an employee id cannot be resolved, exactly as
+    -- cash_transfer_posted_by may be.
+    CONSTRAINT chk_ap_closed_pair CHECK (
+        (accounting_period_status = 'closed') = (accounting_period_closed_at IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_ap_fiscal_year ON accounting_period (fiscal_year_id, period_number);
+CREATE INDEX IF NOT EXISTS idx_ap_range       ON accounting_period (period_start, period_end);
+CREATE INDEX IF NOT EXISTS idx_ap_status      ON accounting_period (accounting_period_status);
+
+-- Overlapping periods would make "which period covers this date?" ambiguous,
+-- and journal.CheckPeriodOpen answers exactly that question on every GL write.
+-- UNIQUE(period_start) alone does not prevent an overlap on the END side, so
+-- the invariant is expressed structurally with a range exclusion rather than
+-- trusted to Go-side validation. gist over daterange is core Postgres: no
+-- btree_gist is needed, because no equality column participates.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'excl_ap_no_overlap') THEN
+        ALTER TABLE accounting_period
+            ADD CONSTRAINT excl_ap_no_overlap
+            EXCLUDE USING gist (daterange(period_start, period_end, '[]') WITH &&);
+    END IF;
+END $$;
+
+-- 4. accounting_period_history -- append-only trail, written inside the same
+--    transaction as the status change it documents.
+CREATE TABLE IF NOT EXISTS accounting_period_history (
+    accounting_period_history_id SERIAL      PRIMARY KEY,
+    accounting_period_id         INTEGER     NOT NULL REFERENCES accounting_period(accounting_period_id),
+    history_action               VARCHAR(20) NOT NULL,
+    history_from_status          VARCHAR(10)     NULL,
+    history_to_status            VARCHAR(10)     NULL,
+    history_note                 TEXT        NOT NULL DEFAULT '',
+    history_by                   INTEGER         NULL REFERENCES employee(employee_id),
+    history_at                   TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_ap_history_action
+        CHECK (history_action IN ('generate','close','reopen','base_setup'))
+);
+CREATE INDEX IF NOT EXISTS idx_ap_history
+    ON accounting_period_history (accounting_period_id, history_at DESC);

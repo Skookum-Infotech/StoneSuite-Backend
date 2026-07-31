@@ -52,12 +52,12 @@ func Post(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID 
 		return nil, err
 	}
 
-	closed, err := journal.IsPeriodClosed(ctx, tx, transferDate)
-	if err != nil {
-		return nil, fmt.Errorf("check accounting period: %w", err)
-	}
-	if closed {
-		return nil, ErrPeriodClosed
+	// journal.CreateEntry applies this same guard, so this call is not what
+	// makes posting safe — it is what makes the failure legible, rejecting the
+	// transfer before any account eligibility work runs and with a
+	// cash-transfer-shaped error rather than a raw journal one.
+	if err := journal.CheckPeriodOpen(ctx, tx, transferDate); err != nil {
+		return nil, translatePeriodError(err)
 	}
 
 	if err := checkAccountEligible(ctx, tx, fromAccountID, "Source"); err != nil {

@@ -79,6 +79,31 @@ func TestValidateStartMonth(t *testing.T) {
 	}
 }
 
+func TestValidateGenerateYears(t *testing.T) {
+	tests := []struct {
+		name    string
+		years   int
+		wantErr bool
+	}{
+		{"one", 1, false},
+		{"max", MaxGenerateYears, false},
+		{"zero", 0, true},
+		{"negative", -1, true},
+		{"over max", MaxGenerateYears + 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateGenerateYears(tt.years)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.True(t, IsClientError(err), "want a ClientError, got %T", err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
 func TestFiscalYearStart(t *testing.T) {
 	tests := []struct {
 		name       string

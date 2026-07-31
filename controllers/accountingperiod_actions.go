@@ -37,6 +37,10 @@ func (h *AccountingPeriodOps) Setup(w http.ResponseWriter, r *http.Request) {
 }
 
 // GenerateYear POST /api/tenant/finance/fiscal-years
+//
+// Body may request more than one contiguous year via "years"; the response
+// key is always the plural "fiscalYears", even for the single-year case, so
+// callers do not need two response shapes.
 func (h *AccountingPeriodOps) GenerateYear(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, ok := h.authPeriod(w, r, authz.ActionCreate)
 	if !ok {
@@ -50,13 +54,15 @@ func (h *AccountingPeriodOps) GenerateYear(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	empID := resolveEmployeeID(r, identityID)
-	fy, err := accountingperiod.GenerateFiscalYear(r.Context(), pool, in, empID)
+	fys, err := accountingperiod.GenerateFiscalYear(r.Context(), pool, in, empID)
 	if err != nil {
 		apFail(w, err, "Failed to generate the fiscal year.")
 		return
 	}
-	auditPeriod(r, pool, empID, "generate_fiscal_year", fy.ID, nil, fiscalYearSnapshot(fy))
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "fiscalYear": fy})
+	for _, fy := range fys {
+		auditPeriod(r, pool, empID, "generate_fiscal_year", fy.ID, nil, fiscalYearSnapshot(fy))
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "fiscalYears": fys})
 }
 
 // Close POST /api/tenant/finance/accounting-periods/close

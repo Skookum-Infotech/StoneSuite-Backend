@@ -166,8 +166,10 @@ func TestGenerateFiscalYear_IsForwardOnlyAndContiguous(t *testing.T) {
 	ctx := context.Background()
 	setupCalendarYear(t, pool)
 
-	fy27, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
+	fys, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
 	require.NoError(t, err)
+	require.Len(t, fys, 1, "no Years means a single year")
+	fy27 := fys[0]
 	assert.Equal(t, "FY2027", fy27.Name)
 	assert.True(t, fy27.Start.Equal(day(2027, 1, 1)), "start = %v", fy27.Start)
 	assert.Len(t, fy27.Periods, PeriodsPerYear)
@@ -178,9 +180,10 @@ func TestGenerateFiscalYear_IsForwardOnlyAndContiguous(t *testing.T) {
 	assert.True(t, IsClientError(err), "got %T: %v", err, err)
 
 	// The matching one succeeds and stays contiguous.
-	fy28, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028}, 0)
+	fys, err = GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028}, 0)
 	require.NoError(t, err)
-	assert.True(t, fy28.Start.Equal(day(2028, 1, 1)))
+	require.Len(t, fys, 1)
+	assert.True(t, fys[0].Start.Equal(day(2028, 1, 1)))
 }
 
 func TestGenerateFiscalYear_RequiresSetup(t *testing.T) {
@@ -190,4 +193,72 @@ func TestGenerateFiscalYear_RequiresSetup(t *testing.T) {
 	_, err := GenerateFiscalYear(context.Background(), pool, GenerateInput{}, 0)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotConfigured), "got %v", err)
+}
+
+// TestGenerateFiscalYear_MultipleYearsAreContiguous covers the batch case:
+// Years > 1 generates several years back-to-back in the one call, not just
+// the same next year repeated.
+func TestGenerateFiscalYear_MultipleYearsAreContiguous(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026 already exists
+
+	fys, err := GenerateFiscalYear(ctx, pool, GenerateInput{Years: 3}, 0)
+	require.NoError(t, err)
+	require.Len(t, fys, 3)
+
+	wantNames := []string{"FY2027", "FY2028", "FY2029"}
+	for i, fy := range fys {
+		assert.Equal(t, wantNames[i], fy.Name)
+		assert.True(t, fy.Start.Equal(day(2026+i+1, 1, 1)), "year %d start = %v", i, fy.Start)
+		assert.Len(t, fy.Periods, PeriodsPerYear, "year %d", i)
+	}
+
+	// The next call continues from FY2030, proving the batch really committed
+	// three contiguous years rather than repeating the same start.
+	next, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
+	require.NoError(t, err)
+	require.Len(t, next, 1)
+	assert.Equal(t, "FY2030", next[0].Name)
+}
+
+// TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch proves the batch
+// is atomic: a conflict partway through must undo the years generated before
+// it too, not leave a partial run sitting in the database.
+func TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026
+
+	// Simulate FY2028 already existing (e.g. a concurrent request), so a
+	// 3-year batch starting at FY2027 collides on its second year.
+	_, err := pool.Exec(ctx, `
+		INSERT INTO fiscal_year (fiscal_year_name, fiscal_year_start, fiscal_year_end)
+		VALUES ('FY2028', $1, $2)`, day(2028, 1, 1), day(2028, 12, 31))
+	require.NoError(t, err)
+
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{Years: 3}, 0)
+	require.Error(t, err)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM fiscal_year WHERE fiscal_year_name = 'FY2027'`).Scan(&count))
+	assert.Equal(t, 0, count, "FY2027 must roll back along with the rest of the failed batch")
+}
+
+func TestGenerateFiscalYear_RejectsOutOfBoundsYears(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool)
+
+	_, err := GenerateFiscalYear(ctx, pool, GenerateInput{Years: -1}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "got %T: %v", err, err)
+
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{Years: MaxGenerateYears + 1}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "got %T: %v", err, err)
 }

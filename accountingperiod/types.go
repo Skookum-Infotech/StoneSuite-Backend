@@ -83,11 +83,22 @@ type SetupInput struct {
 	BasePeriodStart *time.Time `json:"basePeriodStart"`
 }
 
-// GenerateInput asks for one fiscal year's twelve periods to be generated.
+// MaxGenerateYears bounds how many contiguous fiscal years one request may
+// generate, so a typo (or a scripted retry loop) cannot silently create a
+// decade of open books.
+const MaxGenerateYears = 10
+
+// GenerateInput asks for one or more contiguous fiscal years' twelve-period
+// blocks to be generated in a single atomic request.
 type GenerateInput struct {
-	// StartYear is the calendar year the fiscal year starts in. Zero means
-	// "the year immediately following the latest one that exists".
+	// StartYear is the calendar year the FIRST generated fiscal year starts
+	// in. Zero means "the year immediately following the latest one that
+	// exists".
 	StartYear int `json:"startYear"`
+	// Years is how many contiguous fiscal years to generate, starting from
+	// StartYear (or the computed next year). Zero means 1. Must not exceed
+	// MaxGenerateYears.
+	Years int `json:"years"`
 }
 
 // StatusChangeInput is the body of the close and reopen endpoints. A

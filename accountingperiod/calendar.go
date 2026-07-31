@@ -37,6 +37,16 @@ func ValidateStartMonth(startMonth int) error {
 	return nil
 }
 
+// ValidateGenerateYears checks a fiscal-year generation count is in
+// 1..MaxGenerateYears.
+func ValidateGenerateYears(years int) error {
+	if years < 1 || years > MaxGenerateYears {
+		return ClientError{Msg: fmt.Sprintf(
+			"years must be between 1 and %d, got %d.", MaxGenerateYears, years)}
+	}
+	return nil
+}
+
 // FiscalYearStart returns the first day of the fiscal year that contains d.
 // A date earlier in the calendar year than startMonth belongs to the fiscal
 // year that began the previous calendar year.

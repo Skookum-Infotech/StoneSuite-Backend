@@ -103,18 +103,33 @@ func nextFiscalYearStart(ctx context.Context, q querier) (time.Time, bool, error
 	return FirstOfMonth(latestEnd.AddDate(0, 0, 1)), true, nil
 }
 
-// GenerateFiscalYear generates the next fiscal year's twelve periods.
+// GenerateFiscalYear generates one or more contiguous fiscal years' twelve
+// periods each, in a single transaction.
 //
 // Generation is forward-only and contiguous. A gap in the calendar would make
 // "the contiguous closed prefix" — the thing books_closed_through reports —
 // meaningless, and a backdated year is not a need the base period leaves open:
 // Setup already generates the whole fiscal year containing the go-live month,
-// with the months before it closed.
+// with the months before it closed. Requesting several years does not relax
+// this: they are generated back-to-back starting from the next contiguous
+// year, never at an arbitrary chosen year.
 //
 // in.StartYear, when nonzero, is a confirmation rather than a choice: it must
-// match the next contiguous year, which makes an accidental double-generation
-// a clear error instead of a silent second year.
-func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInput, employeeID int) (*FiscalYear, error) {
+// match the first generated year's start, which makes an accidental
+// double-generation a clear error instead of a silent extra year. in.Years
+// (default 1, capped at MaxGenerateYears) is genuinely a choice — how many
+// contiguous years to generate in this one call — and the whole batch is one
+// transaction: a failure on any year (e.g. it already exists) rolls back every
+// year in the request rather than leaving a partial run.
+func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInput, employeeID int) ([]*FiscalYear, error) {
+	years := in.Years
+	if years == 0 {
+		years = 1
+	}
+	if err := ValidateGenerateYears(years); err != nil {
+		return nil, err
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin generate fiscal year: %w", err)
@@ -143,9 +158,16 @@ func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInpu
 			"The next fiscal year starts in %d, not %d.", start.Year(), in.StartYear)}
 	}
 
-	fy, err := generateYear(ctx, tx, start, cal.BasePeriodStart, actionGenerate, employeeID)
-	if err != nil {
-		return nil, err
+	fys := make([]*FiscalYear, 0, years)
+	for i := 0; i < years; i++ {
+		fy, err := generateYear(ctx, tx, start, cal.BasePeriodStart, actionGenerate, employeeID)
+		if err != nil {
+			return nil, err
+		}
+		fys = append(fys, fy)
+		// fy.End is always the last day of a month (FiscalYearEnd), so the day
+		// after it is already the first of the next fiscal year's start month.
+		start = fy.End.AddDate(0, 0, 1)
 	}
 	if _, err := syncBooksClosedThrough(ctx, tx, employeeID); err != nil {
 		return nil, err
@@ -153,7 +175,7 @@ func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInpu
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit generate fiscal year: %w", err)
 	}
-	return fy, nil
+	return fys, nil
 }
 
 // errNoSettingsRow guards against a tenant database whose accounting_settings

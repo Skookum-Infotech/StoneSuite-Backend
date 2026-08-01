@@ -1,8 +1,8 @@
-// Package purchaseorder: relational store shared helpers + Get. A purchase
-// order row (header + purchase_order_item lines) with a status trail
-// (purchase_order_history) — a sibling of estimate/quote/salesorder/invoice,
-// not the generic v1 JSONB workflow engine (see the package doc in types.go).
-package purchaseorder
+// Package requisition: relational store shared helpers. A requisition row
+// (header + requisition_item lines) with a status trail (requisition_history)
+// — a sibling of estimate/quote/salesorder/invoice/purchaseorder, not the
+// generic v1 JSONB workflow engine (see the package doc in types.go).
+package requisition
 
 import (
 	"context"
@@ -17,11 +17,11 @@ import (
 	"stonesuite-backend/workflow"
 )
 
-// ErrNotFound is returned when a purchase order uuid matches nothing live.
-var ErrNotFound = errors.New("purchase order not found")
+// ErrNotFound is returned when a requisition uuid matches nothing live.
+var ErrNotFound = errors.New("requisition not found")
 
 // ClientError signals a client-caused failure (validation, bad input) that a
-// controller maps to HTTP 400, mirroring estimate.ClientError.
+// controller maps to HTTP 400, mirroring purchaseorder.ClientError.
 type ClientError struct{ Msg string }
 
 func (e ClientError) Error() string { return e.Msg }
@@ -32,10 +32,10 @@ func IsClientError(err error) bool {
 	return errors.As(err, &ce)
 }
 
-// pordRecordTypeCode is the lkp_record_type code for Purchase Order (spec §1).
-const pordRecordTypeCode = "PORD"
+// reqnRecordTypeCode is the lkp_record_type code for Requisition.
+const reqnRecordTypeCode = "REQN"
 
-// draftStatusCode is the status every new purchase order starts at (AD-5).
+// draftStatusCode is the status every new requisition starts at.
 const draftStatusCode = "DRFT"
 
 // nullableInt converts a non-positive id to SQL NULL.
@@ -51,9 +51,7 @@ func nullableInt(v int) any {
 // a CHECK constraint) — used when the caller has no resolvable employee id.
 const systemEmployeeID = 1
 
-// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset
-// (0). Use this — never nullableInt — for any *_deleted_by column paired
-// with a NOT NULL *_deleted_at via a CHECK constraint.
+// actorOrSystem returns actorEmployeeID, or systemEmployeeID if it's unset (0).
 func actorOrSystem(actorEmployeeID int) int {
 	if actorEmployeeID == 0 {
 		return systemEmployeeID
@@ -69,12 +67,21 @@ func nullableDate(d string) any {
 	return d
 }
 
-// orNow returns the given "yyyy-mm-dd" date string, or today when blank.
-func orNow(d string) string {
-	if d == "" {
-		return "now"
+// validPriorities mirrors the chk_reqn_priority CHECK constraint — validated
+// here too so an invalid value is a friendly 400 (ClientError), not a raw
+// constraint-violation 500.
+var validPriorities = map[string]bool{"low": true, "normal": true, "high": true, "urgent": true}
+
+// orNormal returns the given priority (validated against validPriorities),
+// or "normal" when blank.
+func orNormal(p string) (string, error) {
+	if p == "" {
+		return "normal", nil
 	}
-	return d
+	if !validPriorities[p] {
+		return "", ClientError{Msg: "priority must be one of low, normal, high, urgent."}
+	}
+	return p, nil
 }
 
 // isForeignKeyViolation reports whether err is a PostgreSQL FK-constraint
@@ -86,7 +93,7 @@ func isForeignKeyViolation(err error) bool {
 
 // isUniqueViolation reports whether err is a PostgreSQL unique-constraint
 // violation (code 23505) — the concurrent-conversion race on
-// uq_requisition_conversion_requisition (store_convert.go).
+// uq_requisition_conversion_requisition.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
@@ -159,8 +166,8 @@ func statusIDByCode(ctx context.Context, q workflow.Querier, recordTypeID int, c
 }
 
 // vendorSnapshot loads a vendor's internal id and display name for the
-// create-time snapshot (AD-2). The display name prefers the organization
-// legal name, falling back to the person given/family names.
+// create-time/update-time snapshot. The display name prefers the
+// organization legal name, falling back to the person given/family names.
 func vendorSnapshot(ctx context.Context, q workflow.Querier, vendorUUID string) (id int, name string, err error) {
 	err = q.QueryRow(ctx, `
 		SELECT vendor_id,
@@ -176,25 +183,6 @@ func vendorSnapshot(ctx context.Context, q workflow.Querier, vendorUUID string) 
 	return id, name, nil
 }
 
-// addrColVals returns the 12 (column, value) pairs for the ship-to snapshot
-// block, in the exact column order the schema declares (state before zip).
-func addrColVals(a AddressInput) []colVal {
-	return []colVal{
-		{"purchase_order_ship_name", a.Name, ""},
-		{"purchase_order_ship_attention", a.Attention, ""},
-		{"purchase_order_ship_addr_line1", a.AddrLine1, ""},
-		{"purchase_order_ship_addr_line2", a.AddrLine2, ""},
-		{"purchase_order_ship_addr_suitenum", a.SuiteUnit, ""},
-		{"purchase_order_ship_addr_city", a.City, ""},
-		{"purchase_order_ship_addr_state", a.StateID, ""},
-		{"purchase_order_ship_addr_zip", a.Zip, ""},
-		{"purchase_order_ship_addr_country", a.CountryID, ""},
-		{"purchase_order_ship_phone", a.Phone, ""},
-		{"purchase_order_ship_fax", a.Fax, ""},
-		{"purchase_order_ship_email", a.Email, ""},
-	}
-}
-
 // itemSnapshot is what a line needs from its catalog item at add time.
 type itemSnapshot struct {
 	internalID int
@@ -204,7 +192,6 @@ type itemSnapshot struct {
 	unitID     *int
 	unitCode   string
 	unitPrice  float64
-	taxRateID  *int
 }
 
 // resolveInventoryItem loads a catalog item's snapshot fields by its external
@@ -213,11 +200,11 @@ func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) 
 	var s itemSnapshot
 	err := q.QueryRow(ctx, `
 		SELECT ii.inventory_item_id, ii.inventory_item_sku, ii.inventory_item_name, ii.inventory_item_description,
-		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id
+		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price
 		FROM inventory_item ii
 		LEFT JOIN lkp_unit u ON u.unit_id = ii.inventory_item_unit_id
 		WHERE ii.inventory_item_uuid = $1 AND ii.inventory_item_deleted_at IS NULL`, uuid).Scan(
-		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID)
+		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "Unknown inventory item: " + uuid}
 	}
@@ -227,39 +214,35 @@ func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) 
 	return &s, nil
 }
 
-// validateCustom validates custom fields against the "purchase_order"
-// workflow's field definitions (≤15, typed) — the corrected skeleton
-// (mirrors invoice.validateCustom; estimate/quote dropped this, known drift).
+// validateCustom validates custom fields against the "requisition" workflow's
+// field definitions (≤15, typed) — the corrected skeleton (mirrors
+// purchaseorder.validateCustom / invoice.validateCustom). The pre-existing
+// legacy v1 JSONB "requisition" workflow row (schema.sql ~1889-1928) is
+// deliberately reused here as the custom-field-definition host — the same
+// pattern purchaseorder.validateCustom already established for the
+// "purchase_order" workflow key: a tenant admin configures custom fields for
+// this relational module through the same admin UI that manages the legacy
+// engine's workflow field definitions, without a parallel config system.
+// This relational module's own JSONB column (requisition_custom_fields) is
+// what actually stores the values; the legacy workflow only supplies the
+// field *definitions* to validate against.
 func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]any) error {
 	if custom == nil {
 		return nil
 	}
-	wf, err := workflow.GetWorkflowByKey(ctx, pool, "purchase_order")
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, "requisition")
 	if errors.Is(err, workflow.ErrWorkflowNotFound) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("load purchase_order workflow: %w", err)
+		return fmt.Errorf("load requisition workflow: %w", err)
 	}
 	def, err := workflow.LoadDefinition(ctx, pool, wf.ID)
 	if err != nil {
-		return fmt.Errorf("load purchase_order field definitions: %w", err)
+		return fmt.Errorf("load requisition field definitions: %w", err)
 	}
 	if err := workflow.ValidateCustomFieldsPartial(def.Fields, custom); err != nil {
 		return ClientError{Msg: err.Error()}
 	}
 	return nil
-}
-
-// taxPercentForRate loads a named tax rate's percent by internal id.
-func taxPercentForRate(ctx context.Context, q workflow.Querier, taxRateID int) (float64, error) {
-	var pct float64
-	if err := q.QueryRow(ctx,
-		`SELECT tax_rate_percent FROM lkp_tax_rate WHERE tax_rate_id = $1`, taxRateID).Scan(&pct); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ClientError{Msg: "Unknown tax rate."}
-		}
-		return 0, fmt.Errorf("load tax rate: %w", err)
-	}
-	return pct, nil
 }

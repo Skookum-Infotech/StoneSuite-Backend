@@ -80,6 +80,9 @@ func changeStatus(ctx context.Context, pool *pgxpool.Pool, ids []string, note st
 	if err := syncFiscalYearStatus(ctx, tx, changed); err != nil {
 		return nil, err
 	}
+	if err := syncQuarterStatus(ctx, tx, changed); err != nil {
+		return nil, err
+	}
 	through, err := syncBooksClosedThrough(ctx, tx, employeeID)
 	if err != nil {
 		return nil, err
@@ -100,6 +103,12 @@ func changeStatus(ctx context.Context, pool *pgxpool.Pool, ids []string, note st
 // closed_at is set with the status and cleared with it, which is what
 // chk_ap_closed_pair enforces: the pairing is with the STATUS, not with
 // closed_by, because the actor may legitimately be unresolved.
+//
+// The three sub-ledger locks are set to the SAME target in the same
+// statement, which is what keeps them in lock-step with the derived overall
+// status for every caller who only ever uses whole-period Close/Reopen and
+// never the granular per-lock endpoints (store_locks.go) -- the backward
+// compatibility property the whole lock design depends on (see spec §2.1).
 func applyStatus(ctx context.Context, tx pgx.Tx, p PeriodState, target, action, note string, employeeID int) error {
 	var (
 		closedAt *time.Time
@@ -114,6 +123,7 @@ func applyStatus(ctx context.Context, tx pgx.Tx, p PeriodState, target, action, 
 	err := tx.QueryRow(ctx, `
 		UPDATE accounting_period
 		SET accounting_period_status = $2,
+		    ap_lock_status = $2, ar_lock_status = $2, gl_lock_status = $2,
 		    accounting_period_closed_at = $3,
 		    accounting_period_closed_by = $4,
 		    accounting_period_updated_at = CURRENT_TIMESTAMP,

@@ -160,16 +160,20 @@ func TestSetup_RejectsBadInput(t *testing.T) {
 	assert.True(t, IsClientError(err), "got %T", err)
 }
 
+// TestGenerateFiscalYear_IsForwardOnlyAndContiguous's call sites unwrap
+// GenerateResult.FiscalYears[0]: GenerateFiscalYear's return type is
+// *GenerateResult, not *FiscalYear, but every assertion's VALUE expectation
+// is unchanged.
 func TestGenerateFiscalYear_IsForwardOnlyAndContiguous(t *testing.T) {
 	pool := testPool(t)
 	freshCalendar(t, pool)
 	ctx := context.Background()
 	setupCalendarYear(t, pool)
 
-	fys, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
+	res27, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
 	require.NoError(t, err)
-	require.Len(t, fys, 1, "no Years means a single year")
-	fy27 := fys[0]
+	require.Len(t, res27.FiscalYears, 1)
+	fy27 := res27.FiscalYears[0]
 	assert.Equal(t, "FY2027", fy27.Name)
 	assert.True(t, fy27.Start.Equal(day(2027, 1, 1)), "start = %v", fy27.Start)
 	assert.Len(t, fy27.Periods, PeriodsPerYear)
@@ -180,10 +184,10 @@ func TestGenerateFiscalYear_IsForwardOnlyAndContiguous(t *testing.T) {
 	assert.True(t, IsClientError(err), "got %T: %v", err, err)
 
 	// The matching one succeeds and stays contiguous.
-	fys, err = GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028}, 0)
+	res28, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028}, 0)
 	require.NoError(t, err)
-	require.Len(t, fys, 1)
-	assert.True(t, fys[0].Start.Equal(day(2028, 1, 1)))
+	require.Len(t, res28.FiscalYears, 1)
+	assert.True(t, res28.FiscalYears[0].Start.Equal(day(2028, 1, 1)))
 }
 
 func TestGenerateFiscalYear_RequiresSetup(t *testing.T) {
@@ -204,12 +208,12 @@ func TestGenerateFiscalYear_MultipleYearsAreContiguous(t *testing.T) {
 	ctx := context.Background()
 	setupCalendarYear(t, pool) // FY2026 already exists
 
-	fys, err := GenerateFiscalYear(ctx, pool, GenerateInput{Years: 3}, 0)
+	res, err := GenerateFiscalYear(ctx, pool, GenerateInput{Years: 3}, 0)
 	require.NoError(t, err)
-	require.Len(t, fys, 3)
+	require.Len(t, res.FiscalYears, 3)
 
 	wantNames := []string{"FY2027", "FY2028", "FY2029"}
-	for i, fy := range fys {
+	for i, fy := range res.FiscalYears {
 		assert.Equal(t, wantNames[i], fy.Name)
 		assert.True(t, fy.Start.Equal(day(2026+i+1, 1, 1)), "year %d start = %v", i, fy.Start)
 		assert.Len(t, fy.Periods, PeriodsPerYear, "year %d", i)
@@ -219,8 +223,8 @@ func TestGenerateFiscalYear_MultipleYearsAreContiguous(t *testing.T) {
 	// three contiguous years rather than repeating the same start.
 	next, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
 	require.NoError(t, err)
-	require.Len(t, next, 1)
-	assert.Equal(t, "FY2030", next[0].Name)
+	require.Len(t, next.FiscalYears, 1)
+	assert.Equal(t, "FY2030", next.FiscalYears[0].Name)
 }
 
 // TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch proves the batch
@@ -248,6 +252,8 @@ func TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch(t *testing.T) {
 	assert.Equal(t, 0, count, "FY2027 must roll back along with the rest of the failed batch")
 }
 
+// TestGenerateFiscalYear_RejectsOutOfBoundsYears covers Years-specific input
+// validation: negative counts and counts over the shared maxGenerateYears cap.
 func TestGenerateFiscalYear_RejectsOutOfBoundsYears(t *testing.T) {
 	pool := testPool(t)
 	freshCalendar(t, pool)
@@ -258,7 +264,20 @@ func TestGenerateFiscalYear_RejectsOutOfBoundsYears(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, IsClientError(err), "got %T: %v", err, err)
 
-	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{Years: MaxGenerateYears + 1}, 0)
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{Years: maxGenerateYears + 1}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "got %T: %v", err, err)
+}
+
+// TestGenerateFiscalYear_RejectsBothEndYearAndYears covers the mutual
+// exclusivity between the two range-selection inputs.
+func TestGenerateFiscalYear_RejectsBothEndYearAndYears(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool)
+
+	_, err := GenerateFiscalYear(ctx, pool, GenerateInput{EndYear: 2030, Years: 3}, 0)
 	require.Error(t, err)
 	assert.True(t, IsClientError(err), "got %T: %v", err, err)
 }

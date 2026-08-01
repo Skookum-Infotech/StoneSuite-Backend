@@ -66,3 +66,45 @@ func syncFiscalYearStatus(ctx context.Context, q querier, periodUUIDs []string) 
 	}
 	return nil
 }
+
+// syncQuarterStatus recomputes the derived status of every fiscal quarter
+// that owns one of the given periods: closed only when all three of its
+// periods are closed. Same derivation shape as syncFiscalYearStatus, scoped
+// by fiscal_quarter_id instead of fiscal_year_id.
+//
+// A period generated before quarters existed carries a NULL
+// fiscal_quarter_id (quarters are not backfilled onto already-generated
+// fiscal years) and is excluded by construction: it can never appear as the
+// inner query's fiscal_quarter_id, so no quarter row is touched for it.
+//
+// Every caller of syncFiscalYearStatus -- changeStatus's whole-period
+// Close/Reopen and changeLock's six granular lock endpoints -- calls this
+// immediately alongside it, so a quarter's derived status can never drift
+// from the periods under it.
+func syncQuarterStatus(ctx context.Context, q querier, periodUUIDs []string) error {
+	if len(periodUUIDs) == 0 {
+		return nil
+	}
+	if _, err := q.Exec(ctx, `
+		UPDATE fiscal_quarter fq
+		SET fiscal_quarter_status = CASE
+		        WHEN EXISTS (
+		            SELECT 1 FROM accounting_period ap
+		            WHERE ap.fiscal_quarter_id = fq.fiscal_quarter_id
+		              AND ap.accounting_period_status = $2
+		        ) OR NOT EXISTS (
+		            SELECT 1 FROM accounting_period ap
+		            WHERE ap.fiscal_quarter_id = fq.fiscal_quarter_id
+		        ) THEN $2
+		        ELSE $3
+		    END,
+		    fiscal_quarter_updated_at = CURRENT_TIMESTAMP
+		WHERE fq.fiscal_quarter_id IN (
+		    SELECT ap.fiscal_quarter_id FROM accounting_period ap
+		    WHERE ap.accounting_period_uuid = ANY($1)
+		      AND ap.fiscal_quarter_id IS NOT NULL
+		)`, periodUUIDs, StatusOpen, StatusClosed); err != nil {
+		return fmt.Errorf("sync fiscal quarter status: %w", err)
+	}
+	return nil
+}

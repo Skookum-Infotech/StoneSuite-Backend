@@ -10,13 +10,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// generateYear inserts one fiscal_year row and its twelve accounting_period
-// rows, inside the caller's transaction.
+// periodsPerQuarter mirrors QuartersFor's grouping: 4 quarters of 3 months
+// each in every fiscal year. Derived from PeriodsPerYear rather than a bare
+// 3, so the two constants cannot silently disagree.
+const periodsPerQuarter = PeriodsPerYear / 4
+
+// generateYear inserts one fiscal_year row, its four fiscal_quarter rows, and
+// its twelve accounting_period rows, inside the caller's transaction.
 //
 // base is the go-live boundary. Periods ending before it are created closed —
 // they stand for books closed in whatever system the tenant used before
 // StoneSuite — and the period containing it is flagged is_base_period. A nil
-// base means no boundary applies and every period is created open.
+// base means no boundary applies and every period is created open. A quarter
+// is created closed under the identical rule, applied to its own three-month
+// span, and every period's three sub-ledger locks (AP/AR/GL) are created at
+// the SAME value as its own status -- this is what keeps the locks in
+// lock-step with accounting_period_status for every period this function
+// creates, the backward-compatibility property the whole lock design depends
+// on (see spec §2.1).
 func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Time, action string, employeeID int) (*FiscalYear, error) {
 	start = FirstOfMonth(start)
 	fy := FiscalYear{
@@ -42,7 +53,44 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 		return nil, fmt.Errorf("insert fiscal year %s: %w", fy.Name, err)
 	}
 
-	for _, span := range MonthsFor(start) {
+	months := MonthsFor(start)
+	quarterSpans := QuartersFor(months, fy.Name)
+	quarterIDs := make([]int, len(quarterSpans))
+	for i, span := range quarterSpans {
+		status := StatusOpen
+		if base != nil && span.End.Before(*base) {
+			status = StatusClosed
+		}
+
+		var (
+			qID int
+			q   = Quarter{
+				FiscalYearID: fy.ID, Number: span.Number, Name: span.Name,
+				Start: span.Start, End: span.End, Status: status,
+			}
+		)
+		err := tx.QueryRow(ctx, `
+			INSERT INTO fiscal_quarter (
+				fiscal_year_id, quarter_number, quarter_name,
+				quarter_start, quarter_end, fiscal_quarter_status,
+				fiscal_quarter_created_by, fiscal_quarter_updated_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+			RETURNING fiscal_quarter_id, fiscal_quarter_uuid,
+			          fiscal_quarter_created_at, fiscal_quarter_updated_at`,
+			fyID, span.Number, span.Name, span.Start, span.End, status, nullableInt(employeeID),
+		).Scan(&qID, &q.ID, &q.CreatedAt, &q.UpdatedAt)
+		if isUniqueViolation(err) {
+			return nil, conflict(ErrAlreadyConfigured, fmt.Sprintf(
+				"A fiscal quarter already covers %s.", span.Name))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("insert fiscal quarter %s: %w", span.Name, err)
+		}
+		quarterIDs[i] = qID
+		fy.Quarters = append(fy.Quarters, q)
+	}
+
+	for _, span := range months {
 		status := StatusOpen
 		var closedAt any
 		if base != nil && span.End.Before(*base) {
@@ -50,6 +98,8 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 			closedAt = time.Now().UTC()
 		}
 		isBase := base != nil && span.Start.Equal(*base)
+		quarterIdx := (span.Number - 1) / periodsPerQuarter
+		quarterID := quarterIDs[quarterIdx]
 
 		var (
 			periodID int
@@ -58,6 +108,9 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 				Name: span.Name, Number: span.Number,
 				Start: span.Start, End: span.End,
 				Status: status, IsBasePeriod: isBase,
+				APLockStatus: status, ARLockStatus: status, GLLockStatus: status,
+				QuarterID:   fy.Quarters[quarterIdx].ID,
+				QuarterName: fy.Quarters[quarterIdx].Name,
 			}
 		)
 		err := tx.QueryRow(ctx, `
@@ -65,13 +118,14 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 				fiscal_year_id, accounting_period_name, period_number,
 				period_start, period_end, accounting_period_status, is_base_period,
 				accounting_period_closed_at, accounting_period_closed_by,
+				fiscal_quarter_id, ap_lock_status, ar_lock_status, gl_lock_status,
 				accounting_period_created_by, accounting_period_updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$6,$6,$6,$9,$9)
 			RETURNING accounting_period_id, accounting_period_uuid,
 			          accounting_period_closed_at,
 			          accounting_period_created_at, accounting_period_updated_at`,
 			fyID, span.Name, span.Number, span.Start, span.End, status, isBase,
-			closedAt, nullableInt(employeeID),
+			closedAt, nullableInt(employeeID), quarterID,
 		).Scan(&periodID, &p.ID, &p.ClosedAt, &p.CreatedAt, &p.UpdatedAt)
 		if isUniqueViolation(err) {
 			return nil, conflict(ErrAlreadyConfigured, fmt.Sprintf(
@@ -103,31 +157,40 @@ func nextFiscalYearStart(ctx context.Context, q querier) (time.Time, bool, error
 	return FirstOfMonth(latestEnd.AddDate(0, 0, 1)), true, nil
 }
 
+// maxGenerateYears is a bare sanity cap on a single GenerateFiscalYear call's
+// range -- not a requirement from the design, just validation against an
+// unbounded request size (consistent with "handlers must validate input").
+const maxGenerateYears = 20
+
 // GenerateFiscalYear generates one or more contiguous fiscal years' twelve
-// periods each, in a single transaction.
+// periods each, all inside one transaction.
 //
 // Generation is forward-only and contiguous. A gap in the calendar would make
 // "the contiguous closed prefix" — the thing books_closed_through reports —
 // meaningless, and a backdated year is not a need the base period leaves open:
 // Setup already generates the whole fiscal year containing the go-live month,
-// with the months before it closed. Requesting several years does not relax
-// this: they are generated back-to-back starting from the next contiguous
-// year, never at an arbitrary chosen year.
+// with the months before it closed.
 //
 // in.StartYear, when nonzero, is a confirmation rather than a choice: it must
-// match the first generated year's start, which makes an accidental
-// double-generation a clear error instead of a silent extra year. in.Years
-// (default 1, capped at MaxGenerateYears) is genuinely a choice — how many
-// contiguous years to generate in this one call — and the whole batch is one
-// transaction: a failure on any year (e.g. it already exists) rolls back every
-// year in the request rather than leaving a partial run.
-func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInput, employeeID int) ([]*FiscalYear, error) {
-	years := in.Years
-	if years == 0 {
-		years = 1
+// match the next contiguous year, which makes an accidental double-generation
+// a clear error instead of a silent second year. The range to generate is
+// then chosen by at most one of in.EndYear (an explicit end year) or in.Years
+// (a count of contiguous years) -- specifying both is a 400. Either way, any
+// failure partway through — a duplicate, an overlap — rolls back every year
+// already generated in this call via the deferred tx.Rollback, not just the
+// one that failed.
+func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInput, employeeID int) (*GenerateResult, error) {
+	if in.EndYear != 0 && in.Years != 0 {
+		return nil, ClientError{Msg: "specify only one of endYear or years, not both."}
 	}
-	if err := ValidateGenerateYears(years); err != nil {
-		return nil, err
+	if in.Years < 0 {
+		return nil, ClientError{Msg: fmt.Sprintf("years must not be negative, got %d.", in.Years)}
+	}
+	if in.EndYear != 0 && in.StartYear == 0 {
+		return nil, ClientError{Msg: "startYear is required when endYear is given."}
+	}
+	if in.EndYear != 0 && in.EndYear < in.StartYear {
+		return nil, ClientError{Msg: "endYear cannot be before startYear."}
 	}
 
 	tx, err := pool.Begin(ctx)
@@ -158,24 +221,47 @@ func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInpu
 			"The next fiscal year starts in %d, not %d.", start.Year(), in.StartYear)}
 	}
 
-	fys := make([]*FiscalYear, 0, years)
-	for i := 0; i < years; i++ {
-		fy, err := generateYear(ctx, tx, start, cal.BasePeriodStart, actionGenerate, employeeID)
+	// Resolve the range: both EndYear and Years zero means "just the next
+	// year" (today's unchanged default); StartYear alone means "just that
+	// year" (today's unchanged confirmation behaviour); EndYear or Years
+	// extends it to a range (validated above as mutually exclusive).
+	endYear := start.Year()
+	switch {
+	case in.EndYear != 0:
+		endYear = in.EndYear
+	case in.Years != 0:
+		endYear = start.Year() + in.Years - 1
+	case in.StartYear != 0:
+		endYear = in.StartYear
+	}
+	count := endYear - start.Year() + 1
+	if count > maxGenerateYears {
+		return nil, ClientError{Msg: fmt.Sprintf(
+			"cannot generate more than %d fiscal years in one call.", maxGenerateYears)}
+	}
+
+	years := make([]FiscalYear, 0, count)
+	cursor := start
+	for i := 0; i < count; i++ {
+		fy, err := generateYear(ctx, tx, cursor, cal.BasePeriodStart, actionGenerate, employeeID)
 		if err != nil {
 			return nil, err
 		}
-		fys = append(fys, fy)
-		// fy.End is always the last day of a month (FiscalYearEnd), so the day
-		// after it is already the first of the next fiscal year's start month.
-		start = fy.End.AddDate(0, 0, 1)
+		years = append(years, *fy)
+		cursor = FirstOfMonth(fy.End.AddDate(0, 0, 1))
 	}
+
 	if _, err := syncBooksClosedThrough(ctx, tx, employeeID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit generate fiscal year: %w", err)
 	}
-	return fys, nil
+	return &GenerateResult{
+		FiscalYears:          years,
+		FiscalYearStartMonth: cal.FiscalYearStartMonth,
+		FiscalYearEndMonth:   FiscalYearEndMonth(cal.FiscalYearStartMonth),
+	}, nil
 }
 
 // errNoSettingsRow guards against a tenant database whose accounting_settings

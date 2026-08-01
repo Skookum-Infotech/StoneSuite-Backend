@@ -36,17 +36,32 @@ const periodSelect = `
 	       ap.period_start, ap.period_end,
 	       ap.accounting_period_status, ap.is_base_period,
 	       ap.accounting_period_closed_at,
-	       ap.accounting_period_created_at, ap.accounting_period_updated_at
+	       ap.accounting_period_created_at, ap.accounting_period_updated_at,
+	       ap.ap_lock_status, ap.ar_lock_status, ap.gl_lock_status,
+	       fq.fiscal_quarter_uuid, fq.quarter_name
 	FROM accounting_period ap
-	JOIN fiscal_year fy ON fy.fiscal_year_id = ap.fiscal_year_id`
+	JOIN fiscal_year fy ON fy.fiscal_year_id = ap.fiscal_year_id
+	LEFT JOIN fiscal_quarter fq ON fq.fiscal_quarter_id = ap.fiscal_quarter_id`
 
 func scanPeriod(row pgx.Row) (*Period, error) {
-	var p Period
+	var (
+		p           Period
+		quarterID   *string
+		quarterName *string
+	)
 	if err := row.Scan(&p.ID, &p.FiscalYearID, &p.FiscalYearName,
 		&p.Name, &p.Number, &p.Start, &p.End,
 		&p.Status, &p.IsBasePeriod, &p.ClosedAt,
-		&p.CreatedAt, &p.UpdatedAt); err != nil {
+		&p.CreatedAt, &p.UpdatedAt,
+		&p.APLockStatus, &p.ARLockStatus, &p.GLLockStatus,
+		&quarterID, &quarterName); err != nil {
 		return nil, err
+	}
+	if quarterID != nil {
+		p.QuarterID = *quarterID
+	}
+	if quarterName != nil {
+		p.QuarterName = *quarterName
 	}
 	return &p, nil
 }
@@ -165,6 +180,7 @@ func loadStates(ctx context.Context, q querier) ([]PeriodState, error) {
 	rows, err := q.Query(ctx, `
 		SELECT ap.accounting_period_uuid, ap.accounting_period_name,
 		       ap.period_start, ap.period_end, ap.accounting_period_status,
+		       ap.ap_lock_status, ap.ar_lock_status, ap.gl_lock_status,
 		       COALESCE(ap.period_end < s.base_period_start, FALSE)
 		FROM accounting_period ap
 		CROSS JOIN accounting_settings s
@@ -178,7 +194,8 @@ func loadStates(ctx context.Context, q querier) ([]PeriodState, error) {
 	var out []PeriodState
 	for rows.Next() {
 		var p PeriodState
-		if err := rows.Scan(&p.ID, &p.Name, &p.Start, &p.End, &p.Status, &p.IsBeforeBase); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Start, &p.End, &p.Status,
+			&p.APStatus, &p.ARStatus, &p.GLStatus, &p.IsBeforeBase); err != nil {
 			return nil, fmt.Errorf("scan accounting period state: %w", err)
 		}
 		out = append(out, p)

@@ -15,7 +15,48 @@ type PeriodState struct {
 	Start        time.Time
 	End          time.Time
 	Status       string
+	APStatus     string
+	ARStatus     string
+	GLStatus     string
 	IsBeforeBase bool // ends before the go-live boundary; never reopenable
+}
+
+// LockField identifies one of a period's three independent sub-ledger
+// locks -- AP, AR, GL -- each sequenced by the same chronological rule
+// PlanClose/PlanReopen already apply to the derived overall Status.
+type LockField int
+
+const (
+	LockAP LockField = iota
+	LockAR
+	LockGL
+)
+
+// get returns the value of this lock's status field on the given period.
+func (f LockField) get(p PeriodState) string {
+	switch f {
+	case LockAP:
+		return p.APStatus
+	case LockAR:
+		return p.ARStatus
+	case LockGL:
+		return p.GLStatus
+	}
+	return ""
+}
+
+// label returns the human-readable name of this lock, used only in error
+// message text.
+func (f LockField) label() string {
+	switch f {
+	case LockAP:
+		return "AP"
+	case LockAR:
+		return "AR"
+	case LockGL:
+		return "GL"
+	}
+	return ""
 }
 
 // PlanClose validates closing every period named in ids against the full
@@ -27,19 +68,35 @@ type PeriodState struct {
 // is one function over the whole batch rather than a per-period predicate: a
 // batch must be judged as the state it produces, not one row at a time.
 func PlanClose(ids []string, all []PeriodState) ([]PeriodState, error) {
-	return plan(ids, all, true)
+	return plan(ids, all, func(p PeriodState) string { return p.Status }, "", true)
 }
 
 // PlanReopen is PlanClose's mirror: newest-first, and blocked by any later
 // period that is still closed or by the base-period boundary.
 func PlanReopen(ids []string, all []PeriodState) ([]PeriodState, error) {
-	return plan(ids, all, false)
+	return plan(ids, all, func(p PeriodState) string { return p.Status }, "", false)
+}
+
+// PlanCloseLock is PlanClose scoped to one of a period's three independent
+// sub-ledger locks (see LockField) instead of the derived overall Status --
+// same chronological-order rule, applied to that lock's own history.
+func PlanCloseLock(ids []string, all []PeriodState, lock LockField) ([]PeriodState, error) {
+	return plan(ids, all, lock.get, lock.label(), true)
+}
+
+// PlanReopenLock is PlanReopen scoped to one lock. IsBeforeBase still
+// blocks reopening on every dimension -- a pre-go-live period can never be
+// reopened on any lock, not just the derived overall status.
+func PlanReopenLock(ids []string, all []PeriodState, lock LockField) ([]PeriodState, error) {
+	return plan(ids, all, lock.get, lock.label(), false)
 }
 
 // plan implements both directions. closing selects the direction; the two
 // share selection, dedup, ordering and the working-state thread, and differ
-// only in the per-period rule.
-func plan(ids []string, all []PeriodState, closing bool) ([]PeriodState, error) {
+// only in the per-period rule. get extracts the status field being planned
+// over (Status, or one of the three lock fields) and label names it for
+// error messages ("" for the derived overall Status).
+func plan(ids []string, all []PeriodState, get func(PeriodState) string, label string, closing bool) ([]PeriodState, error) {
 	if len(ids) == 0 {
 		return nil, ClientError{Msg: "periodIds must contain at least one period."}
 	}
@@ -74,15 +131,15 @@ func plan(ids []string, all []PeriodState, closing bool) ([]PeriodState, error) 
 	// working carries the effect of each step onto the next.
 	working := make(map[string]string, len(all))
 	for _, p := range all {
-		working[p.ID] = p.Status
+		working[p.ID] = get(p)
 	}
 
 	for _, target := range selected {
 		var err error
 		if closing {
-			err = checkClose(target, all, working)
+			err = checkClose(target, all, working, label)
 		} else {
-			err = checkReopen(target, all, working)
+			err = checkReopen(target, all, working, label)
 		}
 		if err != nil {
 			return nil, err
@@ -96,26 +153,40 @@ func plan(ids []string, all []PeriodState, closing bool) ([]PeriodState, error) 
 	return selected, nil
 }
 
-// checkClose enforces: the target is open, and every earlier period is closed.
-func checkClose(target PeriodState, all []PeriodState, working map[string]string) error {
+// checkClose enforces: the target is open, and every earlier period is
+// closed. label prefixes the error text ("AP for", "AR for", "GL for") when
+// checking a sub-ledger lock rather than the derived overall Status; "" for
+// the latter reproduces today's unprefixed messages exactly.
+func checkClose(target PeriodState, all []PeriodState, working map[string]string, label string) error {
+	prefix := ""
+	if label != "" {
+		prefix = label + " for "
+	}
 	if working[target.ID] == StatusClosed {
-		return conflict(ErrAlreadyClosed, fmt.Sprintf("%s is already closed.", target.Name))
+		return conflict(ErrAlreadyClosed, fmt.Sprintf("%s%s is already closed.", prefix, target.Name))
 	}
 	for _, p := range all {
 		if p.Start.Before(target.Start) && working[p.ID] == StatusOpen {
 			return conflict(ErrPriorPeriodOpen, fmt.Sprintf(
-				"%s cannot be closed while the earlier period %s is still open. "+
-					"Close periods in chronological order.", target.Name, p.Name))
+				"%s%s cannot be closed while the earlier period %s%s is still open. "+
+					"Close periods in chronological order.", prefix, target.Name, prefix, p.Name))
 		}
 	}
 	return nil
 }
 
 // checkReopen enforces: the target is closed, is not before the base period,
-// and every later period is open.
-func checkReopen(target PeriodState, all []PeriodState, working map[string]string) error {
+// and every later period is open. label prefixes the error text ("AP for",
+// "AR for", "GL for") when checking a sub-ledger lock rather than the derived
+// overall Status; "" for the latter reproduces today's unprefixed messages
+// exactly.
+func checkReopen(target PeriodState, all []PeriodState, working map[string]string, label string) error {
+	prefix := ""
+	if label != "" {
+		prefix = label + " for "
+	}
 	if working[target.ID] == StatusOpen {
-		return conflict(ErrAlreadyOpen, fmt.Sprintf("%s is already open.", target.Name))
+		return conflict(ErrAlreadyOpen, fmt.Sprintf("%s%s is already open.", prefix, target.Name))
 	}
 	if target.IsBeforeBase {
 		return conflict(ErrBeforeBasePeriod, fmt.Sprintf(
@@ -124,8 +195,8 @@ func checkReopen(target PeriodState, all []PeriodState, working map[string]strin
 	for _, p := range all {
 		if target.Start.Before(p.Start) && working[p.ID] == StatusClosed {
 			return conflict(ErrLaterPeriodClosed, fmt.Sprintf(
-				"%s cannot be reopened while the later period %s is closed. "+
-					"Reopen periods in reverse chronological order.", target.Name, p.Name))
+				"%s%s cannot be reopened while the later period %s%s is closed. "+
+					"Reopen periods in reverse chronological order.", prefix, target.Name, prefix, p.Name))
 		}
 	}
 	return nil

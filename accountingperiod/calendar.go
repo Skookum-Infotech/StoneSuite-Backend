@@ -13,6 +13,14 @@ type MonthSpan struct {
 	End    time.Time // last day, midnight UTC
 }
 
+// QuarterSpan is one generated fiscal quarter -- three consecutive MonthSpans.
+type QuarterSpan struct {
+	Number int       // 1..4, position within the fiscal year
+	Name   string    // "Q1 FY2026"
+	Start  time.Time // first day of its first month, midnight UTC
+	End    time.Time // last day of its third month, midnight UTC
+}
+
 // FirstOfMonth normalizes t to midnight UTC on the first day of its month.
 // Every date this package stores is normalized this way, so a caller may pass
 // any instant within the intended month.
@@ -37,16 +45,6 @@ func ValidateStartMonth(startMonth int) error {
 	return nil
 }
 
-// ValidateGenerateYears checks a fiscal-year generation count is in
-// 1..MaxGenerateYears.
-func ValidateGenerateYears(years int) error {
-	if years < 1 || years > MaxGenerateYears {
-		return ClientError{Msg: fmt.Sprintf(
-			"years must be between 1 and %d, got %d.", MaxGenerateYears, years)}
-	}
-	return nil
-}
-
 // FiscalYearStart returns the first day of the fiscal year that contains d.
 // A date earlier in the calendar year than startMonth belongs to the fiscal
 // year that began the previous calendar year.
@@ -56,6 +54,17 @@ func FiscalYearStart(d time.Time, startMonth int) time.Time {
 		y--
 	}
 	return time.Date(y, time.Month(startMonth), 1, 0, 0, 0, 0, time.UTC)
+}
+
+// FiscalYearEndMonth returns the calendar month a fiscal year beginning in
+// startMonth ends in. A fiscal year is always exactly twelve months (see
+// PeriodsPerYear), so the end month is fully implied by the start month --
+// it is derived here, never stored.
+func FiscalYearEndMonth(startMonth int) int {
+	if startMonth == int(time.January) {
+		return int(time.December)
+	}
+	return startMonth - 1
 }
 
 // FiscalYearLabel names the fiscal year beginning at start.
@@ -87,6 +96,27 @@ func MonthsFor(start time.Time) []MonthSpan {
 		})
 	}
 	return spans
+}
+
+// QuartersFor groups months, the twelve MonthSpans of a fiscal year, into
+// four QuarterSpans of three consecutive months each. It assumes exactly
+// PeriodsPerYear months in fiscal order, matching MonthsFor's contract --
+// it is an internal helper only ever called with MonthsFor's output.
+func QuartersFor(months []MonthSpan, fyLabel string) []QuarterSpan {
+	const monthsPerQuarter = 3
+	quarters := make([]QuarterSpan, 0, PeriodsPerYear/monthsPerQuarter)
+	for i := 0; i < PeriodsPerYear/monthsPerQuarter; i++ {
+		number := i + 1
+		first := months[i*monthsPerQuarter]
+		last := months[i*monthsPerQuarter+monthsPerQuarter-1]
+		quarters = append(quarters, QuarterSpan{
+			Number: number,
+			Name:   fmt.Sprintf("Q%d %s", number, fyLabel),
+			Start:  first.Start,
+			End:    last.End,
+		})
+	}
+	return quarters
 }
 
 // FiscalYearEnd returns the last day of the fiscal year beginning at start.

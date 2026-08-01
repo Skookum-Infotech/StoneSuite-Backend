@@ -88,7 +88,11 @@ func ctFail(w http.ResponseWriter, err error, serverMsg string) {
 	case errors.Is(err, cashtransfer.ErrNotPosted):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, cashtransfer.ErrPeriodClosed):
-		fail(w, http.StatusConflict, err.Error())
+		fail(w, http.StatusConflict,
+			"The accounting period for this date is closed. Reopen it to post.")
+	case errors.Is(err, cashtransfer.ErrNoAccountingPeriod):
+		fail(w, http.StatusConflict,
+			"No accounting period covers this date. Generate the fiscal year first.")
 	case errors.Is(err, cashtransfer.ErrVersionMismatch):
 		fail(w, http.StatusConflict, "This cash transfer was changed by someone else. Reload and try again.")
 	default:

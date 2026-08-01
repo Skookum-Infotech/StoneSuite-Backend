@@ -82,6 +82,14 @@ const (
 	ResourceChartOfAccount Resource = "chart_of_account"
 	ResourceCashTransfer   Resource = "cash_transfer"
 
+	// ResourceAccountingPeriod covers the fiscal calendar: generating a fiscal
+	// year, and opening/closing the monthly periods that gate every GL write.
+	//
+	// create (generate next year's calendar) is deliberately separable from
+	// update (close the books): the first is routine admin, the second is a
+	// controller's signature. configure is the one-time base period setup.
+	ResourceAccountingPeriod Resource = "accounting_period"
+
 	// ResourceAny is the wildcard resource. Granting it matches every resource;
 	// it is how the seeded super_admin role is expressed as a single row.
 	ResourceAny Resource = "*"
@@ -333,6 +341,13 @@ var catalog = []Permission{
 	{ResourceCashTransfer, ActionUpdate},
 	{ResourceCashTransfer, ActionDelete},
 	{ResourceCashTransfer, ActionTransition},
+
+	// No ActionDelete: a period is never removed, only closed. Deleting one
+	// would strand every journal entry that fell inside it.
+	{ResourceAccountingPeriod, ActionRead},
+	{ResourceAccountingPeriod, ActionCreate},
+	{ResourceAccountingPeriod, ActionUpdate},
+	{ResourceAccountingPeriod, ActionConfigure},
 
 	{ResourceUser, ActionCreate},
 	{ResourceUser, ActionRead},

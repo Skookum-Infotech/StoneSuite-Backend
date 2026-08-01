@@ -48,7 +48,9 @@ const (
 type periodLookup struct {
 	// Found reports whether a row in accounting_period covers the date.
 	Found bool
-	// Status is that row's accounting_period_status. Meaningless when !Found.
+	// Status is that row's gl_lock_status -- the GL choke point specifically,
+	// not the derived overall accounting_period_status (see lookupPeriod in
+	// store.go). Meaningless when !Found.
 	Status string
 	// CalendarExists reports whether the tenant has ANY accounting_period row,
 	// i.e. whether they have ever run the base period setup.

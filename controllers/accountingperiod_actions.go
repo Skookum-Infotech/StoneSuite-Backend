@@ -50,13 +50,25 @@ func (h *AccountingPeriodOps) GenerateYear(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	empID := resolveEmployeeID(r, identityID)
-	fy, err := accountingperiod.GenerateFiscalYear(r.Context(), pool, in, empID)
+	result, err := accountingperiod.GenerateFiscalYear(r.Context(), pool, in, empID)
 	if err != nil {
-		apFail(w, err, "Failed to generate the fiscal year.")
+		apFail(w, err, "Failed to generate the fiscal year(s).")
 		return
 	}
-	auditPeriod(r, pool, empID, "generate_fiscal_year", fy.ID, nil, fiscalYearSnapshot(fy))
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "fiscalYear": fy})
+	for i := range result.FiscalYears {
+		fy := result.FiscalYears[i]
+		auditPeriod(r, pool, empID, "generate_fiscal_year", fy.ID, nil, fiscalYearSnapshot(&fy))
+	}
+	resp := map[string]any{
+		"success":              true,
+		"fiscalYears":          result.FiscalYears,
+		"fiscalYearStartMonth": result.FiscalYearStartMonth,
+		"fiscalYearEndMonth":   result.FiscalYearEndMonth,
+	}
+	if len(result.FiscalYears) == 1 {
+		resp["fiscalYear"] = result.FiscalYears[0]
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // Close POST /api/tenant/finance/accounting-periods/close

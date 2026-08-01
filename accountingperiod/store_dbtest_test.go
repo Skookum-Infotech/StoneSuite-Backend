@@ -160,14 +160,20 @@ func TestSetup_RejectsBadInput(t *testing.T) {
 	assert.True(t, IsClientError(err), "got %T", err)
 }
 
+// TestGenerateFiscalYear_IsForwardOnlyAndContiguous's call sites were
+// mechanically adapted to unwrap GenerateResult.FiscalYears[0] after
+// GenerateFiscalYear's return type changed from *FiscalYear to
+// *GenerateResult; every assertion's VALUE expectation is unchanged.
 func TestGenerateFiscalYear_IsForwardOnlyAndContiguous(t *testing.T) {
 	pool := testPool(t)
 	freshCalendar(t, pool)
 	ctx := context.Background()
 	setupCalendarYear(t, pool)
 
-	fy27, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
+	res27, err := GenerateFiscalYear(ctx, pool, GenerateInput{}, 0)
 	require.NoError(t, err)
+	require.Len(t, res27.FiscalYears, 1)
+	fy27 := res27.FiscalYears[0]
 	assert.Equal(t, "FY2027", fy27.Name)
 	assert.True(t, fy27.Start.Equal(day(2027, 1, 1)), "start = %v", fy27.Start)
 	assert.Len(t, fy27.Periods, PeriodsPerYear)
@@ -178,9 +184,10 @@ func TestGenerateFiscalYear_IsForwardOnlyAndContiguous(t *testing.T) {
 	assert.True(t, IsClientError(err), "got %T: %v", err, err)
 
 	// The matching one succeeds and stays contiguous.
-	fy28, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028}, 0)
+	res28, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028}, 0)
 	require.NoError(t, err)
-	assert.True(t, fy28.Start.Equal(day(2028, 1, 1)))
+	require.Len(t, res28.FiscalYears, 1)
+	assert.True(t, res28.FiscalYears[0].Start.Equal(day(2028, 1, 1)))
 }
 
 func TestGenerateFiscalYear_RequiresSetup(t *testing.T) {
@@ -190,4 +197,155 @@ func TestGenerateFiscalYear_RequiresSetup(t *testing.T) {
 	_, err := GenerateFiscalYear(context.Background(), pool, GenerateInput{}, 0)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotConfigured), "got %v", err)
+}
+
+// TestGenerateFiscalYear_Range proves a single call can generate several
+// contiguous fiscal years, each with its four quarters and twelve periods,
+// and that the calendar's configured start/end month come back as read-only
+// context alongside them.
+func TestGenerateFiscalYear_Range(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026
+
+	res, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2027, EndYear: 2029}, 0)
+	require.NoError(t, err)
+	require.Len(t, res.FiscalYears, 3)
+	assert.Equal(t, 1, res.FiscalYearStartMonth)
+	assert.Equal(t, 12, res.FiscalYearEndMonth)
+
+	wantNames := []string{"FY2027", "FY2028", "FY2029"}
+	for i, fy := range res.FiscalYears {
+		assert.Equal(t, wantNames[i], fy.Name)
+		assert.Len(t, fy.Periods, PeriodsPerYear)
+		assert.Len(t, fy.Quarters, 4)
+	}
+	assert.True(t, res.FiscalYears[0].Start.Equal(day(2027, 1, 1)))
+	assert.True(t, res.FiscalYears[2].End.Equal(day(2029, 12, 31)))
+}
+
+// TestGenerateFiscalYear_SingleYearViaEqualStartEnd proves StartYear==EndYear
+// behaves identically to StartYear alone -- EndYear defaulting to StartYear
+// is documented as "the same row" as the StartYear-only case (design spec
+// §4), so both must produce exactly one fiscal year.
+func TestGenerateFiscalYear_SingleYearViaEqualStartEnd(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026
+
+	res, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2027, EndYear: 2027}, 0)
+	require.NoError(t, err)
+	require.Len(t, res.FiscalYears, 1)
+	assert.Equal(t, "FY2027", res.FiscalYears[0].Name)
+}
+
+// TestGenerateFiscalYear_RangeValidation covers the EndYear resolution table
+// from the design spec: EndYear without StartYear, EndYear before StartYear,
+// and a range whose StartYear does not confirm the next contiguous year are
+// all client errors.
+func TestGenerateFiscalYear_RangeValidation(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026
+
+	_, err := GenerateFiscalYear(ctx, pool, GenerateInput{EndYear: 2028}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "endYear without startYear should be a client error, got %T: %v", err, err)
+
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2029, EndYear: 2028}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "endYear before startYear should be a client error, got %T: %v", err, err)
+
+	// The next contiguous year is 2027, not 2028: a range starting on the
+	// wrong year is refused the same way a single mismatched StartYear is.
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2028, EndYear: 2030}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "got %T: %v", err, err)
+}
+
+// TestGenerateFiscalYear_RangeExceedingCapIsRefused proves maxGenerateYears
+// is enforced -- a range one year over the cap is refused as a client error,
+// and crucially with no year in the range generated: the check runs before
+// generateYear's insert loop starts, so a caller cannot get a partial batch
+// out of an over-sized request the way they could out of a mid-range
+// collision (see TestGenerateFiscalYear_MidRangeCollisionRollsBackWholeBatch,
+// which is the "some rows already inserted" case; this is the "no rows ever
+// attempted" case).
+func TestGenerateFiscalYear_RangeExceedingCapIsRefused(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026; next contiguous year is 2027
+
+	endYear := 2027 + maxGenerateYears // one year past the cap
+	_, err := GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2027, EndYear: endYear}, 0)
+	require.Error(t, err)
+	assert.True(t, IsClientError(err), "a range over maxGenerateYears should be a client error, got %T: %v", err, err)
+
+	years, err := ListFiscalYears(ctx, pool)
+	require.NoError(t, err)
+	assert.Len(t, years, 1, "only the FY2026 from setup should exist; nothing from the refused range")
+
+	// A range exactly at the cap is unaffected by this check (it may still
+	// fail later for unrelated reasons, but not on the cap itself).
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2027, EndYear: 2027 + maxGenerateYears - 1}, 0)
+	require.NoError(t, err, "a range exactly at maxGenerateYears must be accepted")
+}
+
+// TestGenerateFiscalYear_MidRangeCollisionRollsBackWholeBatch proves the
+// whole-range-is-one-transaction guarantee: a failure partway through a
+// range must leave NONE of the range's years behind, not just the one that
+// collided.
+//
+// nextFiscalYearStart always resumes from MAX(fiscal_year_end), so any
+// pre-existing row positioned at (or after) the range's own years would
+// itself become the new "next year" and be silently skipped past, rather
+// than collided with -- the confirmation check would simply reject the
+// StartYear before any insert runs. To force a genuine MID-batch failure
+// (some rows already inserted by THIS call, in THIS transaction, before the
+// error), the collision is planted one level deeper: a decoy fiscal_quarter
+// row occupying exactly where FY2028's own Q1 would land. quarter_start is
+// globally unique (uq_fq_start) regardless of which fiscal_year owns the
+// row, so it collides with FY2028's real Q1 insert without disturbing
+// fiscal_year's own MAX -- the decoy is anchored to a throwaway fiscal_year
+// row dated safely in the past (1900) so it can never become the computed
+// "next year" itself.
+func TestGenerateFiscalYear_MidRangeCollisionRollsBackWholeBatch(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	setupCalendarYear(t, pool) // FY2026; MAX(fiscal_year_end) = 2026-12-31
+
+	var anchorID int
+	require.NoError(t, pool.QueryRow(ctx, `
+		INSERT INTO fiscal_year (fiscal_year_name, fiscal_year_start, fiscal_year_end, fiscal_year_status)
+		VALUES ('FY1900-decoy-anchor', $1, $2, 'open') RETURNING fiscal_year_id`,
+		day(1900, 1, 1), day(1900, 12, 31)).Scan(&anchorID))
+
+	_, err := pool.Exec(ctx, `
+		INSERT INTO fiscal_quarter (fiscal_year_id, quarter_number, quarter_name, quarter_start, quarter_end, fiscal_quarter_status)
+		VALUES ($1, 1, 'decoy', $2, $3, 'open')`,
+		anchorID, day(2028, 1, 1), day(2028, 3, 31))
+	require.NoError(t, err)
+
+	// StartYear:2027 still confirms correctly (MAX is untouched by the
+	// 1900-dated anchor), so FY2027 -- and its quarters and periods -- are
+	// inserted successfully inside this transaction before the loop reaches
+	// FY2028 and collides.
+	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{StartYear: 2027, EndYear: 2029}, 0)
+	require.Error(t, err, "FY2028's own Q1 insert must collide with the decoy's quarter_start")
+	assert.True(t, IsConflict(err), "got %T: %v", err, err)
+
+	years, err := ListFiscalYears(ctx, pool)
+	require.NoError(t, err)
+	names := make(map[string]bool, len(years))
+	for _, fy := range years {
+		names[fy.Name] = true
+	}
+	assert.False(t, names["FY2027"], "FY2027 must have been rolled back even though its own insert succeeded")
+	assert.False(t, names["FY2028"], "FY2028 must not exist")
+	assert.False(t, names["FY2029"], "FY2029 must never have been reached")
 }

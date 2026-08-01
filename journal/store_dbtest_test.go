@@ -249,6 +249,13 @@ func TestCheckPeriodOpen_FallsBackToBooksClosedThrough(t *testing.T) {
 
 // seedPeriod inserts one accounting_period (and the fiscal_year it needs)
 // through the caller's tx, so it is rolled back with the rest of the test.
+//
+// status is applied uniformly to accounting_period_status AND all three
+// sub-ledger locks (ap_lock_status, ar_lock_status, gl_lock_status) — the
+// same shape generateYear/applyStatus produce in production (see
+// accountingperiod/store_generate.go, accountingperiod/store_status.go) — so
+// every existing caller continues to test what it claims to now that the GL
+// choke point reads gl_lock_status instead of the derived overall status.
 func seedPeriod(t *testing.T, tx pgx.Tx, status string, start, end time.Time) {
 	t.Helper()
 	ctx := context.Background()
@@ -266,9 +273,64 @@ func seedPeriod(t *testing.T, tx pgx.Tx, status string, start, end time.Time) {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO accounting_period (fiscal_year_id, accounting_period_name,
 			period_number, period_start, period_end, accounting_period_status,
-			accounting_period_closed_at)
-		VALUES ($1,$2,1,$3,$4,$5,$6)`,
+			accounting_period_closed_at, ap_lock_status, ar_lock_status, gl_lock_status)
+		VALUES ($1,$2,1,$3,$4,$5,$6,$5,$5,$5)`,
 		fyID, "Test Period", start, end, status, closedAt); err != nil {
 		t.Fatalf("seed accounting period: %v", err)
+	}
+}
+
+// TestCreateEntry_GLLockAloneGatesEvenWhenPeriodStatusIsOpen proves the GL
+// choke point reads gl_lock_status specifically, not the derived
+// accounting_period_status: it seeds a period whose overall status (and
+// AP/AR locks) are "open" but whose gl_lock_status alone is "closed", and
+// expects the same rejection seedPeriod's "closed" case produces.
+func TestCreateEntry_GLLockAloneGatesEvenWhenPeriodStatusIsOpen(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	fromID, toID := seedTwoAccounts(t, tx)
+	start := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
+	entryDate := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	var fyID int
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO fiscal_year (fiscal_year_name, fiscal_year_start, fiscal_year_end)
+		VALUES ($1,$2,$3) RETURNING fiscal_year_id`,
+		"FYTEST", start, end).Scan(&fyID); err != nil {
+		t.Fatalf("seed fiscal year: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO accounting_period (fiscal_year_id, accounting_period_name,
+			period_number, period_start, period_end, accounting_period_status,
+			ap_lock_status, ar_lock_status, gl_lock_status)
+		VALUES ($1,$2,1,$3,$4,'open','open','open','closed')`,
+		fyID, "Test Period", start, end); err != nil {
+		t.Fatalf("seed accounting period with GL-only lock: %v", err)
+	}
+
+	if err := CheckPeriodOpen(ctx, tx, entryDate); !errors.Is(err, ErrPeriodClosed) {
+		t.Fatalf("CheckPeriodOpen with gl_lock_status closed = %v, want ErrPeriodClosed", err)
+	}
+
+	_, err = CreateEntry(ctx, tx, CreateEntryInput{
+		EntryDate:  entryDate,
+		Memo:       "GL locked while period status is open",
+		SourceType: "cash_transfer",
+		SourceID:   "00000000-0000-0000-0000-000000000010",
+		Lines: []LineInput{
+			{AccountID: toID, Debit: 100},
+			{AccountID: fromID, Credit: 100},
+		},
+	})
+	if !errors.Is(err, ErrPeriodClosed) {
+		t.Fatalf("CreateEntry with gl_lock_status closed = %v, want ErrPeriodClosed", err)
 	}
 }

@@ -52,8 +52,24 @@ type FiscalYear struct {
 	End       time.Time `json:"end"`
 	Status    string    `json:"status"`
 	Periods   []Period  `json:"periods,omitempty"`
+	Quarters  []Quarter `json:"quarters,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// Quarter is one fiscal quarter -- three consecutive Periods. Status is
+// derived from its periods (closed iff all three are closed) and is never
+// set directly by a caller, the same posture FiscalYear.Status already has.
+type Quarter struct {
+	ID           string    `json:"id"`
+	FiscalYearID string    `json:"fiscalYearId"`
+	Number       int       `json:"quarterNumber"`
+	Name         string    `json:"name"`
+	Start        time.Time `json:"start"`
+	End          time.Time `json:"end"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // Period is one calendar month of a fiscal year.
@@ -68,8 +84,20 @@ type Period struct {
 	Status         string     `json:"status"`
 	IsBasePeriod   bool       `json:"isBasePeriod"`
 	ClosedAt       *time.Time `json:"closedAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	// APLockStatus, ARLockStatus, GLLockStatus are the three independent
+	// sub-ledger locks. accounting_period_status (Status above) is derived
+	// from them -- closed iff all three are closed -- so, unlike Status,
+	// these are always meaningful and never omitted.
+	APLockStatus string `json:"apLockStatus"`
+	ARLockStatus string `json:"arLockStatus"`
+	GLLockStatus string `json:"glLockStatus"`
+	// QuarterID and QuarterName are empty for periods generated before
+	// quarters existed: fiscal_quarter_id is nullable and not backfilled
+	// onto already-generated fiscal years.
+	QuarterID   string    `json:"quarterId,omitempty"`
+	QuarterName string    `json:"quarterName,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // SetupInput configures the fiscal calendar. It is accepted exactly once per
@@ -83,11 +111,27 @@ type SetupInput struct {
 	BasePeriodStart *time.Time `json:"basePeriodStart"`
 }
 
-// GenerateInput asks for one fiscal year's twelve periods to be generated.
+// GenerateInput asks for one or more fiscal years' twelve periods each to be
+// generated, in one call.
 type GenerateInput struct {
 	// StartYear is the calendar year the fiscal year starts in. Zero means
 	// "the year immediately following the latest one that exists".
 	StartYear int `json:"startYear"`
+	// EndYear, when nonzero, requests a contiguous range StartYear..EndYear
+	// (inclusive), one fiscal year per calendar year. Zero means "just
+	// StartYear" (or, if StartYear is also zero, just the next year).
+	EndYear int `json:"endYear"`
+}
+
+// GenerateResult is the response of GenerateFiscalYear: the years it
+// created, plus the fiscal calendar's configured start/end month, echoed
+// back as read-only context -- Accounting Preferences, not a per-request
+// input. Read from the same locked accounting_settings row the generation
+// itself used, so there is no separate query and no risk of disagreement.
+type GenerateResult struct {
+	FiscalYears          []FiscalYear `json:"fiscalYears"`
+	FiscalYearStartMonth int          `json:"fiscalYearStartMonth"`
+	FiscalYearEndMonth   int          `json:"fiscalYearEndMonth"`
 }
 
 // StatusChangeInput is the body of the close and reopen endpoints. A

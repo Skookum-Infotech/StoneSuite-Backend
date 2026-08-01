@@ -6691,3 +6691,113 @@ CREATE TABLE IF NOT EXISTS accounting_period_history (
 );
 CREATE INDEX IF NOT EXISTS idx_ap_history
     ON accounting_period_history (accounting_period_id, history_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Accounting Period Management -- sub-ledger locks, quarters, range
+-- generation (enhancement)
+--
+-- Spec: docs/superpowers/specs/2026-07-31-accounting-period-locks-and-ranges-design.md
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- 1. fiscal_quarter -- 4 rows per fiscal year, each spanning 3 consecutive
+--    accounting_period rows (Q1 = periods 1-3, etc). Generated only going
+--    forward, by the same generateYear call that creates a fiscal year's
+--    periods -- not backfilled onto fiscal years that already exist.
+--
+-- fiscal_quarter_status is DERIVED, like fiscal_year_status: closed iff all
+-- 3 of its periods are closed, recomputed alongside fiscal year status on
+-- every period status change. Quarters have no lock of their own -- only a
+-- derived status.
+CREATE TABLE IF NOT EXISTS fiscal_quarter (
+    fiscal_quarter_id         SERIAL       PRIMARY KEY,
+    fiscal_quarter_uuid       UUID         NOT NULL DEFAULT gen_random_uuid(),
+    fiscal_year_id            INTEGER      NOT NULL REFERENCES fiscal_year(fiscal_year_id),
+    quarter_number            SMALLINT     NOT NULL,
+    quarter_name              VARCHAR(20)  NOT NULL,
+    quarter_start             DATE         NOT NULL,
+    quarter_end               DATE         NOT NULL,
+    fiscal_quarter_status     VARCHAR(10)  NOT NULL DEFAULT 'open',
+    fiscal_quarter_created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fiscal_quarter_created_by INTEGER          NULL REFERENCES employee(employee_id),
+    fiscal_quarter_updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fiscal_quarter_updated_by INTEGER          NULL REFERENCES employee(employee_id),
+
+    CONSTRAINT uq_fq_uuid      UNIQUE (fiscal_quarter_uuid),
+    CONSTRAINT uq_fq_fy_number UNIQUE (fiscal_year_id, quarter_number),
+    CONSTRAINT uq_fq_start     UNIQUE (quarter_start),
+    CONSTRAINT chk_fq_range    CHECK (quarter_end > quarter_start),
+    CONSTRAINT chk_fq_number   CHECK (quarter_number BETWEEN 1 AND 4),
+    CONSTRAINT chk_fq_status   CHECK (fiscal_quarter_status IN ('open','closed'))
+);
+CREATE INDEX IF NOT EXISTS idx_fq_fiscal_year ON fiscal_quarter (fiscal_year_id, quarter_number);
+CREATE INDEX IF NOT EXISTS idx_fq_status      ON fiscal_quarter (fiscal_quarter_status);
+
+-- 2. accounting_period gains a quarter link and three independent
+--    sub-ledger lock columns (AP/AR/GL). Appended as ALTER ... ADD COLUMN
+--    IF NOT EXISTS, never by editing the CREATE TABLE body above -- that
+--    body is a no-op on every existing tenant, so an inline edit would
+--    reach fresh databases only.
+--
+-- accounting_period_status stops being written directly by a lock change
+-- and becomes DERIVED from the three lock columns (closed iff all three are
+-- closed) -- the same posture fiscal_year_status already has over its
+-- periods. fiscal_quarter_id is nullable and NOT backfilled onto periods
+-- that already exist (see fiscal_quarter comment above).
+ALTER TABLE accounting_period
+    ADD COLUMN IF NOT EXISTS fiscal_quarter_id INTEGER NULL REFERENCES fiscal_quarter(fiscal_quarter_id);
+ALTER TABLE accounting_period
+    ADD COLUMN IF NOT EXISTS ap_lock_status VARCHAR(10) NOT NULL DEFAULT 'open';
+ALTER TABLE accounting_period
+    ADD COLUMN IF NOT EXISTS ar_lock_status VARCHAR(10) NOT NULL DEFAULT 'open';
+ALTER TABLE accounting_period
+    ADD COLUMN IF NOT EXISTS gl_lock_status VARCHAR(10) NOT NULL DEFAULT 'open';
+
+-- ADD CONSTRAINT is not idempotent -- guard each new CHECK on pg_constraint,
+-- same pattern as chk_acct_settings_fy_start_month / excl_ap_no_overlap above.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ap_lock_ap_status') THEN
+        ALTER TABLE accounting_period
+            ADD CONSTRAINT chk_ap_lock_ap_status
+            CHECK (ap_lock_status IN ('open','closed'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ap_lock_ar_status') THEN
+        ALTER TABLE accounting_period
+            ADD CONSTRAINT chk_ap_lock_ar_status
+            CHECK (ar_lock_status IN ('open','closed'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ap_lock_gl_status') THEN
+        ALTER TABLE accounting_period
+            ADD CONSTRAINT chk_ap_lock_gl_status
+            CHECK (gl_lock_status IN ('open','closed'));
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_ap_fiscal_quarter ON accounting_period (fiscal_quarter_id);
+
+-- 3. Widen chk_ap_history_action to accept the six new per-lock actions.
+--    The original CHECK is INLINE inside accounting_period_history's
+--    CREATE TABLE IF NOT EXISTS body -- do NOT edit it there, a second
+--    CREATE TABLE IF NOT EXISTS is a no-op on every already-provisioned
+--    tenant, so an inline edit would never reach them. DROP + unconditional
+--    ADD is safe to re-run every boot: DROP IF EXISTS never errors, and ADD
+--    always converges to the same, correct, widened definition.
+ALTER TABLE accounting_period_history DROP CONSTRAINT IF EXISTS chk_ap_history_action;
+ALTER TABLE accounting_period_history
+    ADD CONSTRAINT chk_ap_history_action
+    CHECK (history_action IN ('generate','close','reopen','base_setup',
+                               'ap_lock','ap_unlock','ar_lock','ar_unlock',
+                               'gl_lock','gl_unlock'));
+
+-- 4. Backfill: a period already closed under the old single-status model
+--    gets all three locks closed too, exactly once. Safe to re-run on every
+--    boot (schema.sql re-runs in full every time): going forward
+--    accounting_period_status is only ever set AS A DERIVATION of the three
+--    lock columns (never independently), so "status = closed AND all three
+--    locks still open" is a state that can only exist as leftover from data
+--    created before this migration -- it cannot recur once the derivation
+--    logic above is live, so this WHERE clause matches zero rows after the
+--    first successful run.
+UPDATE accounting_period
+SET ap_lock_status = 'closed', ar_lock_status = 'closed', gl_lock_status = 'closed'
+WHERE accounting_period_status = 'closed'
+  AND ap_lock_status = 'open' AND ar_lock_status = 'open' AND gl_lock_status = 'open';

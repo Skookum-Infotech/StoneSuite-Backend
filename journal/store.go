@@ -77,8 +77,16 @@ func validateLines(lines []LineInput) error {
 }
 
 // lookupPeriod reads, in one round trip, everything verdictFor needs: the
-// status of the accounting_period covering effectiveDate (if any), whether the
-// tenant has a fiscal calendar at all, and the two accounting_settings dates.
+// gl_lock_status of the accounting_period covering effectiveDate (if any),
+// whether the tenant has a fiscal calendar at all, and the two
+// accounting_settings dates.
+//
+// gl_lock_status, not the derived accounting_period_status, is what gates GL
+// postings: gl_lock_status is the GL choke point specifically, and the
+// whole-period status can diverge from it -- the derived status stays "open"
+// while GL alone is locked (AP/AR still open), though the reverse can't
+// happen (GL can't be open while the derived status reads closed, since the
+// derived status is closed only when all three sub-ledger locks are).
 //
 // The period table is queried with raw SQL rather than through the
 // accountingperiod package on purpose: journal imports zero stonesuite-backend
@@ -90,7 +98,7 @@ func lookupPeriod(ctx context.Context, q querier, effectiveDate time.Time) (peri
 		l      periodLookup
 	)
 	err := q.QueryRow(ctx, `
-		SELECT (SELECT ap.accounting_period_status
+		SELECT (SELECT ap.gl_lock_status
 		          FROM accounting_period ap
 		         WHERE $1::date BETWEEN ap.period_start AND ap.period_end),
 		       EXISTS (SELECT 1 FROM accounting_period),

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -246,4 +247,168 @@ func TestSyncBooksClosedThroughStopsAtTheFirstOpenPeriod(t *testing.T) {
 	).Scan(&through))
 	require.NotNil(t, through)
 	assert.True(t, through.Equal(day(2026, 2, 28)), "got %v", through)
+}
+
+// quarterStatus reads fiscal_quarter_status directly -- there is no store
+// function that surfaces a quarter's status on its own (see design spec §3:
+// "no new CRUD/history/lock surface for quarters"), so a dbtest checking the
+// derivation has to read the column the same way TestOverlapIsStructurally
+// Impossible reads below the store's own API.
+func quarterStatus(t *testing.T, pool *pgxpool.Pool, quarterStart time.Time) string {
+	t.Helper()
+	var status string
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT fiscal_quarter_status FROM fiscal_quarter WHERE quarter_start = $1`,
+		quarterStart).Scan(&status))
+	return status
+}
+
+// TestQuarterStatusIsDerived proves a quarter flips closed only when all
+// three of its periods are, and flips back on the first reopen -- mirroring
+// TestFiscalYearStatusIsDerived's shape, one level down.
+func TestQuarterStatusIsDerived(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	fy := setupCalendarYear(t, pool)
+
+	jan := periodByName(t, fy.Periods, "Jan 2026")
+	feb := periodByName(t, fy.Periods, "Feb 2026")
+	mar := periodByName(t, fy.Periods, "Mar 2026")
+
+	assert.Equal(t, StatusOpen, quarterStatus(t, pool, day(2026, 1, 1)), "Q1 starts open")
+
+	// Close Jan and Feb: Q1 must still be open, since Mar is not closed yet.
+	_, err := Close(ctx, pool, []string{jan.ID, feb.ID}, "", 0)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOpen, quarterStatus(t, pool, day(2026, 1, 1)))
+
+	// Close Mar: Q1 flips closed; Q2 is untouched.
+	_, err = Close(ctx, pool, []string{mar.ID}, "", 0)
+	require.NoError(t, err)
+	assert.Equal(t, StatusClosed, quarterStatus(t, pool, day(2026, 1, 1)))
+	assert.Equal(t, StatusOpen, quarterStatus(t, pool, day(2026, 4, 1)), "Q2 must stay open")
+
+	// Reopening any one period in Q1 flips it back.
+	_, err = Reopen(ctx, pool, []string{mar.ID}, "", 0)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOpen, quarterStatus(t, pool, day(2026, 1, 1)))
+}
+
+// TestLocks_AreIndependentAndDeriveOverallStatus proves each of the three
+// sub-ledger locks moves only its own column, leaving the other two and the
+// derived overall accounting_period_status untouched -- until all three are
+// closed, at which point Status flips closed with ClosedAt set; unlocking
+// any one flips Status back open with ClosedAt cleared. Also proves history
+// rows carry the correct per-lock action verb.
+func TestLocks_AreIndependentAndDeriveOverallStatus(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	fy := setupCalendarYear(t, pool)
+	jan := periodByName(t, fy.Periods, "Jan 2026")
+
+	res, err := LockAPPeriods(ctx, pool, []string{jan.ID}, "ap close", 0)
+	require.NoError(t, err)
+	require.Len(t, res.Periods, 1)
+	p := res.Periods[0]
+	assert.Equal(t, StatusClosed, p.APLockStatus)
+	assert.Equal(t, StatusOpen, p.ARLockStatus)
+	assert.Equal(t, StatusOpen, p.GLLockStatus)
+	assert.Equal(t, StatusOpen, p.Status, "overall status must not flip until all three locks are closed")
+	assert.Nil(t, p.ClosedAt)
+
+	res, err = LockARPeriods(ctx, pool, []string{jan.ID}, "ar close", 0)
+	require.NoError(t, err)
+	assert.Equal(t, StatusOpen, res.Periods[0].Status, "still open with GL outstanding")
+
+	res, err = LockGLPeriods(ctx, pool, []string{jan.ID}, "gl close", 0)
+	require.NoError(t, err)
+	p = res.Periods[0]
+	assert.Equal(t, StatusClosed, p.APLockStatus)
+	assert.Equal(t, StatusClosed, p.ARLockStatus)
+	assert.Equal(t, StatusClosed, p.GLLockStatus)
+	assert.Equal(t, StatusClosed, p.Status, "all three locks closed must flip the derived status")
+	require.NotNil(t, p.ClosedAt)
+
+	res, err = UnlockGLPeriods(ctx, pool, []string{jan.ID}, "gl reopen", 0)
+	require.NoError(t, err)
+	p = res.Periods[0]
+	assert.Equal(t, StatusOpen, p.GLLockStatus)
+	assert.Equal(t, StatusOpen, p.Status, "unlocking any one lock reopens the derived status")
+	assert.Nil(t, p.ClosedAt, "closed_at must clear along with the derived status")
+
+	entries, err := History(ctx, pool, jan.ID, 0)
+	require.NoError(t, err)
+	actions := make([]string, 0, len(entries))
+	for _, e := range entries {
+		actions = append(actions, e.Action)
+	}
+	assert.Contains(t, actions, "ap_lock")
+	assert.Contains(t, actions, "ar_lock")
+	assert.Contains(t, actions, "gl_lock")
+	assert.Contains(t, actions, "gl_unlock")
+}
+
+// TestLocks_EnforceChronologicalOrderPerLock proves the chronological rule
+// holds per-lock, independent of the other two locks' and periods' states:
+// GL on the later period is refused while GL on the earlier one is still
+// open, even though nothing has touched AP or AR on either period.
+func TestLocks_EnforceChronologicalOrderPerLock(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	fy := setupCalendarYear(t, pool)
+
+	jan := periodByName(t, fy.Periods, "Jan 2026")
+	feb := periodByName(t, fy.Periods, "Feb 2026")
+
+	_, err := LockGLPeriods(ctx, pool, []string{feb.ID}, "", 0)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrPriorPeriodOpen), "got %v", err)
+
+	// AP has its own independent prefix: closing Jan then Feb on AP succeeds
+	// in order, unaffected by GL's state on either period.
+	_, err = LockAPPeriods(ctx, pool, []string{jan.ID}, "", 0)
+	require.NoError(t, err)
+	_, err = LockAPPeriods(ctx, pool, []string{feb.ID}, "", 0)
+	require.NoError(t, err)
+
+	// GL on Jan can now close -- its own prefix (nothing earlier) is
+	// satisfied, independent of AP already being closed on both periods.
+	_, err = LockGLPeriods(ctx, pool, []string{jan.ID}, "", 0)
+	require.NoError(t, err)
+}
+
+// TestCloseReopen_WritesExactlyOneHistoryRowEach proves whole-period
+// Close/Reopen -- unlike the granular lock endpoints, which write one row
+// per lock touched -- write exactly one accounting_period_history row per
+// period, since applyStatus makes one UPDATE touching all three locks and
+// the derived status together. This is the audit-trail backward-
+// compatibility guarantee the whole lock design depends on (design spec
+// §2.1).
+func TestCloseReopen_WritesExactlyOneHistoryRowEach(t *testing.T) {
+	pool := testPool(t)
+	freshCalendar(t, pool)
+	ctx := context.Background()
+	fy := setupCalendarYear(t, pool)
+	jan := periodByName(t, fy.Periods, "Jan 2026")
+
+	before, err := History(ctx, pool, jan.ID, 0)
+	require.NoError(t, err)
+	baseline := len(before) // the base_setup row generateYear already wrote
+
+	_, err = Close(ctx, pool, []string{jan.ID}, "", 0)
+	require.NoError(t, err)
+	afterClose, err := History(ctx, pool, jan.ID, 0)
+	require.NoError(t, err)
+	assert.Len(t, afterClose, baseline+1, "Close must write exactly one history row")
+	assert.Equal(t, actionClose, afterClose[0].Action)
+
+	_, err = Reopen(ctx, pool, []string{jan.ID}, "", 0)
+	require.NoError(t, err)
+	afterReopen, err := History(ctx, pool, jan.ID, 0)
+	require.NoError(t, err)
+	assert.Len(t, afterReopen, baseline+2, "Reopen must write exactly one more history row")
+	assert.Equal(t, actionReopen, afterReopen[0].Action)
 }

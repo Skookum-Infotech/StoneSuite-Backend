@@ -103,6 +103,24 @@ func TestFiscalYearStart(t *testing.T) {
 	}
 }
 
+func TestFiscalYearEndMonth(t *testing.T) {
+	tests := []struct {
+		name       string
+		startMonth int
+		want       int
+	}{
+		{"january start ends in december", 1, 12},
+		{"july start ends in june", 7, 6},
+		{"december start ends in november", 12, 11},
+		{"february start ends in january", 2, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, FiscalYearEndMonth(tt.startMonth))
+		})
+	}
+}
+
 func TestFiscalYearLabel(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -157,6 +175,47 @@ func TestMonthsFor(t *testing.T) {
 	t.Run("a mid-month start is normalized", func(t *testing.T) {
 		spans := MonthsFor(day(2026, 3, 17))
 		assert.True(t, spans[0].Start.Equal(day(2026, 3, 1)))
+	})
+}
+
+func TestQuartersFor(t *testing.T) {
+	t.Run("calendar year", func(t *testing.T) {
+		months := MonthsFor(day(2026, 1, 1))
+		spans := QuartersFor(months, "FY2026")
+		require.Len(t, spans, 4)
+
+		assert.Equal(t, 1, spans[0].Number)
+		assert.Equal(t, "Q1 FY2026", spans[0].Name)
+		assert.True(t, spans[0].Start.Equal(day(2026, 1, 1)))
+		assert.True(t, spans[0].End.Equal(day(2026, 3, 31)))
+
+		assert.Equal(t, 4, spans[3].Number)
+		assert.Equal(t, "Q4 FY2026", spans[3].Name)
+		assert.True(t, spans[3].Start.Equal(day(2026, 10, 1)))
+		assert.True(t, spans[3].End.Equal(day(2026, 12, 31)))
+	})
+
+	t.Run("july start straddles the calendar year", func(t *testing.T) {
+		months := MonthsFor(day(2026, 7, 1))
+		spans := QuartersFor(months, "FY2027")
+		require.Len(t, spans, 4)
+
+		assert.Equal(t, "Q1 FY2027", spans[0].Name)
+		assert.True(t, spans[0].Start.Equal(day(2026, 7, 1)))
+		assert.True(t, spans[0].End.Equal(day(2026, 9, 30)))
+
+		assert.Equal(t, "Q4 FY2027", spans[3].Name)
+		assert.True(t, spans[3].Start.Equal(day(2027, 4, 1)))
+		assert.True(t, spans[3].End.Equal(day(2027, 6, 30)))
+	})
+
+	t.Run("spans are contiguous and non-overlapping", func(t *testing.T) {
+		months := MonthsFor(day(2026, 1, 1))
+		spans := QuartersFor(months, "FY2026")
+		for i := 1; i < len(spans); i++ {
+			assert.True(t, spans[i].Start.Equal(spans[i-1].End.AddDate(0, 0, 1)),
+				"gap or overlap between %s and %s", spans[i-1].Name, spans[i].Name)
+		}
 	})
 }
 

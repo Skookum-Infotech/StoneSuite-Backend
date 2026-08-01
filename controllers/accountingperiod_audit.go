@@ -29,6 +29,9 @@ func periodSnapshot(p *accountingperiod.Period) map[string]any {
 		"end":            p.End,
 		"status":         p.Status,
 		"isBasePeriod":   p.IsBasePeriod,
+		"apLockStatus":   p.APLockStatus,
+		"arLockStatus":   p.ARLockStatus,
+		"glLockStatus":   p.GLLockStatus,
 	}
 }
 

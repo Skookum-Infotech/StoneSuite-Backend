@@ -34,6 +34,12 @@ import (
 //	GET  /accounting-periods/{uuid}/history    — audit trail
 //	POST /accounting-periods/close             — close one or many
 //	POST /accounting-periods/reopen            — reopen one or many
+//	POST /accounting-periods/lock-ap           — lock AP sub-ledger, one or many
+//	POST /accounting-periods/unlock-ap         — unlock AP sub-ledger, one or many
+//	POST /accounting-periods/lock-ar           — lock AR sub-ledger, one or many
+//	POST /accounting-periods/unlock-ar         — unlock AR sub-ledger, one or many
+//	POST /accounting-periods/lock-gl           — lock GL sub-ledger, one or many
+//	POST /accounting-periods/unlock-gl         — unlock GL sub-ledger, one or many
 type AccountingPeriodOps struct{}
 
 // NewAccountingPeriodOps constructs the handler group.

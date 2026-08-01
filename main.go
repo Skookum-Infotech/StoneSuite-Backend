@@ -651,6 +651,12 @@ func main() {
 		mux.Handle("GET /api/tenant/finance/accounting-periods/current", tenantChain(apOps.Current))
 		mux.Handle("POST /api/tenant/finance/accounting-periods/close", tenantChain(apOps.Close))
 		mux.Handle("POST /api/tenant/finance/accounting-periods/reopen", tenantChain(apOps.Reopen))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/lock-ap", tenantChain(apOps.LockAP))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/unlock-ap", tenantChain(apOps.UnlockAP))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/lock-ar", tenantChain(apOps.LockAR))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/unlock-ar", tenantChain(apOps.UnlockAR))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/lock-gl", tenantChain(apOps.LockGL))
+		mux.Handle("POST /api/tenant/finance/accounting-periods/unlock-gl", tenantChain(apOps.UnlockGL))
 		mux.Handle("GET /api/tenant/finance/accounting-periods/{uuid}", tenantChain(apOps.Get))
 		mux.Handle("GET /api/tenant/finance/accounting-periods/{uuid}/history", tenantChain(apOps.History))
 

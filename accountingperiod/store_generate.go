@@ -173,12 +173,19 @@ const maxGenerateYears = 20
 //
 // in.StartYear, when nonzero, is a confirmation rather than a choice: it must
 // match the next contiguous year, which makes an accidental double-generation
-// a clear error instead of a silent second year. in.EndYear, when nonzero,
-// requests a contiguous range StartYear..EndYear in the same call; any
+// a clear error instead of a silent second year. The range to generate is
+// then chosen by at most one of in.EndYear (an explicit end year) or in.Years
+// (a count of contiguous years) -- specifying both is a 400. Either way, any
 // failure partway through — a duplicate, an overlap — rolls back every year
 // already generated in this call via the deferred tx.Rollback, not just the
 // one that failed.
 func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInput, employeeID int) (*GenerateResult, error) {
+	if in.EndYear != 0 && in.Years != 0 {
+		return nil, ClientError{Msg: "specify only one of endYear or years, not both."}
+	}
+	if in.Years < 0 {
+		return nil, ClientError{Msg: fmt.Sprintf("years must not be negative, got %d.", in.Years)}
+	}
 	if in.EndYear != 0 && in.StartYear == 0 {
 		return nil, ClientError{Msg: "startYear is required when endYear is given."}
 	}
@@ -214,13 +221,16 @@ func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInpu
 			"The next fiscal year starts in %d, not %d.", start.Year(), in.StartYear)}
 	}
 
-	// Resolve the range: both zero means "just the next year" (today's
-	// unchanged default); StartYear alone means "just that year" (today's
-	// unchanged confirmation behaviour); EndYear extends it to a range.
+	// Resolve the range: both EndYear and Years zero means "just the next
+	// year" (today's unchanged default); StartYear alone means "just that
+	// year" (today's unchanged confirmation behaviour); EndYear or Years
+	// extends it to a range (validated above as mutually exclusive).
 	endYear := start.Year()
 	switch {
 	case in.EndYear != 0:
 		endYear = in.EndYear
+	case in.Years != 0:
+		endYear = start.Year() + in.Years - 1
 	case in.StartYear != 0:
 		endYear = in.StartYear
 	}

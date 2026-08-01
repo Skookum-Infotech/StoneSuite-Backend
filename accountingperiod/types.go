@@ -111,16 +111,24 @@ type SetupInput struct {
 	BasePeriodStart *time.Time `json:"basePeriodStart"`
 }
 
-// GenerateInput asks for one or more fiscal years' twelve periods each to be
-// generated, in one call.
+// GenerateInput asks for one or more contiguous fiscal years' twelve-period
+// blocks to be generated in a single atomic request.
 type GenerateInput struct {
-	// StartYear is the calendar year the fiscal year starts in. Zero means
-	// "the year immediately following the latest one that exists".
+	// StartYear is the calendar year the FIRST generated fiscal year starts
+	// in. Zero means "the year immediately following the latest one that
+	// exists".
 	StartYear int `json:"startYear"`
 	// EndYear, when nonzero, requests a contiguous range StartYear..EndYear
 	// (inclusive), one fiscal year per calendar year. Zero means "just
 	// StartYear" (or, if StartYear is also zero, just the next year).
+	//
+	// Mutually exclusive with Years -- specifying both is a 400.
 	EndYear int `json:"endYear"`
+	// Years, when nonzero, is a count-based alternative to EndYear: generate
+	// this many contiguous fiscal years starting from StartYear (or the
+	// computed next year). Zero means "just one year" (today's unchanged
+	// default). Mutually exclusive with EndYear.
+	Years int `json:"years"`
 }
 
 // GenerateResult is the response of GenerateFiscalYear: the years it

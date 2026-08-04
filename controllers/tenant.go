@@ -1097,6 +1097,58 @@ func (h *TenantOps) RepairBucketCORS(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "CORS applied to bucket " + tenant.R2Bucket,
 		"bucket":  tenant.R2Bucket,
+	})
+}
+
+// RepairBucket POST /api/platform/tenants/{id}/repair-bucket
+// Creates the tenant's R2 bucket and records it on the tenant row. Use when a
+// tenant was provisioned before CLOUDFLARE_API_TOKEN was configured, so the
+// automatic bucket-creation step in the provisioner was skipped and r2_bucket
+// was left blank (attachment endpoints then 503 forever, since provisioning
+// only runs once). Applies CORS immediately after creation. Platform-admin only.
+func (h *TenantOps) RepairBucket(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requirePlatformAdmin(r); !ok {
+		fail(w, http.StatusForbidden, "Platform admin required.")
+		return
+	}
+	if h.CF == nil || !h.CF.IsConfigured() {
+		fail(w, http.StatusServiceUnavailable, "Cloudflare API not configured (set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN).")
+		return
+	}
+
+	id := r.PathValue("id")
+	tenant, err := h.CP.TenantByID(r.Context(), id)
+	if err != nil {
+		fail(w, http.StatusNotFound, "Tenant not found.")
+		return
+	}
+	if tenant.R2Bucket != "" {
+		fail(w, http.StatusBadRequest, "Tenant already has an R2 bucket assigned: "+tenant.R2Bucket)
+		return
+	}
+
+	bucket := storage.BucketName(tenant.Slug)
+	if err := h.CF.CreateBucket(r.Context(), bucket); err != nil {
+		log.Printf("repair-bucket: create bucket %s for tenant %s: %v", bucket, tenant.Slug, err)
+		fail(w, http.StatusInternalServerError, "Failed to create bucket: "+err.Error())
+		return
+	}
+	if err := h.CF.SetBucketCORS(r.Context(), bucket, h.CORSOrigins); err != nil {
+		log.Printf("repair-bucket: set cors on bucket %s for tenant %s: %v", bucket, tenant.Slug, err)
+		fail(w, http.StatusInternalServerError, "Bucket created but failed to set CORS: "+err.Error())
+		return
+	}
+	if err := h.CP.SetTenantR2Bucket(r.Context(), tenant.ID, bucket); err != nil {
+		log.Printf("repair-bucket: record bucket %s for tenant %s: %v", bucket, tenant.Slug, err)
+		fail(w, http.StatusInternalServerError, "Bucket created but failed to record it: "+err.Error())
+		return
+	}
+
+	log.Printf("repair-bucket: created and assigned bucket %s for tenant %s", bucket, tenant.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "R2 bucket created and assigned: " + bucket,
+		"bucket":  bucket,
 		"origins": h.CORSOrigins,
 	})
 }

@@ -767,6 +767,22 @@ func main() {
 		mux.Handle("POST /api/tenant/vendors/{uuid}/transition", tenantChain(vnd.Transition))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/audit", tenantChain(vnd.Audit))
 
+		// Requisition: dedicated v2 relational module (header + line items +
+		// approval), the internal request-to-buy raised before a vendor or
+		// price is finalized — one step upstream of Purchase Order in the
+		// procurement chain. Not served through the generic JSONB router.
+		reqnOps := controllers.NewRequisitionOps()
+		mux.Handle("GET /api/tenant/requisitions", tenantChain(reqnOps.List))
+		mux.Handle("POST /api/tenant/requisitions/search", tenantChain(reqnOps.Search))
+		mux.Handle("POST /api/tenant/requisitions", tenantChain(reqnOps.Create))
+		mux.Handle("GET /api/tenant/requisitions/{uuid}", tenantChain(reqnOps.Get))
+		mux.Handle("PATCH /api/tenant/requisitions/{uuid}", tenantChain(reqnOps.Update))
+		mux.Handle("DELETE /api/tenant/requisitions/{uuid}", tenantChain(reqnOps.Delete))
+		mux.Handle("POST /api/tenant/requisitions/{uuid}/transition", tenantChain(reqnOps.Transition))
+		mux.Handle("POST /api/tenant/requisitions/{uuid}/approve", tenantChain(reqnOps.Approve))
+		mux.Handle("POST /api/tenant/requisitions/{uuid}/convert", tenantChain(reqnOps.Convert))
+		mux.Handle("GET /api/tenant/requisitions/{uuid}/audit", tenantChain(reqnOps.Audit))
+
 		// Purchase Order: dedicated v2 relational module (header + line items +
 		// receiving progress + approval), the first Purchases document module —
 		// a sibling of Estimate/Quote/Invoice, addressed to a Vendor. Not served

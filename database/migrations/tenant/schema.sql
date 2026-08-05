@@ -6801,3 +6801,178 @@ UPDATE accounting_period
 SET ap_lock_status = 'closed', ar_lock_status = 'closed', gl_lock_status = 'closed'
 WHERE accounting_period_status = 'closed'
   AND ap_lock_status = 'open' AND ar_lock_status = 'open' AND gl_lock_status = 'open';
+
+-- =====================================================================
+-- REQUISITION MODULE
+-- Spec: docs/superpowers/specs/2026-08-01-requisition-module-design.md
+-- Reuses (already seeded, do not recreate): lkp_record_type REQN (id 12),
+-- lkp_record_status rows for record_type=12 (DRFT/PAPV/APPV/CANC),
+-- authz.ResourceRequisition, vendor, inventory_item, lkp_unit,
+-- lkp_payment_terms, employee. Reads (never writes outside the conversion
+-- path) purchase_order/purchase_order_item, owned by the Purchase Order
+-- module. Adds zero seed stanzas.
+-- =====================================================================
+
+-- requisition (header) -- an internal request-to-buy: no ship-to block
+-- (AD-4, it never leaves the tenant) and a nullable, suggestion-only vendor
+-- (AD-2, unlike purchase_order's mandatory vendor).
+CREATE TABLE IF NOT EXISTS requisition (
+    requisition_id                SERIAL        PRIMARY KEY,
+    requisition_uuid              UUID          NOT NULL DEFAULT gen_random_uuid(),
+    requisition_number            VARCHAR(20)       NULL,  -- 'REQN-000001', generated post-insert in Go
+
+    -- Classification
+    record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = REQN
+    requisition_status            INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (optional, configuration-driven -- AD-7, mirrors purchase_order_approval_status)
+    requisition_approval_status   VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    requisition_approved_by       INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Requester (AD-5: also the IDOR scope owner, no separate owner_id column)
+    requisition_requested_by_id   INTEGER       NOT NULL REFERENCES employee(employee_id),
+    requisition_department        VARCHAR(100)  NOT NULL DEFAULT '',  -- free text; no cost-center master exists yet
+
+    -- Primary info
+    requisition_needed_by_date    DATE              NULL,
+    requisition_priority          VARCHAR(10)   NOT NULL DEFAULT 'normal',  -- low | normal | high | urgent
+    requisition_memo              TEXT          NOT NULL DEFAULT '',
+
+    -- Suggested vendor (AD-2: nullable, a suggestion the PO's real vendor may differ from)
+    requisition_vendor_id         INTEGER           NULL REFERENCES vendor(vendor_id),
+    requisition_vendor_name       VARCHAR(150)  NOT NULL DEFAULT '',
+    requisition_payment_terms     INTEGER           NULL REFERENCES lkp_payment_terms(payment_terms_id),
+
+    -- Money summary (stored; simplified per AD-3/AD-9 -- no discount, no shipping/adjustment)
+    requisition_sales_tax_percent DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    requisition_subtotal          DECIMAL(15,2) NOT NULL DEFAULT 0,
+    requisition_tax_total         DECIMAL(15,2) NOT NULL DEFAULT 0,
+    requisition_estimated_total   DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Dynamic + audit
+    requisition_custom_fields     JSONB         NOT NULL DEFAULT '{}',
+    requisition_created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requisition_created_by        INTEGER           NULL REFERENCES employee(employee_id),
+    requisition_updated_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requisition_updated_by        INTEGER           NULL REFERENCES employee(employee_id),
+    requisition_deleted_at        TIMESTAMP         NULL,
+    requisition_deleted_by        INTEGER           NULL REFERENCES employee(employee_id),
+    requisition_record_version    INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_requisition_uuid   UNIQUE (requisition_uuid),
+    CONSTRAINT uq_requisition_number UNIQUE (requisition_number),
+    CONSTRAINT chk_reqn_approval_status CHECK (requisition_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_reqn_priority        CHECK (requisition_priority IN ('low','normal','high','urgent')),
+    CONSTRAINT chk_reqn_tax_percent     CHECK (requisition_sales_tax_percent >= 0 AND requisition_sales_tax_percent <= 100),
+    CONSTRAINT chk_reqn_totals_nonneg   CHECK (requisition_subtotal >= 0 AND requisition_estimated_total >= 0),
+    CONSTRAINT chk_reqn_soft_delete     CHECK (
+        (requisition_deleted_at IS NULL AND requisition_deleted_by IS NULL) OR
+        (requisition_deleted_at IS NOT NULL AND requisition_deleted_by IS NOT NULL)
+    )
+);
+
+-- requisition_item (line items) -- mirrors purchase_order_item, minus the
+-- receiving hook (a requisition is never received against) and per-line
+-- discount/tax (AD-3: a requisition is a rough ask, not a priced commitment).
+CREATE TABLE IF NOT EXISTS requisition_item (
+    requisition_item_id       SERIAL        PRIMARY KEY,
+    requisition_item_uuid     UUID          NOT NULL DEFAULT gen_random_uuid(),
+    requisition_id            INTEGER       NOT NULL REFERENCES requisition(requisition_id) ON DELETE CASCADE,
+    line_number                INTEGER       NOT NULL,
+    inventory_item_id          INTEGER           NULL REFERENCES inventory_item(inventory_item_id),  -- NULL = free-text line
+
+    -- Snapshots (frozen at add time -- never re-read from catalog)
+    item_name                  VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                        VARCHAR(50)   NOT NULL DEFAULT '',
+    description                 TEXT          NOT NULL DEFAULT '',
+    unit_id                     INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                   VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                    DECIMAL(14,3) NOT NULL DEFAULT 0,
+    estimated_unit_price        DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Stored line money (AD-9: qty * unit price only, no discount/tax term)
+    estimated_amount            DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at             TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by             INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at             TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at             TIMESTAMP         NULL,
+    item_record_version         INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_reqn_item_uuid UNIQUE (requisition_item_uuid),
+    CONSTRAINT chk_reqni_qty     CHECK (quantity >= 0),
+    CONSTRAINT chk_reqni_price   CHECK (estimated_unit_price >= 0)
+);
+
+-- requisition_history -- status/action trail (mirrors purchase_order_history)
+CREATE TABLE IF NOT EXISTS requisition_history (
+    requisition_history_id    SERIAL       PRIMARY KEY,
+    requisition_id             INTEGER      NOT NULL REFERENCES requisition(requisition_id) ON DELETE CASCADE,
+    from_status_id              INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                 INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                       VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | update | approve | convert
+    actor_employee_id            INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                     JSONB        NOT NULL DEFAULT '{}',
+    at                           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_reqn_history_action CHECK (action IN ('create','transition','update','approve','convert'))
+);
+
+-- requisition_approver / requisition_approval (AD-7, exact structural copies
+-- of purchase_order_approver / purchase_order_approval)
+CREATE TABLE IF NOT EXISTS requisition_approver (
+    requisition_approver_id   SERIAL      PRIMARY KEY,
+    record_type_id             INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = REQN
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                 INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_requisition_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS requisition_approval (
+    requisition_approval_id   SERIAL     PRIMARY KEY,
+    requisition_id             INTEGER     NOT NULL REFERENCES requisition(requisition_id) ON DELETE CASCADE,
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_requisition_approval UNIQUE (requisition_id, record_status_id, approver_employee_id)
+);
+
+-- requisition_conversion (AD-8 -- Requisition -> Purchase Order lineage,
+-- mirrors quote_conversion). A requisition converts at most once.
+CREATE TABLE IF NOT EXISTS requisition_conversion (
+    requisition_conversion_id SERIAL       PRIMARY KEY,
+    requisition_id             INTEGER      NOT NULL REFERENCES requisition(requisition_id) ON DELETE CASCADE,
+    purchase_order_id          INTEGER      NOT NULL REFERENCES purchase_order(purchase_order_id) ON DELETE CASCADE,
+    converted_at                TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    converted_by                 INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                     JSONB        NOT NULL DEFAULT '{}',  -- {requisitionItemUuid: purchaseOrderItemUuid} line mapping for audit
+
+    CONSTRAINT uq_requisition_conversion_po UNIQUE (purchase_order_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_requisition_conversion_requisition
+    ON requisition_conversion (requisition_id);
+
+-- requisition indexes (listing/filtering -- all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_reqn_requested_by  ON requisition (requisition_requested_by_id) WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_status        ON requisition (requisition_status)          WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_vendor        ON requisition (requisition_vendor_id)        WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_needed_by     ON requisition (requisition_needed_by_date)    WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_created_id    ON requisition (requisition_created_at, requisition_id) WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_updated_id    ON requisition (requisition_updated_at, requisition_id) WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_total_id      ON requisition (requisition_estimated_total, requisition_id) WHERE requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_custom_gin    ON requisition USING GIN (requisition_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_reqni_requisition ON requisition_item (requisition_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqni_item        ON requisition_item (inventory_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reqni_line_active
+    ON requisition_item (requisition_id, line_number) WHERE item_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_reqn_history_requisition ON requisition_history (requisition_id);
+
+CREATE INDEX IF NOT EXISTS idx_requisition_approver_lookup
+    ON requisition_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_requisition_approval_requisition ON requisition_approval (requisition_id);
+
+CREATE INDEX IF NOT EXISTS idx_requisition_conversion_po ON requisition_conversion (purchase_order_id);

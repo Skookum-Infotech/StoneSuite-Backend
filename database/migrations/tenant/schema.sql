@@ -6801,3 +6801,31 @@ UPDATE accounting_period
 SET ap_lock_status = 'closed', ar_lock_status = 'closed', gl_lock_status = 'closed'
 WHERE accounting_period_status = 'closed'
   AND ap_lock_status = 'open' AND ar_lock_status = 'open' AND gl_lock_status = 'open';
+
+
+-- dashboard_widget_config -- tenant-wide widget on/off override.
+-- Override-only: a widget with no row here is enabled. widget_key is not a
+-- real FK -- the catalog is Go code (dashboard/catalog.go), not a table,
+-- same non-FK pattern as role_permissions.resource.
+CREATE TABLE IF NOT EXISTS dashboard_widget_config (
+    widget_key  VARCHAR(64) PRIMARY KEY,
+    enabled     BOOLEAN     NOT NULL DEFAULT TRUE,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- dashboard_user_widget -- one caller's visibility/layout for one widget.
+-- position/width/height describe a conventional 12-column, 8-row grid; see
+-- dashboard.MinSize/MaxWidth/MaxHeight (dashboard/catalog.go).
+CREATE TABLE IF NOT EXISTS dashboard_user_widget (
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    widget_key  VARCHAR(64) NOT NULL,
+    visible     BOOLEAN     NOT NULL DEFAULT TRUE,
+    position    INT         NOT NULL DEFAULT 0,
+    width       INT         NOT NULL DEFAULT 4,
+    height      INT         NOT NULL DEFAULT 2,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, widget_key),
+    CONSTRAINT chk_dashboard_user_widget_position CHECK (position >= 0),
+    CONSTRAINT chk_dashboard_user_widget_size CHECK (width BETWEEN 1 AND 12 AND height BETWEEN 1 AND 8)
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_user_widget_user ON dashboard_user_widget(user_id);

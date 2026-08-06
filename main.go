@@ -420,6 +420,16 @@ func main() {
 		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
 		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
 
+		// Dashboard Widgets: RBAC + tenant-config filtered widget catalog, plus
+		// per-user visibility/layout preferences. Config routes require
+		// workflow_config:configure (mirrors CRMAdminOps' admin gate).
+		dashboardOps := controllers.NewDashboardOps()
+		mux.Handle("GET /api/tenant/dashboard/widgets", tenantChain(dashboardOps.ListWidgets))
+		mux.Handle("PUT /api/tenant/dashboard/widgets/preferences", tenantChain(dashboardOps.SavePreferences))
+		mux.Handle("DELETE /api/tenant/dashboard/widgets/preferences", tenantChain(dashboardOps.ResetPreferences))
+		mux.Handle("GET /api/tenant/dashboard/config", tenantChain(dashboardOps.GetConfig))
+		mux.Handle("PUT /api/tenant/dashboard/config", tenantChain(dashboardOps.SetConfig))
+
 		// Tenant-wide audit-log browser (audit:read, scope-narrowed on the actor).
 		auditOps := controllers.NewAuditOps()
 		mux.Handle("GET /api/tenant/audit", tenantChain(auditOps.ListAudit))

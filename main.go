@@ -418,6 +418,18 @@ func main() {
 		mux.Handle("GET /api/tenant/sso-configs/{id}", tenantChain(sso.GetConfig))
 		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
 		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
+		mux.Handle("POST /api/tenant/sso-configs/{id}/refresh-metadata", tenantChain(sso.RefreshMetadata))
+
+		// SAML authentication flow: metadata/initiate/acs/exchange are public
+		// (rate-limited by IP, same as tenant-login); logout requires the JWT
+		// already issued by exchange, so it goes through the full tenantChain.
+		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher)
+		mux.Handle("GET /api/auth/saml/{provider}/metadata", http.HandlerFunc(samlAuth.Metadata))
+		mux.Handle("GET /api/auth/saml/{provider}/initiate", authRateLimiter.PerIPFunc(samlAuth.Initiate))
+		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
+		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))
+		mux.Handle("POST /api/auth/saml/{provider}/logout", tenantChain(samlAuth.Logout))
+		mux.Handle("GET /api/auth/saml/{provider}/logout-response", http.HandlerFunc(samlAuth.LogoutResponse))
 
 		// Tenant-wide audit-log browser (audit:read, scope-narrowed on the actor).
 		auditOps := controllers.NewAuditOps()

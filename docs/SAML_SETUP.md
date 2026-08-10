@@ -274,6 +274,7 @@ ACS / Reply URL         :  POST ${API_BASE_URL}/api/auth/saml/entra/acs
 | Method | Path | Auth | Rate limit |
 |---|---|---|---|
 | `GET` | `/api/auth/saml/{provider}/metadata` | none | none |
+| `GET` | `/api/auth/saml/{provider}/sp-info` | none | none |
 | `GET` | `/api/auth/saml/{provider}/initiate` | none | per-IP (burst 10, ~12/min sustained) |
 | `POST` | `/api/auth/saml/{provider}/acs` | none (IdP-facing) | per-IP (same as above) |
 | `POST` | `/api/auth/saml/exchange` | none (one-time code is the credential) | per-IP (same as above) |
@@ -292,6 +293,13 @@ Public, no DB call. Returns this SP's metadata document,
 `SingleLogoutService` (HTTP-Redirect) if this tenant/provider has an SLO URL
 configured, `AuthnRequestsSigned=false`, `WantAssertionsSigned=true`. No
 `<KeyDescriptor>` — this SP has no signing certificate of its own.
+
+### `GET /api/auth/saml/{provider}/sp-info`
+Public, no DB call. Returns the same SP entity id / ACS URL / SLO URL as the
+metadata document above, as JSON, for callers that don't want to parse XML:
+```json
+{"success": true, "provider": "entra", "sp_entity_id": "...", "acs_url": "...", "slo_url": "..."}
+```
 
 ### `GET /api/auth/saml/{provider}/initiate?tenant_slug=...|tenant_id=...&return_to=...`
 Exactly one of `tenant_slug`/`tenant_id` is required (400 otherwise). On
@@ -444,15 +452,15 @@ whatever `status` it's in (a `suspended`/`disabled` user is rejected with
   straight through to `saml.BuildLogoutRequestURL` as `sessionIndex`. The
   request is still built and sent, but most IdPs will not be able to match it
   to a real session.
-- **Frontend has no real integration.** No `/auth/sso/callback` route exists
-  in the StoneSuite-WebUI repo to receive `code` and call
-  `POST /api/auth/saml/exchange`; no pre-login "which workspace" (tenant
-  slug) entry UI exists to supply `tenant_slug`/`tenant_id` before redirecting
-  to `/initiate`. Explicitly out of scope for this backend-only pass.
-- **Frontend's existing SAML setup-guide copy is stale.** It references
-  placeholder `app.stonesuite.io/saml/...`-style URLs that do not match these
-  real backend routes (`{API_BASE_URL}/api/auth/saml/...`). Known
-  frontend/infra follow-up.
+- **Frontend integration is now wired** (StoneSuite-WebUI,
+  `feat/saml-configs-integrations`): `/auth/sso/callback` exchanges the code
+  and completes login; the login page has an SSO entry point that accepts
+  either a `tenant_id`/`tenant_slug` deep link or manual workspace-slug
+  entry; Configuration → SAML Setup drives the full config CRUD +
+  refresh-metadata against the real API, including the SP entity id/ACS URL
+  via the new `GET /api/auth/saml/{provider}/sp-info` (§6). Not yet verified
+  against a live IdP end-to-end — that still needs a real Entra or Cognito
+  tenant.
 - **Okta is not supported for SAML.** `samlProviders` (`controllers/sso.go`)
   only whitelists `entra` and `cognito`; `{"protocol":"saml","provider":"okta"}`
   is rejected with `400`. Okta remains available on the pre-existing

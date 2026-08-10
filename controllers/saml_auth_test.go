@@ -102,6 +102,33 @@ func TestSAMLAuthOps_Metadata(t *testing.T) {
 	})
 }
 
+func TestSAMLAuthOps_SPInfo(t *testing.T) {
+	withSAMLTestURLs(t, "https://app.stonesuite.io/saml", "https://api.stonesuite.io")
+	h := &SAMLAuthOps{}
+
+	t.Run("unknown provider is 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/okta/sp-info", nil)
+		req.SetPathValue("provider", "okta")
+		rr := httptest.NewRecorder()
+		h.SPInfo(rr, req)
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("known provider returns sp info json", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/entra/sp-info", nil)
+		req.SetPathValue("provider", "entra")
+		rr := httptest.NewRecorder()
+		h.SPInfo(rr, req)
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+		body := rr.Body.String()
+		assert.Contains(t, body, `"provider":"entra"`)
+		assert.Contains(t, body, `"sp_entity_id":"https://app.stonesuite.io/saml/entra/metadata"`)
+		assert.Contains(t, body, `"acs_url":"https://api.stonesuite.io/api/auth/saml/entra/acs"`)
+		assert.Contains(t, body, `"slo_url":"https://api.stonesuite.io/api/auth/saml/entra/logout-response"`)
+	})
+}
+
 func TestSafeReturnTo(t *testing.T) {
 	tests := []struct {
 		name string

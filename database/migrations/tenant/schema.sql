@@ -6976,3 +6976,20 @@ CREATE INDEX IF NOT EXISTS idx_requisition_approver_lookup
 CREATE INDEX IF NOT EXISTS idx_requisition_approval_requisition ON requisition_approval (requisition_id);
 
 CREATE INDEX IF NOT EXISTS idx_requisition_conversion_po ON requisition_conversion (purchase_order_id);
+
+-- =====================================================================
+-- Role-based dashboard widget allocation.
+--
+-- Lets an admin choose which dashboard widgets each role's members may see.
+-- One row per configured role; a role with no row here falls back to the
+-- widget catalog's default set (see dashboardui.DefaultWidgetIDs) -- row
+-- presence, not row content, is what "configured" means, so an admin can
+-- deliberately clear a role down to zero widgets without it reverting to
+-- the defaults on next read.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS role_dashboard_widgets (
+    role_id    UUID PRIMARY KEY REFERENCES roles(id) ON DELETE CASCADE,
+    widget_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

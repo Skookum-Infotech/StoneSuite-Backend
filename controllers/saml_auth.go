@@ -73,6 +73,24 @@ func (h *SAMLAuthOps) Metadata(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(xmlBytes)
 }
 
+// SPInfo returns this SP's entity id, ACS URL, and SLO response URL for
+// provider as JSON -- the same values embedded in the SP metadata XML
+// (Metadata, above), for callers that want them without parsing XML (e.g.
+// the frontend's SAML setup guide pages). Public, no auth, no DB call.
+// Path: GET /api/auth/saml/{provider}/sp-info
+func (h *SAMLAuthOps) SPInfo(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if !samlProviders[provider] {
+		fail(w, http.StatusNotFound, "Not found.")
+		return
+	}
+	spEntityID, acsURL, sloURL := spConfig(provider)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "provider": provider,
+		"sp_entity_id": spEntityID, "acs_url": acsURL, "slo_url": sloURL,
+	})
+}
+
 // Initiate begins a SAML login: resolves the tenant, builds an unsigned
 // AuthnRequest (see saml.serviceProvider's doc comment for why AuthnRequests
 // are never signed), records single-use request state keyed by the

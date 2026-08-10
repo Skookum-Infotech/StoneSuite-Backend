@@ -425,6 +425,7 @@ func main() {
 		// already issued by exchange, so it goes through the full tenantChain.
 		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher)
 		mux.Handle("GET /api/auth/saml/{provider}/metadata", http.HandlerFunc(samlAuth.Metadata))
+		mux.Handle("GET /api/auth/saml/{provider}/sp-info", http.HandlerFunc(samlAuth.SPInfo))
 		mux.Handle("GET /api/auth/saml/{provider}/initiate", authRateLimiter.PerIPFunc(samlAuth.Initiate))
 		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
 		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))

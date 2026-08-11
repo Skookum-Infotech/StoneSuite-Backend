@@ -6993,3 +6993,237 @@ CREATE TABLE IF NOT EXISTS role_dashboard_widgets (
     widget_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── Vendor Bills + Vendor Payments module ───────────────────────────
+
+-- 5.1 Two new lkp_record_status rows for VPAY (AD-7)
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'DRFT', 'Draft', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
+UNION ALL
+SELECT 'SCHD', 'Scheduled', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- 5.2 vendor_bill (minimal header)
+CREATE TABLE IF NOT EXISTS vendor_bill (
+    vendor_bill_id                SERIAL        PRIMARY KEY,
+    vendor_bill_uuid              UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_bill_number            VARCHAR(20)       NULL,  -- 'VBIL-000001', generated post-insert in Go
+
+    record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = VBIL
+    vendor_bill_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    vendor_bill_vendor_id          INTEGER       NOT NULL REFERENCES vendor(vendor_id),   -- fixed at creation
+    vendor_bill_vendor_name        VARCHAR(150)  NOT NULL DEFAULT '',                      -- snapshot
+
+    vendor_bill_reference_number   VARCHAR(50)   NOT NULL DEFAULT '',
+    vendor_bill_date               DATE          NOT NULL DEFAULT CURRENT_DATE,
+    vendor_bill_due_date           DATE              NULL,
+    vendor_bill_memo               TEXT          NOT NULL DEFAULT '',
+    vendor_bill_internal_notes     TEXT          NOT NULL DEFAULT '',
+
+    vendor_bill_owner_id           INTEGER           NULL REFERENCES employee(employee_id),
+
+    vendor_bill_grand_total        DECIMAL(15,2) NOT NULL DEFAULT 0,
+    vendor_bill_amount_paid        DECIMAL(15,2) NOT NULL DEFAULT 0,   -- rollup, sole writer vendorbill.RecomputeBalance
+    vendor_bill_balance_due        DECIMAL(15,2) NOT NULL DEFAULT 0,   -- rollup
+
+    vendor_bill_custom_fields      JSONB         NOT NULL DEFAULT '{}',
+    vendor_bill_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_bill_created_by         INTEGER           NULL REFERENCES employee(employee_id),
+    vendor_bill_updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_bill_updated_by         INTEGER           NULL REFERENCES employee(employee_id),
+    vendor_bill_deleted_at         TIMESTAMP         NULL,
+    vendor_bill_deleted_by         INTEGER           NULL REFERENCES employee(employee_id),
+    vendor_bill_record_version     INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_bill_uuid     UNIQUE (vendor_bill_uuid),
+    CONSTRAINT uq_vendor_bill_number   UNIQUE (vendor_bill_number),
+    CONSTRAINT chk_vbil_total_nonneg   CHECK (vendor_bill_grand_total >= 0),
+    CONSTRAINT chk_vbil_paid_nonneg    CHECK (vendor_bill_amount_paid >= 0 AND vendor_bill_balance_due >= 0),
+    CONSTRAINT chk_vbil_soft_delete    CHECK (
+        (vendor_bill_deleted_at IS NULL AND vendor_bill_deleted_by IS NULL) OR
+        (vendor_bill_deleted_at IS NOT NULL AND vendor_bill_deleted_by IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS vendor_bill_history (
+    vendor_bill_history_id   SERIAL       PRIMARY KEY,
+    vendor_bill_id            INTEGER      NOT NULL REFERENCES vendor_bill(vendor_bill_id) ON DELETE CASCADE,
+    from_status_id             INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                      VARCHAR(32)  NOT NULL DEFAULT 'transition',
+    actor_employee_id            INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                     JSONB        NOT NULL DEFAULT '{}',
+    at                           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 5.3 vendor_payment (header)
+CREATE TABLE IF NOT EXISTS vendor_payment (
+    vendor_payment_id               SERIAL        PRIMARY KEY,
+    vendor_payment_uuid             UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_payment_number           VARCHAR(20)       NULL,  -- 'VPAY-000001', generated post-insert in Go
+
+    record_type                     INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = VPAY
+    vendor_payment_status            INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    vendor_payment_vendor_id          INTEGER       NOT NULL REFERENCES vendor(vendor_id),  -- fixed at creation
+    vendor_payment_vendor_name        VARCHAR(150)  NOT NULL DEFAULT '',                      -- snapshot
+
+    vendor_payment_method               INTEGER       NOT NULL REFERENCES lkp_payment_method(payment_method_id),
+    vendor_payment_reference_number     VARCHAR(50)   NOT NULL DEFAULT '',
+    vendor_payment_date                 DATE          NOT NULL DEFAULT CURRENT_DATE,
+    vendor_payment_scheduled_date       DATE              NULL,  -- only meaningful once status = SCHD
+    vendor_payment_currency             INTEGER           NULL REFERENCES lkp_currency(currency_id),
+    vendor_payment_memo                 TEXT          NOT NULL DEFAULT '',
+    vendor_payment_internal_notes       TEXT          NOT NULL DEFAULT '',
+
+    vendor_payment_amount                DECIMAL(15,2) NOT NULL,                              -- immutable post-create (AD-12)
+    vendor_payment_applied_total          DECIMAL(15,2) NOT NULL DEFAULT 0,                    -- rollup
+    vendor_payment_unapplied_amount        DECIMAL(15,2) NOT NULL DEFAULT 0,                   -- rollup
+
+    vendor_payment_approval_status          VARCHAR(10)  NOT NULL DEFAULT 'none',              -- AD-6
+    vendor_payment_approved_by               INTEGER          NULL REFERENCES employee(employee_id),
+
+    vendor_payment_owner_id                   INTEGER           NULL REFERENCES employee(employee_id),
+
+    vendor_payment_custom_fields               JSONB        NOT NULL DEFAULT '{}',
+    vendor_payment_created_at                   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_payment_created_by                    INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_payment_updated_at                     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_payment_updated_by                      INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_payment_deleted_at                       TIMESTAMP        NULL,
+    vendor_payment_deleted_by                        INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_payment_record_version                     INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_payment_uuid       UNIQUE (vendor_payment_uuid),
+    CONSTRAINT uq_vendor_payment_number     UNIQUE (vendor_payment_number),
+    CONSTRAINT chk_vpay_approval_status     CHECK (vendor_payment_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_vpay_amount_pos          CHECK (vendor_payment_amount > 0),
+    CONSTRAINT chk_vpay_applied_nonneg      CHECK (vendor_payment_applied_total >= 0 AND vendor_payment_unapplied_amount >= 0),
+    CONSTRAINT chk_vpay_applied_le_amt      CHECK (vendor_payment_applied_total <= vendor_payment_amount),
+    CONSTRAINT chk_vpay_soft_delete         CHECK (
+        (vendor_payment_deleted_at IS NULL AND vendor_payment_deleted_by IS NULL) OR
+        (vendor_payment_deleted_at IS NOT NULL AND vendor_payment_deleted_by IS NOT NULL)
+    )
+);
+
+-- 5.4 vendor_payment_application (bill-application ledger)
+CREATE TABLE IF NOT EXISTS vendor_payment_application (
+    application_id              SERIAL        PRIMARY KEY,
+    application_uuid             UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_payment_id             INTEGER       NOT NULL REFERENCES vendor_payment(vendor_payment_id) ON DELETE CASCADE,
+    vendor_bill_id                 INTEGER       NOT NULL REFERENCES vendor_bill(vendor_bill_id),
+
+    application_amount              DECIMAL(15,2) NOT NULL,
+
+    application_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    application_created_by            INTEGER          NULL REFERENCES employee(employee_id),
+    application_deleted_at             TIMESTAMP        NULL,  -- set = "unapplied"
+    application_deleted_by              INTEGER          NULL REFERENCES employee(employee_id),
+    application_record_version           INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_payment_application_uuid UNIQUE (application_uuid),
+    CONSTRAINT chk_vpay_app_amount_pos            CHECK (application_amount > 0),
+    CONSTRAINT chk_vpay_app_soft_delete           CHECK (
+        (application_deleted_at IS NULL AND application_deleted_by IS NULL) OR
+        (application_deleted_at IS NOT NULL AND application_deleted_by IS NOT NULL)
+    )
+);
+
+-- At most one LIVE application per (vendor_payment, vendor_bill) pair -- re-applying
+-- increases the existing row's amount instead of creating a duplicate.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vpay_app_live_pair
+    ON vendor_payment_application (vendor_payment_id, vendor_bill_id) WHERE application_deleted_at IS NULL;
+
+-- 5.5 vendor_payment_refund (AD-5)
+CREATE TABLE IF NOT EXISTS vendor_payment_refund (
+    refund_id                    SERIAL        PRIMARY KEY,
+    refund_uuid                  UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_payment_id             INTEGER       NOT NULL REFERENCES vendor_payment(vendor_payment_id) ON DELETE CASCADE,
+    vendor_bill_id                 INTEGER       NOT NULL REFERENCES vendor_bill(vendor_bill_id),
+
+    refund_amount                   DECIMAL(15,2) NOT NULL,
+    refund_reason                    VARCHAR(150) NOT NULL DEFAULT '',
+    refund_reference_number           VARCHAR(50)  NOT NULL DEFAULT '',
+    refund_memo                        TEXT         NOT NULL DEFAULT '',
+    refund_refunded_at                  DATE         NOT NULL DEFAULT CURRENT_DATE,
+
+    refund_created_at                    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    refund_created_by                     INTEGER          NULL REFERENCES employee(employee_id),
+    refund_deleted_at                      TIMESTAMP        NULL,  -- set = "un-refund" (correction)
+    refund_deleted_by                       INTEGER          NULL REFERENCES employee(employee_id),
+    refund_record_version                    INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_payment_refund_uuid UNIQUE (refund_uuid),
+    CONSTRAINT chk_vpay_refund_amount_pos    CHECK (refund_amount > 0),
+    CONSTRAINT chk_vpay_refund_soft_delete   CHECK (
+        (refund_deleted_at IS NULL AND refund_deleted_by IS NULL) OR
+        (refund_deleted_at IS NOT NULL AND refund_deleted_by IS NOT NULL)
+    )
+);
+
+-- 5.6 vendor_payment_history
+CREATE TABLE IF NOT EXISTS vendor_payment_history (
+    vendor_payment_history_id  SERIAL       PRIMARY KEY,
+    vendor_payment_id           INTEGER      NOT NULL REFERENCES vendor_payment(vendor_payment_id) ON DELETE CASCADE,
+    from_status_id                INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                   INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                          VARCHAR(32)  NOT NULL DEFAULT 'transition',  -- create|update|transition|approve|apply|unapply|refund|unrefund
+    actor_employee_id                INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                          JSONB        NOT NULL DEFAULT '{}',
+    at                                 TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 5.7 vendor_payment_approver / vendor_payment_approval (AD-6)
+CREATE TABLE IF NOT EXISTS vendor_payment_approver (
+    vendor_payment_approver_id   SERIAL      PRIMARY KEY,
+    record_type_id                 INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = VPAY
+    record_status_id               INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- = PAPV
+    approver_employee_id           INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                      BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                     TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                     INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_vendor_payment_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS vendor_payment_approval (
+    vendor_payment_approval_id   SERIAL     PRIMARY KEY,
+    vendor_payment_id              INTEGER    NOT NULL REFERENCES vendor_payment(vendor_payment_id) ON DELETE CASCADE,
+    record_status_id               INTEGER    NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id           INTEGER    NOT NULL REFERENCES employee(employee_id),
+    approved_at                    TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_vendor_payment_approval UNIQUE (vendor_payment_id, record_status_id, approver_employee_id)
+);
+
+-- 5.8 Indexes
+
+-- vendor_bill
+CREATE INDEX IF NOT EXISTS idx_vbil_vendor        ON vendor_bill (vendor_bill_vendor_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_status         ON vendor_bill (vendor_bill_status)    WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_date           ON vendor_bill (vendor_bill_date)      WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_due_date       ON vendor_bill (vendor_bill_due_date)  WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_owner          ON vendor_bill (vendor_bill_owner_id)  WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_created_id     ON vendor_bill (vendor_bill_created_at, vendor_bill_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_balance_id     ON vendor_bill (vendor_bill_balance_due, vendor_bill_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_custom_gin     ON vendor_bill USING GIN (vendor_bill_custom_fields);
+CREATE INDEX IF NOT EXISTS idx_vbil_history_bill   ON vendor_bill_history (vendor_bill_id);
+
+-- vendor_payment
+CREATE INDEX IF NOT EXISTS idx_vpay_vendor         ON vendor_payment (vendor_payment_vendor_id) WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_status         ON vendor_payment (vendor_payment_status)    WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_date           ON vendor_payment (vendor_payment_date)      WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_scheduled      ON vendor_payment (vendor_payment_scheduled_date) WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_owner          ON vendor_payment (vendor_payment_owner_id)  WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_created_id     ON vendor_payment (vendor_payment_created_at, vendor_payment_id) WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_amount_id      ON vendor_payment (vendor_payment_amount, vendor_payment_id) WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_unapplied_id   ON vendor_payment (vendor_payment_unapplied_amount, vendor_payment_id) WHERE vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_custom_gin     ON vendor_payment USING GIN (vendor_payment_custom_fields);
+
+-- children
+CREATE INDEX IF NOT EXISTS idx_vpay_app_payment    ON vendor_payment_application (vendor_payment_id) WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_app_bill        ON vendor_payment_application (vendor_bill_id)     WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_refund_payment  ON vendor_payment_refund (vendor_payment_id) WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_refund_bill      ON vendor_payment_refund (vendor_bill_id)     WHERE refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_history_payment   ON vendor_payment_history (vendor_payment_id);
+CREATE INDEX IF NOT EXISTS idx_vpay_approver_lookup    ON vendor_payment_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_vpay_approval_payment    ON vendor_payment_approval (vendor_payment_id);

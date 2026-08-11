@@ -7201,3 +7201,20 @@ CREATE INDEX IF NOT EXISTS idx_vendor_bill_approval_bill ON vendor_bill_approval
 CREATE INDEX IF NOT EXISTS idx_vbp_bill ON vendor_bill_payment (vendor_bill_id) WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_vendor_bill_conversion_po ON vendor_bill_conversion (purchase_order_id);
+
+-- =====================================================================
+-- Role-based dashboard widget allocation.
+--
+-- Lets an admin choose which dashboard widgets each role's members may see.
+-- One row per configured role; a role with no row here falls back to the
+-- widget catalog's default set (see dashboardui.DefaultWidgetIDs) -- row
+-- presence, not row content, is what "configured" means, so an admin can
+-- deliberately clear a role down to zero widgets without it reverting to
+-- the defaults on next read.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS role_dashboard_widgets (
+    role_id    UUID PRIMARY KEY REFERENCES roles(id) ON DELETE CASCADE,
+    widget_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

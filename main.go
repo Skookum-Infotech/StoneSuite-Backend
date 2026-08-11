@@ -388,6 +388,14 @@ func main() {
 		// assigned roles is currently enforced (see authz.EffectiveGrants).
 		mux.Handle("POST /api/tenant/auth/switch-role", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.SwitchRole))))
 
+		// Role-based dashboard widget allocation. Me is available to every
+		// authenticated user (no dashboard_widget permission needed); the
+		// admin allocation page's GET/PUT go through RoleAllocations, gated
+		// by dashboard_widget:read / dashboard_widget:configure per method.
+		dashboardUI := controllers.NewDashboardUIOps()
+		mux.Handle("GET /api/tenant/dashboard/widgets/me", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.Me))))
+		mux.Handle("/api/tenant/dashboard/widgets/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.RoleAllocations))))
+
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))

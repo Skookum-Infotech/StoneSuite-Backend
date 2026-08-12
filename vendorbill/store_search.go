@@ -1,3 +1,4 @@
+// vendorbill/store_search.go
 package vendorbill
 
 import (
@@ -10,19 +11,36 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/query"
-	"stonesuite-backend/workflow"
 )
 
-// Search lists live vendor bills with server-side filter/sort/global-search +
-// keyset pagination. The RBAC scope clause and the caller's filter compose
-// with AND — a filter can only narrow the caller's permitted set, never
-// widen it.
+// employeeIDByIdentity resolves a control-plane identity to a tenant
+// employee_id.
+func employeeIDByIdentity(ctx context.Context, pool *pgxpool.Pool, identityID string) (int, bool) {
+	if identityID == "" {
+		return 0, false
+	}
+	var id int
+	err := pool.QueryRow(ctx, `
+		SELECT e.employee_id FROM employee e
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE u.identity_id = $1 AND e.employee_deleted_at IS NULL`, identityID).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// Search lists vendor bills under the caller's RBAC scope with filter/sort/
+// global search + keyset pagination. Scope x filter is ANDed -- a filter can
+// only narrow the permitted set. List rows include lines already loaded by
+// scanVendorBill's Items=[]Line{} default (empty, not nil) -- Search does not
+// N+1-load lines, mirroring purchaseorder.Search.
 func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID string, req query.Request) (Page, error) {
 	where := []string{"vb.vendor_bill_deleted_at IS NULL"}
-	args := []any{}
+	var args []any
 	nextIdx := 1
 	if scope != string(authz.ScopeAll) {
-		empID, found := workflow.EmployeeIDByIdentity(ctx, pool, actorIdentityID)
+		empID, found := employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return Page{}, nil
 		}
@@ -43,7 +61,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	}
 	args = append(args, built.Args...)
 
-	q := headerSelect + " WHERE " + strings.Join(where, " AND ") +
+	q := vbSelect + " WHERE " + strings.Join(where, " AND ") +
 		" ORDER BY " + built.OrderBy + " LIMIT " + strconv.Itoa(built.EffLimit+1)
 
 	rows, err := pool.Query(ctx, q, args...)
@@ -54,11 +72,11 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	out := []VendorBill{}
 	metas := []vbMeta{}
 	for rows.Next() {
-		vb, meta, err := scanVendorBill(rows)
+		b, meta, err := scanVendorBill(rows)
 		if err != nil {
-			return Page{}, fmt.Errorf("scan vendor bill: %w", err)
+			return Page{}, err
 		}
-		out = append(out, *vb)
+		out = append(out, *b)
 		metas = append(metas, meta)
 	}
 	if err := rows.Err(); err != nil {
@@ -76,30 +94,25 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	return page, nil
 }
 
-// sortValue extracts the value of the effective sort field from a scanned
-// record, for minting the next keyset cursor.
-func sortValue(vb VendorBill, meta vbMeta, field string) any {
+// sortValue reads the effective sort field's value from a vendor bill to
+// mint the next cursor. Every key in resolver.go's sortFields must appear
+// here, or the cursor is built from the wrong column and every page after
+// the first is wrong.
+func sortValue(b VendorBill, meta vbMeta, field string) any {
 	switch field {
-	case "updated_at":
-		return vb.UpdatedAt
-	case "document_number", "record_number":
-		return vb.Number
 	case "bill_date":
-		return vb.BillDate
-	case "due_date":
-		if vb.DueDate == nil {
-			return nil
-		}
-		return *vb.DueDate
+		return b.BillDate
 	case "grand_total":
-		return vb.GrandTotal
+		return b.GrandTotal
 	case "balance_due":
-		return vb.BalanceDue
+		return b.BalanceDue
+	case "document_number", "record_number":
+		return b.Number
 	case "status":
 		return meta.statusID
 	case "vendor_id":
 		return meta.vendorID
 	default: // created_at (default)
-		return vb.CreatedAt
+		return b.CreatedAt
 	}
 }

@@ -2,40 +2,39 @@ package vendorbill
 
 import "testing"
 
-func TestTransitions(t *testing.T) {
+func TestCanTransition(t *testing.T) {
 	tests := []struct {
 		from, to string
 		want     bool
 	}{
 		{"DRFT", "PAPV", true},
 		{"DRFT", "VOID", true},
-		{"DRFT", "APPV", false},
+		{"DRFT", "APPV", false}, // must pass through PAPV
 		{"PAPV", "APPV", true},
-		{"PAPV", "DRFT", true},
-		{"PAPV", "VOID", true},
-		{"PAPV", "PART", false},
-		{"APPV", "VOID", true},
-		{"APPV", "PAPV", false},
-		{"APPV", "PART", false},
-		{"PART", "VOID", true},
-		{"PART", "APPV", false},
-		{"PAID", "VOID", true},
-		{"PAID", "PART", false},
-		{"VOID", "DRFT", false},
-		{"VOID", "VOID", false},
+		{"PAPV", "DRFT", true}, // recall
+		{"APPV", "PART", true},
+		{"APPV", "PAID", true},
+		{"APPV", "ODUE", true},
+		{"APPV", "DRFT", false}, // no recall once approved
+		{"PART", "PAID", true},
+		{"PART", "ODUE", true},
+		{"ODUE", "PART", true},
+		{"ODUE", "PAID", true},
+		{"PAID", "VOID", false}, // terminal
+		{"VOID", "DRFT", false}, // terminal
 	}
 	for _, tt := range tests {
-		t.Run(tt.from+"->"+tt.to, func(t *testing.T) {
-			if got := CanTransition(tt.from, tt.to); got != tt.want {
-				t.Errorf("CanTransition(%q, %q) = %v, want %v", tt.from, tt.to, got, tt.want)
-			}
-			err := ValidateTransition(tt.from, tt.to)
-			if tt.want && err != nil {
-				t.Errorf("ValidateTransition(%q, %q) returned error: %v", tt.from, tt.to, err)
-			}
-			if !tt.want && err == nil {
-				t.Errorf("ValidateTransition(%q, %q) expected error, got nil", tt.from, tt.to)
-			}
-		})
+		if got := CanTransition(tt.from, tt.to); got != tt.want {
+			t.Errorf("CanTransition(%q, %q) = %v, want %v", tt.from, tt.to, got, tt.want)
+		}
+	}
+}
+
+func TestValidateTransition(t *testing.T) {
+	if err := ValidateTransition("DRFT", "PAPV"); err != nil {
+		t.Errorf("ValidateTransition(DRFT, PAPV) = %v, want nil", err)
+	}
+	if err := ValidateTransition("PAID", "VOID"); err != ErrInvalidTransition {
+		t.Errorf("ValidateTransition(PAID, VOID) = %v, want ErrInvalidTransition", err)
 	}
 }

@@ -816,6 +816,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
 		// Item Receipt: the second Purchases document module — goods arriving
@@ -837,10 +838,13 @@ func main() {
 		// Receipts for one order — gated by the purchase order's own permission.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
 
-		// Vendor Bill: dedicated relational module (minimal header — no line
-		// items, no PO linkage, no bill-owned approval or payment ledger; see
-		// vendorbill/types.go), the settlement target for Vendor Payment. Not
-		// served through the generic JSONB router.
+		// Vendor Bill: dedicated v2 relational module (header + line items +
+		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror
+		// of Invoice — the third Purchases document module, a sibling of
+		// Purchase Order/Item Receipt. Not served through the generic JSONB
+		// router. ConvertToBill (PO -> Vendor Bill) is registered on the
+		// Purchase Order block above, not here — the route lives on the
+		// source, mirroring Requisition -> Purchase Order.
 		vbOps := controllers.NewVendorBillOps()
 		mux.Handle("GET /api/tenant/vendor-bills", tenantChain(vbOps.List))
 		mux.Handle("POST /api/tenant/vendor-bills/search", tenantChain(vbOps.Search))
@@ -849,13 +853,17 @@ func main() {
 		mux.Handle("PATCH /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Update))
 		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/transition", tenantChain(vbOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/approve", tenantChain(vbOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/payment", tenantChain(vbOps.RecordPayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}/payments/{paymentId}", tenantChain(vbOps.RemovePayment))
 		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/audit", tenantChain(vbOps.Audit))
 
 		// Vendor Payment: dedicated relational module, the accounts-payable
-		// mirror of Payment. Its vendor_payment_application ledger is the
-		// source of truth for vendor bill amount_paid/balance_due (mirrors
-		// Payment/Invoice below). vendorpayment.RecordRefund/RemoveRefund have
-		// no HTTP handler yet, so no /refund route is mounted here.
+		// mirror of Payment. Its vendor_payment_application ledger is a
+		// second, fuller path to settle a bill alongside the bill-owned
+		// RecordPayment ledger above. vendorpayment.RecordRefund/RemoveRefund
+		// have no HTTP handler yet, so no /refund route is mounted here.
 		vpOps := controllers.NewVendorPaymentOps()
 		mux.Handle("GET /api/tenant/vendor-payments", tenantChain(vpOps.List))
 		mux.Handle("POST /api/tenant/vendor-payments/search", tenantChain(vpOps.Search))
@@ -868,8 +876,6 @@ func main() {
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/apply", tenantChain(vpOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
 		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
-		// AP reconciliation view for one bill — gated by the vendor bill's own permission.
-		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()

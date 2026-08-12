@@ -2,23 +2,20 @@ package vendorbill
 
 import "testing"
 
-func TestLocked_BalanceDue(t *testing.T) {
+func TestLockedBalanceDue(t *testing.T) {
 	tests := []struct {
-		name       string
-		grandTotal float64
-		amountPaid float64
-		want       float64
+		name string
+		l    Locked
+		want float64
 	}{
-		{"unpaid", 100, 0, 100},
-		{"partially paid", 100, 40, 60},
-		{"fully paid", 100, 100, 0},
-		{"overpaid floors at zero", 100, 150, 0},
-		{"zero total", 0, 0, 0},
+		{"unpaid", Locked{GrandTotal: 100, AmountPaid: 0}, 100},
+		{"partially paid", Locked{GrandTotal: 100, AmountPaid: 40}, 60},
+		{"fully paid", Locked{GrandTotal: 100, AmountPaid: 100}, 0},
+		{"overpaid never negative", Locked{GrandTotal: 100, AmountPaid: 150}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := Locked{GrandTotal: tt.grandTotal, AmountPaid: tt.amountPaid}
-			if got := l.BalanceDue(); got != tt.want {
+			if got := tt.l.BalanceDue(); got != tt.want {
 				t.Errorf("BalanceDue() = %v, want %v", got, tt.want)
 			}
 		})
@@ -39,7 +36,9 @@ func TestDeriveStatus(t *testing.T) {
 		{"full payment from PART", "PART", 100, 100, "PAID"},
 		{"unapplied back to zero from PART", "PART", 0, 100, "APPV"},
 		{"unapplied back to zero from PAID", "PAID", 0, 100, "APPV"},
-		{"zero grand total counts as paid", "APPV", 0, 0, "PAID"},
+		{"overdue with partial payment resolves to PART", "ODUE", 40, 100, "PART"},
+		{"overdue fully paid resolves to PAID", "ODUE", 100, 100, "PAID"},
+		{"overdue stays overdue while unpaid", "ODUE", 0, 100, "ODUE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,3 +1,4 @@
+// vendorbill/store_update.go
 package vendorbill
 
 import (
@@ -9,76 +10,105 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func internalIDAndStatusByUUID(ctx context.Context, pool *pgxpool.Pool, id string) (int, string, error) {
+// Update replaces a live vendor bill's header fields and lines (recomputing
+// totals) inside one transaction. Allowed only at DRFT (AD-12) -- once
+// submitted for approval, recall it to draft (PAPV->DRFT) to revise.
+// DRFT bills never have payments (AD-7 gates settlement to APPV/PART/ODUE),
+// so amountPaid is always 0 here -- no "can't reduce below what's paid"
+// guard is needed, unlike invoice's Update.
+func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendorBillInput, actorEmployeeID int) (*VendorBill, error) {
+	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
+		return nil, ClientError{Msg: "salesTaxPercent must be between 0 and 100."}
+	}
+	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
+		return nil, err
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update vendor bill: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var internalID int
 	var statusCode string
-	err := pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT vb.vendor_bill_id, rs.record_status_code
-		FROM vendor_bill vb
-		JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
-		WHERE vb.vendor_bill_uuid = $1 AND vb.vendor_bill_deleted_at IS NULL`, id).Scan(&internalID, &statusCode)
+		FROM vendor_bill vb JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
+		WHERE vb.vendor_bill_uuid = $1 AND vb.vendor_bill_deleted_at IS NULL
+		FOR UPDATE OF vb`, uuid,
+	).Scan(&internalID, &statusCode)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, "", ErrNotFound
+		return nil, ErrNotFound
 	}
 	if err != nil {
-		return 0, "", fmt.Errorf("resolve vendor bill: %w", err)
+		return nil, fmt.Errorf("load vendor bill for update: %w", err)
 	}
-	return internalID, statusCode, nil
-}
+	if statusCode != draftStatusCode {
+		return nil, ClientError{Msg: "Only a draft vendor bill can be edited. Recall it to draft first."}
+	}
 
-// Update edits non-monetary header fields. Rejected (ClientError) unless the
-// bill is still in DRFT — grand_total/amount_paid/balance_due are never
-// touched here; the rollups are the sole domain of RecomputeBalance.
-func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorBillInput, actorEmployeeID int) (*VendorBill, error) {
-	internalID, statusCode, err := internalIDAndStatusByUUID(ctx, pool, id)
+	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != "DRFT" {
-		return nil, ClientError{Msg: "Only a draft vendor bill can be edited."}
+	lineMoney := make([]LineMoney, len(lines))
+	for i, l := range lines {
+		lineMoney[i] = l.money
 	}
+	header := ComputeHeader(lineMoney, in.Adjustment, 0)
+
 	custom := in.CustomFields
 	if custom == nil {
 		custom = map[string]any{}
 	}
-	if err := validateCustom(ctx, pool, custom); err != nil {
-		return nil, err
+
+	cv := []colVal{
+		{"vendor_bill_vendor_invoice_number", in.VendorInvoiceNumber, ""},
+		{"vendor_bill_reference_number", in.ReferenceNumber, ""},
+		{"vendor_bill_date", orNow(in.BillDate), "::date"},
+		{"vendor_bill_due_date", nullableDate(in.DueDate), "::date"},
+		{"vendor_bill_payment_terms", in.PaymentTermsID, ""},
+		{"vendor_bill_currency", in.CurrencyID, ""},
+		{"vendor_bill_sales_tax_percent", in.SalesTaxPercent, ""},
+		{"vendor_bill_memo", in.Memo, ""},
+		{"vendor_bill_notes", in.Notes, ""},
+		{"vendor_bill_internal_notes", in.InternalNotes, ""},
+		{"vendor_bill_terms_conditions", in.TermsConditions, ""},
+		{"vendor_bill_owner_id", in.OwnerEmployeeID, ""},
+		{"vendor_bill_subtotal", header.Subtotal, ""},
+		{"vendor_bill_discount_total", header.DiscountTotal, ""},
+		{"vendor_bill_tax_total", header.TaxTotal, ""},
+		{"vendor_bill_adjustment", in.Adjustment, ""},
+		{"vendor_bill_grand_total", header.GrandTotal, ""},
+		{"vendor_bill_balance_due", header.BalanceDue, ""},
+		{"vendor_bill_custom_fields", custom, ""},
+		{"vendor_bill_updated_by", nullableInt(actorEmployeeID), ""},
 	}
-	_, err = pool.Exec(ctx, `
-		UPDATE vendor_bill SET
-			vendor_bill_reference_number = $1, vendor_bill_date = COALESCE($2, vendor_bill_date),
-			vendor_bill_due_date = $3, vendor_bill_owner_id = COALESCE($4, vendor_bill_owner_id),
-			vendor_bill_memo = $5, vendor_bill_internal_notes = $6, vendor_bill_custom_fields = $7,
-			vendor_bill_updated_at = NOW(), vendor_bill_updated_by = $8, vendor_bill_record_version = vendor_bill_record_version + 1
-		WHERE vendor_bill_id = $9`,
-		in.ReferenceNumber, in.BillDate, in.DueDate, in.OwnerEmployeeID,
-		in.Memo, in.InternalNotes, custom, nullableInt(actorEmployeeID), internalID)
-	if err != nil {
+
+	updateSQL, updateArgs := buildUpdateSet("vendor_bill", []any{uuid}, cv,
+		[]string{"vendor_bill_updated_at = NOW()", "vendor_bill_record_version = vendor_bill_record_version + 1"},
+		"vendor_bill_uuid = $1 AND vendor_bill_deleted_at IS NULL")
+	if _, err = tx.Exec(ctx, updateSQL, updateArgs...); err != nil {
+		if isForeignKeyViolation(err) {
+			return nil, ClientError{Msg: "One of the referenced ids (payment terms or currency) does not exist."}
+		}
 		return nil, fmt.Errorf("update vendor bill: %w", err)
 	}
-	return Get(ctx, pool, id)
-}
 
-// SoftDelete marks a vendor bill deleted (paired deleted_at/deleted_by).
-// Allowed only while the bill is in DRFT or VOID; anything else is rejected
-// with a ClientError.
-func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID int) error {
-	_, statusCode, err := internalIDAndStatusByUUID(ctx, pool, id)
-	if err != nil {
-		return err
+	if _, err := tx.Exec(ctx,
+		`UPDATE vendor_bill_item SET item_deleted_at = NOW() WHERE vendor_bill_id = $1 AND item_deleted_at IS NULL`,
+		internalID); err != nil {
+		return nil, fmt.Errorf("clear previous vendor bill items: %w", err)
 	}
-	if statusCode != "DRFT" && statusCode != "VOID" {
-		return ClientError{Msg: "Only a draft or voided vendor bill can be deleted."}
+	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {
+		return nil, err
 	}
-	deletedBy := actorOrSystem(actorEmployeeID)
-	tag, err := pool.Exec(ctx, `
-		UPDATE vendor_bill SET vendor_bill_deleted_at = NOW(), vendor_bill_deleted_by = $1
-		WHERE vendor_bill_uuid = $2 AND vendor_bill_deleted_at IS NULL`, deletedBy, id)
-	if err != nil {
-		return fmt.Errorf("delete vendor bill: %w", err)
+
+	writeHistory(ctx, tx, internalID, "update", nil, nil, actorEmployeeID)
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update vendor bill: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return Get(ctx, pool, uuid)
 }

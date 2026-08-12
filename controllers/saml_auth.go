@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"stonesuite-backend/config"
@@ -26,6 +28,16 @@ type SAMLAuthOps struct {
 func NewSAMLAuthOps(cp *tenancy.ControlPlane, router *tenancy.Router, cipher *secret.Cipher) *SAMLAuthOps {
 	return &SAMLAuthOps{cp: cp, router: router, cipher: cipher}
 }
+
+// samlSignInUnavailableMsg is the single canonical 404 body Initiate returns
+// for every tenant/identity-resolution failure and every missing-SAML-config
+// outcome, regardless of which of tenant_slug/tenant_id/email was supplied.
+// An email is user PII (unlike a tenant_slug), so letting "identity not
+// found" read any differently -- in status, message text, or timing-sensitive
+// short-circuiting -- than "tenant not found" or "no SAML config for this
+// tenant" would open an account-enumeration oracle this endpoint must not
+// have; using one shared constant for all of them closes that by construction.
+const samlSignInUnavailableMsg = "SAML sign-in is not configured or enabled for this workspace."
 
 // spConfig builds this SP's per-provider entity id, ACS URL, and SP-side SLO
 // URL, rooted at the backend's own public base URL (config.AppConfig.APIBaseURL)
@@ -77,7 +89,13 @@ func (h *SAMLAuthOps) Metadata(w http.ResponseWriter, r *http.Request) {
 // AuthnRequest (see saml.serviceProvider's doc comment for why AuthnRequests
 // are never signed), records single-use request state keyed by the
 // generated request id, and redirects the browser to the IdP's SSO endpoint.
-// Path: GET /api/auth/saml/{provider}/initiate?tenant_slug=...|tenant_id=...
+// Accepts exactly one of tenant_slug, tenant_id, or email to resolve the
+// tenant: email resolves via the caller's control-plane identity
+// (IdentityByEmail) to its owning tenant, then joins the exact same
+// downstream flow tenant_slug/tenant_id already use. Every unresolvable
+// input and every missing-SAML-config outcome, for all three parameters,
+// returns the identical samlSignInUnavailableMsg 404 -- see its doc comment.
+// Path: GET /api/auth/saml/{provider}/initiate?tenant_slug=...|tenant_id=...|email=...
 func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
 	if !samlProviders[provider] {
@@ -88,20 +106,40 @@ func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	slug := strings.TrimSpace(q.Get("tenant_slug"))
 	tenantID := strings.TrimSpace(q.Get("tenant_id"))
-	if (slug != "") == (tenantID != "") {
-		fail(w, http.StatusBadRequest, "Provide exactly one of tenant_slug or tenant_id.")
+	email := strings.TrimSpace(q.Get("email"))
+	provided := 0
+	for _, v := range []string{slug, tenantID, email} {
+		if v != "" {
+			provided++
+		}
+	}
+	if provided != 1 {
+		fail(w, http.StatusBadRequest, "Provide exactly one of tenant_slug, tenant_id, or email.")
 		return
 	}
 
 	var tenant *tenancy.Tenant
 	var err error
-	if slug != "" {
+	switch {
+	case slug != "":
 		tenant, err = h.cp.TenantBySlug(ctx, slug)
-	} else {
+	case tenantID != "":
 		tenant, err = h.cp.TenantByID(ctx, tenantID)
+	default:
+		var identity *tenancy.Identity
+		identity, err = h.cp.IdentityByEmail(ctx, email)
+		if errors.Is(err, tenancy.ErrIdentityNotFound) {
+			fail(w, http.StatusNotFound, samlSignInUnavailableMsg)
+			return
+		}
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to resolve workspace.")
+			return
+		}
+		tenant, err = h.cp.TenantByID(ctx, identity.TenantID)
 	}
 	if errors.Is(err, tenancy.ErrTenantNotFound) {
-		fail(w, http.StatusNotFound, "Workspace not found.")
+		fail(w, http.StatusNotFound, samlSignInUnavailableMsg)
 		return
 	}
 	if err != nil {
@@ -115,7 +153,7 @@ func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := h.cp.GetSSOConfigForAuth(ctx, tenant.ID, provider)
 	if errors.Is(err, tenancy.ErrSSOConfigNotFound) {
-		fail(w, http.StatusNotFound, "SAML sign-in is not configured or enabled for this workspace.")
+		fail(w, http.StatusNotFound, samlSignInUnavailableMsg)
 		return
 	}
 	if err != nil {
@@ -172,4 +210,70 @@ func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 
 	logSecurityEvent(r, "saml_login_initiated", "tenant_id", tenant.ID, "provider", provider)
 	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+// samlLookupRequest is the POST /api/auth/saml/lookup payload: the email the
+// frontend wants to know whether the owning workspace uses SAML SSO for.
+type samlLookupRequest struct {
+	Email string `json:"email"`
+}
+
+// Lookup reports whether the workspace owning email has SAML SSO enabled, so
+// the frontend can offer an email-first "Continue with <provider>" button
+// instead of a password field (the Slack/Notion/Google Workspace pattern).
+// Only ever resolves against identities that already exist in the control
+// plane -- brand-new emails are out of scope. Always responds 200: the
+// response body (sso_available/providers), never the status code, carries
+// the "email known vs unknown" / "SSO configured vs not" distinction. That
+// distinction is this endpoint's entire, deliberate purpose (same trade-off
+// those products make); varying the status code on top of it would
+// additionally leak a timing/status-code oracle for raw account existence,
+// which is not part of that trade-off. Never includes tenant_id, identity
+// id, or any other identifier in the response.
+// Path: POST /api/auth/saml/lookup
+func (h *SAMLAuthOps) Lookup(w http.ResponseWriter, r *http.Request) {
+	var req samlLookupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if req.Email == "" {
+		fail(w, http.StatusBadRequest, "email is required.")
+		return
+	}
+
+	ctx := r.Context()
+	identity, err := h.cp.IdentityByEmail(ctx, req.Email)
+	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":       true,
+			"sso_available": false,
+			"providers":     []string{},
+		})
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to process request.")
+		return
+	}
+
+	configs, err := h.cp.ListSSOConfigs(ctx, identity.TenantID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to process request.")
+		return
+	}
+	providers := make([]string, 0, len(configs))
+	for _, cfg := range configs {
+		if cfg.Protocol == ssoProtocolSAML && cfg.Enabled {
+			providers = append(providers, cfg.Provider)
+		}
+	}
+	sort.Strings(providers)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":       true,
+		"sso_available": len(providers) > 0,
+		"providers":     providers,
+	})
 }

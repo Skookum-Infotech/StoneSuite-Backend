@@ -436,6 +436,7 @@ func main() {
 		mux.Handle("GET /api/auth/saml/{provider}/initiate", authRateLimiter.PerIPFunc(samlAuth.Initiate))
 		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
 		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))
+		mux.Handle("POST /api/auth/saml/lookup", authRateLimiter.PerIPFunc(samlAuth.Lookup))
 		mux.Handle("POST /api/auth/saml/{provider}/logout", tenantChain(samlAuth.Logout))
 		mux.Handle("GET /api/auth/saml/{provider}/logout-response", http.HandlerFunc(samlAuth.LogoutResponse))
 

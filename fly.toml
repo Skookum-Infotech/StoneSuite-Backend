@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for stonesuite-backend on 2026-08-12T17:19:59Z
+# fly.toml app configuration file generated for stonesuite-backend on 2026-08-12T17:50:50Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -39,16 +39,11 @@ primary_region = 'iad'
   # period of no requests, and auto-started on the next request (~1-2s cold
   # start — a clean process restart, so DB pools come up fresh). At idle the app
   # costs nothing.
-  auto_stop_machines = 'off'
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
   concurrency = { hard_limit = 250, soft_limit = 200, type = 'requests' }
-
-  [http_service.concurrency]
-    type        = "requests"
-    soft_limit  = 200
-    hard_limit  = 250
 
   # NO periodic health check on purpose. A recurring [[http_service.checks]]
   # ping counts as traffic and keeps the Machine awake forever, defeating

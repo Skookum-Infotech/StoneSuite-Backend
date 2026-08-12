@@ -816,6 +816,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
 		// Item Receipt: the second Purchases document module — goods arriving
@@ -836,6 +837,27 @@ func main() {
 		mux.Handle("GET /api/tenant/item-receipts/{uuid}/audit", tenantChain(irOps.Audit))
 		// Receipts for one order — gated by the purchase order's own permission.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
+
+		// Vendor Bill: dedicated v2 relational module (header + line items +
+		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror
+		// of Invoice — the third Purchases document module, a sibling of
+		// Purchase Order/Item Receipt. Not served through the generic JSONB
+		// router. ConvertToBill (PO -> Vendor Bill) is registered on the
+		// Purchase Order block above, not here — the route lives on the
+		// source, mirroring Requisition -> Purchase Order.
+		vbOps := controllers.NewVendorBillOps()
+		mux.Handle("GET /api/tenant/vendor-bills", tenantChain(vbOps.List))
+		mux.Handle("POST /api/tenant/vendor-bills/search", tenantChain(vbOps.Search))
+		mux.Handle("POST /api/tenant/vendor-bills", tenantChain(vbOps.Create))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/transition", tenantChain(vbOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/approve", tenantChain(vbOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/payment", tenantChain(vbOps.RecordPayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}/payments/{paymentId}", tenantChain(vbOps.RemovePayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/audit", tenantChain(vbOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()

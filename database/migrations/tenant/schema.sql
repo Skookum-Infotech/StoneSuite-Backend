@@ -6978,6 +6978,231 @@ CREATE INDEX IF NOT EXISTS idx_requisition_approval_requisition ON requisition_a
 CREATE INDEX IF NOT EXISTS idx_requisition_conversion_po ON requisition_conversion (purchase_order_id);
 
 -- =====================================================================
+-- VENDOR BILL MODULE
+-- Spec: docs/superpowers/specs/2026-08-10-vendor-bill-module-design.md
+-- Reuses (already seeded, do not recreate): lkp_record_type VBIL (id 15),
+-- lkp_record_status rows for record_type=15 (DRFT/PAPV/APPV/PART/PAID/ODUE/VOID),
+-- authz.ResourceVendorBill, the 'vendor_bill' JSONB workflow (custom-field
+-- definition host), vendor, purchase_order, purchase_order_item,
+-- inventory_item, lkp_unit, lkp_tax_rate, lkp_payment_terms, lkp_currency,
+-- lkp_payment_method. Adds zero seed stanzas. Zero changes to any existing
+-- table.
+-- =====================================================================
+
+-- vendor_bill (header) -- the AP mirror of invoice: what a vendor has billed
+-- us, approved (AD-6), and settled via its own payment ledger (AD-7). Vendor
+-- is fixed at creation (AD-2); Purchase Order link is optional (AD-4); no
+-- address block -- an inbound document is never rendered and mailed (AD-13).
+CREATE TABLE IF NOT EXISTS vendor_bill (
+    vendor_bill_id                SERIAL        PRIMARY KEY,
+    vendor_bill_uuid              UUID          NOT NULL DEFAULT gen_random_uuid(),
+    ss_customer_id                 INTEGER          NULL,  -- platform owner stamp, no cross-DB FK
+    vendor_bill_number             VARCHAR(20)      NULL,  -- 'VBIL-000001', generated post-insert in Go
+
+    record_type                    INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = VBIL
+    vendor_bill_status              INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (AD-6, mirrors purchase_order_approval_status)
+    vendor_bill_approval_status     VARCHAR(10)  NOT NULL DEFAULT 'none',
+    vendor_bill_approved_by         INTEGER          NULL REFERENCES employee(employee_id),
+
+    -- Counterparty (AD-2: fixed at creation, name snapshotted)
+    vendor_bill_vendor_id           INTEGER       NOT NULL REFERENCES vendor(vendor_id),
+    vendor_bill_vendor_name         VARCHAR(150)  NOT NULL DEFAULT '',
+
+    -- Optional PO lineage (AD-4, AD-8) -- set only via the convert endpoint,
+    -- never by manual Create/Update input.
+    vendor_bill_purchase_order_id   INTEGER          NULL REFERENCES purchase_order(purchase_order_id) ON DELETE SET NULL,
+
+    -- Primary info
+    vendor_bill_vendor_invoice_number VARCHAR(50) NOT NULL DEFAULT '',  -- the vendor's own bill/invoice # (not globally unique)
+    vendor_bill_reference_number    VARCHAR(50)  NOT NULL DEFAULT '',
+    vendor_bill_date                DATE         NOT NULL DEFAULT CURRENT_DATE,
+    vendor_bill_due_date            DATE             NULL,
+    vendor_bill_sales_tax_percent   DECIMAL(6,4) NOT NULL DEFAULT 0,
+    vendor_bill_memo                TEXT         NOT NULL DEFAULT '',
+    vendor_bill_notes               TEXT         NOT NULL DEFAULT '',
+    vendor_bill_internal_notes      TEXT         NOT NULL DEFAULT '',
+    vendor_bill_terms_conditions    TEXT         NOT NULL DEFAULT '',
+
+    -- Assignment (IDOR scope owner)
+    vendor_bill_owner_id            INTEGER          NULL REFERENCES employee(employee_id),
+
+    -- Terms / currency
+    vendor_bill_payment_terms       INTEGER          NULL REFERENCES lkp_payment_terms(payment_terms_id),
+    vendor_bill_currency            INTEGER          NULL REFERENCES lkp_currency(currency_id),
+    vendor_bill_exchange_rate       DECIMAL(18,6) NOT NULL DEFAULT 1,
+
+    -- Money summary (stored)
+    vendor_bill_subtotal            DECIMAL(15,2) NOT NULL DEFAULT 0,
+    vendor_bill_discount_total      DECIMAL(15,2) NOT NULL DEFAULT 0,
+    vendor_bill_tax_total           DECIMAL(15,2) NOT NULL DEFAULT 0,
+    vendor_bill_adjustment          DECIMAL(15,2) NOT NULL DEFAULT 0,
+    vendor_bill_grand_total         DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- AP balance (stored, sole writer is vendorbill.RecomputeBalance -- AD-7)
+    vendor_bill_amount_paid         DECIMAL(15,2) NOT NULL DEFAULT 0,
+    vendor_bill_balance_due         DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Dynamic + audit
+    vendor_bill_custom_fields       JSONB        NOT NULL DEFAULT '{}',
+    vendor_bill_created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_bill_created_by          INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_bill_updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_bill_updated_by          INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_bill_deleted_at          TIMESTAMP        NULL,
+    vendor_bill_deleted_by          INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_bill_record_version      INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_bill_uuid     UNIQUE (vendor_bill_uuid),
+    CONSTRAINT uq_vendor_bill_number   UNIQUE (vendor_bill_number),
+    CONSTRAINT chk_vbil_approval_status CHECK (vendor_bill_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_vbil_tax_percent    CHECK (vendor_bill_sales_tax_percent >= 0 AND vendor_bill_sales_tax_percent <= 100),
+    CONSTRAINT chk_vbil_totals_nonneg  CHECK (vendor_bill_subtotal >= 0 AND vendor_bill_grand_total >= 0),
+    CONSTRAINT chk_vbil_paid_nonneg    CHECK (vendor_bill_amount_paid >= 0 AND vendor_bill_balance_due >= 0),
+    CONSTRAINT chk_vbil_soft_delete    CHECK (
+        (vendor_bill_deleted_at IS NULL AND vendor_bill_deleted_by IS NULL) OR
+        (vendor_bill_deleted_at IS NOT NULL AND vendor_bill_deleted_by IS NOT NULL)
+    )
+);
+
+-- vendor_bill_item (lines) -- mirrors invoice_item; purchase_order_item_id is
+-- set only by the convert path (AD-8), never by manual line input.
+CREATE TABLE IF NOT EXISTS vendor_bill_item (
+    vendor_bill_item_id       SERIAL        PRIMARY KEY,
+    vendor_bill_item_uuid     UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_bill_id            INTEGER       NOT NULL REFERENCES vendor_bill(vendor_bill_id) ON DELETE CASCADE,
+    line_number               INTEGER       NOT NULL,
+    inventory_item_id         INTEGER           NULL REFERENCES inventory_item(inventory_item_id),
+    purchase_order_item_id    INTEGER           NULL REFERENCES purchase_order_item(purchase_order_item_id) ON DELETE SET NULL,
+
+    item_name                 VARCHAR(150)  NOT NULL DEFAULT '',
+    sku                       VARCHAR(50)   NOT NULL DEFAULT '',
+    description               TEXT          NOT NULL DEFAULT '',
+    unit_id                   INTEGER           NULL REFERENCES lkp_unit(unit_id),
+    unit_code                 VARCHAR(10)   NOT NULL DEFAULT '',
+    quantity                  DECIMAL(14,3) NOT NULL DEFAULT 0,
+    unit_price                DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_percent          DECIMAL(6,4)  NOT NULL DEFAULT 0,
+    tax_rate_id                INTEGER          NULL REFERENCES lkp_tax_rate(tax_rate_id),
+    tax_percent                DECIMAL(6,4)  NOT NULL DEFAULT 0,
+
+    line_subtotal               DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_discount                DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_tax                     DECIMAL(15,2) NOT NULL DEFAULT 0,
+    line_total                   DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    item_created_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by              INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at              TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at               TIMESTAMP        NULL,
+    item_record_version           INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vbi_uuid       UNIQUE (vendor_bill_item_uuid),
+    CONSTRAINT chk_vbi_qty       CHECK (quantity >= 0),
+    CONSTRAINT chk_vbi_unit_price CHECK (unit_price >= 0),
+    CONSTRAINT chk_vbi_discount  CHECK (discount_percent >= 0 AND discount_percent <= 100),
+    CONSTRAINT chk_vbi_tax       CHECK (tax_percent >= 0 AND tax_percent <= 100)
+);
+
+-- vendor_bill_history -- status/action trail (mirrors purchase_order_history)
+CREATE TABLE IF NOT EXISTS vendor_bill_history (
+    vendor_bill_history_id   SERIAL       PRIMARY KEY,
+    vendor_bill_id            INTEGER      NOT NULL REFERENCES vendor_bill(vendor_bill_id) ON DELETE CASCADE,
+    from_status_id             INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                      VARCHAR(32)  NOT NULL DEFAULT 'transition',
+    actor_employee_id            INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                     JSONB        NOT NULL DEFAULT '{}',
+    at                           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- vendor_bill_approver / vendor_bill_approval (AD-6, exact structural copies
+-- of purchase_order_approver / purchase_order_approval)
+CREATE TABLE IF NOT EXISTS vendor_bill_approver (
+    vendor_bill_approver_id   SERIAL      PRIMARY KEY,
+    record_type_id             INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = VBIL
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                 INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_vendor_bill_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS vendor_bill_approval (
+    vendor_bill_approval_id   SERIAL     PRIMARY KEY,
+    vendor_bill_id             INTEGER    NOT NULL REFERENCES vendor_bill(vendor_bill_id) ON DELETE CASCADE,
+    record_status_id           INTEGER    NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER    NOT NULL REFERENCES employee(employee_id),
+    approved_at                 TIMESTAMP  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_vendor_bill_approval UNIQUE (vendor_bill_id, record_status_id, approver_employee_id)
+);
+
+-- vendor_bill_payment (AD-7 settlement ledger) -- the sole source Recompute-
+-- Balance sums to derive amount_paid/balance_due/status. Soft delete is the
+-- "unapply" (mirrors payment_application's application_deleted_at).
+CREATE TABLE IF NOT EXISTS vendor_bill_payment (
+    vendor_bill_payment_id    SERIAL        PRIMARY KEY,
+    vendor_bill_payment_uuid  UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_bill_id             INTEGER       NOT NULL REFERENCES vendor_bill(vendor_bill_id) ON DELETE CASCADE,
+    payment_method_id          INTEGER           NULL REFERENCES lkp_payment_method(payment_method_id),
+    amount                      DECIMAL(15,2) NOT NULL,
+    reference_number             VARCHAR(50)  NOT NULL DEFAULT '',
+    memo                         TEXT         NOT NULL DEFAULT '',
+    paid_at                      DATE         NOT NULL DEFAULT CURRENT_DATE,
+    created_by                   INTEGER          NULL REFERENCES employee(employee_id),
+    created_at                   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at                   TIMESTAMP        NULL,
+    CONSTRAINT uq_vbp_uuid           UNIQUE (vendor_bill_payment_uuid),
+    CONSTRAINT chk_vbp_amount_positive CHECK (amount > 0)
+);
+
+-- vendor_bill_conversion (AD-8 lineage) -- UNIQUE on vendor_bill_id ONLY,
+-- deliberately NOT on purchase_order_id: a PO may be billed in installments
+-- across multiple bills, so every call to ConvertFromPurchaseOrder creates a
+-- new bill row rather than short-circuiting on an existing one.
+CREATE TABLE IF NOT EXISTS vendor_bill_conversion (
+    vendor_bill_conversion_id SERIAL      PRIMARY KEY,
+    purchase_order_id          INTEGER     NOT NULL REFERENCES purchase_order(purchase_order_id) ON DELETE CASCADE,
+    vendor_bill_id              INTEGER     NOT NULL REFERENCES vendor_bill(vendor_bill_id) ON DELETE CASCADE,
+    converted_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    converted_by                 INTEGER         NULL REFERENCES employee(employee_id),
+    snapshot                     JSONB       NOT NULL DEFAULT '{}',
+    CONSTRAINT uq_vendor_bill_conversion_bill UNIQUE (vendor_bill_id)
+);
+
+-- vendor_bill indexes (listing/filtering -- all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_vbil_vendor        ON vendor_bill (vendor_bill_vendor_id)         WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_po             ON vendor_bill (vendor_bill_purchase_order_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_status         ON vendor_bill (vendor_bill_status)             WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_date           ON vendor_bill (vendor_bill_date)               WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_due_date       ON vendor_bill (vendor_bill_due_date)            WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_owner          ON vendor_bill (vendor_bill_owner_id)            WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_created_id     ON vendor_bill (vendor_bill_created_at, vendor_bill_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_updated_id     ON vendor_bill (vendor_bill_updated_at, vendor_bill_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_duedate_id     ON vendor_bill (vendor_bill_due_date, vendor_bill_id)   WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_grandtotal_id  ON vendor_bill (vendor_bill_grand_total, vendor_bill_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_balance_id     ON vendor_bill (vendor_bill_balance_due, vendor_bill_id) WHERE vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_custom_gin     ON vendor_bill USING GIN (vendor_bill_custom_fields);
+
+CREATE INDEX IF NOT EXISTS idx_vbi_bill   ON vendor_bill_item (vendor_bill_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbi_item   ON vendor_bill_item (inventory_item_id);
+CREATE INDEX IF NOT EXISTS idx_vbi_po_item ON vendor_bill_item (purchase_order_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vbi_line_active
+    ON vendor_bill_item (vendor_bill_id, line_number) WHERE item_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_vbil_history_bill ON vendor_bill_history (vendor_bill_id);
+
+CREATE INDEX IF NOT EXISTS idx_vendor_bill_approver_lookup
+    ON vendor_bill_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_vendor_bill_approval_bill ON vendor_bill_approval (vendor_bill_id);
+
+CREATE INDEX IF NOT EXISTS idx_vbp_bill ON vendor_bill_payment (vendor_bill_id) WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_vendor_bill_conversion_po ON vendor_bill_conversion (purchase_order_id);
+
+-- =====================================================================
 -- Role-based dashboard widget allocation.
 --
 -- Lets an admin choose which dashboard widgets each role's members may see.

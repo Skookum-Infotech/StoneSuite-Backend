@@ -6996,9 +6996,15 @@ CREATE TABLE IF NOT EXISTS role_dashboard_widgets (
 
 -- ── Vendor Bills + Vendor Payments module ───────────────────────────
 
--- 5.1 Two new lkp_record_status rows for VPAY (AD-7)
+-- 5.1 Three new lkp_record_status rows for VPAY (AD-7). VPAY reused
+-- record_type_id 16's PEND/APPV/SENT/VOID block above, but the Go transition
+-- map (vendorpayment/transitions.go) routes DRFT->PAPV->APPV, not PEND-based —
+-- PAPV was missing here until this fix, which made a plain Submit-for-Approval
+-- transition fail server-side with "Unknown target status: PAPV".
 INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
 SELECT 'DRFT', 'Draft', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
+UNION ALL
+SELECT 'PAPV', 'Pending Approval', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
 UNION ALL
 SELECT 'SCHD', 'Scheduled', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
 ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;

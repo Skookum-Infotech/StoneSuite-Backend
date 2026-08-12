@@ -197,18 +197,6 @@ func statusIDByCode(ctx context.Context, pool *pgxpool.Pool, typeID int, code st
 	return id, nil
 }
 
-// statusCodeByID resolves a record_status_id to its code (e.g. "DRFT"), for
-// callers that already hold a status id — used by the transition/apply paths
-// added alongside this core.
-func statusCodeByID(ctx context.Context, pool *pgxpool.Pool, statusID int) (string, error) {
-	var code string
-	if err := pool.QueryRow(ctx,
-		`SELECT record_status_code FROM lkp_record_status WHERE record_status_id = $1`, statusID).Scan(&code); err != nil {
-		return "", fmt.Errorf("resolve status code %d: %w", statusID, err)
-	}
-	return code, nil
-}
-
 func nullableInt(v int) any {
 	if v == 0 {
 		return nil

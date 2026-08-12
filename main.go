@@ -824,6 +824,40 @@ func main() {
 		// Receipts for one order — gated by the purchase order's own permission.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
 
+		// Vendor Bill: dedicated relational module (minimal header — no line
+		// items, no PO linkage, no bill-owned approval or payment ledger; see
+		// vendorbill/types.go), the settlement target for Vendor Payment. Not
+		// served through the generic JSONB router.
+		vbOps := controllers.NewVendorBillOps()
+		mux.Handle("GET /api/tenant/vendor-bills", tenantChain(vbOps.List))
+		mux.Handle("POST /api/tenant/vendor-bills/search", tenantChain(vbOps.Search))
+		mux.Handle("POST /api/tenant/vendor-bills", tenantChain(vbOps.Create))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/transition", tenantChain(vbOps.Transition))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/audit", tenantChain(vbOps.Audit))
+
+		// Vendor Payment: dedicated relational module, the accounts-payable
+		// mirror of Payment. Its vendor_payment_application ledger is the
+		// source of truth for vendor bill amount_paid/balance_due (mirrors
+		// Payment/Invoice below). vendorpayment.RecordRefund/RemoveRefund have
+		// no HTTP handler yet, so no /refund route is mounted here.
+		vpOps := controllers.NewVendorPaymentOps()
+		mux.Handle("GET /api/tenant/vendor-payments", tenantChain(vpOps.List))
+		mux.Handle("POST /api/tenant/vendor-payments/search", tenantChain(vpOps.Search))
+		mux.Handle("POST /api/tenant/vendor-payments", tenantChain(vpOps.Create))
+		mux.Handle("GET /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/transition", tenantChain(vpOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/approve", tenantChain(vpOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/apply", tenantChain(vpOps.Apply))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
+		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
+		// AP reconciliation view for one bill — gated by the vendor bill's own permission.
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

@@ -365,15 +365,10 @@ func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessExpiry := time.Now().Add(d)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   config.AppConfig.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(d.Seconds()),
-	})
+	if err := setAuthCookies(w, token, d, "", time.Time{}); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to switch role.")
+		return
+	}
 
 	logSecurityEvent(r, "role_switched", "identity", payload.ID, "active_role_id", activeRoleID)
 

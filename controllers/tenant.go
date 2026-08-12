@@ -77,6 +77,61 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// setAuthCookies writes the auth_token cookie (and, when refreshRaw is
+// non-empty, the refresh_token cookie). SameSite/Secure come from config so
+// the same binary behaves safely differently across deployments: "lax" for
+// same-origin-proxied deployments, "none" for deployments where the frontend
+// calls this backend cross-origin directly. When "none", it also issues a
+// JS-readable csrf_token cookie — the double-submit CSRF check in
+// middleware.RequireAuth activates automatically alongside it.
+func setAuthCookies(w http.ResponseWriter, token string, d time.Duration, refreshRaw string, refreshExpiry time.Time) error {
+	sameSite := http.SameSiteLaxMode
+	if config.AppConfig.CookieSameSite == "none" {
+		sameSite = http.SameSiteNoneMode
+	}
+	secure := config.AppConfig.IsProduction()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: sameSite,
+		MaxAge:   int(d.Seconds()),
+	})
+
+	if refreshRaw != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    refreshRaw,
+			Path:     "/api/auth",
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: sameSite,
+			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
+		})
+	}
+
+	if config.AppConfig.CookieSameSite == "none" {
+		csrfToken, err := randomToken()
+		if err != nil {
+			return fmt.Errorf("generate csrf token: %w", err)
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "csrf_token",
+			Value:    csrfToken,
+			Path:     "/",
+			HttpOnly: false, // must be JS-readable so the frontend can echo it back
+			Secure:   secure,
+			SameSite: sameSite,
+			MaxAge:   int(d.Seconds()),
+		})
+	}
+
+	return nil
+}
+
 // inviteExpiry returns the expiry instant for an invite. Defaults to the
 // configured INVITE_EXPIRY_HOURS (24h) when hours <= 0.
 func inviteExpiry(hours int) time.Time {
@@ -682,25 +737,9 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	// interceptor in the frontend Axios client serves as a fallback for the
 	// in-memory token that exists immediately after login.
 	accessExpiry := time.Now().Add(d)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   config.AppConfig.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(d.Seconds()),
-	})
-	if refreshRaw != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "refresh_token",
-			Value:    refreshRaw,
-			Path:     "/api/auth",
-			HttpOnly: true,
-			Secure:   config.AppConfig.IsProduction(),
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
-		})
+	if err := setAuthCookies(w, token, d, refreshRaw, refreshExpiry); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to establish session.")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -863,25 +902,9 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessExpiry := time.Now().Add(d)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    newToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   config.AppConfig.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(d.Seconds()),
-	})
-	if refreshRaw != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "refresh_token",
-			Value:    refreshRaw,
-			Path:     "/api/auth",
-			HttpOnly: true,
-			Secure:   config.AppConfig.IsProduction(),
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
-		})
+	if err := setAuthCookies(w, newToken, d, refreshRaw, refreshExpiry); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -910,9 +933,9 @@ func issueRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, identityID
 	return raw, expiry, nil
 }
 
-// clearAuthCookies sets MaxAge=-1 on both auth cookies to force browser deletion.
+// clearAuthCookies sets MaxAge=-1 on all session cookies to force browser deletion.
 func clearAuthCookies(w http.ResponseWriter) {
-	for _, name := range []string{"auth_token", "refresh_token"} {
+	for _, name := range []string{"auth_token", "refresh_token", "csrf_token"} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
 			Value:    "",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -116,6 +117,23 @@ func RequireAuth(next http.Handler) http.Handler {
 		tenantID, _ := claims["tenant_id"].(string)
 		userID, _ := claims["user_id"].(string)
 		activeRoleID, _ := claims["active_role_id"].(string)
+
+		// Double-submit CSRF check for state-changing requests. No-op unless
+		// CookieSameSite is "none" — see csrf.go for why.
+		if !csrfValid(r) {
+			slog.Warn("security event",
+				slog.String("security_event", "csrf_mismatch"),
+				slog.String("request_id", RequestIDFromContext(r.Context())),
+				slog.String("ip", ClientIP(r)),
+				slog.String("path", r.URL.Path),
+			)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(models.APIResponse{
+				Success: false,
+				Message: "Request rejected: missing or invalid CSRF token.",
+			})
+			return
+		}
 
 		// Inject user context payload into request context
 		ctxPayload := UserContextPayload{

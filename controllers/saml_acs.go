@@ -9,6 +9,7 @@ import (
 
 	saml2 "github.com/russellhaering/gosaml2"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/saml"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/userstore"
@@ -188,8 +189,9 @@ func (h *SAMLAuthOps) ACS(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, tenancy.ErrIdentityNotFound):
 		// JIT provisioning: create both the control-plane identity and (below)
-		// the tenant-DB user row, but assign no RBAC role -- see the step
-		// report for this deliberate, conservative default.
+		// the tenant-DB user row. The user gets cfg.DefaultRoleID if the admin
+		// configured one (below, once the tenant-DB user row exists -- roles
+		// are tenant-DB scoped), otherwise no role at all, same as before.
 		fullName = bestEffortNameFromAssertion(assertion)
 		identity, err = h.cp.CreateSSOIdentity(ctx, tenantID, email, fullName, provider, assertion.NameID)
 		if err != nil {
@@ -238,6 +240,18 @@ func (h *SAMLAuthOps) ACS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logSecurityEvent(r, "saml_jit_user_provisioned", "identity_id", identity.ID, "tenant_id", tenantID, "user_id", user.ID)
+		// Grant the config's default role, if the admin set one. Non-fatal on
+		// failure -- the user still gets a working login, just with no role
+		// (the original behaviour) until an admin assigns one manually.
+		if cfg.DefaultRoleID != "" {
+			if err := authz.AssignRole(ctx, pool, user.ID, cfg.DefaultRoleID); err != nil {
+				logSecurityEvent(r, "saml_default_role_assign_failed", "identity_id", identity.ID, "tenant_id", tenantID,
+					"user_id", user.ID, "role_id", cfg.DefaultRoleID, "error", err.Error())
+			} else {
+				logSecurityEvent(r, "saml_default_role_assigned", "identity_id", identity.ID, "tenant_id", tenantID,
+					"user_id", user.ID, "role_id", cfg.DefaultRoleID)
+			}
+		}
 	case err != nil:
 		logSecurityEvent(r, "saml_acs_user_lookup_failed", "provider", provider, "identity_id", identity.ID, "tenant_id", tenantID, "error", err.Error())
 		samlErrorPage(w, http.StatusInternalServerError)

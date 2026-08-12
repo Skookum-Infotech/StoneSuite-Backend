@@ -279,8 +279,10 @@ ACS / Reply URL         :  POST ${API_BASE_URL}/api/auth/saml/entra/acs
 | `POST` | `/api/auth/saml/{provider}/acs` | none (IdP-facing) | per-IP (same as above) |
 | `POST` | `/api/auth/saml/exchange` | none (one-time code is the credential) | per-IP (same as above) |
 | `POST` | `/api/auth/saml/{provider}/logout` | JWT required (full `tenantChain`) | per-tenant (burst 40, 20 req/s) |
+| `POST` | `/api/auth/saml/discover` | none | per-IP (same as above) |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/tenant/sso-configs[/{id}]` | JWT + `sso_config:read`/`configure` | per-tenant |
 | `POST` | `/api/tenant/sso-configs/{id}/refresh-metadata` | JWT + `sso_config:configure` | per-tenant |
+| `GET`/`POST`/`DELETE` | `/api/tenant/sso-configs/{id}/domains[/{domainId}]` | JWT + `sso_config:read`/`configure` | per-tenant |
 
 `{provider}` is `cognito` or `entra` (`samlProviders` in `controllers/sso.go`)
 — anything else, including `okta`, is `404 {"success":false,"message":"Not found."}`
@@ -300,6 +302,36 @@ metadata document above, as JSON, for callers that don't want to parse XML:
 ```json
 {"success": true, "provider": "entra", "sp_entity_id": "...", "acs_url": "...", "slo_url": "..."}
 ```
+
+### `POST /api/auth/saml/discover`
+Public, no auth, no tenant resolved yet. **Home-realm discovery**: lets the
+login page resolve a user's work email to a tenant + provider instead of
+asking for a workspace slug. Body:
+```json
+{"email": "jane@contoso.com"}
+```
+The email is normalized to its domain (`NormalizeEmailDomain` — lowercased,
+`@`-and-everything-before-it stripped) and looked up against
+`tenant_sso_domains` (registered via `POST .../sso-configs/{id}/domains`, see
+[`docs/api/config-endpoints.md`](./api/config-endpoints.md)). Only an
+*enabled*, `protocol=saml` config's domains can ever match — same guard as
+`GetSSOConfigForAuth` used by `/initiate` below.
+```json
+{"success": true, "found": true, "provider": "entra", "tenant_id": "..."}
+```
+or
+```json
+{"success": true, "found": false}
+```
+`found: false` covers every "can't route this" case identically — malformed
+email, unregistered domain, disabled config, or a config whose tenant isn't
+`Servable()` — deliberately, so the response can't be used to fingerprint
+*why* it failed (industry-standard for HRD endpoints; a mild, accepted
+information leak, not a security boundary). The returned `tenant_id` is fed
+straight into `/initiate?tenant_id=...` below — nothing new is exposed beyond
+what a distributed sign-in link already carries (§6, `sp-info`).
+Deliberately `POST`, not `GET`: an email in a query string ends up in server
+logs and `Referer` headers.
 
 ### `GET /api/auth/saml/{provider}/initiate?tenant_slug=...|tenant_id=...&return_to=...`
 Exactly one of `tenant_slug`/`tenant_id` is required (400 otherwise). On
@@ -364,13 +396,14 @@ available:
 The frontend is expected to navigate the browser to `logout_url` next. See
 §8 for what happens when the IdP redirects back.
 
-### `/api/tenant/sso-configs...` (config CRUD)
+### `/api/tenant/sso-configs...` (config CRUD + domains)
 Covered in full, including the SAML-specific request/response fields, in
 [`docs/api/config-endpoints.md`](./api/config-endpoints.md). Summary:
 `GET`/`POST`/`PUT`/`DELETE` as usual; `POST .../{id}/refresh-metadata`
 re-fetches the stored `metadata_url` and updates the IdP entity id, SSO/SLO
 URLs, certificate, and fingerprint — `400` if the target config isn't
-`protocol=saml`.
+`protocol=saml`; `GET`/`POST`/`DELETE .../{id}/domains[/{domainId}]` manages
+the email domains `/discover` (above) matches against.
 
 ---
 
@@ -391,10 +424,15 @@ into the wrong tenant or merging accounts.
    password hash, `sso_provider`/`sso_subject` set from the assertion.
 2. A tenant-database `users` row (`userstore.CreateUser`) — `status = 'active'`.
 
-**The new user gets NO role assigned.** `CreateUser` inserts a bare `users`
-row with zero entries in `user_roles`. The identity can authenticate (it gets
-a valid JWT from Exchange) but every permission check on every tenant
-endpoint will deny it until a tenant admin explicitly grants a role:
+**The new user gets NO role assigned, unless the config sets one.**
+`CreateUser` inserts a bare `users` row with zero entries in `user_roles`; if
+the matched `tenant_sso_configs` row has `default_role_id` set (opt-in, an
+admin picks it explicitly when configuring the provider — see
+[`docs/api/config-endpoints.md`](./api/config-endpoints.md)), `saml_acs.go`
+then calls `authz.AssignRole` for that role immediately after. Either way, the
+identity can authenticate (it gets a valid JWT from Exchange); with no
+default role, every permission check on every tenant endpoint denies it until
+a tenant admin explicitly grants one:
 ```bash
 curl -X POST "$API_BASE_URL/api/tenant/users/$USER_ID/roles" \
   -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
@@ -402,14 +440,21 @@ curl -X POST "$API_BASE_URL/api/tenant/users/$USER_ID/roles" \
 ```
 (`controllers/rbac.go`'s `UserRoles`, requires `role:update`.)
 
-This is a deliberate, conservative default, not an oversight: RBAC in this
-codebase is fail-closed by design, and an IdP asserting an email address is
-proof of *authentication* (who this person is), not *authorization* (what
-they're allowed to do here). Auto-granting a role based purely on a
-successful SSO login — especially for the very first user under a given
-email a tenant has ever seen — would mean anyone your IdP will authenticate
-gets some default level of access to the tenant, which breaks the
-principle that access is explicitly provisioned, not inferred.
+**Unset (`default_role_id` empty) is still the out-of-the-box default, and
+remains the conservative choice, not an oversight:** RBAC in this codebase is
+fail-closed by design, and an IdP asserting an email address is proof of
+*authentication* (who this person is), not *authorization* (what they're
+allowed to do here). Auto-granting a role based purely on a successful SSO
+login means anyone your IdP will authenticate gets that level of access with
+no human review at signup time — `default_role_id` exists for tenants that
+want that tradeoff deliberately (e.g. every `@contoso.com` employee should
+land in the app as a baseline "Member," not locked out), gated behind its own
+`role:update` permission check and a block on system roles
+(`validateDefaultRoleID`, `controllers/sso.go`) so `sso_config:configure`
+alone can't be used to self-grant `super_admin` via a side channel. A role
+assignment failure at login time is non-fatal — the user still gets a working
+session, just with no role (the original behavior), logged server-side as
+`saml_default_role_assign_failed` for an admin to fix manually.
 
 **Repeat logins** skip provisioning: the existing identity is looked up,
 `LinkSSOIdentity` refreshes `sso_provider`/`sso_subject`/`sso_session_index`
@@ -452,15 +497,24 @@ whatever `status` it's in (a `suspended`/`disabled` user is rejected with
   straight through to `saml.BuildLogoutRequestURL` as `sessionIndex`. The
   request is still built and sent, but most IdPs will not be able to match it
   to a real session.
-- **Frontend integration is now wired** (StoneSuite-WebUI,
-  `feat/saml-configs-integrations`): `/auth/sso/callback` exchanges the code
-  and completes login; the login page has an SSO entry point that accepts
-  either a `tenant_id`/`tenant_slug` deep link or manual workspace-slug
-  entry; Configuration → SAML Setup drives the full config CRUD +
-  refresh-metadata against the real API, including the SP entity id/ACS URL
-  via the new `GET /api/auth/saml/{provider}/sp-info` (§6). Not yet verified
-  against a live IdP end-to-end — that still needs a real Entra or Cognito
-  tenant.
+- **Frontend integration is now wired** (StoneSuite-WebUI):
+  `/auth/sso/callback` exchanges the code and completes login; the login page
+  accepts a `tenant_id`/`tenant_slug` deep link, or lets the user pick a
+  provider and type their work email (home-realm discovery via
+  `POST /api/auth/saml/discover`, §6) instead of a workspace slug;
+  Configuration → SAML Setup drives the full config CRUD + refresh-metadata +
+  domain management + default-role selection against the real API, including
+  the SP entity id/ACS URL via `GET /api/auth/saml/{provider}/sp-info` (§6).
+  Not yet verified against a live IdP end-to-end — that still needs a real
+  Entra or Cognito tenant.
+- **Domain registration for discovery is not ownership-verified.** Any tenant
+  admin with `sso_config:configure` can register any domain not on the
+  public-provider blocklist (`controllers/sso.go`'s
+  `publicEmailDomainBlocklist`) against their own config — including a real
+  third party's corporate domain. `tenant_sso_domains.verified_at` is reserved
+  for a future DNS-TXT verification flow; nothing enforces it yet. See
+  [`docs/api/config-endpoints.md`](./api/config-endpoints.md)'s domains
+  section for the full note.
 - **Okta is not supported for SAML.** `samlProviders` (`controllers/sso.go`)
   only whitelists `entra` and `cognito`; `{"protocol":"saml","provider":"okta"}`
   is rejected with `400`. Okta remains available on the pre-existing
@@ -611,7 +665,7 @@ and `FRONTEND_URL` set, and an existing StoneSuite tenant + admin JWT with
 
 **Source of truth for everything above:** `saml/*.go`,
 `controllers/saml_*.go`, `controllers/sso.go`, `tenancy/sso_config.go`,
-`tenancy/identity.go`, `tenancy/saml_request.go`, `tenancy/saml_login_code.go`,
-`database/migrations/control_plane/schema.sql`, `config/config.go`,
-`main.go`. If behavior here and behavior in the code ever disagree, the code
-is right — file a doc fix.
+`tenancy/sso_domain.go`, `tenancy/identity.go`, `tenancy/saml_request.go`,
+`tenancy/saml_login_code.go`, `database/migrations/control_plane/schema.sql`,
+`config/config.go`, `main.go`. If behavior here and behavior in the code ever
+disagree, the code is right — file a doc fix.

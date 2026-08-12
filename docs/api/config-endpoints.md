@@ -22,9 +22,15 @@ reading required.
 
 ## SSO Provider Configs
 Per-tenant single-sign-on provider settings. Stored in the control plane; the
-**client secret is write-only and is never returned** in any response.
+**client secret (OIDC) and IdP certificate (SAML) are write-only and never
+returned** in any response — only a `certificate_fingerprint` is, for SAML.
 
-Permission: `sso_config:read` for GET, `sso_config:configure` for POST/PUT/DELETE.
+Permission: `sso_config:read` for GET, `sso_config:configure` for POST/PUT/DELETE
+(including `refresh-metadata`).
+
+A config is one of two protocols, `oidc` (default, unchanged from before) or
+`saml`. `protocol` decides which of the fields below apply — see
+[`docs/SAML_SETUP.md`](../SAML_SETUP.md) for the full SAML setup guide.
 
 ### Object
 ```json
@@ -32,14 +38,24 @@ Permission: `sso_config:read` for GET, `sso_config:configure` for POST/PUT/DELET
   "id": "uuid",
   "tenant_id": "uuid",
   "provider": "entra | cognito | okta",
-  "client_id": "string",
-  "issuer": "https://... (optional, may be \"\")",
-  "redirect_uri": "https://... (optional, may be \"\")",
+  "protocol": "oidc | saml",
+  "client_id": "string",                  // oidc only, omitted for saml
+  "issuer": "https://... (optional, may be \"\")",       // oidc only
+  "redirect_uri": "https://... (optional, may be \"\")", // oidc only
+  "metadata_url": "https://... (saml only, omitted for oidc)",
+  "idp_entity_id": "string (saml only; extracted from IdP metadata)",
+  "sso_url": "https://... (saml only; extracted from IdP metadata)",
+  "slo_url": "https://... (saml only; may be omitted, not every IdP advertises SLO)",
+  "certificate_fingerprint": "hex sha-256 (saml only; the certificate PEM itself is never returned)",
+  "name_id_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress (saml only; not settable via this API, always the default)",
+  "metadata_fetched_at": "rfc3339 (saml only; set on every create/update/refresh-metadata)",
   "enabled": false,
   "created_at": "rfc3339",
   "updated_at": "rfc3339"
 }
 ```
+All `saml`-only fields are `omitempty` and absent on `oidc` configs, and vice
+versa for `client_id`/`issuer`/`redirect_uri`.
 
 ### `GET /api/tenant/sso-configs`
 List all configs for the tenant (newest first).
@@ -49,33 +65,59 @@ List all configs for the tenant (newest first).
 → `200 { "success": true, "sso_config": <config> }` · `404` if not found.
 
 ### `POST /api/tenant/sso-configs`
-Body:
+Body (`protocol` decides which other fields are validated/required):
 ```json
 {
-  "provider": "entra",          // required, one of entra|cognito|okta (case-insensitive)
-  "client_id": "string",        // required
-  "client_secret": "string",    // required on create; stored encrypted, never echoed
-  "issuer": "https://...",       // optional; if present must be an http(s) URL
-  "redirect_uri": "https://...", // optional; if present must be an http(s) URL
+  "provider": "entra",           // required. protocol=oidc: one of entra|cognito|okta. protocol=saml: one of entra|cognito only (case-insensitive)
+  "protocol": "oidc",            // optional, "oidc" (default) or "saml"
+  "client_id": "string",         // oidc: required. ignored for saml
+  "client_secret": "string",     // oidc: required on create, stored encrypted, never echoed. ignored for saml (saml has no client secret)
+  "issuer": "https://...",       // oidc only; if present must be an http(s) URL
+  "redirect_uri": "https://...", // oidc only; if present must be an http(s) URL
+  "metadata_url": "https://...", // saml: required, must be https://. ignored for oidc
   "enabled": false               // optional, default false
 }
 ```
+For `protocol: "saml"`, the IdP metadata document at `metadata_url` is fetched
+synchronously on every create — `idp_entity_id`, `sso_url`, `slo_url`, the
+signing certificate (encrypted at rest), and `certificate_fingerprint` are all
+derived from it, not supplied by the caller.
 → `201 { "success": true, "sso_config": <config> }`
-- `400` invalid provider / missing client_id / missing client_secret / malformed URL.
-- `409` a config for this provider already exists (unique per tenant+provider).
-- `503` secret encryption is not configured on the server (cannot store secret).
+- `400` invalid provider/protocol / missing client_id / missing client_secret / malformed URL / missing or non-https metadata_url.
+- `409` a config for this provider already exists (unique per tenant+provider, **regardless of protocol** — a tenant can't have both an oidc and a saml config for the same provider).
+- `502` (saml only) the metadata URL was unreachable or didn't parse as SAML metadata.
+- `503` secret encryption is not configured on the server (cannot store the client secret or, for saml, the IdP certificate).
 
 ### `PUT /api/tenant/sso-configs/{id}`
 Same body as create, except **`client_secret` is optional** — omit or send `""`
-to keep the stored secret; send a new value to replace it.
-→ `200 { "success": true, "sso_config": <config> }` · `404` / `409` / `503` as above.
+to keep the stored secret; send a new value to replace it. For
+`protocol: "saml"`, `metadata_url` is always re-fetched (there is no
+"unchanged, skip the fetch" case).
+→ `200 { "success": true, "sso_config": <config> }` · `400` / `404` / `409` / `502` / `503` as above.
+
+### `POST /api/tenant/sso-configs/{id}/refresh-metadata`
+SAML only — re-fetches the stored `metadata_url` and updates the IdP entity
+id, SSO/SLO URLs, certificate, and fingerprint in place. No body. Safe to call
+repeatedly (e.g. from an external cron, since nothing in the backend refreshes
+this automatically).
+→ `200 { "success": true, "sso_config": <config> }`
+- `400` the target config is not `protocol: "saml"`.
+- `404` not found. `502` metadata URL unreachable/malformed. `503` secret encryption unavailable.
 
 ### `DELETE /api/tenant/sso-configs/{id}`
 → `200 { "success": true }` · `404` if not found.
 
-> **Not yet implemented (separate follow-up):** the OAuth login flow itself —
-> authorize redirect, callback, token exchange, identity linking. These endpoints
-> only manage configuration. Do not build a "Sign in with SSO" button against them yet.
+> **SAML: the login flow now exists.** SP-initiated SAML 2.0 login (AWS
+> Cognito, Microsoft Entra ID) is implemented — see
+> [`docs/SAML_SETUP.md`](../SAML_SETUP.md) for the endpoints, request/response
+> shapes, and setup walkthroughs. It is a separate route tree
+> (`/api/auth/saml/...`), not part of this file.
+>
+> **OIDC: still config-only.** For `protocol: "oidc"` configs, this file's
+> original caveat still holds — no OIDC login flow (authorize redirect,
+> callback, token exchange) exists. These endpoints only manage configuration
+> for that protocol. Do not build a "Sign in with SSO" button against an
+> `oidc` config yet.
 
 ---
 

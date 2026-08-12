@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -39,15 +40,15 @@ type Config struct {
 	ProvisionAdminDBURL string
 	// Secret encryption: key (base64) used to encrypt tenant DB DSNs / SSO secrets at rest
 	SecretEncryptionKey string
-	// Microsoft Entra ID OAuth
-	EntraIDClientID     string
-	EntraIDClientSecret string
-	EntraIDRedirectURI  string
-	// AWS Cognito OAuth
-	CognitoClientID     string
-	CognitoClientSecret string
-	CognitoDomain       string
-	CognitoRedirectURI  string
+	// SAML configuration (optional; used for SP metadata generation and IdP metadata refresh)
+	SAMLSPEntityID              string        // e.g., https://app.stonesuite.io/saml
+	SAMLRequestTimeout          time.Duration // assertion expiry tolerance (default: 10m)
+	SAMLMetadataRefreshInterval time.Duration // IdP metadata cache duration (default: 24h)
+	SAMLRequestStateTTL         time.Duration // SAML request state validity (default: 15m)
+	// APIBaseURL is this backend's own public base URL, e.g.
+	// https://stonesuite-backend.fly.dev -- used to build SAML ACS/metadata
+	// URLs, which must be reachable at this backend, not the frontend.
+	APIBaseURL string
 	// Email Configuration
 	ResendAPIKey   string // optional: if set, all email goes through Resend API
 	SMTPHost       string
@@ -139,15 +140,12 @@ func Load() {
 		NeonProjectID:       getEnv("NEON_PROJECT_ID", ""),
 		ProvisionAdminDBURL: getEnv("PROVISION_ADMIN_DB_URL", ""),
 		SecretEncryptionKey: getEnv("SECRET_ENCRYPTION_KEY", ""),
-		// Microsoft Entra ID
-		EntraIDClientID:     getEnv("ENTRA_ID_CLIENT_ID", ""),
-		EntraIDClientSecret: getEnv("ENTRA_ID_CLIENT_SECRET", ""),
-		EntraIDRedirectURI:  getEnv("ENTRA_ID_REDIRECT_URI", "http://localhost:8080/api/auth/entra/callback"),
-		// AWS Cognito
-		CognitoClientID:     getEnv("COGNITO_CLIENT_ID", ""),
-		CognitoClientSecret: getEnv("COGNITO_CLIENT_SECRET", ""),
-		CognitoDomain:       getEnv("COGNITO_DOMAIN", ""),
-		CognitoRedirectURI:  getEnv("COGNITO_REDIRECT_URI", "http://localhost:8080/api/auth/cognito/callback"),
+		// SAML
+		SAMLSPEntityID:              getEnv("SAML_SP_ENTITY_ID", "https://app.stonesuite.io/saml"),
+		SAMLRequestTimeout:          parseDuration(getEnv("SAML_REQUEST_TIMEOUT", "10m")),
+		SAMLMetadataRefreshInterval: parseDuration(getEnv("SAML_METADATA_REFRESH_INTERVAL", "24h")),
+		SAMLRequestStateTTL:         parseDuration(getEnv("SAML_REQUEST_STATE_TTL", "15m")),
+		APIBaseURL:                  getEnv("API_BASE_URL", "http://localhost:8080"),
 		// Email Configuration
 		ResendAPIKey:   getEnv("RESEND_API_KEY", ""),
 		SMTPHost:       getEnv("SMTP_HOST", ""),
@@ -231,4 +229,13 @@ func getEnvInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// parseDuration parses a duration string, falling back to a 10-minute default when unset or invalid.
+func parseDuration(s string) time.Duration {
+	d, _ := time.ParseDuration(s)
+	if d <= 0 {
+		d = 10 * time.Minute // default
+	}
+	return d
 }

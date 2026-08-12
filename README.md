@@ -17,6 +17,8 @@ go build ./...
 
 See [CLAUDE.md](./CLAUDE.md) for architecture, RBAC/multi-tenancy invariants, and the Fly.io deployment runbook.
 
+See [docs/SAML_SETUP.md](./docs/SAML_SETUP.md) for SAML 2.0 SSO setup (AWS Cognito, Microsoft Entra ID).
+
 ## Stack
 
 Go 1.25 + `net/http` + PostgreSQL (pgx), deployed to Fly.io (scale-to-zero) against Neon Postgres.

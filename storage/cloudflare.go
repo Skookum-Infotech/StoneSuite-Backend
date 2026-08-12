@@ -68,11 +68,11 @@ func (c *CFClient) CreateBucket(ctx context.Context, name string) error {
 		return fmt.Errorf("create r2 bucket: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 
 	// 200 = created; 409 = already exists (idempotent).
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		return fmt.Errorf("create r2 bucket: HTTP %d", resp.StatusCode)
+		return fmt.Errorf("create r2 bucket: HTTP %d: %s", resp.StatusCode, respBody)
 	}
 	return nil
 }

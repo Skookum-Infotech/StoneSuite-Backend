@@ -303,6 +303,7 @@ func main() {
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
 		mux.Handle("POST /api/platform/tenants/{id}/repair-cors", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucketCORS)))
+		mux.Handle("POST /api/platform/tenants/{id}/repair-bucket", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucket)))
 		mux.Handle("/api/platform/invites", middleware.RequireAuth(http.HandlerFunc(tenantOps.InviteCustomer)))
 		mux.Handle("/api/platform/tenants", middleware.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {

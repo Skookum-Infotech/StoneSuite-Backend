@@ -389,6 +389,14 @@ func main() {
 		// assigned roles is currently enforced (see authz.EffectiveGrants).
 		mux.Handle("POST /api/tenant/auth/switch-role", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.SwitchRole))))
 
+		// Role-based dashboard widget allocation. Me is available to every
+		// authenticated user (no dashboard_widget permission needed); the
+		// admin allocation page's GET/PUT go through RoleAllocations, gated
+		// by dashboard_widget:read / dashboard_widget:configure per method.
+		dashboardUI := controllers.NewDashboardUIOps()
+		mux.Handle("GET /api/tenant/dashboard/widgets/me", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.Me))))
+		mux.Handle("/api/tenant/dashboard/widgets/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.RoleAllocations))))
+
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
@@ -419,6 +427,19 @@ func main() {
 		mux.Handle("GET /api/tenant/sso-configs/{id}", tenantChain(sso.GetConfig))
 		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
 		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
+		mux.Handle("POST /api/tenant/sso-configs/{id}/refresh-metadata", tenantChain(sso.RefreshMetadata))
+
+		// SAML authentication flow: metadata/initiate/acs/exchange are public
+		// (rate-limited by IP, same as tenant-login); logout requires the JWT
+		// already issued by exchange, so it goes through the full tenantChain.
+		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher)
+		mux.Handle("GET /api/auth/saml/{provider}/metadata", http.HandlerFunc(samlAuth.Metadata))
+		mux.Handle("GET /api/auth/saml/{provider}/sp-info", http.HandlerFunc(samlAuth.SPInfo))
+		mux.Handle("GET /api/auth/saml/{provider}/initiate", authRateLimiter.PerIPFunc(samlAuth.Initiate))
+		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
+		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))
+		mux.Handle("POST /api/auth/saml/{provider}/logout", tenantChain(samlAuth.Logout))
+		mux.Handle("GET /api/auth/saml/{provider}/logout-response", http.HandlerFunc(samlAuth.LogoutResponse))
 
 		// Tenant-wide audit-log browser (audit:read, scope-narrowed on the actor).
 		auditOps := controllers.NewAuditOps()
@@ -796,6 +817,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
 		// Item Receipt: the second Purchases document module — goods arriving
@@ -816,6 +838,45 @@ func main() {
 		mux.Handle("GET /api/tenant/item-receipts/{uuid}/audit", tenantChain(irOps.Audit))
 		// Receipts for one order — gated by the purchase order's own permission.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
+
+		// Vendor Bill: dedicated v2 relational module (header + line items +
+		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror
+		// of Invoice — the third Purchases document module, a sibling of
+		// Purchase Order/Item Receipt. Not served through the generic JSONB
+		// router. ConvertToBill (PO -> Vendor Bill) is registered on the
+		// Purchase Order block above, not here — the route lives on the
+		// source, mirroring Requisition -> Purchase Order.
+		vbOps := controllers.NewVendorBillOps()
+		mux.Handle("GET /api/tenant/vendor-bills", tenantChain(vbOps.List))
+		mux.Handle("POST /api/tenant/vendor-bills/search", tenantChain(vbOps.Search))
+		mux.Handle("POST /api/tenant/vendor-bills", tenantChain(vbOps.Create))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/transition", tenantChain(vbOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/approve", tenantChain(vbOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/payment", tenantChain(vbOps.RecordPayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}/payments/{paymentId}", tenantChain(vbOps.RemovePayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/audit", tenantChain(vbOps.Audit))
+
+		// Vendor Payment: dedicated relational module, the accounts-payable
+		// mirror of Payment. Its vendor_payment_application ledger is a
+		// second, fuller path to settle a bill alongside the bill-owned
+		// RecordPayment ledger above. vendorpayment.RecordRefund/RemoveRefund
+		// have no HTTP handler yet, so no /refund route is mounted here.
+		vpOps := controllers.NewVendorPaymentOps()
+		mux.Handle("GET /api/tenant/vendor-payments", tenantChain(vpOps.List))
+		mux.Handle("POST /api/tenant/vendor-payments/search", tenantChain(vpOps.Search))
+		mux.Handle("POST /api/tenant/vendor-payments", tenantChain(vpOps.Create))
+		mux.Handle("GET /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/transition", tenantChain(vpOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/approve", tenantChain(vpOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/apply", tenantChain(vpOps.Apply))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
+		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()

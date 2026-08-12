@@ -89,6 +89,10 @@ CREATE INDEX IF NOT EXISTS idx_identities_tenant ON identities(tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_sso
     ON identities(sso_provider, sso_subject) WHERE sso_provider IS NOT NULL;
 
+-- SAML logout support: last-known IdP session index, set on each SAML login,
+-- read back on SP-initiated logout to build a matching LogoutRequest.
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS sso_session_index TEXT;
+
 -- ── tenant_invites ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tenant_invites (
     id             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,6 +126,57 @@ CREATE TABLE IF NOT EXISTS tenant_sso_configs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_sso_tenant ON tenant_sso_configs(tenant_id);
+
+-- SAML SSO support: protocol discriminator + IdP metadata fields (nullable;
+-- unused by existing OIDC configs, populated when protocol='saml').
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS protocol VARCHAR(50) NOT NULL DEFAULT 'oidc';
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS metadata_url TEXT;
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS idp_entity_id TEXT;
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS sso_url TEXT;
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS slo_url TEXT;
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS certificate_pem_enc TEXT;
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS certificate_fingerprint TEXT;
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS name_id_format VARCHAR(255) NOT NULL DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS metadata_fetched_at TIMESTAMPTZ;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'tenant_sso_configs_protocol_check'
+    ) THEN
+        ALTER TABLE tenant_sso_configs
+            ADD CONSTRAINT tenant_sso_configs_protocol_check CHECK (protocol IN ('oidc', 'saml'));
+    END IF;
+END $$;
+
+-- ── saml_requests ─────────────────────────────────────────────────────
+-- SAML request state: tracks outstanding AuthnRequests so the ACS callback can
+-- validate the response belongs to a real, recent, single-use request and
+-- resolve which tenant initiated it (SAML assertions carry no tenant context
+-- of their own). Rows are short-lived; expired rows are deleted on ACS/cleanup.
+CREATE TABLE IF NOT EXISTS saml_requests (
+    id          TEXT         PRIMARY KEY,
+    tenant_id   UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    provider    VARCHAR(50)  NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saml_requests_expires ON saml_requests(expires_at);
+CREATE INDEX IF NOT EXISTS idx_saml_requests_tenant ON saml_requests(tenant_id);
+
+-- ── saml_login_codes ──────────────────────────────────────────────────
+-- SAML login handoff codes: short-lived, single-use codes exchanged by the
+-- frontend (POST /api/auth/saml/exchange) for a real JWT after ACS succeeds.
+-- Keeping the JWT out of the ACS redirect URL avoids leaking it via browser
+-- history or Referer headers.
+CREATE TABLE IF NOT EXISTS saml_login_codes (
+    code         TEXT         PRIMARY KEY,
+    identity_id  UUID         NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    tenant_id    UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at   TIMESTAMPTZ  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saml_login_codes_expires ON saml_login_codes(expires_at);
 
 -- ── platform_admins ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS platform_admins (

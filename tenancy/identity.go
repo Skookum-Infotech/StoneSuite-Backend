@@ -14,27 +14,28 @@ var ErrIdentityNotFound = errors.New("identity not found")
 
 // Identity is a central login identity in the control plane.
 type Identity struct {
-	ID            string
-	TenantID      string
-	Email         string
-	PasswordHash  string
-	FullName      string
-	EmailVerified bool
-	SSOProvider   string
-	SSOSubject    string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID              string
+	TenantID        string
+	Email           string
+	PasswordHash    string
+	FullName        string
+	EmailVerified   bool
+	SSOProvider     string
+	SSOSubject      string
+	SSOSessionIndex string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ----- Identity writes/reads -------------------------------------------------
 
 const identityColumns = `id, tenant_id, email, COALESCE(password_hash,''), full_name,
-	email_verified, COALESCE(sso_provider,''), COALESCE(sso_subject,''), created_at, updated_at`
+	email_verified, COALESCE(sso_provider,''), COALESCE(sso_subject,''), COALESCE(sso_session_index,''), created_at, updated_at`
 
 func scanIdentity(row pgx.Row) (*Identity, error) {
 	var i Identity
 	err := row.Scan(&i.ID, &i.TenantID, &i.Email, &i.PasswordHash, &i.FullName,
-		&i.EmailVerified, &i.SSOProvider, &i.SSOSubject, &i.CreatedAt, &i.UpdatedAt)
+		&i.EmailVerified, &i.SSOProvider, &i.SSOSubject, &i.SSOSessionIndex, &i.CreatedAt, &i.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrIdentityNotFound
 	}
@@ -124,6 +125,33 @@ func (c *ControlPlane) SetIdentityPassword(ctx context.Context, identityID, pass
 		 email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
 		identityID, passwordHash); err != nil {
 		return fmt.Errorf("set identity password: %w", err)
+	}
+	return nil
+}
+
+// CreateSSOIdentity inserts a central login identity created via SAML/SSO
+// first-login. Unlike CreateIdentity (password path), there is no password
+// hash, and email_verified is always true -- the identity provider already
+// vouched for the address.
+func (c *ControlPlane) CreateSSOIdentity(ctx context.Context, tenantID, email, fullName, ssoProvider, ssoSubject string) (*Identity, error) {
+	q := `INSERT INTO identities (tenant_id, email, full_name, email_verified, sso_provider, sso_subject)
+	      VALUES ($1, $2, $3, TRUE, $4, $5)
+	      RETURNING ` + identityColumns
+	return scanIdentity(c.pool.QueryRow(ctx, q, tenantID, email, fullName, ssoProvider, ssoSubject))
+}
+
+// LinkSSOIdentity sets sso_provider/sso_subject/sso_session_index on an
+// existing identity. Idempotent: safe to call on every successful SAML
+// login, including repeat logins where the values are unchanged. Overwrites
+// any prior (provider, subject, session index) tuple -- the caller
+// (controllers layer) is responsible for auditing changes it considers
+// noteworthy (e.g. a subject that changed since last login) before calling
+// this; this method just performs the write.
+func (c *ControlPlane) LinkSSOIdentity(ctx context.Context, identityID, ssoProvider, ssoSubject, sessionIndex string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE identities SET sso_provider = $2, sso_subject = $3, sso_session_index = $4, updated_at = NOW() WHERE id = $1`,
+		identityID, ssoProvider, ssoSubject, sessionIndex); err != nil {
+		return fmt.Errorf("link sso identity: %w", err)
 	}
 	return nil
 }

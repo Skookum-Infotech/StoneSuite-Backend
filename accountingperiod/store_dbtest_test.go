@@ -231,7 +231,6 @@ func TestGenerateFiscalYear_MultipleYearsAreContiguous(t *testing.T) {
 // TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch proves the batch
 // is atomic: a conflict partway through must undo the years generated before
 // it too, not leave a partial run sitting in the database.
-//
 // GenerateFiscalYear always starts its batch at MAX(fiscal_year_end)+1, so a
 // synchronous pre-insert of a future year (e.g. FY2028) can never collide
 // with the batch -- it just becomes the new frontier and the batch starts

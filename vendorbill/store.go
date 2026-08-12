@@ -78,13 +78,6 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
-// isUniqueViolation reports whether err is a PostgreSQL unique-constraint
-// violation (code 23505).
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
 // colVal pairs a column name with its bind value (and an optional type cast
 // suffix, e.g. "::date") so an INSERT/UPDATE's column list and argument list
 // are always built from the same slice.

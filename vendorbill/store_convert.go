@@ -32,12 +32,12 @@ type purchaseOrderSnapshot struct {
 	statusCode                                  string
 	vendorID                                    int
 	vendorName                                  string
-	referenceNumber                              string
-	paymentTermsID                               *int
-	currencyID                                   *int
-	salesTaxPercent                              float64
-	memo, notes, internalNotes, termsConditions  string
-	customFields                                 map[string]any
+	referenceNumber                             string
+	paymentTermsID                              *int
+	currencyID                                  *int
+	salesTaxPercent                             float64
+	memo, notes, internalNotes, termsConditions string
+	customFields                                map[string]any
 }
 
 // loadPurchaseOrderSnapshot loads a live purchase order's header snapshot by

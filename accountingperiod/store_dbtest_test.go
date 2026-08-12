@@ -41,6 +41,7 @@ func freshCalendar(t *testing.T, pool *pgxpool.Pool) {
 		ctx := context.Background()
 		_, _ = pool.Exec(ctx, `DELETE FROM accounting_period_history`)
 		_, _ = pool.Exec(ctx, `DELETE FROM accounting_period`)
+		_, _ = pool.Exec(ctx, `DELETE FROM fiscal_quarter`)
 		_, _ = pool.Exec(ctx, `DELETE FROM fiscal_year`)
 		_, _ = pool.Exec(ctx, `
 			UPDATE accounting_settings
@@ -230,21 +231,38 @@ func TestGenerateFiscalYear_MultipleYearsAreContiguous(t *testing.T) {
 // TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch proves the batch
 // is atomic: a conflict partway through must undo the years generated before
 // it too, not leave a partial run sitting in the database.
+//
+// GenerateFiscalYear always starts its batch at MAX(fiscal_year_end)+1, so a
+// synchronous pre-insert of a future year (e.g. FY2028) can never collide
+// with the batch -- it just becomes the new frontier and the batch starts
+// after it. A real collision only happens when a second, already-committed
+// writer beats this transaction to the exact next year while it is mid-batch
+// -- reproduced here by driving generateYear directly (the same call
+// GenerateFiscalYear's loop makes) inside a transaction, exactly as
+// GenerateFiscalYear does, then having a second connection win FY2028 first.
 func TestGenerateFiscalYear_MultiYearFailureRollsBackWholeBatch(t *testing.T) {
 	pool := testPool(t)
 	freshCalendar(t, pool)
 	ctx := context.Background()
 	setupCalendarYear(t, pool) // FY2026
 
-	// Simulate FY2028 already existing (e.g. a concurrent request), so a
-	// 3-year batch starting at FY2027 collides on its second year.
-	_, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = generateYear(ctx, tx, day(2027, 1, 1), nil, actionGenerate, 0)
+	require.NoError(t, err, "FY2027 generates cleanly, same as the batch's first year")
+
+	// A concurrent request wins FY2028 first, over its own connection, and
+	// commits before this transaction gets there.
+	_, err = pool.Exec(ctx, `
 		INSERT INTO fiscal_year (fiscal_year_name, fiscal_year_start, fiscal_year_end)
 		VALUES ('FY2028', $1, $2)`, day(2028, 1, 1), day(2028, 12, 31))
 	require.NoError(t, err)
 
-	_, err = GenerateFiscalYear(ctx, pool, GenerateInput{Years: 3}, 0)
-	require.Error(t, err)
+	_, err = generateYear(ctx, tx, day(2028, 1, 1), nil, actionGenerate, 0)
+	require.Error(t, err, "FY2028 must collide with the concurrently committed row")
+	_ = tx.Rollback(ctx)
 
 	var count int
 	require.NoError(t, pool.QueryRow(ctx,

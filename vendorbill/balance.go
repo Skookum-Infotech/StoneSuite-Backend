@@ -59,6 +59,28 @@ func LockForUpdate(ctx context.Context, tx pgx.Tx, billUUID string) (Locked, err
 	return l, nil
 }
 
+// LockForUpdateByID is LockForUpdate keyed on the internal serial id, for
+// callers that already hold it (e.g. vendorpayment's apply/refund cascades,
+// which reach vendor_bill only after locking their own vendor_payment row).
+func LockForUpdateByID(ctx context.Context, tx pgx.Tx, internalID int) (Locked, error) {
+	l := Locked{InternalID: internalID}
+	err := tx.QueryRow(ctx, `
+		SELECT vb.vendor_bill_vendor_id, rs.record_status_code,
+		       vb.vendor_bill_grand_total, vb.vendor_bill_amount_paid
+		FROM vendor_bill vb
+		JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
+		WHERE vb.vendor_bill_id = $1
+		FOR UPDATE OF vb`, internalID,
+	).Scan(&l.VendorID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Locked{}, ClientError{Msg: "Unknown or deleted vendor bill."}
+	}
+	if err != nil {
+		return Locked{}, fmt.Errorf("lock vendor bill by id: %w", err)
+	}
+	return l, nil
+}
+
 // DeriveStatus re-derives a vendor bill's status purely from what has been
 // settled against it (AD-7).
 //
@@ -81,19 +103,41 @@ func DeriveStatus(currentCode string, amountPaid, grandTotal float64) string {
 
 // RecomputeBalance is the sole writer of a vendor bill's AP rollup (AD-7).
 //
-// It recomputes vendor_bill_amount_paid from the live vendor_bill_payment
-// ledger, derives balance_due and status, and writes a vendor_bill_history
-// row -- all inside tx. RecordPayment and RemovePayment both route through
-// this so the balance identity exists in exactly one place.
+// A bill can be settled two ways: the bill-owned vendor_bill_payment ledger
+// (RecordPayment/RemovePayment) or a standalone vendor_payment applied
+// against it (vendorpayment.Apply/Unapply/RecordRefund) -- both call this
+// with the same Locked bill, so amount_paid is always the sum of whichever
+// ledgers actually have live rows for this bill, never just one. It derives
+// balance_due and status from that combined total, and writes a
+// vendor_bill_history row -- all inside tx.
 func RecomputeBalance(ctx context.Context, tx pgx.Tx, l Locked, action string, actorEmployeeID int) error {
-	var amountPaid float64
+	var billPayments, applied, refunded float64
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM vendor_bill_payment
 		WHERE vendor_bill_id = $1 AND deleted_at IS NULL`,
-		l.InternalID).Scan(&amountPaid); err != nil {
+		l.InternalID).Scan(&billPayments); err != nil {
 		return fmt.Errorf("sum vendor bill payments: %w", err)
 	}
-	amountPaid = round2(amountPaid)
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(vpa.application_amount), 0)
+		FROM vendor_payment_application vpa
+		JOIN vendor_payment vp ON vp.vendor_payment_id = vpa.vendor_payment_id
+		WHERE vpa.vendor_bill_id = $1 AND vpa.application_deleted_at IS NULL AND vp.vendor_payment_deleted_at IS NULL`,
+		l.InternalID).Scan(&applied); err != nil {
+		return fmt.Errorf("sum vendor payment applications: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(vpr.refund_amount), 0)
+		FROM vendor_payment_refund vpr
+		JOIN vendor_payment vp ON vp.vendor_payment_id = vpr.vendor_payment_id
+		WHERE vpr.vendor_bill_id = $1 AND vpr.refund_deleted_at IS NULL AND vp.vendor_payment_deleted_at IS NULL`,
+		l.InternalID).Scan(&refunded); err != nil {
+		return fmt.Errorf("sum vendor payment refunds: %w", err)
+	}
+	amountPaid := round2(billPayments + applied - refunded)
+	if amountPaid < 0 {
+		amountPaid = 0
+	}
 
 	updated := Locked{GrandTotal: l.GrandTotal, AmountPaid: amountPaid}
 	balanceDue := updated.BalanceDue()

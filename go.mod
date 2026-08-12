@@ -1,6 +1,6 @@
 module stonesuite-backend
 
-go 1.25.11
+go 1.25.12
 
 require (
 	github.com/beevik/etree v1.7.0

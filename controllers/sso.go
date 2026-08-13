@@ -376,7 +376,7 @@ var publicEmailDomainBlocklist = map[string]bool{
 	"outlook.com": true, "hotmail.com": true, "live.com": true, "msn.com": true,
 	"yahoo.com": true, "ymail.com": true,
 	"icloud.com": true, "me.com": true, "mac.com": true,
-	"aol.com": true,
+	"aol.com":        true,
 	"protonmail.com": true, "proton.me": true,
 	"zoho.com": true,
 }

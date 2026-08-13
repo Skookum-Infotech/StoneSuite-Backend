@@ -190,6 +190,46 @@ func TestCreate_InactiveVendorRejected(t *testing.T) {
 	})
 }
 
+// Scenario 1b: Update rejects a non-positive amount with a clean
+// ClientError (400), the same way Create does -- before this test, a PATCH
+// with amount <= 0 fell through to the DB's chk_vcrd_amount_pos CHECK and
+// surfaced as an unhandled 500 instead.
+func TestUpdate_AmountValidation(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	vendorUUID := seedVendor(t, pool)
+
+	vc, err := Create(ctx, pool, CreateVendorCreditInput{VendorUUID: vendorUUID, Reason: "Test", Amount: 100}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	cases := []float64{0, -50}
+	for _, amt := range cases {
+		amt := amt
+		t.Run("rejects non-positive amount", func(t *testing.T) {
+			_, err := Update(ctx, pool, vc.ID, UpdateVendorCreditInput{Amount: &amt}, 1)
+			if !IsClientError(err) {
+				t.Fatalf("Update(amount=%v) = %v, want ClientError", amt, err)
+			}
+			if !strings.Contains(err.Error(), "greater than zero") {
+				t.Errorf("message = %q, want it to contain \"greater than zero\"", err.Error())
+			}
+		})
+	}
+
+	t.Run("accepts a positive amount", func(t *testing.T) {
+		newAmt := 250.0
+		updated, err := Update(ctx, pool, vc.ID, UpdateVendorCreditInput{Amount: &newAmt}, 1)
+		if err != nil {
+			t.Fatalf("Update(amount=250): %v", err)
+		}
+		if updated.GrandTotal != 250 || updated.UnappliedAmount != 250 {
+			t.Errorf("grandTotal/unapplied = %v/%v, want 250/250", updated.GrandTotal, updated.UnappliedAmount)
+		}
+	})
+}
+
 // Scenario 2: Apply rejects a target bill in DRFT, PAID, VOID, or
 // soft-deleted -- none of those are in vendorbill.PayableStatuses (or, for
 // soft-deleted, resolve at all).

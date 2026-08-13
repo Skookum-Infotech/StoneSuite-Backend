@@ -19,6 +19,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorC
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Cannot edit a " + statusCode + " vendor credit; only Draft credits can be edited."}
 	}
+	if in.Amount != nil && *in.Amount <= 0 {
+		return nil, ClientError{Msg: "amount must be greater than zero."}
+	}
 
 	// The column is NOT NULL DEFAULT '{}'. A nil Go map encodes as SQL NULL, so
 	// every PATCH that omits customFields would 500 without this guard.

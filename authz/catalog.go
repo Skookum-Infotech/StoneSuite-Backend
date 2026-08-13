@@ -31,6 +31,12 @@ const (
 	ResourceSSOConfig      Resource = "sso_config"      // per-tenant SSO settings
 	ResourceAudit          Resource = "audit"           // audit log
 
+	// ResourceDashboardWidget covers which dashboard widgets each role's
+	// members may see (role_dashboard_widgets) -- separate from ResourceRole
+	// so a tenant can delegate dashboard curation without handing out full
+	// role-editing rights.
+	ResourceDashboardWidget Resource = "dashboard_widget"
+
 	// Sales module resources
 	ResourceInventoryItem Resource = "inventory_item"
 	ResourceEstimate      Resource = "estimate"
@@ -364,6 +370,9 @@ var catalog = []Permission{
 
 	{ResourceSSOConfig, ActionRead},
 	{ResourceSSOConfig, ActionConfigure},
+
+	{ResourceDashboardWidget, ActionRead},
+	{ResourceDashboardWidget, ActionConfigure},
 
 	{ResourceAudit, ActionRead},
 }

@@ -77,6 +77,61 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// setAuthCookies writes the auth_token cookie (and, when refreshRaw is
+// non-empty, the refresh_token cookie). SameSite/Secure come from config so
+// the same binary behaves safely differently across deployments: "lax" for
+// same-origin-proxied deployments, "none" for deployments where the frontend
+// calls this backend cross-origin directly. When "none", it also issues a
+// JS-readable csrf_token cookie — the double-submit CSRF check in
+// middleware.RequireAuth activates automatically alongside it.
+func setAuthCookies(w http.ResponseWriter, token string, d time.Duration, refreshRaw string, refreshExpiry time.Time) error {
+	sameSite := http.SameSiteLaxMode
+	if config.AppConfig.CookieSameSite == "none" {
+		sameSite = http.SameSiteNoneMode
+	}
+	secure := config.AppConfig.IsProduction()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: sameSite,
+		MaxAge:   int(d.Seconds()),
+	})
+
+	if refreshRaw != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    refreshRaw,
+			Path:     "/api/auth",
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: sameSite,
+			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
+		})
+	}
+
+	if config.AppConfig.CookieSameSite == "none" {
+		csrfToken, err := randomToken()
+		if err != nil {
+			return fmt.Errorf("generate csrf token: %w", err)
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "csrf_token",
+			Value:    csrfToken,
+			Path:     "/",
+			HttpOnly: false, // must be JS-readable so the frontend can echo it back
+			Secure:   secure,
+			SameSite: sameSite,
+			MaxAge:   int(d.Seconds()),
+		})
+	}
+
+	return nil
+}
+
 // inviteExpiry returns the expiry instant for an invite. Defaults to the
 // configured INVITE_EXPIRY_HOURS (24h) when hours <= 0.
 func inviteExpiry(hours int) time.Time {
@@ -682,25 +737,9 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	// interceptor in the frontend Axios client serves as a fallback for the
 	// in-memory token that exists immediately after login.
 	accessExpiry := time.Now().Add(d)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   config.AppConfig.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(d.Seconds()),
-	})
-	if refreshRaw != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "refresh_token",
-			Value:    refreshRaw,
-			Path:     "/api/auth",
-			HttpOnly: true,
-			Secure:   config.AppConfig.IsProduction(),
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
-		})
+	if err := setAuthCookies(w, token, d, refreshRaw, refreshExpiry); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to establish session.")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -863,25 +902,9 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessExpiry := time.Now().Add(d)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "auth_token",
-		Value:    newToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   config.AppConfig.IsProduction(),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(d.Seconds()),
-	})
-	if refreshRaw != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "refresh_token",
-			Value:    refreshRaw,
-			Path:     "/api/auth",
-			HttpOnly: true,
-			Secure:   config.AppConfig.IsProduction(),
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   int(time.Until(refreshExpiry).Seconds()),
-		})
+	if err := setAuthCookies(w, newToken, d, refreshRaw, refreshExpiry); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -910,9 +933,9 @@ func issueRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, identityID
 	return raw, expiry, nil
 }
 
-// clearAuthCookies sets MaxAge=-1 on both auth cookies to force browser deletion.
+// clearAuthCookies sets MaxAge=-1 on all session cookies to force browser deletion.
 func clearAuthCookies(w http.ResponseWriter) {
-	for _, name := range []string{"auth_token", "refresh_token"} {
+	for _, name := range []string{"auth_token", "refresh_token", "csrf_token"} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
 			Value:    "",
@@ -1097,6 +1120,58 @@ func (h *TenantOps) RepairBucketCORS(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "CORS applied to bucket " + tenant.R2Bucket,
 		"bucket":  tenant.R2Bucket,
+	})
+}
+
+// RepairBucket POST /api/platform/tenants/{id}/repair-bucket
+// Creates the tenant's R2 bucket and records it on the tenant row. Use when a
+// tenant was provisioned before CLOUDFLARE_API_TOKEN was configured, so the
+// automatic bucket-creation step in the provisioner was skipped and r2_bucket
+// was left blank (attachment endpoints then 503 forever, since provisioning
+// only runs once). Applies CORS immediately after creation. Platform-admin only.
+func (h *TenantOps) RepairBucket(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requirePlatformAdmin(r); !ok {
+		fail(w, http.StatusForbidden, "Platform admin required.")
+		return
+	}
+	if h.CF == nil || !h.CF.IsConfigured() {
+		fail(w, http.StatusServiceUnavailable, "Cloudflare API not configured (set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN).")
+		return
+	}
+
+	id := r.PathValue("id")
+	tenant, err := h.CP.TenantByID(r.Context(), id)
+	if err != nil {
+		fail(w, http.StatusNotFound, "Tenant not found.")
+		return
+	}
+	if tenant.R2Bucket != "" {
+		fail(w, http.StatusBadRequest, "Tenant already has an R2 bucket assigned: "+tenant.R2Bucket)
+		return
+	}
+
+	bucket := storage.BucketName(tenant.Slug)
+	if err := h.CF.CreateBucket(r.Context(), bucket); err != nil {
+		log.Printf("repair-bucket: create bucket %s for tenant %s: %v", bucket, tenant.Slug, err)
+		fail(w, http.StatusInternalServerError, "Failed to create bucket: "+err.Error())
+		return
+	}
+	if err := h.CF.SetBucketCORS(r.Context(), bucket, h.CORSOrigins); err != nil {
+		log.Printf("repair-bucket: set cors on bucket %s for tenant %s: %v", bucket, tenant.Slug, err)
+		fail(w, http.StatusInternalServerError, "Bucket created but failed to set CORS: "+err.Error())
+		return
+	}
+	if err := h.CP.SetTenantR2Bucket(r.Context(), tenant.ID, bucket); err != nil {
+		log.Printf("repair-bucket: record bucket %s for tenant %s: %v", bucket, tenant.Slug, err)
+		fail(w, http.StatusInternalServerError, "Bucket created but failed to record it: "+err.Error())
+		return
+	}
+
+	log.Printf("repair-bucket: created and assigned bucket %s for tenant %s", bucket, tenant.Slug)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"message": "R2 bucket created and assigned: " + bucket,
+		"bucket":  bucket,
 		"origins": h.CORSOrigins,
 	})
 }

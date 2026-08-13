@@ -29,6 +29,13 @@ type Config struct {
 	DBName                 string
 	CorsOrigin             string
 	FrontendURL            string
+	// CookieSameSite controls the SameSite attribute on auth cookies (auth_token,
+	// refresh_token, csrf_token). "lax" (default) is for deployments where the
+	// frontend is same-origin with the API (via a reverse proxy). "none" is for
+	// deployments where the frontend calls this backend cross-origin directly —
+	// it requires the double-submit CSRF check in middleware.RequireAuth, which
+	// activates automatically when this is "none".
+	CookieSameSite string
 	// InviteExpiryHours is the default lifetime of an onboarding invite link.
 	InviteExpiryHours int
 	// Multi-tenant control plane
@@ -133,6 +140,7 @@ func Load() {
 		RefreshTokenExpiresIn:  getEnv("REFRESH_TOKEN_EXPIRES_IN", "24h"),
 		CorsOrigin:             getEnv("CORS_ORIGIN", "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176"),
 		FrontendURL:            getEnv("FRONTEND_URL", "http://localhost:5173"),
+		CookieSameSite:         getEnv("COOKIE_SAME_SITE_MODE", "lax"),
 		InviteExpiryHours:      getEnvInt("INVITE_EXPIRY_HOURS", 24),
 		// Multi-tenant control plane + provisioning
 		ControlPlaneDBURL:   getEnv("CONTROL_PLANE_DB_URL", ""),

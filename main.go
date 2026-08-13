@@ -303,6 +303,7 @@ func main() {
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
 		mux.Handle("POST /api/platform/tenants/{id}/repair-cors", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucketCORS)))
+		mux.Handle("POST /api/platform/tenants/{id}/repair-bucket", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucket)))
 		mux.Handle("/api/platform/invites", middleware.RequireAuth(http.HandlerFunc(tenantOps.InviteCustomer)))
 		mux.Handle("/api/platform/tenants", middleware.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
@@ -387,6 +388,14 @@ func main() {
 		// Active-role context switching: sets/clears which one of the caller's
 		// assigned roles is currently enforced (see authz.EffectiveGrants).
 		mux.Handle("POST /api/tenant/auth/switch-role", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.SwitchRole))))
+
+		// Role-based dashboard widget allocation. Me is available to every
+		// authenticated user (no dashboard_widget permission needed); the
+		// admin allocation page's GET/PUT go through RoleAllocations, gated
+		// by dashboard_widget:read / dashboard_widget:configure per method.
+		dashboardUI := controllers.NewDashboardUIOps()
+		mux.Handle("GET /api/tenant/dashboard/widgets/me", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.Me))))
+		mux.Handle("/api/tenant/dashboard/widgets/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.RoleAllocations))))
 
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
@@ -812,6 +821,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
 		// Item Receipt: the second Purchases document module — goods arriving
@@ -832,6 +842,45 @@ func main() {
 		mux.Handle("GET /api/tenant/item-receipts/{uuid}/audit", tenantChain(irOps.Audit))
 		// Receipts for one order — gated by the purchase order's own permission.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
+
+		// Vendor Bill: dedicated v2 relational module (header + line items +
+		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror
+		// of Invoice — the third Purchases document module, a sibling of
+		// Purchase Order/Item Receipt. Not served through the generic JSONB
+		// router. ConvertToBill (PO -> Vendor Bill) is registered on the
+		// Purchase Order block above, not here — the route lives on the
+		// source, mirroring Requisition -> Purchase Order.
+		vbOps := controllers.NewVendorBillOps()
+		mux.Handle("GET /api/tenant/vendor-bills", tenantChain(vbOps.List))
+		mux.Handle("POST /api/tenant/vendor-bills/search", tenantChain(vbOps.Search))
+		mux.Handle("POST /api/tenant/vendor-bills", tenantChain(vbOps.Create))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/transition", tenantChain(vbOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/approve", tenantChain(vbOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/payment", tenantChain(vbOps.RecordPayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
+		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}/payments/{paymentId}", tenantChain(vbOps.RemovePayment))
+		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/audit", tenantChain(vbOps.Audit))
+
+		// Vendor Payment: dedicated relational module, the accounts-payable
+		// mirror of Payment. Its vendor_payment_application ledger is a
+		// second, fuller path to settle a bill alongside the bill-owned
+		// RecordPayment ledger above. vendorpayment.RecordRefund/RemoveRefund
+		// have no HTTP handler yet, so no /refund route is mounted here.
+		vpOps := controllers.NewVendorPaymentOps()
+		mux.Handle("GET /api/tenant/vendor-payments", tenantChain(vpOps.List))
+		mux.Handle("POST /api/tenant/vendor-payments/search", tenantChain(vpOps.Search))
+		mux.Handle("POST /api/tenant/vendor-payments", tenantChain(vpOps.Create))
+		mux.Handle("GET /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/transition", tenantChain(vpOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/approve", tenantChain(vpOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/apply", tenantChain(vpOps.Apply))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
+		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
@@ -932,7 +981,7 @@ func main() {
 		}
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
 
 		// Handle Preflight OPTIONS requests immediately
 		if r.Method == http.MethodOptions {
@@ -1031,6 +1080,13 @@ func main() {
 // to existing tenant DBs on every boot without manual intervention. There is
 // no version gate: schema.sql is the single canonical source of truth and is
 // always safe to re-run.
+//
+// Eligibility is status==active && db_name set, not Servable() — a tenant
+// whose migration_status is stuck short of "ok" (e.g. an interrupted first
+// run) still has a real database and must be attempted here, since this is
+// the only code path that can ever promote migration_status back to "ok".
+// Gating on Servable() would make that state permanent: unservable because
+// migration_status isn't "ok", but never retried because it's unservable.
 func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
 	tenants, err := cp.ListTenants(ctx)
 	if err != nil {
@@ -1038,7 +1094,7 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 		return
 	}
 	for _, t := range tenants {
-		if !t.Servable() {
+		if t.Status != tenancy.StatusActive || t.DBName == "" {
 			continue
 		}
 		pool, err := router.PoolFor(ctx, &t)
@@ -1055,6 +1111,13 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 			log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
 		} else {
 			log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
+		}
+		if t.MigrationStatus != tenancy.MigrationOK {
+			if err := cp.SetTenantMigrationStatus(ctx, t.ID, tenancy.MigrationOK); err != nil {
+				log.Printf("migrate-all: tenant %s: failed to recover migration_status to ok: %v", t.Slug, err)
+			} else {
+				log.Printf("migrate-all: tenant %s: migration_status recovered to ok", t.Slug)
+			}
 		}
 		if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
 			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)

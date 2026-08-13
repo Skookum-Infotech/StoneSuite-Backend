@@ -60,7 +60,7 @@ func FetchIdPMetadata(ctx context.Context, metadataURL string) (*IdPMetadata, er
 	if err != nil {
 		return nil, fmt.Errorf("saml: fetching idp metadata: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("saml: idp metadata request returned status %d", resp.StatusCode)

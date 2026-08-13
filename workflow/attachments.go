@@ -188,6 +188,27 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 		return RecordAccessInfo{}, fmt.Errorf("lookup cash transfer: %w", err)
 	}
 
+	// vendor_bill: dedicated relational module (Vendor Bill spec AD-11), owner
+	// resolved the same way (employee -> users.id); no team column. This is
+	// the first document module wired into the generic attachment mechanism
+	// -- attachments were explicitly requested for Vendor Bill, and the
+	// mechanism (workflow_record_attachments, FK deliberately dropped in
+	// migration 023) already supports any record UUID regardless of table.
+	var vbOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM vendor_bill vb
+		LEFT JOIN employee e ON e.employee_id = vb.vendor_bill_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE vb.vendor_bill_uuid = $1::uuid AND vb.vendor_bill_deleted_at IS NULL`,
+		recordID).Scan(&vbOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "vendor_bill", OwnerUserID: vbOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup vendor bill: %w", err)
+	}
+
 	return RecordAccessInfo{}, ErrRecordNotFound
 }
 

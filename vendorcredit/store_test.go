@@ -215,8 +215,11 @@ func TestApply_BillStatusGating(t *testing.T) {
 			if err == nil {
 				t.Fatalf("apply against %s succeeded, want rejection", tc.name)
 			}
-			if !vendorbill.IsClientError(err) {
-				t.Fatalf("apply against %s: err = %v, want vendorbill.ClientError", tc.name, err)
+			// DRFT/PAID/VOID resolve in vendorbill.LockForUpdate fine and fail
+			// vendorcredit's own PayableStatuses gate (vendorcredit.ClientError);
+			// soft-deleted doesn't resolve there at all (vendorbill.ClientError).
+			if !IsClientError(err) && !vendorbill.IsClientError(err) {
+				t.Fatalf("apply against %s: err = %v, want a ClientError", tc.name, err)
 			}
 		})
 	}

@@ -31,20 +31,34 @@ type lockedCredit struct {
 // inside tx. It is the FIRST lock taken on any apply path: the global lock
 // order is vendor_credit < vendor_bill, which keeps vendor_bill always last
 // and so makes a deadlock cycle impossible (spec AD-6).
+//
+// Deliberately two queries, not one JOIN: Postgres's EvalPlanQual row-lock
+// re-check does not re-run a JOIN when a blocked FOR UPDATE unblocks after a
+// concurrent transaction changes the locked row's join key -- here that's
+// vendor_credit_status, which recomputeCredit updates on every apply. A
+// single locked JOIN query would then spuriously report zero rows for the
+// second of two concurrent Apply calls instead of returning the row with its
+// now-current status. Locking status_id bare, then resolving its code as a
+// second, unlocked query, sidesteps the re-check entirely.
 func lockVendorCreditForUpdate(ctx context.Context, tx pgx.Tx, creditUUID string) (lockedCredit, error) {
 	var lc lockedCredit
+	var statusID int
 	err := tx.QueryRow(ctx, `
-		SELECT vc.vendor_credit_id, vc.vendor_credit_vendor_id, rs.record_status_code, vc.vendor_credit_grand_total
+		SELECT vc.vendor_credit_id, vc.vendor_credit_vendor_id, vc.vendor_credit_status, vc.vendor_credit_grand_total
 		FROM vendor_credit vc
-		JOIN lkp_record_status rs ON rs.record_status_id = vc.vendor_credit_status
 		WHERE vc.vendor_credit_uuid = $1 AND vc.vendor_credit_deleted_at IS NULL
 		FOR UPDATE OF vc`, creditUUID,
-	).Scan(&lc.internalID, &lc.vendorID, &lc.statusCode, &lc.grandTotal)
+	).Scan(&lc.internalID, &lc.vendorID, &statusID, &lc.grandTotal)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedCredit{}, ErrNotFound
 	}
 	if err != nil {
 		return lockedCredit{}, fmt.Errorf("lock vendor credit: %w", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`SELECT record_status_code FROM lkp_record_status WHERE record_status_id = $1`, statusID,
+	).Scan(&lc.statusCode); err != nil {
+		return lockedCredit{}, fmt.Errorf("resolve vendor credit status: %w", err)
 	}
 	return lc, nil
 }

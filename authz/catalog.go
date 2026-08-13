@@ -329,6 +329,12 @@ var catalog = []Permission{
 	{ResourceVendorCredit, ActionUpdate},
 	{ResourceVendorCredit, ActionDelete},
 	{ResourceVendorCredit, ActionTransition},
+	// Approving a vendor credit is what authorizes real credit against AP, so
+	// it is a distinct capability from moving the record around: a purchasing
+	// role can hold create/read/update without ever being able to approve its
+	// own drafts. Every other transition uses ActionTransition (mirrors
+	// ResourceCreditMemo, ResourceRefund, and ResourceItemReceipt above).
+	{ResourceVendorCredit, ActionApprove},
 
 	{ResourceExpense, ActionCreate},
 	{ResourceExpense, ActionRead},

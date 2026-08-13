@@ -15,7 +15,7 @@ import (
 // report. Path: POST /api/auth/saml/{provider}/logout (auth required)
 func (h *SAMLAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}
@@ -92,7 +92,7 @@ func (h *SAMLAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
 // the IdP sends (or doesn't send) back. Path: GET /api/auth/saml/{provider}/logout-response
 func (h *SAMLAuthOps) LogoutResponse(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}

@@ -38,10 +38,26 @@ func NewSSOOps(cp *tenancy.ControlPlane, cipher *secret.Cipher) *SSOOps {
 // ssoProviders is the whitelist of supported identity providers.
 var ssoProviders = map[string]bool{"entra": true, "cognito": true, "okta": true}
 
-// samlProviders restricts protocol="saml" configs to the providers this SAML
-// implementation actually supports. Okta SAML is out of scope for this
-// implementation (OIDC/Okta is unaffected and keeps working via ssoProviders).
+// samlProviders are the SAML providers with a dedicated, first-class setup
+// experience (frontend walkthrough pages, docs). Not a hard whitelist --
+// isValidSAMLProvider (below) also accepts any provider matching
+// samlProviderSlugPattern, so a tenant can connect a SAML IdP this codebase
+// has no bespoke UI for (Okta, OneLogin, ADFS, ...) under a custom slug.
 var samlProviders = map[string]bool{"entra": true, "cognito": true}
+
+// samlProviderSlugPattern validates a caller-supplied SAML provider slug for
+// any value not already in samlProviders: lowercase letters/digits/hyphens,
+// 2-30 chars, must start with a letter. Kept conservative because this value
+// becomes a URL path segment (/api/auth/saml/{provider}/acs) and the SP
+// entity id suffix (spConfig).
+var samlProviderSlugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,29}$`)
+
+// isValidSAMLProvider reports whether provider is acceptable for a
+// protocol=saml config or SAML auth-flow route: one of the first-class
+// providers, or any slug matching samlProviderSlugPattern.
+func isValidSAMLProvider(provider string) bool {
+	return samlProviders[provider] || samlProviderSlugPattern.MatchString(provider)
+}
 
 // ssoProtocolOIDC and ssoProtocolSAML are the two protocol values
 // tenant_sso_configs.protocol accepts.
@@ -561,8 +577,8 @@ func validateSSORequest(req ssoConfigRequest, requireSecret bool) (tenancy.SSOCo
 
 	provider := strings.ToLower(strings.TrimSpace(req.Provider))
 	if protocol == ssoProtocolSAML {
-		if !samlProviders[provider] {
-			return tenancy.SSOConfigInput{}, "For protocol=saml, provider must be one of: entra, cognito."
+		if !isValidSAMLProvider(provider) {
+			return tenancy.SSOConfigInput{}, "For protocol=saml, provider must be entra, cognito, or a custom slug (lowercase letters, digits, hyphens, 2-30 chars, starting with a letter)."
 		}
 	} else {
 		if !ssoProviders[provider] {

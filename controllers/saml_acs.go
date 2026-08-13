@@ -87,7 +87,7 @@ func bestEffortNameFromAssertion(assertion *saml.ParsedAssertion) string {
 // client-supplied. Path: POST /api/auth/saml/{provider}/acs
 func (h *SAMLAuthOps) ACS(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}

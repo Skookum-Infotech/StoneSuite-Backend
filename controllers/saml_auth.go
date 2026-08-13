@@ -59,7 +59,7 @@ func safeReturnTo(s string) bool {
 // auth, no DB call. Path: GET /api/auth/saml/{provider}/metadata
 func (h *SAMLAuthOps) Metadata(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}
@@ -81,7 +81,7 @@ func (h *SAMLAuthOps) Metadata(w http.ResponseWriter, r *http.Request) {
 // Path: GET /api/auth/saml/{provider}/sp-info
 func (h *SAMLAuthOps) SPInfo(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}
@@ -153,7 +153,7 @@ func (h *SAMLAuthOps) Discover(w http.ResponseWriter, r *http.Request) {
 // Path: GET /api/auth/saml/{provider}/initiate?tenant_slug=...|tenant_id=...
 func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}

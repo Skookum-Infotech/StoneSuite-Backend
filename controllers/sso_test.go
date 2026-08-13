@@ -46,9 +46,14 @@ func TestValidateSSORequest(t *testing.T) {
 			r.Provider = " Cognito "
 			r.MetadataURL = "https://idp.example.com/metadata"
 		}, requireSecret: true, wantErr: false, wantProvider: "cognito", wantProtocol: "saml"},
-		{name: "SAML with okta provider rejected", mutate: func(r *ssoConfigRequest) {
+		{name: "SAML with custom okta slug accepted", mutate: func(r *ssoConfigRequest) {
 			r.Protocol = "saml"
 			r.Provider = "okta"
+			r.MetadataURL = "https://idp.example.com/metadata"
+		}, requireSecret: true, wantErr: false, wantProvider: "okta", wantProtocol: "saml"},
+		{name: "SAML with malformed provider slug rejected", mutate: func(r *ssoConfigRequest) {
+			r.Protocol = "saml"
+			r.Provider = "Not_Valid!"
 			r.MetadataURL = "https://idp.example.com/metadata"
 		}, requireSecret: true, wantErr: true},
 		{name: "SAML missing metadata_url rejected", mutate: func(r *ssoConfigRequest) {

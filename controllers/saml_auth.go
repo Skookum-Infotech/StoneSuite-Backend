@@ -165,6 +165,16 @@ func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Provide exactly one of tenant_slug or tenant_id.")
 		return
 	}
+	if h.cp == nil {
+		// Defensively unreachable -- NewSAMLAuthOps always wires a real
+		// ControlPlane -- but never trust that invariant blindly (same
+		// posture as the h.cipher nil-check below). isValidSAMLProvider now
+		// accepts any well-formed custom slug, not just entra/cognito, so a
+		// provider reaching this point is no longer guaranteed to be one
+		// this handler group was constructed to serve.
+		fail(w, http.StatusInternalServerError, "SAML sign-in is not available.")
+		return
+	}
 
 	var tenant *tenancy.Tenant
 	var err error

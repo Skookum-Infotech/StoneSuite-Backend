@@ -103,8 +103,11 @@ func tenantUnservableMessage(t *Tenant) string {
 		return "This workspace has not been activated yet."
 	case t.MigrationStatus == MigrationFailed:
 		return "This workspace is temporarily unavailable (maintenance)."
-	case t.Status == StatusProvisioning, t.DBName == "":
-		// Provisioning, or active-but-not-yet-provisioned (no DB).
+	case t.Status == StatusProvisioning, t.DBName == "", t.MigrationStatus != MigrationOK:
+		// Provisioning, active-but-not-yet-provisioned (no DB), or active
+		// with a DB but migration_status stuck short of "ok" (e.g. an
+		// interrupted first migration run) — same user-facing message
+		// since the caller can't tell these apart.
 		return "Your workspace is still being set up. Please try again shortly."
 	default:
 		return "This workspace is not available."

@@ -67,16 +67,18 @@ func TestTenantUnservableMessage(t *testing.T) {
 		name      string
 		status    string
 		migration string
+		dbName    string
 		wantSub   string
 	}{
-		{"provisioning", StatusProvisioning, MigrationOK, "still being set up"},
-		{"suspended", StatusSuspended, MigrationOK, "suspended"},
-		{"deleted", StatusDeleted, MigrationOK, "deleted"},
-		{"migration failed", StatusActive, MigrationFailed, "maintenance"},
+		{"provisioning", StatusProvisioning, MigrationOK, "", "still being set up"},
+		{"suspended", StatusSuspended, MigrationOK, "tenant_acme", "suspended"},
+		{"deleted", StatusDeleted, MigrationOK, "tenant_acme", "deleted"},
+		{"migration failed", StatusActive, MigrationFailed, "tenant_acme", "maintenance"},
+		{"active but migration pending with db", StatusActive, MigrationPending, "tenant_acme", "still being set up"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := tenantUnservableMessage(&Tenant{Status: tc.status, MigrationStatus: tc.migration})
+			msg := tenantUnservableMessage(&Tenant{Status: tc.status, MigrationStatus: tc.migration, DBName: tc.dbName})
 			if msg == "" {
 				t.Fatal("expected a non-empty message")
 			}

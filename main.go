@@ -1076,6 +1076,13 @@ func main() {
 // to existing tenant DBs on every boot without manual intervention. There is
 // no version gate: schema.sql is the single canonical source of truth and is
 // always safe to re-run.
+//
+// Eligibility is status==active && db_name set, not Servable() — a tenant
+// whose migration_status is stuck short of "ok" (e.g. an interrupted first
+// run) still has a real database and must be attempted here, since this is
+// the only code path that can ever promote migration_status back to "ok".
+// Gating on Servable() would make that state permanent: unservable because
+// migration_status isn't "ok", but never retried because it's unservable.
 func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
 	tenants, err := cp.ListTenants(ctx)
 	if err != nil {
@@ -1083,7 +1090,7 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 		return
 	}
 	for _, t := range tenants {
-		if !t.Servable() {
+		if t.Status != tenancy.StatusActive || t.DBName == "" {
 			continue
 		}
 		pool, err := router.PoolFor(ctx, &t)
@@ -1100,6 +1107,13 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 			log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
 		} else {
 			log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
+		}
+		if t.MigrationStatus != tenancy.MigrationOK {
+			if err := cp.SetTenantMigrationStatus(ctx, t.ID, tenancy.MigrationOK); err != nil {
+				log.Printf("migrate-all: tenant %s: failed to recover migration_status to ok: %v", t.Slug, err)
+			} else {
+				log.Printf("migrate-all: tenant %s: migration_status recovered to ok", t.Slug)
+			}
 		}
 		if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
 			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)

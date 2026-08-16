@@ -283,6 +283,7 @@ func main() {
 		// endpoints sit behind the per-IP rate limiter to blunt brute-force and
 		// credential-stuffing attacks (no tenant id exists yet to key on).
 		mux.Handle("/api/auth/tenant-login", authRateLimiter.PerIPFunc(tenantOps.TenantLogin))
+		mux.Handle("POST /api/auth/identify", authRateLimiter.PerIPFunc(tenantOps.Identify))
 		mux.Handle("POST /api/auth/refresh", authRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
 		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(http.HandlerFunc(tenantOps.ChangePassword)))
@@ -428,6 +429,9 @@ func main() {
 		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
 		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
 		mux.Handle("POST /api/tenant/sso-configs/{id}/refresh-metadata", tenantChain(sso.RefreshMetadata))
+		mux.Handle("GET /api/tenant/sso-configs/{id}/domains", tenantChain(sso.ListDomains))
+		mux.Handle("POST /api/tenant/sso-configs/{id}/domains", tenantChain(sso.CreateDomain))
+		mux.Handle("DELETE /api/tenant/sso-configs/{id}/domains/{domainId}", tenantChain(sso.DeleteDomain))
 
 		// SAML authentication flow: metadata/initiate/acs/exchange are public
 		// (rate-limited by IP, same as tenant-login); logout requires the JWT
@@ -435,6 +439,7 @@ func main() {
 		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher)
 		mux.Handle("GET /api/auth/saml/{provider}/metadata", http.HandlerFunc(samlAuth.Metadata))
 		mux.Handle("GET /api/auth/saml/{provider}/sp-info", http.HandlerFunc(samlAuth.SPInfo))
+		mux.Handle("POST /api/auth/saml/discover", authRateLimiter.PerIPFunc(samlAuth.Discover))
 		mux.Handle("GET /api/auth/saml/{provider}/initiate", authRateLimiter.PerIPFunc(samlAuth.Initiate))
 		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
 		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))
@@ -877,6 +882,23 @@ func main() {
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/apply", tenantChain(vpOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
 		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
+
+		// Vendor Credit: dedicated relational module, the accounts-payable
+		// mirror of Credit Memo — header-only (no line items), applied
+		// against a Vendor Bill via its own vendor_credit_application
+		// ledger, alongside the bill-owned RecordPayment and Vendor
+		// Payment ledgers above.
+		vcOps := controllers.NewVendorCreditOps()
+		mux.Handle("GET /api/tenant/vendor-credits", tenantChain(vcOps.List))
+		mux.Handle("POST /api/tenant/vendor-credits/search", tenantChain(vcOps.Search))
+		mux.Handle("POST /api/tenant/vendor-credits", tenantChain(vcOps.Create))
+		mux.Handle("GET /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/transition", tenantChain(vcOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/apply", tenantChain(vcOps.Apply))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
+		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()

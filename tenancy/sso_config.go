@@ -48,9 +48,14 @@ type SSOConfig struct {
 	CertificateFingerprint string     `json:"certificate_fingerprint,omitempty"` // fingerprint only -- the certificate PEM itself is never returned, same write-only discipline as client_secret
 	NameIDFormat           string     `json:"name_id_format,omitempty"`
 	MetadataFetchedAt      *time.Time `json:"metadata_fetched_at,omitempty"`
-	Enabled                bool       `json:"enabled"`
-	CreatedAt              time.Time  `json:"created_at"`
-	UpdatedAt              time.Time  `json:"updated_at"`
+	// DefaultRoleID is the role granted to users JIT-provisioned by this
+	// config's SAML flow; "" means none (user is created with no role).
+	// Not a DB foreign key -- roles live in the tenant database. See the
+	// column comment in control_plane/schema.sql.
+	DefaultRoleID string    `json:"default_role_id,omitempty"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // SSOConfigInput carries the mutable fields of an SSO config. The client
@@ -58,29 +63,31 @@ type SSOConfig struct {
 // store never touches the cipher; CertificateFingerprint and
 // MetadataFetchedAt are store-computed and travel as explicit method params.
 type SSOConfigInput struct {
-	Provider     string
-	Protocol     string
-	ClientID     string
-	Issuer       string
-	RedirectURI  string
-	MetadataURL  string
-	IDPEntityID  string
-	SSOURL       string
-	SLOURL       string
-	NameIDFormat string
-	Enabled      bool
+	Provider      string
+	Protocol      string
+	ClientID      string
+	Issuer        string
+	RedirectURI   string
+	MetadataURL   string
+	IDPEntityID   string
+	SSOURL        string
+	SLOURL        string
+	NameIDFormat  string
+	DefaultRoleID string
+	Enabled       bool
 }
 
 const ssoConfigColumns = `id, tenant_id, provider, client_id, COALESCE(issuer, ''), COALESCE(redirect_uri, ''), enabled, created_at, updated_at,
 	protocol, COALESCE(metadata_url, ''), COALESCE(idp_entity_id, ''), COALESCE(sso_url, ''), COALESCE(slo_url, ''),
-	COALESCE(certificate_fingerprint, ''), name_id_format, metadata_fetched_at`
+	COALESCE(certificate_fingerprint, ''), name_id_format, metadata_fetched_at, COALESCE(default_role_id::text, '')`
 
 func scanSSOConfig(row pgx.Row) (*SSOConfig, error) {
 	var c SSOConfig
 	if err := row.Scan(&c.ID, &c.TenantID, &c.Provider, &c.ClientID, &c.Issuer,
 		&c.RedirectURI, &c.Enabled, &c.CreatedAt, &c.UpdatedAt,
 		&c.Protocol, &c.MetadataURL, &c.IDPEntityID, &c.SSOURL, &c.SLOURL,
-		&c.CertificateFingerprint, &c.NameIDFormat, &c.MetadataFetchedAt); err != nil {
+		&c.CertificateFingerprint, &c.NameIDFormat, &c.MetadataFetchedAt,
+		&c.DefaultRoleID); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -149,17 +156,19 @@ func (c *ControlPlane) CreateSSOConfig(ctx context.Context, tenantID string, in 
 		INSERT INTO tenant_sso_configs (
 			tenant_id, provider, client_id, client_secret_enc, issuer, redirect_uri, enabled,
 			protocol, metadata_url, idp_entity_id, sso_url, slo_url,
-			certificate_pem_enc, certificate_fingerprint, name_id_format, metadata_fetched_at
+			certificate_pem_enc, certificate_fingerprint, name_id_format, metadata_fetched_at,
+			default_role_id
 		)
 		VALUES (
 			$1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7,
 			COALESCE(NULLIF($8, ''), '`+defaultSSOProtocol+`'), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''),
-			NULLIF($13, ''), NULLIF($14, ''), COALESCE(NULLIF($15, ''), '`+defaultSAMLNameIDFormat+`'), $16
+			NULLIF($13, ''), NULLIF($14, ''), COALESCE(NULLIF($15, ''), '`+defaultSAMLNameIDFormat+`'), $16,
+			NULLIF($17, '')::uuid
 		)
 		RETURNING `+ssoConfigColumns,
 		tenantID, in.Provider, in.ClientID, encSecret, in.Issuer, in.RedirectURI, in.Enabled,
 		in.Protocol, in.MetadataURL, in.IDPEntityID, in.SSOURL, in.SLOURL,
-		encCertPEM, certFingerprint, in.NameIDFormat, metadataFetchedAt))
+		encCertPEM, certFingerprint, in.NameIDFormat, metadataFetchedAt, in.DefaultRoleID))
 	if err != nil {
 		return nil, fmt.Errorf("create sso config: %w", err)
 	}
@@ -190,12 +199,13 @@ func (c *ControlPlane) UpdateSSOConfig(ctx context.Context, tenantID, id string,
 		    certificate_fingerprint = COALESCE($15, certificate_fingerprint),
 		    name_id_format          = COALESCE(NULLIF($16, ''), '`+defaultSAMLNameIDFormat+`'),
 		    metadata_fetched_at     = COALESCE($17, metadata_fetched_at),
+		    default_role_id         = NULLIF($18, '')::uuid,
 		    updated_at              = NOW()
 		WHERE tenant_id = $1 AND id = $2
 		RETURNING `+ssoConfigColumns,
 		tenantID, id, in.Provider, in.ClientID, encSecret, in.Issuer, in.RedirectURI, in.Enabled,
 		in.Protocol, in.MetadataURL, in.IDPEntityID, in.SSOURL, in.SLOURL,
-		encCertPEM, certFingerprint, in.NameIDFormat, metadataFetchedAt))
+		encCertPEM, certFingerprint, in.NameIDFormat, metadataFetchedAt, in.DefaultRoleID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSSOConfigNotFound
 	}
@@ -239,7 +249,10 @@ type SSOConfigAuth struct {
 	SLOURL            string
 	CertificatePEMEnc string
 	NameIDFormat      string
-	Enabled           bool
+	// DefaultRoleID is the role to grant a JIT-provisioned user signing in
+	// through this config; "" means none (see saml_acs.go).
+	DefaultRoleID string
+	Enabled       bool
 }
 
 // GetSSOConfigForAuth loads the enabled SAML config for a tenant+provider,
@@ -249,12 +262,13 @@ func (c *ControlPlane) GetSSOConfigForAuth(ctx context.Context, tenantID, provid
 	var a SSOConfigAuth
 	err := c.pool.QueryRow(ctx, `
 		SELECT id, tenant_id, provider, protocol, COALESCE(idp_entity_id, ''), COALESCE(sso_url, ''),
-		       COALESCE(slo_url, ''), COALESCE(certificate_pem_enc, ''), name_id_format, enabled
+		       COALESCE(slo_url, ''), COALESCE(certificate_pem_enc, ''), name_id_format,
+		       COALESCE(default_role_id::text, ''), enabled
 		FROM tenant_sso_configs
 		WHERE tenant_id = $1 AND provider = $2 AND protocol = '`+ssoProtocolSAML+`' AND enabled = TRUE`,
 		tenantID, provider,
 	).Scan(&a.ID, &a.TenantID, &a.Provider, &a.Protocol, &a.IDPEntityID, &a.SSOURL,
-		&a.SLOURL, &a.CertificatePEMEnc, &a.NameIDFormat, &a.Enabled)
+		&a.SLOURL, &a.CertificatePEMEnc, &a.NameIDFormat, &a.DefaultRoleID, &a.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSSOConfigNotFound
 	}

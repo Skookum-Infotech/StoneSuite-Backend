@@ -103,8 +103,13 @@ func TestSAMLErrorPage_StaticContent(t *testing.T) {
 
 func TestSAMLAuthOps_ACS_UnknownProviderIsJSON404(t *testing.T) {
 	h := &SAMLAuthOps{}
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/saml/okta/acs", strings.NewReader(""))
-	req.SetPathValue("provider", "okta")
+	// "okta" is no longer a fitting fixture here -- isValidSAMLProvider
+	// accepts it as a well-formed custom slug (sso.go). "INVALID" fails the
+	// slug pattern outright (uppercase), which is what this test means to
+	// exercise: a provider that can never resolve, not one that's merely
+	// unconfigured.
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/saml/INVALID/acs", strings.NewReader(""))
+	req.SetPathValue("provider", "INVALID")
 	rr := httptest.NewRecorder()
 	h.ACS(rr, req)
 	assert.Equal(t, http.StatusNotFound, rr.Code)

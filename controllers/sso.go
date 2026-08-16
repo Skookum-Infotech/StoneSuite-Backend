@@ -5,8 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/middleware"
@@ -35,10 +38,26 @@ func NewSSOOps(cp *tenancy.ControlPlane, cipher *secret.Cipher) *SSOOps {
 // ssoProviders is the whitelist of supported identity providers.
 var ssoProviders = map[string]bool{"entra": true, "cognito": true, "okta": true}
 
-// samlProviders restricts protocol="saml" configs to the providers this SAML
-// implementation actually supports. Okta SAML is out of scope for this
-// implementation (OIDC/Okta is unaffected and keeps working via ssoProviders).
+// samlProviders are the SAML providers with a dedicated, first-class setup
+// experience (frontend walkthrough pages, docs). Not a hard whitelist --
+// isValidSAMLProvider (below) also accepts any provider matching
+// samlProviderSlugPattern, so a tenant can connect a SAML IdP this codebase
+// has no bespoke UI for (Okta, OneLogin, ADFS, ...) under a custom slug.
 var samlProviders = map[string]bool{"entra": true, "cognito": true}
+
+// samlProviderSlugPattern validates a caller-supplied SAML provider slug for
+// any value not already in samlProviders: lowercase letters/digits/hyphens,
+// 2-30 chars, must start with a letter. Kept conservative because this value
+// becomes a URL path segment (/api/auth/saml/{provider}/acs) and the SP
+// entity id suffix (spConfig).
+var samlProviderSlugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,29}$`)
+
+// isValidSAMLProvider reports whether provider is acceptable for a
+// protocol=saml config or SAML auth-flow route: one of the first-class
+// providers, or any slug matching samlProviderSlugPattern.
+func isValidSAMLProvider(provider string) bool {
+	return samlProviders[provider] || samlProviderSlugPattern.MatchString(provider)
+}
 
 // ssoProtocolOIDC and ssoProtocolSAML are the two protocol values
 // tenant_sso_configs.protocol accepts.
@@ -53,14 +72,15 @@ const (
 // MetadataURL is required when protocol="saml" and is (re-)fetched on every
 // create/update.
 type ssoConfigRequest struct {
-	Provider     string `json:"provider"`
-	Protocol     string `json:"protocol"` // "oidc" (default if empty) or "saml"
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	Issuer       string `json:"issuer"`
-	RedirectURI  string `json:"redirect_uri"`
-	MetadataURL  string `json:"metadata_url"` // required when protocol="saml"
-	Enabled      bool   `json:"enabled"`
+	Provider      string `json:"provider"`
+	Protocol      string `json:"protocol"` // "oidc" (default if empty) or "saml"
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"`
+	Issuer        string `json:"issuer"`
+	RedirectURI   string `json:"redirect_uri"`
+	MetadataURL   string `json:"metadata_url"`    // required when protocol="saml"
+	DefaultRoleID string `json:"default_role_id"` // optional, protocol="saml" only -- see validateDefaultRoleID
+	Enabled       bool   `json:"enabled"`
 }
 
 // authorizeSSO resolves the caller, checks sso_config:action, and returns the
@@ -130,7 +150,7 @@ func (h *SSOOps) GetConfig(w http.ResponseWriter, r *http.Request) {
 
 // CreateConfig POST /api/tenant/sso-configs
 func (h *SSOOps) CreateConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := h.authorizeSSO(w, r, authz.ActionConfigure)
+	tenantID, identityID, ok := h.authorizeSSO(w, r, authz.ActionConfigure)
 	if !ok {
 		return
 	}
@@ -144,6 +164,16 @@ func (h *SSOOps) CreateConfig(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, msg)
 		return
 	}
+	pool, err := tenancy.PoolFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+	roleID, ok := h.validateDefaultRoleID(w, r, pool, identityID, in.Protocol, req.DefaultRoleID)
+	if !ok {
+		return
+	}
+	in.DefaultRoleID = roleID
 
 	var encSecret, encCertPEM, certFingerprint string
 	if in.Protocol == ssoProtocolSAML {
@@ -183,7 +213,7 @@ func (h *SSOOps) CreateConfig(w http.ResponseWriter, r *http.Request) {
 
 // UpdateConfig PUT /api/tenant/sso-configs/{id}
 func (h *SSOOps) UpdateConfig(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, ok := h.authorizeSSO(w, r, authz.ActionConfigure)
+	tenantID, identityID, ok := h.authorizeSSO(w, r, authz.ActionConfigure)
 	if !ok {
 		return
 	}
@@ -197,6 +227,17 @@ func (h *SSOOps) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, msg)
 		return
 	}
+	pool, err := tenancy.PoolFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+	roleID, ok := h.validateDefaultRoleID(w, r, pool, identityID, in.Protocol, req.DefaultRoleID)
+	if !ok {
+		return
+	}
+	in.DefaultRoleID = roleID
+
 	// Secret is optional on update: encrypt only when a new one is supplied.
 	// (protocol="saml" requests never populate ClientSecret, so this stays a
 	// no-op for them -- no special-casing needed.)
@@ -310,17 +351,18 @@ func (h *SSOOps) RefreshMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := tenancy.SSOConfigInput{
-		Provider:     cfg.Provider,
-		Protocol:     cfg.Protocol,
-		ClientID:     cfg.ClientID,
-		Issuer:       cfg.Issuer,
-		RedirectURI:  cfg.RedirectURI,
-		MetadataURL:  cfg.MetadataURL,
-		IDPEntityID:  meta.EntityID,
-		SSOURL:       meta.SSOURL,
-		SLOURL:       meta.SLOURL,
-		NameIDFormat: cfg.NameIDFormat,
-		Enabled:      cfg.Enabled,
+		Provider:      cfg.Provider,
+		Protocol:      cfg.Protocol,
+		ClientID:      cfg.ClientID,
+		Issuer:        cfg.Issuer,
+		RedirectURI:   cfg.RedirectURI,
+		MetadataURL:   cfg.MetadataURL,
+		IDPEntityID:   meta.EntityID,
+		SSOURL:        meta.SSOURL,
+		SLOURL:        meta.SLOURL,
+		NameIDFormat:  cfg.NameIDFormat,
+		DefaultRoleID: cfg.DefaultRoleID,
+		Enabled:       cfg.Enabled,
 	}
 	certFingerprint := meta.Fingerprint
 	now := time.Now()
@@ -340,6 +382,121 @@ func (h *SSOOps) RefreshMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "sso_config": updated})
 }
 
+// publicEmailDomainBlocklist blocks registering a domain owned by a public
+// email provider for SSO discovery. Without this, whichever tenant registers
+// e.g. "gmail.com" first would hijack home-realm discovery for every Gmail
+// user on the platform -- and if that config also carries a default_role_id,
+// grant them a role. Not exhaustive; a starting set of the largest providers.
+var publicEmailDomainBlocklist = map[string]bool{
+	"gmail.com": true, "googlemail.com": true,
+	"outlook.com": true, "hotmail.com": true, "live.com": true, "msn.com": true,
+	"yahoo.com": true, "ymail.com": true,
+	"icloud.com": true, "me.com": true, "mac.com": true,
+	"aol.com":        true,
+	"protonmail.com": true, "proton.me": true,
+	"zoho.com": true,
+}
+
+// domainPattern is a permissive hostname check: labels of letters/digits/
+// hyphens (not leading/trailing with a hyphen), at least one dot.
+var domainPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
+func isValidDomain(s string) bool {
+	return len(s) <= 253 && domainPattern.MatchString(s)
+}
+
+// ListDomains GET /api/tenant/sso-configs/{id}/domains
+func (h *SSOOps) ListDomains(w http.ResponseWriter, r *http.Request) {
+	tenantID, _, ok := h.authorizeSSO(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	domains, err := h.cp.ListSSODomains(r.Context(), tenantID, r.PathValue("id"))
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to list SSO domains.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "domains": domains})
+}
+
+// CreateDomain POST /api/tenant/sso-configs/{id}/domains
+func (h *SSOOps) CreateDomain(w http.ResponseWriter, r *http.Request) {
+	tenantID, _, ok := h.authorizeSSO(w, r, authz.ActionConfigure)
+	if !ok {
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	domain := tenancy.NormalizeEmailDomain(req.Domain)
+	if domain == "" || !isValidDomain(domain) {
+		fail(w, http.StatusBadRequest, "Enter a valid domain, e.g. contoso.com.")
+		return
+	}
+	if publicEmailDomainBlocklist[domain] {
+		fail(w, http.StatusBadRequest, "Public email domains cannot be registered for SSO discovery.")
+		return
+	}
+
+	// DiscoverSSOByEmailDomain only ever matches protocol=saml configs (see
+	// its query) -- an oidc config can never resolve at discovery time no
+	// matter how many domains are registered against it. Catch that here
+	// with a clear message instead of letting the admin register a domain
+	// that silently does nothing. enabled is intentionally not required: an
+	// admin may reasonably register domains before flipping the config live.
+	cfg, err := h.cp.GetSSOConfig(r.Context(), tenantID, r.PathValue("id"))
+	if errors.Is(err, tenancy.ErrSSOConfigNotFound) {
+		fail(w, http.StatusNotFound, "SSO configuration not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load SSO configuration.")
+		return
+	}
+	if cfg.Protocol != ssoProtocolSAML {
+		fail(w, http.StatusBadRequest, "Email domains can only be registered against protocol=saml configurations.")
+		return
+	}
+
+	d, err := h.cp.CreateSSODomain(r.Context(), tenantID, r.PathValue("id"), domain)
+	if errors.Is(err, tenancy.ErrSSOConfigNotFound) {
+		fail(w, http.StatusNotFound, "SSO configuration not found.")
+		return
+	}
+	if isUniqueViolation(err) {
+		fail(w, http.StatusConflict, "This domain is already registered for SSO sign-in.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to register domain.")
+		return
+	}
+	logSecurityEvent(r, "sso_domain_registered", "sso_config_id", r.PathValue("id"), "domain", domain)
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "domain": d})
+}
+
+// DeleteDomain DELETE /api/tenant/sso-configs/{id}/domains/{domainId}
+func (h *SSOOps) DeleteDomain(w http.ResponseWriter, r *http.Request) {
+	tenantID, _, ok := h.authorizeSSO(w, r, authz.ActionConfigure)
+	if !ok {
+		return
+	}
+	err := h.cp.DeleteSSODomain(r.Context(), tenantID, r.PathValue("domainId"))
+	if errors.Is(err, tenancy.ErrSSODomainNotFound) {
+		fail(w, http.StatusNotFound, "Domain not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to remove domain.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 // encryptSecret encrypts a secret (an OAuth client secret or a SAML IdP
 // certificate PEM), failing closed (503) when no cipher is configured so a
 // secret is never persisted in plaintext. On failure it writes the response
@@ -357,6 +514,54 @@ func (h *SSOOps) encryptSecret(w http.ResponseWriter, plaintext string) (string,
 	return enc, true
 }
 
+// validateDefaultRoleID validates a caller-supplied default_role_id for
+// CreateConfig/UpdateConfig. Empty is always valid (no default -- JIT users
+// get no role, the original behaviour). Non-empty is only meaningful for
+// protocol=saml (the only flow with JIT provisioning, see saml_acs.go); it
+// must reference an existing, non-system role in the caller's tenant; and
+// setting it requires role:update in addition to sso_config:configure --
+// otherwise a caller holding only sso_config:configure could grant any role,
+// up to and including super_admin, to every future SSO sign-in. Mirrors the
+// InviteUser guard in controllers/user.go. On failure it writes the response
+// and returns ok=false.
+func (h *SSOOps) validateDefaultRoleID(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID, protocol, defaultRoleID string) (string, bool) {
+	defaultRoleID = strings.TrimSpace(defaultRoleID)
+	if defaultRoleID == "" {
+		return "", true
+	}
+	if protocol != ssoProtocolSAML {
+		fail(w, http.StatusBadRequest, "default_role_id is only applicable to protocol=saml.")
+		return "", false
+	}
+	role, err := authz.GetRole(r.Context(), pool, defaultRoleID)
+	if errors.Is(err, authz.ErrRoleNotFound) {
+		fail(w, http.StatusBadRequest, "The specified default role does not exist.")
+		return "", false
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to validate default role.")
+		return "", false
+	}
+	if role.IsSystem {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(authz.ResourceRole), "action", "assign_system_role", "role", defaultRoleID)
+		fail(w, http.StatusForbidden, "System roles cannot be set as the default SSO role.")
+		return "", false
+	}
+	decision, err := authz.Check(r.Context(), pool, identityID, authz.ResourceRole, authz.ActionUpdate)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return "", false
+	}
+	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(authz.ResourceRole), "action", string(authz.ActionUpdate))
+		fail(w, http.StatusForbidden, "You do not have permission to set a default SSO role.")
+		return "", false
+	}
+	return defaultRoleID, true
+}
+
 // validateSSORequest validates and normalizes the payload. requireSecret is
 // true on create for protocol="oidc" only (SAML configs never have an OAuth
 // client secret). It returns the store input and an empty message on
@@ -372,8 +577,8 @@ func validateSSORequest(req ssoConfigRequest, requireSecret bool) (tenancy.SSOCo
 
 	provider := strings.ToLower(strings.TrimSpace(req.Provider))
 	if protocol == ssoProtocolSAML {
-		if !samlProviders[provider] {
-			return tenancy.SSOConfigInput{}, "For protocol=saml, provider must be one of: entra, cognito."
+		if !isValidSAMLProvider(provider) {
+			return tenancy.SSOConfigInput{}, "For protocol=saml, provider must be entra, cognito, or a custom slug (lowercase letters, digits, hyphens, 2-30 chars, starting with a letter)."
 		}
 	} else {
 		if !ssoProviders[provider] {

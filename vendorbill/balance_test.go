@@ -26,7 +26,7 @@ func TestDeriveStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		current    string
-		amountPaid float64
+		settled    float64
 		grandTotal float64
 		want       string
 	}{
@@ -42,8 +42,8 @@ func TestDeriveStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := DeriveStatus(tt.current, tt.amountPaid, tt.grandTotal); got != tt.want {
-				t.Errorf("DeriveStatus(%q, %v, %v) = %q, want %q", tt.current, tt.amountPaid, tt.grandTotal, got, tt.want)
+			if got := DeriveStatus(tt.current, tt.settled, tt.grandTotal); got != tt.want {
+				t.Errorf("DeriveStatus(%q, %v, %v) = %q, want %q", tt.current, tt.settled, tt.grandTotal, got, tt.want)
 			}
 		})
 	}

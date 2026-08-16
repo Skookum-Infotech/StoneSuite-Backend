@@ -7400,3 +7400,108 @@ CREATE INDEX IF NOT EXISTS idx_vpay_refund_bill      ON vendor_payment_refund (v
 CREATE INDEX IF NOT EXISTS idx_vpay_history_payment   ON vendor_payment_history (vendor_payment_id);
 CREATE INDEX IF NOT EXISTS idx_vpay_approver_lookup    ON vendor_payment_approver (record_type_id, record_status_id) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_vpay_approval_payment    ON vendor_payment_approval (vendor_payment_id);
+
+-- ===================================================================
+-- Vendor Credit Module
+-- Reuses (already seeded, do not recreate): lkp_record_type VCRD (id 17,
+-- tenant/schema.sql:710) and its DRFT/APPV/APPL/VOID statuses (record_type=17,
+-- tenant/schema.sql:752) -- the same status set as CRDT/credit_memo.
+-- Spec: docs/superpowers/specs/2026-08-13-vendor-credit-module-design.md
+-- ===================================================================
+
+-- Extend vendor_bill with a credit rollup, mirroring invoice_credit_total's
+-- separation of cash (vendor_bill_amount_paid) from credit-memo-style credit.
+ALTER TABLE vendor_bill ADD COLUMN IF NOT EXISTS vendor_bill_credit_total DECIMAL(15,2) NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS vendor_credit (
+    vendor_credit_id                SERIAL        PRIMARY KEY,
+    vendor_credit_uuid              UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_credit_number            VARCHAR(20)       NULL,  -- 'VCR-000001', generated post-insert in Go
+
+    record_type                     INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = VCRD (17)
+    vendor_credit_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    vendor_credit_vendor_id           INTEGER       NOT NULL REFERENCES vendor(vendor_id),  -- fixed at creation
+    vendor_credit_vendor_name         VARCHAR(150)  NOT NULL DEFAULT '',                      -- snapshot
+
+    vendor_credit_reference_number     VARCHAR(50)   NOT NULL DEFAULT '',
+    vendor_credit_date                  DATE          NOT NULL DEFAULT CURRENT_DATE,
+    vendor_credit_reason                 VARCHAR(150)  NOT NULL DEFAULT '',
+    vendor_credit_memo                    TEXT          NOT NULL DEFAULT '',
+    vendor_credit_internal_notes           TEXT          NOT NULL DEFAULT '',
+
+    vendor_credit_owner_id                  INTEGER           NULL REFERENCES employee(employee_id),
+
+    vendor_credit_grand_total                DECIMAL(15,2) NOT NULL,                          -- face amount, entered directly
+    vendor_credit_applied_total               DECIMAL(15,2) NOT NULL DEFAULT 0,                -- rollup
+    vendor_credit_unapplied_amount             DECIMAL(15,2) NOT NULL DEFAULT 0,               -- rollup
+
+    vendor_credit_custom_fields                 JSONB        NOT NULL DEFAULT '{}',
+    vendor_credit_created_at                     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_credit_created_by                      INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_credit_updated_at                       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    vendor_credit_updated_by                        INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_credit_deleted_at                         TIMESTAMP        NULL,
+    vendor_credit_deleted_by                          INTEGER          NULL REFERENCES employee(employee_id),
+    vendor_credit_record_version                      INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_credit_uuid       UNIQUE (vendor_credit_uuid),
+    CONSTRAINT uq_vendor_credit_number     UNIQUE (vendor_credit_number),
+    CONSTRAINT chk_vcrd_amount_pos          CHECK (vendor_credit_grand_total > 0),
+    CONSTRAINT chk_vcrd_applied_nonneg      CHECK (vendor_credit_applied_total >= 0 AND vendor_credit_unapplied_amount >= 0),
+    CONSTRAINT chk_vcrd_applied_le_amt      CHECK (vendor_credit_applied_total <= vendor_credit_grand_total),
+    CONSTRAINT chk_vcrd_soft_delete         CHECK (
+        (vendor_credit_deleted_at IS NULL AND vendor_credit_deleted_by IS NULL) OR
+        (vendor_credit_deleted_at IS NOT NULL AND vendor_credit_deleted_by IS NOT NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS vendor_credit_history (
+    vendor_credit_history_id   SERIAL       PRIMARY KEY,
+    vendor_credit_id            INTEGER      NOT NULL REFERENCES vendor_credit(vendor_credit_id) ON DELETE CASCADE,
+    from_status_id                INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                   INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                          VARCHAR(32)  NOT NULL DEFAULT 'transition',  -- create|update|transition|apply|reverse
+    actor_employee_id                INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                          JSONB        NOT NULL DEFAULT '{}',
+    at                                 TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vendor_credit_application (
+    application_id              SERIAL        PRIMARY KEY,
+    application_uuid             UUID          NOT NULL DEFAULT gen_random_uuid(),
+    vendor_credit_id              INTEGER       NOT NULL REFERENCES vendor_credit(vendor_credit_id) ON DELETE CASCADE,
+    vendor_bill_id                 INTEGER       NOT NULL REFERENCES vendor_bill(vendor_bill_id),
+
+    application_amount              DECIMAL(15,2) NOT NULL,
+
+    application_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    application_created_by            INTEGER          NULL REFERENCES employee(employee_id),
+    application_deleted_at             TIMESTAMP        NULL,  -- set = "reversed"
+    application_deleted_by              INTEGER          NULL REFERENCES employee(employee_id),
+    application_record_version           INTEGER      NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_vendor_credit_application_uuid UNIQUE (application_uuid),
+    CONSTRAINT chk_vcrd_app_amount_pos            CHECK (application_amount > 0),
+    CONSTRAINT chk_vcrd_app_soft_delete           CHECK (
+        (application_deleted_at IS NULL AND application_deleted_by IS NULL) OR
+        (application_deleted_at IS NOT NULL AND application_deleted_by IS NOT NULL)
+    )
+);
+
+-- At most one LIVE application per (vendor_credit, vendor_bill) pair -- re-applying
+-- increases the existing row's amount instead of creating a duplicate (mirrors
+-- uq_cm_app_live_pair / uq_vpay_app_live_pair).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vcrd_app_live_pair
+    ON vendor_credit_application (vendor_credit_id, vendor_bill_id) WHERE application_deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_vcrd_vendor        ON vendor_credit (vendor_credit_vendor_id) WHERE vendor_credit_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_status         ON vendor_credit (vendor_credit_status)    WHERE vendor_credit_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_date           ON vendor_credit (vendor_credit_date)      WHERE vendor_credit_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_owner          ON vendor_credit (vendor_credit_owner_id)  WHERE vendor_credit_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_created_id     ON vendor_credit (vendor_credit_created_at, vendor_credit_id) WHERE vendor_credit_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_unapplied_id   ON vendor_credit (vendor_credit_unapplied_amount, vendor_credit_id) WHERE vendor_credit_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_custom_gin     ON vendor_credit USING GIN (vendor_credit_custom_fields);
+CREATE INDEX IF NOT EXISTS idx_vcrd_history_credit ON vendor_credit_history (vendor_credit_id);
+CREATE INDEX IF NOT EXISTS idx_vcrd_app_credit     ON vendor_credit_application (vendor_credit_id) WHERE application_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_app_bill       ON vendor_credit_application (vendor_bill_id)     WHERE application_deleted_at IS NULL;

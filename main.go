@@ -883,6 +883,23 @@ func main() {
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
 		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
 
+		// Vendor Credit: dedicated relational module, the accounts-payable
+		// mirror of Credit Memo — header-only (no line items), applied
+		// against a Vendor Bill via its own vendor_credit_application
+		// ledger, alongside the bill-owned RecordPayment and Vendor
+		// Payment ledgers above.
+		vcOps := controllers.NewVendorCreditOps()
+		mux.Handle("GET /api/tenant/vendor-credits", tenantChain(vcOps.List))
+		mux.Handle("POST /api/tenant/vendor-credits/search", tenantChain(vcOps.Search))
+		mux.Handle("POST /api/tenant/vendor-credits", tenantChain(vcOps.Create))
+		mux.Handle("GET /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Get))
+		mux.Handle("PATCH /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Update))
+		mux.Handle("DELETE /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Delete))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/transition", tenantChain(vcOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/apply", tenantChain(vcOps.Apply))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
+		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

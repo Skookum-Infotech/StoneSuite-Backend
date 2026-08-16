@@ -81,8 +81,11 @@ func TestSAMLAuthOps_Metadata(t *testing.T) {
 	h := &SAMLAuthOps{}
 
 	t.Run("unknown provider is 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/okta/metadata", nil)
-		req.SetPathValue("provider", "okta")
+		// "okta" is now a valid custom SAML slug (sso.go's isValidSAMLProvider);
+		// "INVALID" fails the slug pattern outright, which is what "unknown"
+		// means here -- a provider that can never resolve.
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/INVALID/metadata", nil)
+		req.SetPathValue("provider", "INVALID")
 		rr := httptest.NewRecorder()
 		h.Metadata(rr, req)
 		assert.Equal(t, http.StatusNotFound, rr.Code)
@@ -107,8 +110,9 @@ func TestSAMLAuthOps_SPInfo(t *testing.T) {
 	h := &SAMLAuthOps{}
 
 	t.Run("unknown provider is 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/okta/sp-info", nil)
-		req.SetPathValue("provider", "okta")
+		// See the equivalent Metadata case above for why "okta" no longer fits.
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/INVALID/sp-info", nil)
+		req.SetPathValue("provider", "INVALID")
 		rr := httptest.NewRecorder()
 		h.SPInfo(rr, req)
 		assert.Equal(t, http.StatusNotFound, rr.Code)
@@ -155,8 +159,11 @@ func TestSAMLAuthOps_Initiate_ValidatesProviderAndTenantParams(t *testing.T) {
 	h := &SAMLAuthOps{}
 
 	t.Run("unknown provider is 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/okta/initiate?tenant_slug=acme", nil)
-		req.SetPathValue("provider", "okta")
+		// "okta" is now a valid custom SAML slug, so it no longer short-circuits
+		// before h.cp is touched -- "INVALID" fails the slug pattern and still
+		// 404s at the very first check, matching this subtest's nil h.cp setup.
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/INVALID/initiate?tenant_slug=acme", nil)
+		req.SetPathValue("provider", "INVALID")
 		rr := httptest.NewRecorder()
 		h.Initiate(rr, req)
 		assert.Equal(t, http.StatusNotFound, rr.Code)

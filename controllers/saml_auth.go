@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -58,7 +59,7 @@ func safeReturnTo(s string) bool {
 // auth, no DB call. Path: GET /api/auth/saml/{provider}/metadata
 func (h *SAMLAuthOps) Metadata(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}
@@ -80,7 +81,7 @@ func (h *SAMLAuthOps) Metadata(w http.ResponseWriter, r *http.Request) {
 // Path: GET /api/auth/saml/{provider}/sp-info
 func (h *SAMLAuthOps) SPInfo(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}
@@ -91,6 +92,60 @@ func (h *SAMLAuthOps) SPInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Discover resolves a work email to the tenant + SAML provider registered for
+// its domain (see tenancy.CreateSSODomain) -- home-realm discovery for the
+// login page, so a user can type their email instead of a workspace slug.
+// Public, no auth, no tenant resolved yet. Deliberately POST, not GET: an
+// email in a query string ends up in server logs and Referer headers.
+// found=false covers every "can't route this" case identically (bad input,
+// unregistered domain, disabled config, unservable tenant) -- callers cannot
+// distinguish "no such domain" from "domain exists but isn't live" today,
+// which is only a mild information leak (industry-standard for HRD
+// endpoints) and never a security boundary.
+// Path: POST /api/auth/saml/discover
+func (h *SAMLAuthOps) Discover(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	ctx := r.Context()
+	domain := tenancy.NormalizeEmailDomain(req.Email)
+	if domain == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "found": false})
+		return
+	}
+
+	result, err := h.cp.DiscoverSSOByEmailDomain(ctx, domain)
+	if errors.Is(err, tenancy.ErrSSOConfigNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "found": false})
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to resolve sign-in provider.")
+		return
+	}
+
+	tenant, err := h.cp.TenantByID(ctx, result.TenantID)
+	if err != nil {
+		logSecurityEvent(r, "saml_discover_tenant_lookup_failed", "tenant_id", result.TenantID, "provider", result.Provider, "error", err.Error())
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "found": false})
+		return
+	}
+	if !tenant.Servable() {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "found": false})
+		return
+	}
+
+	logSecurityEvent(r, "saml_discover_matched", "tenant_id", result.TenantID, "provider", result.Provider, "domain", domain)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "found": true,
+		"provider": result.Provider, "tenant_id": result.TenantID,
+	})
+}
+
 // Initiate begins a SAML login: resolves the tenant, builds an unsigned
 // AuthnRequest (see saml.serviceProvider's doc comment for why AuthnRequests
 // are never signed), records single-use request state keyed by the
@@ -98,7 +153,7 @@ func (h *SAMLAuthOps) SPInfo(w http.ResponseWriter, r *http.Request) {
 // Path: GET /api/auth/saml/{provider}/initiate?tenant_slug=...|tenant_id=...
 func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
-	if !samlProviders[provider] {
+	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
 		return
 	}
@@ -108,6 +163,16 @@ func (h *SAMLAuthOps) Initiate(w http.ResponseWriter, r *http.Request) {
 	tenantID := strings.TrimSpace(q.Get("tenant_id"))
 	if (slug != "") == (tenantID != "") {
 		fail(w, http.StatusBadRequest, "Provide exactly one of tenant_slug or tenant_id.")
+		return
+	}
+	if h.cp == nil {
+		// Defensively unreachable -- NewSAMLAuthOps always wires a real
+		// ControlPlane -- but never trust that invariant blindly (same
+		// posture as the h.cipher nil-check below). isValidSAMLProvider now
+		// accepts any well-formed custom slug, not just entra/cognito, so a
+		// provider reaching this point is no longer guaranteed to be one
+		// this handler group was constructed to serve.
+		fail(w, http.StatusInternalServerError, "SAML sign-in is not available.")
 		return
 	}
 

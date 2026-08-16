@@ -149,6 +149,37 @@ BEGIN
     END IF;
 END $$;
 
+-- Role granted to a user JIT-provisioned by this config's SAML flow (see
+-- controllers/saml_acs.go). Deliberately NOT a foreign key: roles live in the
+-- per-tenant database while this table is control-plane, so Postgres cannot
+-- enforce the reference across databases -- the id is validated at write time
+-- by controllers/sso.go against the caller's tenant pool. NULL keeps the
+-- original conservative behaviour: provision the user with no role at all.
+ALTER TABLE tenant_sso_configs ADD COLUMN IF NOT EXISTS default_role_id UUID;
+
+-- ── tenant_sso_domains ────────────────────────────────────────────────
+-- Home-realm discovery: maps an email domain to the SSO config that should
+-- handle sign-in for it, so the login page can resolve a work email to a
+-- tenant + provider without asking the user for a workspace slug.
+--
+-- domain is globally unique (one domain resolves to exactly one config,
+-- otherwise discovery is ambiguous). Cascades off the config so deleting an
+-- SSO configuration cleans up its domains.
+CREATE TABLE IF NOT EXISTS tenant_sso_domains (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    sso_config_id UUID        NOT NULL REFERENCES tenant_sso_configs(id) ON DELETE CASCADE,
+    domain        TEXT        NOT NULL,
+    -- Reserved for future DNS TXT ownership verification. NULL = unverified;
+    -- no code path consults this yet, domains are trusted on registration.
+    verified_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_sso_domains_domain
+    ON tenant_sso_domains(LOWER(domain));
+CREATE INDEX IF NOT EXISTS idx_tenant_sso_domains_config
+    ON tenant_sso_domains(sso_config_id);
+
 -- ── saml_requests ─────────────────────────────────────────────────────
 -- SAML request state: tracks outstanding AuthnRequests so the ACS callback can
 -- validate the response belongs to a real, recent, single-use request and

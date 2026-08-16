@@ -283,6 +283,7 @@ func main() {
 		// endpoints sit behind the per-IP rate limiter to blunt brute-force and
 		// credential-stuffing attacks (no tenant id exists yet to key on).
 		mux.Handle("/api/auth/tenant-login", authRateLimiter.PerIPFunc(tenantOps.TenantLogin))
+		mux.Handle("POST /api/auth/identify", authRateLimiter.PerIPFunc(tenantOps.Identify))
 		mux.Handle("POST /api/auth/refresh", authRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
 		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(http.HandlerFunc(tenantOps.ChangePassword)))
@@ -428,6 +429,9 @@ func main() {
 		mux.Handle("PUT /api/tenant/sso-configs/{id}", tenantChain(sso.UpdateConfig))
 		mux.Handle("DELETE /api/tenant/sso-configs/{id}", tenantChain(sso.DeleteConfig))
 		mux.Handle("POST /api/tenant/sso-configs/{id}/refresh-metadata", tenantChain(sso.RefreshMetadata))
+		mux.Handle("GET /api/tenant/sso-configs/{id}/domains", tenantChain(sso.ListDomains))
+		mux.Handle("POST /api/tenant/sso-configs/{id}/domains", tenantChain(sso.CreateDomain))
+		mux.Handle("DELETE /api/tenant/sso-configs/{id}/domains/{domainId}", tenantChain(sso.DeleteDomain))
 
 		// SAML authentication flow: metadata/initiate/acs/exchange are public
 		// (rate-limited by IP, same as tenant-login); logout requires the JWT
@@ -435,6 +439,7 @@ func main() {
 		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher)
 		mux.Handle("GET /api/auth/saml/{provider}/metadata", http.HandlerFunc(samlAuth.Metadata))
 		mux.Handle("GET /api/auth/saml/{provider}/sp-info", http.HandlerFunc(samlAuth.SPInfo))
+		mux.Handle("POST /api/auth/saml/discover", authRateLimiter.PerIPFunc(samlAuth.Discover))
 		mux.Handle("GET /api/auth/saml/{provider}/initiate", authRateLimiter.PerIPFunc(samlAuth.Initiate))
 		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
 		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))

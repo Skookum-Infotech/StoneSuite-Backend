@@ -90,10 +90,11 @@ func TestGetSSOConfigForAuth(t *testing.T) {
 }
 
 // TestUpdateSSOConfig exercises the full-replace vs. leave-untouched split in
-// UpdateSSOConfig's 17-parameter SQL: SSOConfigInput-sourced fields (protocol,
-// metadata_url, idp_entity_id, sso_url, slo_url, name_id_format, ...) always
-// overwrite; the encrypted-value trio (encSecret/encCertPEM/certFingerprint)
-// and metadataFetchedAt only overwrite when passed non-nil.
+// UpdateSSOConfig's 18-parameter SQL: SSOConfigInput-sourced fields (protocol,
+// metadata_url, idp_entity_id, sso_url, slo_url, name_id_format,
+// default_role_id, ...) always overwrite; the encrypted-value trio
+// (encSecret/encCertPEM/certFingerprint) and metadataFetchedAt only overwrite
+// when passed non-nil.
 func TestUpdateSSOConfig(t *testing.T) {
 	cp := newCPTestControlPlane(t)
 	ctx := context.Background()

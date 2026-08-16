@@ -10,8 +10,11 @@ import (
 
 func TestSAMLAuthOps_Logout_UnknownProviderIs404(t *testing.T) {
 	h := &SAMLAuthOps{}
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/saml/okta/logout", nil)
-	req.SetPathValue("provider", "okta")
+	// "okta" is now a valid custom SAML slug (sso.go's isValidSAMLProvider);
+	// "INVALID" fails the slug pattern outright, which is what "unknown"
+	// means here.
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/saml/INVALID/logout", nil)
+	req.SetPathValue("provider", "INVALID")
 	rr := httptest.NewRecorder()
 	h.Logout(rr, req)
 	assert.Equal(t, http.StatusNotFound, rr.Code)
@@ -34,8 +37,10 @@ func TestSAMLAuthOps_LogoutResponse(t *testing.T) {
 	h := &SAMLAuthOps{}
 
 	t.Run("unknown provider is 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/okta/logout-response", nil)
-		req.SetPathValue("provider", "okta")
+		// See TestSAMLAuthOps_Logout_UnknownProviderIs404 for why "okta" no
+		// longer fits.
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/saml/INVALID/logout-response", nil)
+		req.SetPathValue("provider", "INVALID")
 		rr := httptest.NewRecorder()
 		h.LogoutResponse(rr, req)
 		assert.Equal(t, http.StatusNotFound, rr.Code)

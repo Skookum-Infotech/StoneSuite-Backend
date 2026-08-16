@@ -49,6 +49,7 @@ A config is one of two protocols, `oidc` (default, unchanged from before) or
   "certificate_fingerprint": "hex sha-256 (saml only; the certificate PEM itself is never returned)",
   "name_id_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress (saml only; not settable via this API, always the default)",
   "metadata_fetched_at": "rfc3339 (saml only; set on every create/update/refresh-metadata)",
+  "default_role_id": "uuid (saml only; omitted when unset)",
   "enabled": false,
   "created_at": "rfc3339",
   "updated_at": "rfc3339"
@@ -56,6 +57,13 @@ A config is one of two protocols, `oidc` (default, unchanged from before) or
 ```
 All `saml`-only fields are `omitempty` and absent on `oidc` configs, and vice
 versa for `client_id`/`issuer`/`redirect_uri`.
+
+`default_role_id`: the role auto-granted to a user JIT-provisioned via this
+config's SAML login (see [`docs/SAML_SETUP.md`](../SAML_SETUP.md) §7). Unset
+(omitted) means no role — the original behavior. Setting it requires
+`role:update` in addition to `sso_config:configure` (mirrors the `initialRoleId`
+guard on `POST /api/tenant/users/invite`), rejects system roles (`403`), and is
+only accepted when `protocol: "saml"` (`400` otherwise).
 
 ### `GET /api/tenant/sso-configs`
 List all configs for the tenant (newest first).
@@ -75,7 +83,8 @@ Body (`protocol` decides which other fields are validated/required):
   "issuer": "https://...",       // oidc only; if present must be an http(s) URL
   "redirect_uri": "https://...", // oidc only; if present must be an http(s) URL
   "metadata_url": "https://...", // saml: required, must be https://. ignored for oidc
-  "enabled": false               // optional, default false
+  "enabled": false,              // optional, default false
+  "default_role_id": "uuid"      // optional, saml only. '' or omitted = no default role
 }
 ```
 For `protocol: "saml"`, the IdP metadata document at `metadata_url` is fetched
@@ -83,7 +92,8 @@ synchronously on every create — `idp_entity_id`, `sso_url`, `slo_url`, the
 signing certificate (encrypted at rest), and `certificate_fingerprint` are all
 derived from it, not supplied by the caller.
 → `201 { "success": true, "sso_config": <config> }`
-- `400` invalid provider/protocol / missing client_id / missing client_secret / malformed URL / missing or non-https metadata_url.
+- `400` invalid provider/protocol / missing client_id / missing client_secret / malformed URL / missing or non-https metadata_url / `default_role_id` set on a non-saml config / `default_role_id` references a role that doesn't exist.
+- `403` `default_role_id` set to a system role, or the caller lacks `role:update` (required in addition to `sso_config:configure` to set it at all).
 - `409` a config for this provider already exists (unique per tenant+provider, **regardless of protocol** — a tenant can't have both an oidc and a saml config for the same provider).
 - `502` (saml only) the metadata URL was unreachable or didn't parse as SAML metadata.
 - `503` secret encryption is not configured on the server (cannot store the client secret or, for saml, the IdP certificate).
@@ -106,6 +116,54 @@ this automatically).
 
 ### `DELETE /api/tenant/sso-configs/{id}`
 → `200 { "success": true }` · `404` if not found.
+
+### Email domains (home-realm discovery)
+Lets the login page resolve a user's work email to a tenant + provider
+without asking for a workspace slug — see
+[`docs/SAML_SETUP.md`](../SAML_SETUP.md) §6 for the public
+`POST /api/auth/saml/discover` endpoint these domains feed. A domain is
+registered against one specific `sso_config` (not the tenant broadly), and is
+globally unique across the whole platform — registering a domain someone else
+already registered returns `409`.
+
+**Known gap:** domain registration is **not** ownership-verified. Any tenant
+admin with `sso_config:configure` can register any domain not on the public-
+provider blocklist below, including a real third party's corporate domain
+(domain squatting). The schema reserves a `verified_at` column for a future
+DNS-TXT verification flow; nothing enforces it yet. Treat `/discover` results
+as "this domain is registered with us," not "we verified this domain's owner
+configured this."
+
+#### Object
+```json
+{
+  "id": "uuid",
+  "sso_config_id": "uuid",
+  "domain": "contoso.com",
+  "created_at": "rfc3339"
+}
+```
+
+#### `GET /api/tenant/sso-configs/{id}/domains`
+List domains registered against this config.
+→ `200 { "success": true, "domains": [ <domain>, ... ] }`
+
+#### `POST /api/tenant/sso-configs/{id}/domains`
+Body: `{"domain": "contoso.com"}` — accepts a bare domain or a full email
+(`user@contoso.com`), normalized (lowercased, `@`-stripped) server-side.
+→ `201 { "success": true, "domain": <domain> }`
+- `400` malformed domain, or a public email provider (gmail.com, outlook.com,
+  hotmail.com, live.com, msn.com, yahoo.com, ymail.com, icloud.com, me.com,
+  mac.com, aol.com, protonmail.com, proton.me, zoho.com — not exhaustive), or
+  the target config isn't `protocol: "saml"` (an oidc config can never match
+  at discovery time, see `DiscoverSSOByEmailDomain`).
+- `404` the config doesn't exist (or belongs to another tenant).
+- `409` this domain is already registered (against any config, any tenant).
+
+#### `DELETE /api/tenant/sso-configs/{id}/domains/{domainId}`
+→ `200 { "success": true }` · `404` if not found (or belongs to another
+tenant's config — `{id}` in the path isn't cross-checked against
+`{domainId}`'s actual parent, only tenant ownership is enforced).
 
 > **SAML: the login flow now exists.** SP-initiated SAML 2.0 login (AWS
 > Cognito, Microsoft Entra ID) is implemented — see

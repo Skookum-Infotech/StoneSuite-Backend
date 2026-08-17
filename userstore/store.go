@@ -135,6 +135,24 @@ func GetUserByIdentityID(ctx context.Context, q Querier, identityID string) (*Us
 	return &u, nil
 }
 
+// IsActiveIdentity reports whether the tenant user linked to a control-plane
+// identity has status "active". Used by modules (e.g. expense) that must
+// block disabled users from mutating actions beyond what RBAC alone checks
+// — authz.Check's grant query does not filter on user status, so an
+// unrevoked role assignment still resolves grants for a disabled user.
+func IsActiveIdentity(ctx context.Context, q Querier, identityID string) (bool, error) {
+	var status string
+	err := q.QueryRow(ctx,
+		`SELECT status FROM users WHERE identity_id = $1`, identityID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check identity active: %w", err)
+	}
+	return status == "active", nil
+}
+
 // GetUserByEmail loads a user by their email (case-insensitive).
 func GetUserByEmail(ctx context.Context, q Querier, email string) (*User, error) {
 	var u User

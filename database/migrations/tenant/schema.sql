@@ -7505,3 +7505,178 @@ CREATE INDEX IF NOT EXISTS idx_vcrd_custom_gin     ON vendor_credit USING GIN (v
 CREATE INDEX IF NOT EXISTS idx_vcrd_history_credit ON vendor_credit_history (vendor_credit_id);
 CREATE INDEX IF NOT EXISTS idx_vcrd_app_credit     ON vendor_credit_application (vendor_credit_id) WHERE application_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vcrd_app_bill       ON vendor_credit_application (vendor_bill_id)     WHERE application_deleted_at IS NULL;
+
+-- =====================================================================
+-- EXPENSE MODULE (Employee Expense Claims)
+-- Reuses (already seeded, do not recreate): authz.ResourceExpense (already
+-- has 5 catalog rows), employee, users, workflow_record_attachments
+-- (receipts route through the generic attachment mechanism -- see
+-- workflow.ResolveRecordAccess's "expense" branch, not a dedicated table).
+-- Reuses (read-only) the pre-existing legacy v1 JSONB "expense" workflow
+-- row (this file, ~line 2127) purely as the custom-field-definition host,
+-- the same pattern requisition/purchase order/invoice already established
+-- for their own same-named legacy rows.
+-- Spec: docs/superpowers/specs/2026-08-17-expense-module-design.md
+-- =====================================================================
+
+-- 1. New lkp_record_type row (append-only). The record_type_id is resolved
+-- by SUBSELECT on record_type_code below, never a hardcoded id (pattern
+-- copied from the IADJ/ITRF/ICNT block at tenant/schema.sql:5947) --
+-- lkp_record_status keys statuses to types by SERIAL assignment order, so a
+-- literal id would silently mis-assign every downstream status the moment
+-- this file's append order no longer matches assumptions made at write time.
+INSERT INTO lkp_record_type (record_type_code, record_type_code_full, record_type_name, record_type_is_active, record_type_is_system, record_type_created_by) VALUES
+    ('EXPN', 'expense', 'Expense', TRUE, TRUE, 1)
+ON CONFLICT (record_type_code) DO NOTHING;
+
+-- 2. lkp_record_status rows for EXPN, resolved by SUBSELECT (see note above).
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES
+    ('DRFT','Draft'), ('SUBM','Submitted'), ('APPV','Approved'),
+    ('RJCT','Rejected'), ('REIM','Reimbursed')
+) AS v(code, name)
+CROSS JOIN lkp_record_type rt
+WHERE rt.record_type_code = 'EXPN'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- 3. lkp_expense_category -- new tenant-editable lookup, mirrors
+-- lkp_customer_type's shape. expense_category_coa_account_id is an optional
+-- link to a GL expense account for future accounting work; nothing in this
+-- module posts journal entries against it.
+CREATE TABLE IF NOT EXISTS lkp_expense_category (
+    expense_category_id             SERIAL       PRIMARY KEY,
+    expense_category_name           VARCHAR(100) NOT NULL,
+    expense_category_code           VARCHAR(20)  NOT NULL,
+    expense_category_coa_account_id INTEGER          NULL REFERENCES coa_account(coa_account_id),
+    expense_category_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    expense_category_is_system      BOOLEAN      NOT NULL DEFAULT TRUE,
+    expense_category_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expense_category_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    expense_category_deleted_at     TIMESTAMP        NULL,
+    expense_category_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_expense_category_code UNIQUE (expense_category_code)
+);
+
+INSERT INTO lkp_expense_category (expense_category_name, expense_category_code, expense_category_created_by) VALUES
+    ('Travel',          'TRAVEL', 1),
+    ('Meals',           'MEALS',  1),
+    ('Office Supplies', 'OFFICE', 1),
+    ('Equipment',       'EQUIP',  1),
+    ('Software',        'SOFT',   1),
+    ('Other',           'OTHER',  1)
+ON CONFLICT (expense_category_code) DO NOTHING;
+
+-- 4. expense (header) -- an employee expense claim: no vendor/payment-terms/
+-- tax fields (AD: a reimbursement claim isn't a priced commitment against a
+-- vendor). Claimant is always the acting employee (self-service, AD-5-style
+-- owner-is-requester) and doubles as the IDOR scope owner.
+CREATE TABLE IF NOT EXISTS expense (
+    expense_id                SERIAL        PRIMARY KEY,
+    expense_uuid               UUID          NOT NULL DEFAULT gen_random_uuid(),
+    expense_number              VARCHAR(20)      NULL,  -- 'EXPN-000001', generated post-insert in Go
+
+    record_type                 INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = EXPN
+    expense_status               INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+
+    -- Approval (optional, configuration-driven, mirrors requisition_approval_status)
+    expense_approval_status      VARCHAR(10)   NOT NULL DEFAULT 'none',  -- none | pending | approved
+    expense_approved_by          INTEGER           NULL REFERENCES employee(employee_id),
+    expense_rejected_by          INTEGER           NULL REFERENCES employee(employee_id),
+    expense_rejection_reason     TEXT          NOT NULL DEFAULT '',
+
+    -- Claimant (also the IDOR scope owner -- no separate owner_id column)
+    expense_claimant_id          INTEGER       NOT NULL REFERENCES employee(employee_id),
+    expense_department           VARCHAR(100)  NOT NULL DEFAULT '',
+    expense_memo                 TEXT          NOT NULL DEFAULT '',
+
+    -- Money (stored; sum of line amounts -- no discount/tax term)
+    expense_total                DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+    -- Dynamic + audit
+    expense_custom_fields        JSONB         NOT NULL DEFAULT '{}',
+    expense_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expense_created_by           INTEGER           NULL REFERENCES employee(employee_id),
+    expense_updated_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expense_updated_by           INTEGER           NULL REFERENCES employee(employee_id),
+    expense_deleted_at           TIMESTAMP         NULL,
+    expense_deleted_by           INTEGER           NULL REFERENCES employee(employee_id),
+    expense_record_version       INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_expense_uuid   UNIQUE (expense_uuid),
+    CONSTRAINT uq_expense_number UNIQUE (expense_number),
+    CONSTRAINT chk_exp_approval_status CHECK (expense_approval_status IN ('none','pending','approved')),
+    CONSTRAINT chk_exp_total_nonneg    CHECK (expense_total >= 0),
+    CONSTRAINT chk_exp_soft_delete     CHECK (
+        (expense_deleted_at IS NULL AND expense_deleted_by IS NULL) OR
+        (expense_deleted_at IS NOT NULL AND expense_deleted_by IS NOT NULL)
+    )
+);
+
+-- 5. expense_item (line items) -- one row per receipt/expense entry.
+CREATE TABLE IF NOT EXISTS expense_item (
+    expense_item_id            SERIAL        PRIMARY KEY,
+    expense_item_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
+    expense_id                   INTEGER       NOT NULL REFERENCES expense(expense_id) ON DELETE CASCADE,
+    line_number                   INTEGER       NOT NULL,
+    category_id                   INTEGER       NOT NULL REFERENCES lkp_expense_category(expense_category_id),
+
+    expense_date                  DATE          NOT NULL,
+    amount                        DECIMAL(15,2) NOT NULL DEFAULT 0,
+    description                   TEXT          NOT NULL DEFAULT '',
+
+    item_created_at               TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_created_by               INTEGER           NULL REFERENCES employee(employee_id),
+    item_updated_at               TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    item_deleted_at               TIMESTAMP         NULL,
+    item_record_version           INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_exp_item_uuid UNIQUE (expense_item_uuid),
+    CONSTRAINT chk_expi_amount  CHECK (amount >= 0)
+);
+
+-- 6. expense_history -- status/action trail (mirrors requisition_history).
+CREATE TABLE IF NOT EXISTS expense_history (
+    expense_history_id        SERIAL       PRIMARY KEY,
+    expense_id                  INTEGER      NOT NULL REFERENCES expense(expense_id) ON DELETE CASCADE,
+    from_status_id                INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id                   INTEGER          NULL REFERENCES lkp_record_status(record_status_id),
+    action                         VARCHAR(32)  NOT NULL DEFAULT 'transition', -- create | transition | update | approve | reject
+    actor_employee_id              INTEGER          NULL REFERENCES employee(employee_id),
+    snapshot                       JSONB        NOT NULL DEFAULT '{}',
+    at                             TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_exp_history_action CHECK (action IN ('create','transition','update','approve','reject'))
+);
+
+-- 7. expense_approver / expense_approval -- configuration-driven approval
+-- gate, exact structural copies of requisition_approver / requisition_approval.
+-- expense_approver.is_active is what keeps an inactive employee from
+-- signing off, rejecting, or counting toward quorum.
+CREATE TABLE IF NOT EXISTS expense_approver (
+    expense_approver_id       SERIAL      PRIMARY KEY,
+    record_type_id             INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = EXPN
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. SUBM
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                 INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_expense_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+
+CREATE TABLE IF NOT EXISTS expense_approval (
+    expense_approval_id       SERIAL     PRIMARY KEY,
+    expense_id                  INTEGER     NOT NULL REFERENCES expense(expense_id) ON DELETE CASCADE,
+    record_status_id            INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- status the sign-off was for
+    approver_employee_id        INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_expense_approval UNIQUE (expense_id, record_status_id, approver_employee_id)
+);
+
+-- expense indexes (listing/filtering -- all partial on live rows)
+CREATE INDEX IF NOT EXISTS idx_exp_claimant        ON expense (expense_claimant_id) WHERE expense_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exp_status          ON expense (expense_status)      WHERE expense_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exp_created_id      ON expense (expense_created_at, expense_id) WHERE expense_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exp_custom_gin      ON expense USING GIN (expense_custom_fields);
+CREATE INDEX IF NOT EXISTS idx_exp_item_expense    ON expense_item (expense_id) WHERE item_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exp_history_expense ON expense_history (expense_id);

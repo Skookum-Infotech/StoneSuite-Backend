@@ -30,6 +30,7 @@ import (
 //	GET    /api/tenant/expenses                    — unfiltered list (cursor-paginated)
 //	POST   /api/tenant/expenses/search             — filter + sort + search + pagination
 //	POST   /api/tenant/expenses                    — create (claimant = caller)
+//	GET    /api/tenant/expenses/categories         — active lkp_expense_category rows (line category picker)
 //	GET    /api/tenant/expenses/{uuid}             — get (+ items)
 //	PATCH  /api/tenant/expenses/{uuid}             — update (DRFT only)
 //	DELETE /api/tenant/expenses/{uuid}             — soft delete (DRFT only)
@@ -190,6 +191,28 @@ func (h *ExpenseOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpoo
 		"nextCursor": page.NextCursor,
 		"hasMore":    page.HasMore,
 	})
+}
+
+// Categories GET /api/tenant/expenses/categories
+// Lists active, non-deleted lkp_expense_category rows for the line item
+// category picker. Gated by expense:read (same as List/Search/Get) since it
+// only ever backs an expense-form dropdown, mirroring
+// ChartOfAccountsOps.Categories's read-gated lookup shape.
+func (h *ExpenseOps) Categories(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authExp(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	cats, err := queryLookupItems(r.Context(), pool, `
+		SELECT expense_category_id, expense_category_code, expense_category_name
+		FROM lkp_expense_category
+		WHERE expense_category_is_active AND expense_category_deleted_at IS NULL
+		ORDER BY expense_category_name`)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load expense categories.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "categories": cats})
 }
 
 // Create POST /api/tenant/expenses

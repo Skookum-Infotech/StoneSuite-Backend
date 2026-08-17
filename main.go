@@ -909,6 +909,7 @@ func main() {
 		mux.Handle("GET /api/tenant/expenses", tenantChain(expOps.List))
 		mux.Handle("POST /api/tenant/expenses/search", tenantChain(expOps.Search))
 		mux.Handle("POST /api/tenant/expenses", tenantChain(expOps.Create))
+		mux.Handle("GET /api/tenant/expenses/categories", tenantChain(expOps.Categories))
 		mux.Handle("GET /api/tenant/expenses/{uuid}", tenantChain(expOps.Get))
 		mux.Handle("PATCH /api/tenant/expenses/{uuid}", tenantChain(expOps.Update))
 		mux.Handle("DELETE /api/tenant/expenses/{uuid}", tenantChain(expOps.Delete))

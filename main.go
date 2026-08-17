@@ -900,6 +900,23 @@ func main() {
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
 		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))
 
+		// Expense: dedicated v2 relational module (header + line items +
+		// configuration-driven approval + dedicated reject), employee
+		// self-service reimbursement claims. Receipts have no routes here —
+		// they reuse the generic /api/tenant/records/{uuid}/attachments/*
+		// mechanism (see workflow.ResolveRecordAccess's "expense" branch).
+		expOps := controllers.NewExpenseOps()
+		mux.Handle("GET /api/tenant/expenses", tenantChain(expOps.List))
+		mux.Handle("POST /api/tenant/expenses/search", tenantChain(expOps.Search))
+		mux.Handle("POST /api/tenant/expenses", tenantChain(expOps.Create))
+		mux.Handle("GET /api/tenant/expenses/{uuid}", tenantChain(expOps.Get))
+		mux.Handle("PATCH /api/tenant/expenses/{uuid}", tenantChain(expOps.Update))
+		mux.Handle("DELETE /api/tenant/expenses/{uuid}", tenantChain(expOps.Delete))
+		mux.Handle("POST /api/tenant/expenses/{uuid}/transition", tenantChain(expOps.Transition))
+		mux.Handle("POST /api/tenant/expenses/{uuid}/approve", tenantChain(expOps.Approve))
+		mux.Handle("POST /api/tenant/expenses/{uuid}/reject", tenantChain(expOps.Reject))
+		mux.Handle("GET /api/tenant/expenses/{uuid}/audit", tenantChain(expOps.Audit))
+
 		// Invoice: dedicated v2 relational module, sibling of sales order.
 		invOps := controllers.NewInvoiceOps()
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))

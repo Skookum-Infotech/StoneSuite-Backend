@@ -209,6 +209,23 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 		return RecordAccessInfo{}, fmt.Errorf("lookup vendor bill: %w", err)
 	}
 
+	// expense: dedicated relational module (Expense Claims), owner resolved
+	// the same way (employee -> users.id); no team column.
+	var expOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM expense ex
+		LEFT JOIN employee e ON e.employee_id = ex.expense_claimant_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE ex.expense_uuid = $1::uuid AND ex.expense_deleted_at IS NULL`,
+		recordID).Scan(&expOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "expense", OwnerUserID: expOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup expense: %w", err)
+	}
+
 	return RecordAccessInfo{}, ErrRecordNotFound
 }
 

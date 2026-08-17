@@ -54,14 +54,6 @@ func actorOrSystem(actorEmployeeID int) int {
 	return actorEmployeeID
 }
 
-// nullableDate returns the given "yyyy-mm-dd" string as a nullable date arg.
-func nullableDate(d string) any {
-	if d == "" {
-		return nil
-	}
-	return d
-}
-
 // colVal pairs a column name with its bind value (and an optional type cast
 // suffix, e.g. "::date") so an INSERT/UPDATE's column list and argument list
 // are always built from the same slice.

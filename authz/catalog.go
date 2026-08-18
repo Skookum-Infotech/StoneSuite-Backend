@@ -25,6 +25,7 @@ const (
 	ResourceProspect       Resource = "prospect"        // CRM prospects
 	ResourceCustomer       Resource = "customer"        // CRM customers
 	ResourceCRMActivity    Resource = "crm_activity"    // CRM activity log (calls/emails/meetings/notes/tasks)
+	ResourceCustomerNote   Resource = "customer_note"   // notes submitted by external customers via the portal
 	ResourceUser           Resource = "user"            // tenant users
 	ResourceRole           Resource = "role"            // roles & permissions
 	ResourceWorkflowConfig Resource = "workflow_config" // states/transitions/fields config
@@ -159,6 +160,13 @@ var catalog = []Permission{
 	{ResourceCRMActivity, ActionRead},
 	{ResourceCRMActivity, ActionUpdate},
 	{ResourceCRMActivity, ActionDelete},
+
+	// No ActionCreate: notes are created only by an authenticated external
+	// customer through the portal (middleware.RequireCustomerAuth), which
+	// sits entirely outside RBAC — staff only ever read/triage/delete them.
+	{ResourceCustomerNote, ActionRead},
+	{ResourceCustomerNote, ActionUpdate},
+	{ResourceCustomerNote, ActionDelete},
 
 	{ResourceInventoryItem, ActionCreate},
 	{ResourceInventoryItem, ActionRead},

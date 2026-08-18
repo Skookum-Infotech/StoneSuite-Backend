@@ -699,6 +699,11 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Check the user's workspace status — suspended/disabled accounts must not
 	// be able to log in even though their control-plane identity still exists.
+	// The tenant-scoped users.full_name is also picked up here when present —
+	// it's the field Config > Users edits, and the control-plane identity's
+	// full_name is never updated by that flow, so it must not be treated as
+	// authoritative once a workspace user row exists.
+	displayName := identity.FullName
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
 			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
@@ -710,6 +715,9 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 					if u.Status == "disabled" {
 						fail(w, http.StatusForbidden, "Your account has been deactivated.")
 						return
+					}
+					if u.FullName != "" {
+						displayName = u.FullName
 					}
 				}
 			}
@@ -762,10 +770,34 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		"expiresAt": accessExpiry.UnixMilli(),
 		"user": map[string]any{
 			"id": identity.ID, "email": identity.Email,
-			"fullName": identity.FullName, "tenantId": identity.TenantID,
+			"fullName": displayName, "tenantId": identity.TenantID,
 			"isPlatformAdmin": isPlatformAdmin,
 		},
 	})
+}
+
+// tenantDisplayName resolves the name to show for a signed-in identity. The
+// tenant-scoped users.full_name — the field Config > Users edits — is
+// authoritative once a workspace user row exists; the control-plane
+// identity.full_name is only a fallback for platform-admin-only identities
+// with no tenant workspace.
+func tenantDisplayName(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, identity *tenancy.Identity) string {
+	if identity.TenantID == "" {
+		return identity.FullName
+	}
+	tenant, err := cp.TenantByID(ctx, identity.TenantID)
+	if err != nil || !tenant.Servable() {
+		return identity.FullName
+	}
+	pool, err := router.PoolFor(ctx, tenant)
+	if err != nil {
+		return identity.FullName
+	}
+	u, err := userstore.GetUserByIdentityID(ctx, pool, identity.ID)
+	if err != nil || u.FullName == "" {
+		return identity.FullName
+	}
+	return u.FullName
 }
 
 // ChangePassword updates the authenticated caller's password. Requires the

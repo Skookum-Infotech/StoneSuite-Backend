@@ -264,6 +264,20 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// identities.email is unique platform-wide (login identity, not per-tenant).
+	// Reject up front so we never create a tenant shell for an email that's
+	// already claimed elsewhere — finalizeOnboarding's create-or-reuse fallback
+	// cannot safely tell "retry of this same tenant" apart from "belongs to a
+	// different tenant" without this check, and used to silently misattach.
+	if existing, err := h.CP.IdentityByEmail(r.Context(), superAdminEmail); err == nil && existing != nil {
+		fail(w, http.StatusConflict, fmt.Sprintf(
+			"%q is already registered on another workspace. Use a different admin email.", superAdminEmail))
+		return
+	} else if err != nil && !errors.Is(err, tenancy.ErrIdentityNotFound) {
+		fail(w, http.StatusInternalServerError, "Failed to validate admin email.")
+		return
+	}
+
 	tenant, err := h.CP.CreateTenant(r.Context(), slug, companyName, false)
 	if err != nil {
 		if isUniqueViolation(err) {

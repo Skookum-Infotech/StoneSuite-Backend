@@ -109,10 +109,12 @@ func UpsertNumberingConfig(ctx context.Context, q Querier, cfg NumberingConfig) 
 	return nil
 }
 
-// generateRecordNumber atomically claims and formats the next record number
+// GenerateRecordNumber atomically claims and formats the next record number
 // for workflowID, as part of an in-flight create-record transaction. Returns
-// "" if numbering is not configured or not enabled for this workflow.
-func generateRecordNumber(ctx context.Context, tx Querier, workflowID string) (string, error) {
+// "" if numbering is not configured or not enabled for this workflow. Used by
+// both the v1 JSONB engine (this package's CreateRecord) and the v2 relational
+// CRM store (crmstore.relationalStore), which share workflow_numbering_configs.
+func GenerateRecordNumber(ctx context.Context, tx Querier, workflowID string) (string, error) {
 	var (
 		n         int64
 		prefix    string

@@ -453,6 +453,7 @@ func main() {
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))
+		mux.Handle("GET /api/tenant/workflows/enabled", tenantChain(wf.ListEnabledWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))

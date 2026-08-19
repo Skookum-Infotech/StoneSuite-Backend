@@ -68,6 +68,44 @@ func (h *WorkflowOps) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "workflows": wfs})
 }
 
+// workflowStatus is the minimal {key, enabled} shape returned by
+// ListEnabledWorkflows — deliberately narrower than the full Workflow struct.
+type workflowStatus struct {
+	Key     string `json:"key"`
+	Enabled bool   `json:"enabled"`
+}
+
+// ListEnabledWorkflows GET /api/tenant/workflows/enabled — {key, enabled} for
+// every workflow, callable by ANY authenticated tenant member regardless of
+// RBAC grants. Unlike ListWorkflows (gated by workflow:read, a
+// Configuration-only permission), this intentionally skips the authz.Check —
+// every CRM/Sales/Purchases page needs to know whether its OWN workflow is
+// disabled to hide/block itself for every user, even a role holding only
+// e.g. lead:read with no Configuration access at all. Returns nothing beyond
+// key/enabled: no name, description, id, or approver ids.
+func (h *WorkflowOps) ListEnabledWorkflows(w http.ResponseWriter, r *http.Request) {
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return
+	}
+	pool, err := tenancy.PoolFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+	wfs, err := workflow.ListWorkflows(r.Context(), pool)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to list workflows.")
+		return
+	}
+	statuses := make([]workflowStatus, 0, len(wfs))
+	for _, wf := range wfs {
+		statuses = append(statuses, workflowStatus{Key: wf.Key, Enabled: wf.Enabled})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "workflows": statuses})
+}
+
 // GetWorkflow GET /api/tenant/workflows/{id} — full definition.
 func (h *WorkflowOps) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflow, authz.ActionRead)

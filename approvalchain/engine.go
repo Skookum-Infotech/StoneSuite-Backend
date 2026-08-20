@@ -372,6 +372,15 @@ func signOffCount(ctx context.Context, q workflow.Querier, approvalTable, idColu
 	return n, nil
 }
 
+// IsConfiguredApprover reports whether an employee is an active configured
+// approver on approverTable for a record type at a status. Exported for
+// modules that need this check outside the Approve flow -- e.g. expense's
+// Reject, which requires the actor be a configured approver (when any are
+// configured) even though rejecting itself needs no quorum.
+func IsConfiguredApprover(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID, employeeID int) (bool, error) {
+	return isConfiguredApprover(ctx, q, approverTable, recordTypeID, statusID, employeeID)
+}
+
 func isConfiguredApprover(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID, employeeID int) (bool, error) {
 	var exists bool
 	if err := q.QueryRow(ctx, fmt.Sprintf(

@@ -897,6 +897,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Update))
 		mux.Handle("DELETE /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/transition", tenantChain(vcOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/approve", tenantChain(vcOps.Approve))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/apply", tenantChain(vcOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
 		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))

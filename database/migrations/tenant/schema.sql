@@ -7812,3 +7812,41 @@ CREATE TABLE IF NOT EXISTS refund_approval (
 );
 CREATE INDEX IF NOT EXISTS idx_refund_approver_lookup ON refund_approver (record_type_id, record_status_id) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_refund_approval_refund ON refund_approval (refund_id);
+
+-- -- 000037_approval_chain_generic_phase2 ----------------------------------
+-- =====================================================================
+-- Tenant migration 037: extends the AD-8 approval gate to Vendor Credit --
+-- the approvalchain "Purchases" rollout group's one net-new module (every
+-- other Purchases module -- Requisition, Purchase Order, Vendor Bill,
+-- Vendor Payment, Expense -- already had its approver/approval tables from
+-- an earlier migration; only their Go code moved onto the shared engine).
+--
+-- Vendor Credit has no separate pending status, mirroring Credit Memo
+-- (migration 036) -- its gate sits on DRFT itself, with Void always exempt
+-- (approvalchain.AlwaysAllowedExitCodes) so a draft vendor credit can still
+-- be voided without approval sign-off.
+-- =====================================================================
+
+ALTER TABLE vendor_credit ADD COLUMN IF NOT EXISTS vendor_credit_approval_status VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE vendor_credit ADD COLUMN IF NOT EXISTS vendor_credit_approved_by     INTEGER         NULL REFERENCES employee(employee_id);
+
+CREATE TABLE IF NOT EXISTS vendor_credit_approver (
+    vendor_credit_approver_id SERIAL      PRIMARY KEY,
+    record_type_id            INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = VCRD
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. DRFT
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                  INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_vendor_credit_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS vendor_credit_approval (
+    vendor_credit_approval_id SERIAL      PRIMARY KEY,
+    vendor_credit_id             INTEGER     NOT NULL REFERENCES vendor_credit(vendor_credit_id) ON DELETE CASCADE,
+    record_status_id             INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id         INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                   TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_vendor_credit_approval UNIQUE (vendor_credit_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_vendor_credit_approver_lookup ON vendor_credit_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_vendor_credit_approval_credit ON vendor_credit_approval (vendor_credit_id);

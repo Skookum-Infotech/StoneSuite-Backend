@@ -48,14 +48,14 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	approverTable := moduleConfig().ApproverTable
 
 	// Approval gate: a job cannot leave a status that has configured approvers
-	// until it has been approved, except into Cancelled -- cancelling a job
-	// is a way out of the approval process, not a way past it (mirrors
-	// approvalchain.AlwaysAllowedExitCodes).
+	// until it has been approved, except into an always-allowed exit like
+	// Cancelled -- cancelling a job is a way out of the approval process, not
+	// a way past it.
 	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, st.statusID)
 	if err != nil {
 		return nil, err
 	}
-	if requiredHere > 0 && st.approvalStatus != approvalchain.StatusApproved && toStatusCode != StatusCancelled {
+	if err := approvalchain.CheckTransitionGate(requiredHere, st.approvalStatus, toStatusCode); err != nil {
 		return nil, ErrApprovalRequired
 	}
 	// The status being entered may itself require approval → start it pending.

@@ -180,6 +180,21 @@ var registry = map[string]ModuleConfig{
 		},
 		Gates: []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
 	},
+	"vendor_credit": {
+		RecordTypeCode: "VCRD", ApproverTable: "vendor_credit_approver", ApprovalTable: "vendor_credit_approval",
+		Record: RecordSpec{
+			Table: "vendor_credit", HistoryTable: "vendor_credit_history",
+			IDColumn: "vendor_credit_id", UUIDColumn: "vendor_credit_uuid", StatusColumn: "vendor_credit_status",
+			ApprovalStatusColumn: "vendor_credit_approval_status", ApprovedByColumn: "vendor_credit_approved_by",
+			UpdatedAtColumn: "vendor_credit_updated_at", UpdatedByColumn: "vendor_credit_updated_by",
+			RecordVersionColumn: "vendor_credit_record_version", DeletedAtColumn: "vendor_credit_deleted_at",
+		},
+		// Vendor Credit has no separate Pending status -- the gate sits on
+		// Draft itself, mirroring credit_memo. Void always escapes
+		// (AlwaysAllowedExitCodes), so a draft vendor credit can still be
+		// voided without approval.
+		Gates: []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+	},
 }
 
 // ForWorkflowKey returns the approval-chain configuration for a workflow key

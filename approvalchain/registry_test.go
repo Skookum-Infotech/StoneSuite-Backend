@@ -23,12 +23,12 @@ func TestForWorkflowKey(t *testing.T) {
 		{"payment", true, "PYMT", []string{"PEND"}, []string{"APPV"}},
 		{"credit_memo", true, "CRDT", []string{"DRFT"}, []string{"APPV"}},
 		{"refund", true, "RFND", []string{"PEND"}, []string{"APPV"}},
+		{"vendor_credit", true, "VCRD", []string{"DRFT"}, []string{"APPV"}},
 		{"lead", false, "", nil, nil},
 		{"prospect", false, "", nil, nil},
 		{"customer", false, "", nil, nil},
 		{"vendor", false, "", nil, nil},
 		{"item_receipt", false, "", nil, nil},
-		{"vendor_credit", false, "", nil, nil},
 		{"not_a_real_key", false, "", nil, nil},
 	}
 	for _, tt := range tests {

@@ -101,22 +101,57 @@ var registry = map[string]ModuleConfig{
 	},
 	"purchase_order": {
 		RecordTypeCode: "PORD", ApproverTable: "purchase_order_approver", ApprovalTable: "purchase_order_approval",
+		Record: RecordSpec{
+			Table: "purchase_order", HistoryTable: "purchase_order_history",
+			IDColumn: "purchase_order_id", UUIDColumn: "purchase_order_uuid", StatusColumn: "purchase_order_status",
+			ApprovalStatusColumn: "purchase_order_approval_status", ApprovedByColumn: "purchase_order_approved_by",
+			UpdatedAtColumn: "purchase_order_updated_at", UpdatedByColumn: "purchase_order_updated_by",
+			RecordVersionColumn: "purchase_order_record_version", DeletedAtColumn: "purchase_order_deleted_at",
+		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
 	"requisition": {
 		RecordTypeCode: "REQN", ApproverTable: "requisition_approver", ApprovalTable: "requisition_approval",
+		Record: RecordSpec{
+			Table: "requisition", HistoryTable: "requisition_history",
+			IDColumn: "requisition_id", UUIDColumn: "requisition_uuid", StatusColumn: "requisition_status",
+			ApprovalStatusColumn: "requisition_approval_status", ApprovedByColumn: "requisition_approved_by",
+			UpdatedAtColumn: "requisition_updated_at", UpdatedByColumn: "requisition_updated_by",
+			RecordVersionColumn: "requisition_record_version", DeletedAtColumn: "requisition_deleted_at",
+		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
 	"vendor_bill": {
 		RecordTypeCode: "VBIL", ApproverTable: "vendor_bill_approver", ApprovalTable: "vendor_bill_approval",
+		Record: RecordSpec{
+			Table: "vendor_bill", HistoryTable: "vendor_bill_history",
+			IDColumn: "vendor_bill_id", UUIDColumn: "vendor_bill_uuid", StatusColumn: "vendor_bill_status",
+			ApprovalStatusColumn: "vendor_bill_approval_status", ApprovedByColumn: "vendor_bill_approved_by",
+			UpdatedAtColumn: "vendor_bill_updated_at", UpdatedByColumn: "vendor_bill_updated_by",
+			RecordVersionColumn: "vendor_bill_record_version", DeletedAtColumn: "vendor_bill_deleted_at",
+		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
 	"vendor_payment": {
 		RecordTypeCode: "VPAY", ApproverTable: "vendor_payment_approver", ApprovalTable: "vendor_payment_approval",
+		Record: RecordSpec{
+			Table: "vendor_payment", HistoryTable: "vendor_payment_history",
+			IDColumn: "vendor_payment_id", UUIDColumn: "vendor_payment_uuid", StatusColumn: "vendor_payment_status",
+			ApprovalStatusColumn: "vendor_payment_approval_status", ApprovedByColumn: "vendor_payment_approved_by",
+			UpdatedAtColumn: "vendor_payment_updated_at", UpdatedByColumn: "vendor_payment_updated_by",
+			RecordVersionColumn: "vendor_payment_record_version", DeletedAtColumn: "vendor_payment_deleted_at",
+		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
 	"expense": {
 		RecordTypeCode: "EXPN", ApproverTable: "expense_approver", ApprovalTable: "expense_approval",
+		Record: RecordSpec{
+			Table: "expense", HistoryTable: "expense_history",
+			IDColumn: "expense_id", UUIDColumn: "expense_uuid", StatusColumn: "expense_status",
+			ApprovalStatusColumn: "expense_approval_status", ApprovedByColumn: "expense_approved_by",
+			UpdatedAtColumn: "expense_updated_at", UpdatedByColumn: "expense_updated_by",
+			RecordVersionColumn: "expense_record_version", DeletedAtColumn: "expense_deleted_at",
+		},
 		Gates: []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV"}},
 	},
 	"installation": {

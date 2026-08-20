@@ -64,6 +64,34 @@ func TestForWorkflowKey(t *testing.T) {
 	}
 }
 
+// TestRegistry_RecordSpecComplete guards against the exact bug this test was
+// added for: a registry entry with every other field set but a zero-value
+// Record (RecordSpec{}), which compiles fine (RecordSpec is just strings)
+// but makes every SQL statement engine.go builds from it syntactically
+// invalid -- e.g. `SELECT , ,  FROM  WHERE  = $1` -- so every Get/Approve
+// call for that module 500s at runtime. go build/vet/test all stay green
+// because nothing here is a compile-time property; this loop is what
+// catches it instead.
+func TestRegistry_RecordSpecComplete(t *testing.T) {
+	for key, cfg := range registry {
+		t.Run(key, func(t *testing.T) {
+			r := cfg.Record
+			fields := map[string]string{
+				"Table": r.Table, "HistoryTable": r.HistoryTable,
+				"IDColumn": r.IDColumn, "UUIDColumn": r.UUIDColumn, "StatusColumn": r.StatusColumn,
+				"ApprovalStatusColumn": r.ApprovalStatusColumn, "ApprovedByColumn": r.ApprovedByColumn,
+				"UpdatedAtColumn": r.UpdatedAtColumn, "UpdatedByColumn": r.UpdatedByColumn,
+				"RecordVersionColumn": r.RecordVersionColumn, "DeletedAtColumn": r.DeletedAtColumn,
+			}
+			for name, val := range fields {
+				if val == "" {
+					t.Errorf("Record.%s is empty for %q -- every registered module's Record must be fully populated", name, key)
+				}
+			}
+		})
+	}
+}
+
 func TestModuleConfig_HasGate(t *testing.T) {
 	fjob, _ := ForWorkflowKey("installation")
 	if !fjob.HasGate("TMPL") {

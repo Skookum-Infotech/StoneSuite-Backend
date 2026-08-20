@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -227,62 +226,6 @@ func (h *WorkflowOps) SetWorkflowApprovers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": req.ApproverUserIDs})
-}
-
-// ---- per-state approver config (generic workflow engine) --------------------
-
-// GetStateApprovers GET /api/tenant/workflows/{id}/states/{stateId}/approvers
-// Returns the tenant user ids currently configured as active approvers for the
-// given workflow state.
-func (h *WorkflowOps) GetStateApprovers(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionRead)
-	if !ok {
-		return
-	}
-	stateID, ok := h.stateInWorkflow(w, r, pool)
-	if !ok {
-		return
-	}
-	ids, err := workflow.StateApproverUserIDs(r.Context(), pool, stateID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load approvers.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": ids})
-}
-
-// SetStateApprovers PUT /api/tenant/workflows/{id}/states/{stateId}/approvers
-// body {"approverUserIds":["..."]}
-// Replaces the state's active approver set with exactly the given users. The
-// backend enforces NO count cap — the 2-approver limit is a UI concern; the
-// backend holds any number. A state with >=1 approver becomes approval-gated.
-func (h *WorkflowOps) SetStateApprovers(w http.ResponseWriter, r *http.Request) {
-	pool, _, identityID, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionConfigure)
-	if !ok {
-		return
-	}
-	stateID, ok := h.stateInWorkflow(w, r, pool)
-	if !ok {
-		return
-	}
-	var req struct {
-		ApproverUserIDs []string `json:"approverUserIds"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	ids := dedupeStrings(req.ApproverUserIDs)
-	if !allActiveUsers(r.Context(), pool, ids) {
-		fail(w, http.StatusBadRequest, "One or more approverUserIds do not match an active user.")
-		return
-	}
-	createdBy, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
-	if err := workflow.ReplaceStateApprovers(r.Context(), pool, stateID, ids, createdBy); err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to save approvers.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "approverUserIds": ids})
 }
 
 // ---- record numbering --------------------------------------------------------
@@ -729,56 +672,6 @@ func isWorkflowClientErr(err error) bool {
 	}
 	var ve workflow.ValidationErrors
 	return errors.As(err, &ve)
-}
-
-// stateInWorkflow validates that the {stateId} path param is a state of the
-// {id} workflow. On failure it writes the response (404 unknown / 500 error)
-// and returns ok=false.
-func (h *WorkflowOps) stateInWorkflow(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (string, bool) {
-	workflowID := r.PathValue("id")
-	stateID := r.PathValue("stateId")
-	var exists bool
-	err := pool.QueryRow(r.Context(),
-		`SELECT EXISTS (SELECT 1 FROM workflow_states WHERE id::text = $1 AND workflow_id::text = $2)`,
-		stateID, workflowID).Scan(&exists)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load state.")
-		return "", false
-	}
-	if !exists {
-		fail(w, http.StatusNotFound, "State not found for this workflow.")
-		return "", false
-	}
-	return stateID, true
-}
-
-// allActiveUsers reports whether every id in ids resolves to an active tenant
-// user. An empty set is valid (clears the approver set). Malformed ids simply
-// fail to match, so the check returns false.
-func allActiveUsers(ctx context.Context, pool *pgxpool.Pool, ids []string) bool {
-	if len(ids) == 0 {
-		return true
-	}
-	var count int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM users WHERE id::text = ANY($1) AND status = 'active'`, ids).Scan(&count); err != nil {
-		return false
-	}
-	return count == len(ids)
-}
-
-// dedupeStrings returns ids with blanks and duplicates removed, order preserved.
-func dedupeStrings(in []string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, s := range in {
-		if s == "" || seen[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-	return out
 }
 
 // splitPermission parses "resource:action" into typed values.

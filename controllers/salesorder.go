@@ -199,14 +199,19 @@ func (h *SalesOrderOps) Get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	info, err := salesorder.GetApprovalInfo(r.Context(), pool, order.ID, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		soFail(w, err, "Failed to load sales order.")
+		return
+	}
+	info, err := salesorder.GetApprovalInfo(r.Context(), pool, order.ID, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		soFail(w, err, "Failed to load sales order.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "salesOrder": order,
-		"approvers": info.Approvers, "canApprove": info.CanApprove,
+		"gated": info.Gated, "approvers": info.Approvers, "canApprove": info.CanApprove, "isOverride": info.IsOverride,
 	})
 }
 
@@ -280,7 +285,12 @@ func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	order, err := salesorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		soFail(w, err, "Failed to approve sales order.")
+		return
+	}
+	order, err := salesorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, salesorder.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

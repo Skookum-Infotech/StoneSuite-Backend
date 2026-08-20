@@ -75,7 +75,13 @@ func isConfiguredApprover(ctx context.Context, q workflow.Querier, recordTypeID,
 // status, is idempotent per (quote, status, approver), and flips the
 // header's approval_status to 'approved' once the sign-off count reaches the
 // configured approver count.
-func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int) (*Quote, error) {
+//
+// callerIsSuperAdmin lets a super admin (the wildcard-grant role) approve a
+// gate they aren't personally configured on, skipping quorum entirely
+// rather than counting as one more sign-off -- this is an override of the
+// gate, not a substitute approver, so it's written to history as
+// "approve_override" and always resolves straight to approved.
+func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*Quote, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin approve quote: %w", err)
@@ -107,12 +113,26 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmplo
 		return nil, ErrApprovalNotRequired
 	}
 
-	ok, err := isConfiguredApprover(ctx, tx, recordTypeID, curStatusID, approverEmployeeID)
+	isApprover, err := isConfiguredApprover(ctx, tx, recordTypeID, curStatusID, approverEmployeeID)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
+	if !isApprover && !callerIsSuperAdmin {
 		return nil, ErrNotApprover
+	}
+
+	if !isApprover && callerIsSuperAdmin {
+		if _, err := tx.Exec(ctx, `
+			UPDATE quote SET
+				quote_approval_status = $2, quote_approved_by = $3, quote_updated_at = NOW()
+			WHERE quote_id = $1`, internalID, approvalApproved, nullableInt(approverEmployeeID)); err != nil {
+			return nil, fmt.Errorf("override approve quote: %w", err)
+		}
+		writeHistory(ctx, tx, internalID, "approve_override", &curStatusID, &curStatusID, approverEmployeeID)
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit approve quote: %w", err)
+		}
+		return Get(ctx, pool, uuid)
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -156,19 +176,32 @@ type ApproverInfo struct {
 	Name string `json:"name"`
 }
 
-// ApprovalInfo tells the detail page who is waiting to sign off on a quote's
-// current status and whether the requesting caller is one of them (AD-8), so
-// the UI can show a banner instead of a transition control that would just
-// 409.
+// ApprovalInfo tells the detail page whether a quote is actually gated right
+// now, who is configured to sign off on it, and whether the requesting
+// caller can approve it (AD-8) -- so the UI can show a banner instead of a
+// transition control that would just 409.
 type ApprovalInfo struct {
+	// Gated mirrors exactly the predicate store_transition.go's Transition
+	// enforces (activeApproverCount > 0 && approvalStatus != approved) --
+	// NOT the stored approvalStatus column alone, which goes stale the
+	// moment an admin edits the approver list out from under a quote
+	// already sitting in a gated status. If the configured approver list
+	// for the current status is emptied, Gated flips to false immediately
+	// (matching that Transition would no longer block), even though the
+	// stored column still reads "pending" until the next transition.
+	Gated bool `json:"gated"`
+	// Approvers and CanApprove are only meaningful while Gated is true.
 	Approvers  []ApproverInfo `json:"approvers"`
 	CanApprove bool           `json:"canApprove"`
+	// IsOverride is true when CanApprove is true only because the caller is
+	// a super admin, not because they're on Approvers -- the UI uses this to
+	// label the action as an override rather than an ordinary approval.
+	IsOverride bool `json:"isOverride"`
 }
 
-// GetApprovalInfo resolves ApprovalInfo for a quote. Returns the zero value
-// (no approvers, cannot approve) without error once the quote isn't
-// currently gated -- callers only need this while ApprovalStatus == pending.
-func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, callerEmployeeID int) (ApprovalInfo, error) {
+// GetApprovalInfo resolves ApprovalInfo for a quote. Returns Gated: false
+// without error once the quote isn't currently gated.
+func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, callerEmployeeID int, callerIsSuperAdmin bool) (ApprovalInfo, error) {
 	var curStatusID int
 	var approvalStatus string
 	err := pool.QueryRow(ctx, `
@@ -180,13 +213,18 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 	if err != nil {
 		return ApprovalInfo{}, fmt.Errorf("load quote for approval info: %w", err)
 	}
-	if approvalStatus != approvalPending {
-		return ApprovalInfo{}, nil
-	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, pool, quotRecordTypeCode)
 	if err != nil {
 		return ApprovalInfo{}, fmt.Errorf("resolve QUOT record type: %w", err)
+	}
+
+	required, err := activeApproverCount(ctx, pool, recordTypeID, curStatusID)
+	if err != nil {
+		return ApprovalInfo{}, err
+	}
+	if required == 0 || approvalStatus == approvalApproved {
+		return ApprovalInfo{Gated: false}, nil
 	}
 
 	rows, err := pool.Query(ctx, `
@@ -214,9 +252,14 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 		return ApprovalInfo{}, fmt.Errorf("iterate quote approvers: %w", err)
 	}
 
-	canApprove, err := isConfiguredApprover(ctx, pool, recordTypeID, curStatusID, callerEmployeeID)
+	isApprover, err := isConfiguredApprover(ctx, pool, recordTypeID, curStatusID, callerEmployeeID)
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
-	return ApprovalInfo{Approvers: approvers, CanApprove: canApprove}, nil
+	return ApprovalInfo{
+		Gated:      true,
+		Approvers:  approvers,
+		CanApprove: isApprover || callerIsSuperAdmin,
+		IsOverride: !isApprover && callerIsSuperAdmin,
+	}, nil
 }

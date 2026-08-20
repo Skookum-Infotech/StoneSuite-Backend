@@ -196,14 +196,19 @@ func (h *QuoteOps) Get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	info, err := quote.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		quoteFail(w, err, "Failed to load quote.")
+		return
+	}
+	info, err := quote.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		quoteFail(w, err, "Failed to load quote.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "quote": est,
-		"approvers": info.Approvers, "canApprove": info.CanApprove,
+		"gated": info.Gated, "approvers": info.Approvers, "canApprove": info.CanApprove, "isOverride": info.IsOverride,
 	})
 }
 
@@ -273,7 +278,12 @@ func (h *QuoteOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	est, err := quote.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		quoteFail(w, err, "Failed to approve quote.")
+		return
+	}
+	est, err := quote.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, quote.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

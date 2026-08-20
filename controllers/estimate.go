@@ -196,14 +196,19 @@ func (h *EstimateOps) Get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	info, err := estimate.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		estimateFail(w, err, "Failed to load estimate.")
+		return
+	}
+	info, err := estimate.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		estimateFail(w, err, "Failed to load estimate.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "estimate": est,
-		"approvers": info.Approvers, "canApprove": info.CanApprove,
+		"gated": info.Gated, "approvers": info.Approvers, "canApprove": info.CanApprove, "isOverride": info.IsOverride,
 	})
 }
 
@@ -273,7 +278,12 @@ func (h *EstimateOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	est, err := estimate.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		estimateFail(w, err, "Failed to approve estimate.")
+		return
+	}
+	est, err := estimate.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, estimate.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

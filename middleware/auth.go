@@ -100,6 +100,18 @@ func RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		// Customer-portal tokens (principal_type=customer, see customer_auth.go)
+		// carry a disjoint claim shape and must never authenticate a staff
+		// route, even if the two token kinds ever share a signing key.
+		if pt, _ := claims["principal_type"].(string); pt == CustomerPrincipalType {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(models.APIResponse{
+				Success: false,
+				Message: "Authentication failed. Invalid or malformed token.",
+			})
+			return
+		}
+
 		identityID, okID := claims["id"].(string)
 		email, okEmail := claims["email"].(string)
 

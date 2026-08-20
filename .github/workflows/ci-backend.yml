@@ -17,7 +17,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache-dependency-path: go.sum
       # Deterministic and zero-cost. Catches the formatting drift that
       # copy-cloning a module produces -- e.g. quote/types.go's struct tags
@@ -66,7 +66,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache-dependency-path: go.sum
 
       # --single-transaction is REQUIRED, not tidiness: it matches what the Go
@@ -143,7 +143,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -158,7 +158,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Run govulncheck
         run: |

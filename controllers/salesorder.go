@@ -195,11 +195,19 @@ func (h *SalesOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/sales-orders/{uuid}
 func (h *SalesOrderOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, order, ok := h.authSOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, order, ok := h.authSOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
+	info, err := salesorder.GetApprovalInfo(r.Context(), pool, order.ID, resolveEmployeeID(r, identityID))
+	if err != nil {
+		soFail(w, err, "Failed to load sales order.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "salesOrder": order,
+		"approvers": info.Approvers, "canApprove": info.CanApprove,
+	})
 }
 
 // Update PATCH /api/tenant/sales-orders/{uuid}

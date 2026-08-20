@@ -192,11 +192,19 @@ func (h *EstimateOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/estimates/{uuid}
 func (h *EstimateOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, est, ok := h.authEstimateByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, est, ok := h.authEstimateByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "estimate": est})
+	info, err := estimate.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID))
+	if err != nil {
+		estimateFail(w, err, "Failed to load estimate.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "estimate": est,
+		"approvers": info.Approvers, "canApprove": info.CanApprove,
+	})
 }
 
 // Update PATCH /api/tenant/estimates/{uuid}

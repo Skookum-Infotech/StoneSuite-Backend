@@ -147,3 +147,76 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmplo
 	}
 	return Get(ctx, pool, uuid)
 }
+
+// ApproverInfo names one configured approver for display (AD-8) — deliberately
+// just id+name, not a full employee/user record, since the detail page only
+// needs it to answer "who is this waiting on".
+type ApproverInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ApprovalInfo tells the detail page who is waiting to sign off on an
+// estimate's current status and whether the requesting caller is one of
+// them (AD-8), so the UI can show a banner instead of a transition control
+// that would just 409.
+type ApprovalInfo struct {
+	Approvers  []ApproverInfo `json:"approvers"`
+	CanApprove bool           `json:"canApprove"`
+}
+
+// GetApprovalInfo resolves ApprovalInfo for an estimate. Returns the zero
+// value (no approvers, cannot approve) without error once the estimate isn't
+// currently gated -- callers only need this while ApprovalStatus == pending.
+func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, callerEmployeeID int) (ApprovalInfo, error) {
+	var curStatusID int
+	var approvalStatus string
+	err := pool.QueryRow(ctx, `
+		SELECT estimate_status, estimate_approval_status FROM estimate
+		WHERE estimate_uuid = $1 AND estimate_deleted_at IS NULL`, uuid).Scan(&curStatusID, &approvalStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ApprovalInfo{}, ErrNotFound
+	}
+	if err != nil {
+		return ApprovalInfo{}, fmt.Errorf("load estimate for approval info: %w", err)
+	}
+	if approvalStatus != approvalPending {
+		return ApprovalInfo{}, nil
+	}
+
+	recordTypeID, err := recordTypeIDByCode(ctx, pool, estmRecordTypeCode)
+	if err != nil {
+		return ApprovalInfo{}, fmt.Errorf("resolve ESTM record type: %w", err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT e.employee_id, COALESCE(NULLIF(u.full_name,''), u.email)
+		FROM estimate_approver ea
+		JOIN employee e ON e.employee_id = ea.approver_employee_id
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE ea.record_type_id = $1 AND ea.record_status_id = $2 AND ea.is_active
+		ORDER BY 2`, recordTypeID, curStatusID)
+	if err != nil {
+		return ApprovalInfo{}, fmt.Errorf("load estimate approvers: %w", err)
+	}
+	defer rows.Close()
+	var approvers []ApproverInfo
+	for rows.Next() {
+		var a ApproverInfo
+		var id int
+		if err := rows.Scan(&id, &a.Name); err != nil {
+			return ApprovalInfo{}, fmt.Errorf("scan estimate approver: %w", err)
+		}
+		a.ID = fmt.Sprint(id)
+		approvers = append(approvers, a)
+	}
+	if err := rows.Err(); err != nil {
+		return ApprovalInfo{}, fmt.Errorf("iterate estimate approvers: %w", err)
+	}
+
+	canApprove, err := isConfiguredApprover(ctx, pool, recordTypeID, curStatusID, callerEmployeeID)
+	if err != nil {
+		return ApprovalInfo{}, err
+	}
+	return ApprovalInfo{Approvers: approvers, CanApprove: canApprove}, nil
+}

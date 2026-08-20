@@ -546,6 +546,22 @@ SELECT setval(
     GREATEST((SELECT MAX(employee_id) FROM employee), 1)
 );
 
+-- Backfill: link every existing users row to an employee row if it doesn't
+-- have one yet. Every employee_id-based FK (Sales Rep, CRM/module approvers,
+-- "own"-scope record ownership via workflow.EmployeeIDByIdentity) resolves
+-- through employee, not users directly -- new signups get this immediately
+-- now (provisioning/provisioner.go, controllers/user.go AcceptUserInvite,
+-- controllers/saml_acs.go all call userstore.EnsureEmployeeForUser), this
+-- catches everyone who signed up before that existed. Re-runs safely: the
+-- NOT EXISTS guard skips users that already have a row, and ON CONFLICT
+-- guards the rare case where employee_email already collides with a stale
+-- row (skipped for manual reconciliation rather than erroring).
+INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email)
+SELECT u.id, COALESCE(NULLIF(TRIM(u.full_name), ''), u.email), '', u.email
+FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.employee_user_id = u.id)
+ON CONFLICT (employee_email) DO NOTHING;
+
 
 -- -- 000014_lkp_tables --------------------------------------------------
 -- =====================================================================

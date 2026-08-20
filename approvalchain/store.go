@@ -21,6 +21,43 @@ type GateApprovers struct {
 	ApproverEmployeeIDs []string `json:"approverEmployeeIds"`
 }
 
+// EligibleEmployee is an active employee who can be picked as an approver,
+// shaped for the GET .../approval-chain response's employees list.
+type EligibleEmployee struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// EligibleEmployees lists every active employee in the tenant for the
+// approval-chain approver picker. Callers reach this only after already
+// passing the handler's workflow_config:read/configure check -- unlike
+// /tenant/crm/lookups' employees field (gated separately behind user:read,
+// for its broader staff-directory use on CRM forms), configuring who
+// approves a workflow gate is itself the permission that should unlock
+// seeing who can be picked, so this does not re-check ResourceUser.
+func EligibleEmployees(ctx context.Context, pool *pgxpool.Pool) ([]EligibleEmployee, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT e.employee_id, COALESCE(NULLIF(u.full_name,''), u.email)
+		FROM employee e
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE e.employee_deleted_at IS NULL AND u.status = 'active'
+		ORDER BY COALESCE(NULLIF(u.full_name,''), u.email)`)
+	if err != nil {
+		return nil, fmt.Errorf("list eligible employees: %w", err)
+	}
+	defer rows.Close()
+	out := []EligibleEmployee{}
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("scan eligible employee: %w", err)
+		}
+		out = append(out, EligibleEmployee{ID: strconv.Itoa(id), Name: name})
+	}
+	return out, rows.Err()
+}
+
 // GatesWithApprovers loads every configured gate for cfg, each with its
 // currently active approver employee ids, in registry order.
 func GatesWithApprovers(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig) ([]GateApprovers, error) {

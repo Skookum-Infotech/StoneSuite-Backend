@@ -90,6 +90,55 @@ func TestReplaceApprovers_And_GatesWithApprovers(t *testing.T) {
 	}
 }
 
+// seedEmployeeWithUser inserts an active user and an employee row linked to
+// it (unlike seedEmployee, which leaves employee_user_id NULL -- fine for the
+// ReplaceApprovers tests, which only care about employee_id, but
+// EligibleEmployees INNER JOINs to users and would silently skip a row with
+// no linked user).
+func seedEmployeeWithUser(t *testing.T, pool *pgxpool.Pool) (empIDStr string) {
+	t.Helper()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	email := "eligible-" + suffix + "@example.test"
+	var userID string
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO users (identity_id, email, full_name, status)
+		VALUES (gen_random_uuid(), $1, 'Eligible Employee', 'active') RETURNING id`,
+		email).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	var id int
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email, employee_created_by)
+		VALUES ($1, 'Eligible', 'Employee', $2, 1) RETURNING employee_id`,
+		userID, email).Scan(&id); err != nil {
+		t.Fatalf("seed employee: %v", err)
+	}
+	return fmt.Sprint(id)
+}
+
+func TestEligibleEmployees(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	empIDStr := seedEmployeeWithUser(t, pool)
+
+	employees, err := EligibleEmployees(ctx, pool)
+	if err != nil {
+		t.Fatalf("EligibleEmployees: %v", err)
+	}
+	found := false
+	for _, e := range employees {
+		if e.ID == empIDStr {
+			found = true
+			if e.Name == "" {
+				t.Error("seeded employee's Name must not be empty")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("EligibleEmployees did not include seeded employee %s: %v", empIDStr, employees)
+	}
+}
+
 func TestReplaceApprovers_UnknownEmployee(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

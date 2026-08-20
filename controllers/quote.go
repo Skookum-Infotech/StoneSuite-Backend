@@ -192,11 +192,19 @@ func (h *QuoteOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/quotes/{uuid}
 func (h *QuoteOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, est, ok := h.authQuoteByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, est, ok := h.authQuoteByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "quote": est})
+	info, err := quote.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID))
+	if err != nil {
+		quoteFail(w, err, "Failed to load quote.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "quote": est,
+		"approvers": info.Approvers, "canApprove": info.CanApprove,
+	})
 }
 
 // Update PATCH /api/tenant/quotes/{uuid}

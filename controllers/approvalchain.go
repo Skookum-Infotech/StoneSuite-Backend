@@ -58,7 +58,12 @@ func (h *WorkflowOps) GetApprovalChain(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load approval chain.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "gates": gates})
+	employees, err := approvalchain.EligibleEmployees(r.Context(), pool)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load employees.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "gates": gates, "employees": employees})
 }
 
 // SetApprovalChain PUT /api/tenant/workflows/{id}/approval-chain

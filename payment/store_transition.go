@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/invoice"
 )
 
@@ -23,14 +24,14 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID, curStatusID, typeID int
-	var curStatusCode string
+	var curStatusCode, approvalStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT p.payment_id, p.payment_status, p.record_type, rs.record_status_code
+		SELECT p.payment_id, p.payment_status, p.record_type, rs.record_status_code, p.payment_approval_status
 		FROM payment p
 		JOIN lkp_record_status rs ON rs.record_status_id = p.payment_status
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL
 		FOR UPDATE OF p`, id,
-	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode)
+	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode, &approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -43,6 +44,26 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	toStatusID, err := statusIDByCode(ctx, pool, typeID, toStatusCode)
 	if err != nil {
 		return nil, ClientError{Msg: "Unknown target status: " + toStatusCode}
+	}
+
+	// AD-8 approval gate: a payment may not leave a status that has
+	// configured approvers until it has been approved (except into an
+	// always-allowed exit like Void -- approvalchain.AlwaysAllowedExitCodes).
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, curStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
+		return nil, ErrApprovalRequired
+	}
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, toStatusID)
+	if err != nil {
+		return nil, err
+	}
+	newApprovalStatus := approvalchain.StatusNone
+	if targetApprovers > 0 {
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	if toStatusCode == "VOID" {
@@ -97,9 +118,9 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE payment SET payment_status = $1, payment_updated_at = NOW(),
-			payment_updated_by = $2, payment_record_version = payment_record_version + 1
-		WHERE payment_id = $3`, toStatusID, nullableInt(actorEmployeeID), internalID); err != nil {
+		UPDATE payment SET payment_status = $1, payment_approval_status = $2, payment_approved_by = NULL,
+			payment_updated_at = NOW(), payment_updated_by = $3, payment_record_version = payment_record_version + 1
+		WHERE payment_id = $4`, toStatusID, newApprovalStatus, nullableInt(actorEmployeeID), internalID); err != nil {
 		return nil, fmt.Errorf("update payment status: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

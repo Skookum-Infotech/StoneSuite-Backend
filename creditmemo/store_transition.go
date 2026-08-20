@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/invoice"
 )
 
@@ -44,9 +45,33 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the memo first — the global order is credit_memo < payment < invoice.
-	if _, err := tx.Exec(ctx,
-		`SELECT credit_memo_id FROM credit_memo WHERE credit_memo_id = $1 FOR UPDATE`, internalID); err != nil {
+	var approvalStatus string
+	if err := tx.QueryRow(ctx,
+		`SELECT credit_memo_approval_status FROM credit_memo WHERE credit_memo_id = $1 FOR UPDATE`, internalID,
+	).Scan(&approvalStatus); err != nil {
 		return nil, fmt.Errorf("lock credit memo for transition: %w", err)
+	}
+
+	// AD-8 approval gate: a credit memo may not leave a status that has
+	// configured approvers until it has been approved (except into an
+	// always-allowed exit like Void -- approvalchain.AlwaysAllowedExitCodes).
+	// Credit Memo has no separate pending status -- the gate sits on DRFT
+	// itself, so Void stays reachable from an unapproved draft.
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, fromStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
+		return nil, ErrApprovalRequired
+	}
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, toStatusID)
+	if err != nil {
+		return nil, err
+	}
+	newApprovalStatus := approvalchain.StatusNone
+	if targetApprovers > 0 {
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	if toStatusCode == "VOID" {
@@ -103,10 +128,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE credit_memo SET credit_memo_status = $1, credit_memo_updated_at = NOW(),
-			credit_memo_updated_by = $2, credit_memo_record_version = credit_memo_record_version + 1
-		WHERE credit_memo_id = $3`,
-		toStatusID, nullableInt(actorEmployeeID), internalID); err != nil {
+		UPDATE credit_memo SET credit_memo_status = $1, credit_memo_approval_status = $2, credit_memo_approved_by = NULL,
+			credit_memo_updated_at = NOW(), credit_memo_updated_by = $3, credit_memo_record_version = credit_memo_record_version + 1
+		WHERE credit_memo_id = $4`,
+		toStatusID, newApprovalStatus, nullableInt(actorEmployeeID), internalID); err != nil {
 		return nil, fmt.Errorf("update credit memo status: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

@@ -4,31 +4,32 @@ import "testing"
 
 func TestForWorkflowKey(t *testing.T) {
 	tests := []struct {
-		key       string
-		wantOK    bool
-		wantRTC   string
-		wantGates []string
+		key         string
+		wantOK      bool
+		wantRTC     string
+		wantGates   []string
+		wantTargets []string
 	}{
-		{"estimate", true, "ESTM", []string{"PAPV"}},
-		{"quote", true, "QUOT", []string{"PAPV"}},
-		{"sales_order", true, "SORD", []string{"PAPV"}},
-		{"purchase_order", true, "PORD", []string{"PAPV"}},
-		{"requisition", true, "REQN", []string{"PAPV"}},
-		{"vendor_bill", true, "VBIL", []string{"PAPV"}},
-		{"vendor_payment", true, "VPAY", []string{"PAPV"}},
-		{"expense", true, "EXPN", []string{"SUBM"}},
-		{"installation", true, "FJOB", []string{"TMPL", "QCPD"}},
-		{"lead", false, "", nil},
-		{"prospect", false, "", nil},
-		{"customer", false, "", nil},
-		{"vendor", false, "", nil},
-		{"invoice", false, "", nil},
-		{"item_receipt", false, "", nil},
-		{"vendor_credit", false, "", nil},
-		{"payment", false, "", nil},
-		{"credit_memo", false, "", nil},
-		{"refund", false, "", nil},
-		{"not_a_real_key", false, "", nil},
+		{"estimate", true, "ESTM", []string{"PAPV"}, []string{"APPV"}},
+		{"quote", true, "QUOT", []string{"PAPV"}, []string{"APPV"}},
+		{"sales_order", true, "SORD", []string{"PAPV"}, []string{"APPV"}},
+		{"purchase_order", true, "PORD", []string{"PAPV"}, []string{"APPV"}},
+		{"requisition", true, "REQN", []string{"PAPV"}, []string{"APPV"}},
+		{"vendor_bill", true, "VBIL", []string{"PAPV"}, []string{"APPV"}},
+		{"vendor_payment", true, "VPAY", []string{"PAPV"}, []string{"APPV"}},
+		{"expense", true, "EXPN", []string{"SUBM"}, []string{"APPV"}},
+		{"installation", true, "FJOB", []string{"TMPL", "QCPD"}, []string{"TAPV", "QCPS"}},
+		{"invoice", true, "INVC", []string{"PAPV"}, []string{"APPV"}},
+		{"payment", true, "PYMT", []string{"PEND"}, []string{"APPV"}},
+		{"credit_memo", true, "CRDT", []string{"DRFT"}, []string{"APPV"}},
+		{"refund", true, "RFND", []string{"PEND"}, []string{"APPV"}},
+		{"lead", false, "", nil, nil},
+		{"prospect", false, "", nil, nil},
+		{"customer", false, "", nil, nil},
+		{"vendor", false, "", nil, nil},
+		{"item_receipt", false, "", nil, nil},
+		{"vendor_credit", false, "", nil, nil},
+		{"not_a_real_key", false, "", nil, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
@@ -45,12 +46,18 @@ func TestForWorkflowKey(t *testing.T) {
 			if cfg.ApproverTable == "" {
 				t.Error("ApproverTable must not be empty")
 			}
+			if cfg.ApprovalTable == "" {
+				t.Error("ApprovalTable must not be empty")
+			}
 			if len(cfg.Gates) != len(tt.wantGates) {
 				t.Fatalf("len(Gates) = %d, want %d", len(cfg.Gates), len(tt.wantGates))
 			}
 			for i, g := range cfg.Gates {
 				if g.StatusCode != tt.wantGates[i] {
 					t.Errorf("Gates[%d].StatusCode = %q, want %q", i, g.StatusCode, tt.wantGates[i])
+				}
+				if g.TargetStatusCode != tt.wantTargets[i] {
+					t.Errorf("Gates[%d].TargetStatusCode = %q, want %q", i, g.TargetStatusCode, tt.wantTargets[i])
 				}
 			}
 		})

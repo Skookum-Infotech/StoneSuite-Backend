@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // ErrUnknownApprover is returned when a submitted approver employee id does
@@ -165,18 +167,18 @@ func approverEmployeeIDs(ctx context.Context, pool *pgxpool.Pool, table string, 
 	return out, rows.Err()
 }
 
-func recordTypeIDByCode(ctx context.Context, pool *pgxpool.Pool, code string) (int, error) {
+func recordTypeIDByCode(ctx context.Context, q workflow.Querier, code string) (int, error) {
 	var id int
-	if err := pool.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1`, code).Scan(&id); err != nil {
+	if err := q.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1`, code).Scan(&id); err != nil {
 		return 0, fmt.Errorf("record type %q: %w", code, err)
 	}
 	return id, nil
 }
 
-func statusIDAndLabelByCode(ctx context.Context, pool *pgxpool.Pool, recordTypeID int, code string) (int, string, error) {
+func statusIDAndLabelByCode(ctx context.Context, q workflow.Querier, recordTypeID int, code string) (int, string, error) {
 	var id int
 	var name string
-	err := pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT record_status_id, record_status_name FROM lkp_record_status
 		WHERE record_status_record_type = $1 AND record_status_code = $2`, recordTypeID, code).Scan(&id, &name)
 	if err != nil {

@@ -126,8 +126,12 @@ func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
 	case errors.Is(err, payment.ErrNotFound):
 		fail(w, http.StatusNotFound, "Payment not found.")
-	case errors.Is(err, payment.ErrInvalidTransition):
+	case errors.Is(err, payment.ErrInvalidTransition),
+		errors.Is(err, payment.ErrApprovalRequired),
+		errors.Is(err, payment.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, payment.ErrNotApprover):
+		fail(w, http.StatusForbidden, err.Error())
 	default:
 		var ce payment.ClientError
 		if errors.As(err, &ce) {
@@ -177,15 +181,51 @@ func (h *PaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PaymentOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authPaymentByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authPaymentByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	p, err := payment.Get(r.Context(), pool, r.PathValue("uuid"))
+	p, err := payment.Get(r.Context(), pool, uuid)
 	if err != nil {
 		paymentFail(w, err, "Failed to load payment.")
 		return
 	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		paymentFail(w, err, "Failed to load payment.")
+		return
+	}
+	info, err := payment.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		paymentFail(w, err, "Failed to load payment.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p, "approval": info})
+}
+
+// Approve POST /api/tenant/payments/{uuid}/approve — approval sign-off (AD-8).
+func (h *PaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authPaymentByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		paymentFail(w, err, "Failed to approve payment.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	p, err := payment.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	if err != nil {
+		if errors.Is(err, payment.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		paymentFail(w, err, "Failed to approve payment.")
+		return
+	}
+	auditPayment(r, pool, empID, "approve", uuid, nil, p)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }
 

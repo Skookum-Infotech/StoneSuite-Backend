@@ -7696,3 +7696,119 @@ CREATE INDEX IF NOT EXISTS idx_exp_created_id      ON expense (expense_created_a
 CREATE INDEX IF NOT EXISTS idx_exp_custom_gin      ON expense USING GIN (expense_custom_fields);
 CREATE INDEX IF NOT EXISTS idx_exp_item_expense    ON expense_item (expense_id) WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_exp_history_expense ON expense_history (expense_id);
+
+-- -- 000036_approval_chain_generic_phase1 ----------------------------------
+-- =====================================================================
+-- Tenant migration 036: extends the AD-8 approval gate (proven on
+-- Estimate/Quote/Sales Order, and already configured for Purchase Order/
+-- Requisition/Vendor Bill/Vendor Payment/Expense/Fabrication Job) to
+-- Invoice, Payment, Credit Memo and Refund -- the approvalchain "Sales"
+-- rollout group. Every new approver/approval table is an exact structural
+-- copy of estimate_approver/estimate_approval (approvalchain/engine.go
+-- drives all of them generically; see approvalchain/registry.go for the
+-- gate config).
+--
+-- Invoice already had a PAPV status (Pending Approval) from its original
+-- design, so its gate is PAPV -> APPV, identical in shape to Estimate.
+-- Payment and Refund already had PEND, so their gate is PEND -> APPV.
+-- Credit Memo has no separate pending status at all -- its gate sits on
+-- DRFT itself, with Void always exempt (approvalchain.AlwaysAllowedExitCodes)
+-- so a draft credit memo can still be voided without approval sign-off.
+--
+-- Fabrication Job needs no schema change here -- it already has
+-- job_approval_status/job_approved_by and its approver/approval tables from
+-- migration 035; only its Go code moves onto the shared engine.
+-- =====================================================================
+
+ALTER TABLE invoice     ADD COLUMN IF NOT EXISTS invoice_approval_status     VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE invoice     ADD COLUMN IF NOT EXISTS invoice_approved_by         INTEGER         NULL REFERENCES employee(employee_id);
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_approval_status     VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_approved_by         INTEGER         NULL REFERENCES employee(employee_id);
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_approval_status VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_approved_by     INTEGER         NULL REFERENCES employee(employee_id);
+ALTER TABLE refund      ADD COLUMN IF NOT EXISTS refund_approval_status      VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE refund      ADD COLUMN IF NOT EXISTS refund_approved_by          INTEGER         NULL REFERENCES employee(employee_id);
+
+CREATE TABLE IF NOT EXISTS invoice_approver (
+    invoice_approver_id     SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = INVC
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_invoice_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS invoice_approval (
+    invoice_approval_id     SERIAL      PRIMARY KEY,
+    invoice_id                INTEGER     NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_invoice_approval UNIQUE (invoice_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_invoice_approver_lookup ON invoice_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_invoice_approval_invoice ON invoice_approval (invoice_id);
+
+CREATE TABLE IF NOT EXISTS payment_approver (
+    payment_approver_id     SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = PYMT
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PEND
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_payment_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS payment_approval (
+    payment_approval_id     SERIAL      PRIMARY KEY,
+    payment_id                INTEGER     NOT NULL REFERENCES payment(payment_id) ON DELETE CASCADE,
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_payment_approval UNIQUE (payment_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_payment_approver_lookup ON payment_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_payment_approval_payment ON payment_approval (payment_id);
+
+CREATE TABLE IF NOT EXISTS credit_memo_approver (
+    credit_memo_approver_id SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = CRDT
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. DRFT
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_credit_memo_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS credit_memo_approval (
+    credit_memo_approval_id SERIAL      PRIMARY KEY,
+    credit_memo_id             INTEGER     NOT NULL REFERENCES credit_memo(credit_memo_id) ON DELETE CASCADE,
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_credit_memo_approval UNIQUE (credit_memo_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_credit_memo_approver_lookup ON credit_memo_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_credit_memo_approval_memo ON credit_memo_approval (credit_memo_id);
+
+CREATE TABLE IF NOT EXISTS refund_approver (
+    refund_approver_id      SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = RFND
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PEND
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_refund_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS refund_approval (
+    refund_approval_id      SERIAL      PRIMARY KEY,
+    refund_id                  INTEGER     NOT NULL REFERENCES refund(refund_id) ON DELETE CASCADE,
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_refund_approval UNIQUE (refund_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_refund_approver_lookup ON refund_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_refund_approval_refund ON refund_approval (refund_id);

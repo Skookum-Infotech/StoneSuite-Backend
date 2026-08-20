@@ -209,10 +209,7 @@ func (h *SalesOrderOps) Get(w http.ResponseWriter, r *http.Request) {
 		soFail(w, err, "Failed to load sales order.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "salesOrder": order,
-		"gated": info.Gated, "approvers": info.Approvers, "canApprove": info.CanApprove, "isOverride": info.IsOverride,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order, "approval": info})
 }
 
 // Update PATCH /api/tenant/sales-orders/{uuid}

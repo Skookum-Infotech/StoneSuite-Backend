@@ -206,10 +206,7 @@ func (h *QuoteOps) Get(w http.ResponseWriter, r *http.Request) {
 		quoteFail(w, err, "Failed to load quote.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "quote": est,
-		"gated": info.Gated, "approvers": info.Approvers, "canApprove": info.CanApprove, "isOverride": info.IsOverride,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "quote": est, "approval": info})
 }
 
 // Update PATCH /api/tenant/quotes/{uuid}

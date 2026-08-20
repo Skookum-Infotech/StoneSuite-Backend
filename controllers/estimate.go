@@ -206,10 +206,7 @@ func (h *EstimateOps) Get(w http.ResponseWriter, r *http.Request) {
 		estimateFail(w, err, "Failed to load estimate.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "estimate": est,
-		"gated": info.Gated, "approvers": info.Approvers, "canApprove": info.CanApprove, "isOverride": info.IsOverride,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "estimate": est, "approval": info})
 }
 
 // Update PATCH /api/tenant/estimates/{uuid}

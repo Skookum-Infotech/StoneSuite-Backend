@@ -266,6 +266,27 @@ func TestApply_ReapplyIncreasesExistingRow(t *testing.T) {
 	}
 }
 
+func TestApply_PartialAmountLeavesInvoicePartiallyPaid(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, invUUID := seedSentInvoice(t, pool, 100)
+	methodID := firstMethodID(t, pool)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 40, 1); err != nil {
+		t.Fatalf("apply partial: %v", err)
+	}
+	inv, err := invoice.Get(ctx, pool, invUUID)
+	if err != nil {
+		t.Fatalf("get invoice: %v", err)
+	}
+	if inv.AmountPaid != 40 || inv.BalanceDue != 60 || inv.StatusCode != "PART" {
+		t.Fatalf("expected paid=40 balance=60 status=PART, got paid=%v balance=%v status=%s", inv.AmountPaid, inv.BalanceDue, inv.StatusCode)
+	}
+}
+
 func TestQuickPay(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

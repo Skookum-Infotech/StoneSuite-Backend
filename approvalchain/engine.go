@@ -183,7 +183,9 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	), internalID, StatusPending); err != nil {
 		return ApproveOutcome{}, fmt.Errorf("update %s approval status: %w", rec.Table, err)
 	}
-	writeGenericHistory(ctx, tx, rec, internalID, "approve", &curStatusID, &curStatusID, approverEmployeeID)
+	if err := writeGenericHistory(ctx, tx, rec, internalID, "approve", &curStatusID, &curStatusID, approverEmployeeID); err != nil {
+		return ApproveOutcome{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
@@ -217,8 +219,7 @@ func finalize(ctx context.Context, tx pgx.Tx, cfg ModuleConfig, recordTypeID, in
 	), internalID, toStatusID, newApprovalStatus, nullIntOrNil(approverEmployeeID)); err != nil {
 		return fmt.Errorf("finalize approve %s: %w", rec.Table, err)
 	}
-	writeGenericHistory(ctx, tx, rec, internalID, historyAction, &curStatusID, &toStatusID, approverEmployeeID)
-	return nil
+	return writeGenericHistory(ctx, tx, rec, internalID, historyAction, &curStatusID, &toStatusID, approverEmployeeID)
 }
 
 // ApproverInfo names one configured approver for display and whether
@@ -402,9 +403,17 @@ func statusCodeByID(ctx context.Context, q workflow.Querier, statusID int) (stri
 // writeGenericHistory records one <table>_history row inside the caller's
 // transaction, matching the shape every relational module's history table
 // shares (see estimate_history / writeHistory in estimate/store_create.go).
-func writeGenericHistory(ctx context.Context, tx pgx.Tx, rec RecordSpec, internalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, fmt.Sprintf(
+// Returns the INSERT's error (e.g. a history table's action CHECK constraint
+// rejecting a value this engine writes) instead of swallowing it -- a
+// discarded error here still aborts the surrounding tx, so the caller's
+// eventual Commit fails with an opaque "commit unexpectedly resulted in
+// rollback" that hides the real cause.
+func writeGenericHistory(ctx context.Context, tx pgx.Tx, rec RecordSpec, internalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) error {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO %s (%s, from_status_id, to_status_id, action, actor_employee_id) VALUES ($1,$2,$3,$4,$5)`,
 		rec.HistoryTable, rec.IDColumn,
-	), internalID, fromStatusID, toStatusID, action, nullIntOrNil(actorEmployeeID))
+	), internalID, fromStatusID, toStatusID, action, nullIntOrNil(actorEmployeeID)); err != nil {
+		return fmt.Errorf("record %s history: %w", rec.HistoryTable, err)
+	}
+	return nil
 }

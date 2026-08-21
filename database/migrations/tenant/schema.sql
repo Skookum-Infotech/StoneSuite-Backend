@@ -4138,9 +4138,16 @@ ALTER TABLE sales_order_history DROP CONSTRAINT IF EXISTS chk_sales_order_histor
 ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
     CHECK (action IN ('create','transition','cancel','update','approve','convert'));
 
+-- Also widened (migration 038) to allow 'approve'/'approve_override', which
+-- approvalchain.Approve (engine.go) writes once Invoice's status transitions
+-- moved onto the shared engine -- this is the last unconditional definition
+-- of this constraint in the file, so it's the one that must carry the fix
+-- (the guarded 'IF NOT EXISTS conname' block above it is a no-op forever on
+-- any tenant DB where the constraint already exists, i.e. every already-
+-- provisioned tenant).
 ALTER TABLE invoice_history DROP CONSTRAINT IF EXISTS chk_invoice_history_action;
 ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
-    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert'));
+    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert','approve','approve_override'));
 
 -- 3. CRM activity log (call | email | meeting | note | task).
 CREATE TABLE IF NOT EXISTS crm_activity (
@@ -7850,3 +7857,40 @@ CREATE TABLE IF NOT EXISTS vendor_credit_approval (
 );
 CREATE INDEX IF NOT EXISTS idx_vendor_credit_approver_lookup ON vendor_credit_approver (record_type_id, record_status_id) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_vendor_credit_approval_credit ON vendor_credit_approval (vendor_credit_id);
+
+-- -- 000038_approval_chain_history_action_fix --------------------------------
+-- =====================================================================
+-- Tenant migration 038: payment_history / credit_memo_history / refund_history's
+-- action CHECK constraints (added in earlier migrations before these modules
+-- had an approval gate) never got widened to allow 'approve' and
+-- 'approve_override' the way estimate_history / quote_history /
+-- sales_order_history / fabrication_job_history / requisition_history /
+-- expense_history already were (invoice_history's own equivalent constraint
+-- is fixed in place above, at its existing unconditional widening from
+-- migration 034 -- see the comment there for why it can't be fixed here
+-- instead). approvalchain.Approve (engine.go) writes exactly those two action
+-- values for every sign-off and every super-admin override -- the INSERT
+-- violated the CHECK, aborting the transaction and surfacing as a generic
+-- "failed to approve" 500 on every Payment/Credit Memo/Refund approval, while
+-- the modules with the wider CHECK (Estimate/Quote/Sales Order) worked fine.
+--
+-- Each of these three has no prior *unconditional* redefinition of its CHECK
+-- (only the original migration's 'IF NOT EXISTS conname' guard, which is a
+-- no-op forever on any tenant DB where the constraint already exists -- i.e.
+-- every already-provisioned tenant), so adding the first unconditional
+-- DROP+ADD here is safe and is what actually reaches already-broken tenants.
+-- Widening-only, mirrors the sales_order_history / invoice_history 'convert'
+-- widening in migration 034 and chk_fab_history_action's widening above.
+-- =====================================================================
+
+ALTER TABLE payment_history DROP CONSTRAINT IF EXISTS chk_payment_history_action;
+ALTER TABLE payment_history ADD CONSTRAINT chk_payment_history_action
+    CHECK (action IN ('create','apply','unapply','transition','approve','approve_override'));
+
+ALTER TABLE credit_memo_history DROP CONSTRAINT IF EXISTS chk_credit_memo_history_action;
+ALTER TABLE credit_memo_history ADD CONSTRAINT chk_credit_memo_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override'));
+
+ALTER TABLE refund_history DROP CONSTRAINT IF EXISTS chk_refund_history_action;
+ALTER TABLE refund_history ADD CONSTRAINT chk_refund_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override'));

@@ -981,18 +981,33 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject suspended/disabled users — their refresh tokens must not extend sessions.
+	// Reject suspended/disabled users — their refresh tokens must not extend
+	// sessions. A missing users row is a hard denial, not a skip: same
+	// reasoning as TenantLogin above — staff membership IS the users row, and
+	// portal customers hold a control-plane identity but never one. Refresh
+	// tokens for both are minted through the same issueRefreshToken /
+	// RefreshTokenByHash store, so swallowing this lookup's error here would
+	// let a portal customer's refresh token mint a fresh staff-scoped access
+	// token with this handler.
 	var pool *pgxpool.Pool
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
 			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
 				pool = p
-				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
-					if u.Status == "suspended" || u.Status == "disabled" {
-						clearAuthCookies(w)
-						fail(w, http.StatusForbidden, "Account suspended. Please contact your administrator.")
-						return
-					}
+				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)
+				switch {
+				case errors.Is(uErr, userstore.ErrUserNotFound):
+					logSecurityEvent(r, "login_failed", "identity", identity.ID, "reason", "no_workspace_user_refresh")
+					clearAuthCookies(w)
+					fail(w, http.StatusUnauthorized, "Session invalid. Please sign in again.")
+					return
+				case uErr != nil:
+					fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+					return
+				case u.Status == "suspended" || u.Status == "disabled":
+					clearAuthCookies(w)
+					fail(w, http.StatusForbidden, "Account suspended. Please contact your administrator.")
+					return
 				}
 			}
 		}

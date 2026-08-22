@@ -10,13 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/vendorbill"
 )
 
 // Transition moves a vendor payment to toStatusCode after validating the
-// move against the static transition map (spec §7). A manual PAPV->APPV move
-// is rejected (ErrApprovalRequired) — that edge is only reachable through
-// Approve() once the configured sign-off count is met (spec AD-6). Moving to
+// move against the static transition map (spec §7), enforcing the AD-6
+// approval gate the same way every other module built on the approvalchain
+// engine does (a manual PAPV->APPV move 409s with ErrApprovalRequired once
+// real approvers are configured for PAPV; use Approve instead). Moving to
 // SCHD requires vendor_payment_scheduled_date to already be set. Moving to
 // VOID cascades: every live vendor_payment_application on this payment is
 // reversed, and every live vendor_payment_refund on it is soft-deleted (moot
@@ -49,7 +51,12 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
 		return nil, err
 	}
-	if curStatusCode == "PAPV" && toStatusCode == "APPV" {
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, curStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
 		return nil, ErrApprovalRequired
 	}
 	if toStatusCode == "SCHD" && scheduledDate == nil {
@@ -121,13 +128,13 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		}
 	}
 
-	newApprovalStatus := approvalNone
-	targetApprovers, err := activeApproverCount(ctx, tx, typeID, toStatusID)
+	newApprovalStatus := approvalchain.StatusNone
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, toStatusID)
 	if err != nil {
 		return nil, err
 	}
 	if targetApprovers > 0 {
-		newApprovalStatus = approvalPending
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	if _, err := tx.Exec(ctx, `

@@ -195,11 +195,22 @@ func (h *RequisitionOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/requisitions/{uuid}
 func (h *RequisitionOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, reqn, ok := h.authReqnByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, reqn, ok := h.authReqnByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "requisition": reqn})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		reqnFail(w, err, "Failed to load requisition.")
+		return
+	}
+	info, err := requisition.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		reqnFail(w, err, "Failed to load requisition.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "requisition": reqn, "approval": info})
 }
 
 // Update PATCH /api/tenant/requisitions/{uuid}
@@ -268,7 +279,12 @@ func (h *RequisitionOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	reqn, err := requisition.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		reqnFail(w, err, "Failed to approve requisition.")
+		return
+	}
+	reqn, err := requisition.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, requisition.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

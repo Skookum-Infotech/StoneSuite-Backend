@@ -169,8 +169,12 @@ func refundFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
 	case errors.Is(err, refund.ErrNotFound):
 		fail(w, http.StatusNotFound, "Refund not found.")
-	case errors.Is(err, refund.ErrInvalidTransition):
+	case errors.Is(err, refund.ErrInvalidTransition),
+		errors.Is(err, refund.ErrApprovalRequired),
+		errors.Is(err, refund.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, refund.ErrNotApprover):
+		fail(w, http.StatusForbidden, err.Error())
 	default:
 		var ce refund.ClientError
 		if errors.As(err, &ce) {
@@ -220,15 +224,55 @@ func (h *RefundOps) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RefundOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authRefundByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authRefundByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	rf, err := refund.Get(r.Context(), pool, r.PathValue("uuid"))
+	rf, err := refund.Get(r.Context(), pool, uuid)
 	if err != nil {
 		refundFail(w, err, "Failed to load refund.")
 		return
 	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		refundFail(w, err, "Failed to load refund.")
+		return
+	}
+	info, err := refund.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		refundFail(w, err, "Failed to load refund.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf, "approval": info})
+}
+
+// Approve POST /api/tenant/refunds/{uuid}/approve — approval sign-off (AD-8).
+func (h *RefundOps) Approve(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	// ActionApprove, not ActionTransition -- approving a refund (PEND->APPV)
+	// is what authorizes it to draw down a payment or credit memo, a
+	// deliberately distinct capability from moving the record around (see
+	// authz/catalog.go).
+	pool, identityID, _, ok := h.authRefundByUUID(w, r, uuid, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		refundFail(w, err, "Failed to approve refund.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rf, err := refund.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	if err != nil {
+		if errors.Is(err, refund.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		refundFail(w, err, "Failed to approve refund.")
+		return
+	}
+	auditRefund(r, pool, empID, "approve", uuid, nil, rf)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})
 }
 

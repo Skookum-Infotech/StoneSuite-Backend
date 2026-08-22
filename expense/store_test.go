@@ -212,7 +212,7 @@ func TestApprove_RequiresConfiguredApprover(t *testing.T) {
 	}
 	// No expense_approver rows configured for (EXPN, SUBM) in this test DB by
 	// default, so Approve should report the status doesn't require approval.
-	if _, err := Approve(ctx, pool, created.ID, 1); !errors.Is(err, ErrApprovalNotRequired) {
+	if _, err := Approve(ctx, pool, created.ID, 1, false); !errors.Is(err, ErrApprovalNotRequired) {
 		t.Fatalf("Approve with no configured approvers = %v, want ErrApprovalNotRequired", err)
 	}
 }
@@ -252,7 +252,7 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if _, err := Transition(ctx, pool, created.ID, "APPV", 1); !errors.Is(err, ErrApprovalRequired) {
 		t.Fatalf("Transition SUBM->APPV before approval = %v, want ErrApprovalRequired", err)
 	}
-	approved, err := Approve(ctx, pool, created.ID, 1)
+	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}

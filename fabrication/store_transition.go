@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // Transition moves a live job to toStatusCode. It validates against the static
@@ -43,23 +45,27 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 		return nil, ClientError{Msg: "Unknown target status."}
 	}
 
+	approverTable := moduleConfig().ApproverTable
+
 	// Approval gate: a job cannot leave a status that has configured approvers
-	// until it has been approved. Statuses with no approvers never block.
-	requiredHere, err := activeApproverCount(ctx, tx, recordTypeID, st.statusID)
+	// until it has been approved, except into an always-allowed exit like
+	// Cancelled -- cancelling a job is a way out of the approval process, not
+	// a way past it.
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, st.statusID)
 	if err != nil {
 		return nil, err
 	}
-	if requiredHere > 0 && st.approvalStatus != approvalApproved {
+	if err := approvalchain.CheckTransitionGate(requiredHere, st.approvalStatus, toStatusCode); err != nil {
 		return nil, ErrApprovalRequired
 	}
 	// The status being entered may itself require approval → start it pending.
-	targetApprovers, err := activeApproverCount(ctx, tx, recordTypeID, toStatusID)
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, toStatusID)
 	if err != nil {
 		return nil, err
 	}
-	newApprovalStatus := approvalNone
+	newApprovalStatus := approvalchain.StatusNone
 	if targetApprovers > 0 {
-		newApprovalStatus = approvalPending
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	// Inventory side-effects of the status being entered.

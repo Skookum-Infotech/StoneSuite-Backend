@@ -3,17 +3,10 @@ package fabrication
 import (
 	"context"
 	"errors"
-	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-)
 
-// Approval status values stored in fabrication_job.job_approval_status.
-const (
-	approvalNone     = "none"
-	approvalPending  = "pending"
-	approvalApproved = "approved"
+	"stonesuite-backend/approvalchain"
 )
 
 // ErrNotApprover maps to HTTP 403.
@@ -25,106 +18,44 @@ var ErrApprovalRequired = errors.New("this job must be approved before it can le
 // ErrApprovalNotRequired maps to HTTP 409.
 var ErrApprovalNotRequired = errors.New("this job's current status does not require approval")
 
-// activeApproverCount returns how many active approvers are configured for the
-// FJOB record type at a status. Zero ⇒ no gate (spec §2.7).
-func activeApproverCount(ctx context.Context, q querier, recordTypeID, statusID int) (int, error) {
-	var n int
-	if err := q.QueryRow(ctx, `
-		SELECT COUNT(*) FROM fabrication_job_approver
-		WHERE record_type_id = $1 AND record_status_id = $2 AND is_active`, recordTypeID, statusID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count fabrication approvers: %w", err)
-	}
-	return n, nil
-}
-
-func signOffCount(ctx context.Context, q querier, jobInternalID, statusID int) (int, error) {
-	var n int
-	if err := q.QueryRow(ctx, `
-		SELECT COUNT(*) FROM fabrication_job_approval
-		WHERE fabrication_job_id = $1 AND record_status_id = $2`, jobInternalID, statusID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count fabrication approvals: %w", err)
-	}
-	return n, nil
-}
-
-func isConfiguredApprover(ctx context.Context, q querier, recordTypeID, statusID, employeeID int) (bool, error) {
-	var exists bool
-	if err := q.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM fabrication_job_approver
-			WHERE record_type_id = $1 AND record_status_id = $2 AND approver_employee_id = $3 AND is_active)`,
-		recordTypeID, statusID, employeeID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("check fabrication approver: %w", err)
-	}
-	return exists, nil
-}
-
-// Approve records one approver's sign-off on a job at its current status (the
-// TAPV / QCPS gates, spec §2.7). Idempotent per (job, status, approver); flips
-// the header to 'approved' once the sign-off count reaches the configured count.
-func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int) (*Job, error) {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin approve: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var internalID, curStatusID int
-	err = tx.QueryRow(ctx, `
-		SELECT fabrication_job_id, fabrication_job_status FROM fabrication_job
-		WHERE fabrication_job_uuid = $1 AND fabrication_job_deleted_at IS NULL
-		FOR UPDATE`, uuid).Scan(&internalID, &curStatusID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load job for approval: %w", err)
-	}
-
-	recordTypeID, err := recordTypeIDByCode(ctx, tx, fjobRecordTypeCode)
-	if err != nil {
-		return nil, err
-	}
-	required, err := activeApproverCount(ctx, tx, recordTypeID, curStatusID)
-	if err != nil {
-		return nil, err
-	}
-	if required == 0 {
-		return nil, ErrApprovalNotRequired
-	}
-	ok, err := isConfiguredApprover(ctx, tx, recordTypeID, curStatusID, approverEmployeeID)
-	if err != nil {
-		return nil, err
-	}
+// moduleConfig resolves the shared approvalchain.ModuleConfig for
+// Fabrication Job (workflows.key "installation") once, so callers don't
+// repeat the ForWorkflowKey lookup+panic-guard.
+func moduleConfig() approvalchain.ModuleConfig {
+	cfg, ok := approvalchain.ForWorkflowKey("installation")
 	if !ok {
+		panic("approvalchain: \"installation\" is not registered")
+	}
+	return cfg
+}
+
+// Approve records one approver's sign-off on a job at its current gate
+// (TAPV or QCPS, spec §2.7) via the shared approvalchain engine. Once every
+// configured approver has signed off -- or a super admin overrides -- the
+// job auto-advances to the gate's target status in the same call.
+func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*Job, error) {
+	_, err := approvalchain.Approve(ctx, pool, moduleConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
+	switch {
+	case errors.Is(err, approvalchain.ErrNotFound):
+		return nil, ErrNotFound
+	case errors.Is(err, approvalchain.ErrNotApprover):
 		return nil, ErrNotApprover
-	}
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO fabrication_job_approval (fabrication_job_id, record_status_id, approver_employee_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (fabrication_job_id, record_status_id, approver_employee_id) DO NOTHING`,
-		internalID, curStatusID, approverEmployeeID); err != nil {
-		return nil, fmt.Errorf("record approval: %w", err)
-	}
-
-	approved, err := signOffCount(ctx, tx, internalID, curStatusID)
-	if err != nil {
+	case errors.Is(err, approvalchain.ErrApprovalNotRequired):
+		return nil, ErrApprovalNotRequired
+	case err != nil:
 		return nil, err
-	}
-	newStatus := approvalPending
-	var approvedBy any
-	if approved >= required {
-		newStatus = approvalApproved
-		approvedBy = approverEmployeeID
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE fabrication_job SET job_approval_status = $2, job_approved_by = $3, fabrication_job_updated_at = NOW()
-		WHERE fabrication_job_id = $1`, internalID, newStatus, approvedBy); err != nil {
-		return nil, fmt.Errorf("update approval status: %w", err)
-	}
-	writeHistory(ctx, tx, internalID, "approve", &curStatusID, &curStatusID, approverEmployeeID)
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit approve: %w", err)
 	}
 	return Get(ctx, pool, uuid)
+}
+
+// GetApprovalInfo resolves approvalchain.ApprovalInfo for a job -- who is
+// configured to sign off on its current gate, who already has, and whether
+// the requesting caller can approve it -- so the detail page can show a
+// banner instead of a transition control that would just 409.
+func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, callerEmployeeID int, callerIsSuperAdmin bool) (approvalchain.ApprovalInfo, error) {
+	info, err := approvalchain.GetInfo(ctx, pool, moduleConfig(), uuid, callerEmployeeID, callerIsSuperAdmin)
+	if errors.Is(err, approvalchain.ErrNotFound) {
+		return approvalchain.ApprovalInfo{}, ErrNotFound
+	}
+	return info, err
 }

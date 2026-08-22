@@ -227,10 +227,10 @@ type ApprovalInfo struct {
 	Gated bool `json:"gated"`
 	// Approvers, RequiredApprovals, ApprovedCount, CanApprove, IsOverride and
 	// CallerAlreadyApproved are only meaningful while Gated is true.
-	Approvers          []ApproverInfo `json:"approvers"`
-	RequiredApprovals  int            `json:"requiredApprovals"`
-	ApprovedCount      int            `json:"approvedCount"`
-	CanApprove         bool           `json:"canApprove"`
+	Approvers         []ApproverInfo `json:"approvers"`
+	RequiredApprovals int            `json:"requiredApprovals"`
+	ApprovedCount     int            `json:"approvedCount"`
+	CanApprove        bool           `json:"canApprove"`
 	// IsOverride is true when CanApprove is true only because the caller is
 	// a super admin, not because they're on Approvers -- the UI uses this to
 	// label the action as an override rather than an ordinary approval.

@@ -87,6 +87,21 @@ func randomToken() (string, error) {
 // JS-readable csrf_token cookie — the double-submit CSRF check in
 // middleware.RequireAuth activates automatically alongside it.
 func setAuthCookies(w http.ResponseWriter, token string, d time.Duration, refreshRaw string, refreshExpiry time.Time) error {
+	return setAuthCookiesAt(w, token, d, refreshRaw, refreshExpiry, staffRefreshCookiePath)
+}
+
+// Cookie paths the refresh token is scoped to. A cookie is only sent to paths
+// under its Path, so the portal — which refreshes at /api/portal/auth/refresh —
+// needs its own; scoping it to "/" instead would send the refresh token on every
+// request, which is exactly what the narrow path avoids.
+const (
+	staffRefreshCookiePath  = "/api/auth"
+	portalRefreshCookiePath = "/api/portal/auth"
+)
+
+// setAuthCookiesAt is setAuthCookies with the refresh cookie's Path chosen by
+// the caller.
+func setAuthCookiesAt(w http.ResponseWriter, token string, d time.Duration, refreshRaw string, refreshExpiry time.Time, refreshPath string) error {
 	sameSite := http.SameSiteLaxMode
 	if config.AppConfig.CookieSameSite == "none" {
 		sameSite = http.SameSiteNoneMode
@@ -107,7 +122,7 @@ func setAuthCookies(w http.ResponseWriter, token string, d time.Duration, refres
 		http.SetCookie(w, &http.Cookie{
 			Name:     "refresh_token",
 			Value:    refreshRaw,
-			Path:     "/api/auth",
+			Path:     refreshPath,
 			HttpOnly: true,
 			Secure:   secure,
 			SameSite: sameSite,
@@ -179,6 +194,29 @@ func generateTenantJWT(identityID, email, tenantID, activeRoleID string, d time.
 	}
 	if activeRoleID != "" {
 		claims["active_role_id"] = activeRoleID
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(config.AppConfig.JWTSecret))
+}
+
+// generatePortalJWT signs an access token for a customer-portal session.
+//
+// Deliberately a separate function rather than a parameter on generateTenantJWT:
+// the five existing staff mint sites stay byte-identical, so this cannot regress
+// internal auth. The `kind` claim is what middleware.RequireAuth uses to confine
+// the session to /api/portal/ and what middleware.RequirePortal checks for.
+//
+// tenantID is the ACTIVE workspace, not identities.tenant_id — a portal identity
+// may be linked to several tenants (see identity_tenants), and that column is
+// only a home hint for such rows. Always mint from the selected workspace.
+func generatePortalJWT(identityID, email, tenantID string, d time.Duration) (string, error) {
+	claims := jwt.MapClaims{
+		"id":        identityID,
+		"email":     email,
+		"tenant_id": tenantID,
+		"kind":      middleware.KindPortal,
+		"exp":       time.Now().Add(d).Unix(),
+		"iat":       time.Now().Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(config.AppConfig.JWTSecret))
@@ -699,8 +737,16 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check the user's workspace status — suspended/disabled accounts must not
+	// Check the user's workspace standing — suspended/disabled accounts must not
 	// be able to log in even though their control-plane identity still exists.
+	//
+	// A missing users row is a hard denial, not a skip. Staff membership IS the
+	// users row: an identity without one is not a member of this workspace, and
+	// portal customers specifically hold a control-plane identity but never a
+	// users row (see customer_portal_user). Swallowing this lookup's error would
+	// hand such an identity a full staff token — one that carries no grants, but
+	// is a valid session on the internal surface all the same.
+	//
 	// The tenant-scoped users.full_name is also picked up here when present —
 	// it's the field Config > Users edits, and the control-plane identity's
 	// full_name is never updated by that flow, so it must not be treated as
@@ -711,18 +757,25 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
 			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
 				pool = p
-				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
-					if u.Status == "suspended" {
-						fail(w, http.StatusForbidden, "Your account has been suspended. Contact your workspace administrator.")
-						return
-					}
-					if u.Status == "disabled" {
-						fail(w, http.StatusForbidden, "Your account has been deactivated.")
-						return
-					}
-					if u.FullName != "" {
-						displayName = u.FullName
-					}
+				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)
+				switch {
+				case errors.Is(uErr, userstore.ErrUserNotFound):
+					logSecurityEvent(r, "login_failed", "email", req.Email,
+						"identity", identity.ID, "reason", "no_workspace_user")
+					fail(w, http.StatusUnauthorized, "Invalid email or password.")
+					return
+				case uErr != nil:
+					fail(w, http.StatusInternalServerError, "Login failed.")
+					return
+				case u.Status == "suspended":
+					fail(w, http.StatusForbidden, "Your account has been suspended. Contact your workspace administrator.")
+					return
+				case u.Status == "disabled":
+					fail(w, http.StatusForbidden, "Your account has been deactivated.")
+					return
+				}
+				if u.FullName != "" {
+					displayName = u.FullName
 				}
 			}
 		}
@@ -1026,14 +1079,18 @@ func clearAuthCookies(w http.ResponseWriter) {
 			MaxAge:   -1,
 		})
 	}
-	// refresh_token uses path=/api/auth — clear that too.
-	http.SetCookie(w, &http.Cookie{
-		Name:     "refresh_token",
-		Value:    "",
-		Path:     "/api/auth",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	// refresh_token is path-scoped, so the "/" clear above does not reach it.
+	// Clear both the staff and portal paths — clearing a cookie that was never
+	// set is harmless, and this keeps one logout helper correct for both.
+	for _, path := range []string{staffRefreshCookiePath, portalRefreshCookiePath} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "refresh_token",
+			Value:    "",
+			Path:     path,
+			HttpOnly: true,
+			MaxAge:   -1,
+		})
+	}
 }
 
 // ---- forgot / reset password ------------------------------------------------

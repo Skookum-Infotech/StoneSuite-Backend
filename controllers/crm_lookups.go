@@ -43,6 +43,16 @@ type StateLookupItem struct {
 	CountryID int    `json:"countryId"`
 }
 
+// CurrencyLookupItem additionally carries the display symbol (e.g. "$", "€")
+// so the frontend can render amounts without hardcoding or duplicating a
+// currency prefix.
+type CurrencyLookupItem struct {
+	ID     int    `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Symbol string `json:"symbol"`
+}
+
 // GetLookups GET /api/tenant/crm/lookups
 func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 	pool, err := tenancy.PoolFromContext(r.Context())
@@ -96,9 +106,7 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load payment terms.")
 		return
 	}
-	currencies, err := queryLookupItems(ctx, pool,
-		`SELECT currency_id, currency_code, currency_name FROM lkp_currency
-		 WHERE currency_is_active AND currency_deleted_at IS NULL ORDER BY currency_name`)
+	currencies, err := queryCurrencyLookupItems(ctx, pool)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load currencies.")
 		return
@@ -234,6 +242,25 @@ func queryLookupItems(ctx context.Context, pool *pgxpool.Pool, query string, arg
 		var item LookupItem
 		if err := rows.Scan(&item.ID, &item.Code, &item.Name); err != nil {
 			return nil, fmt.Errorf("scan lookup item: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func queryCurrencyLookupItems(ctx context.Context, pool *pgxpool.Pool) ([]CurrencyLookupItem, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT currency_id, currency_code, currency_name, currency_symbol FROM lkp_currency
+		WHERE currency_is_active AND currency_deleted_at IS NULL ORDER BY currency_name`)
+	if err != nil {
+		return nil, fmt.Errorf("query currencies: %w", err)
+	}
+	defer rows.Close()
+	out := []CurrencyLookupItem{}
+	for rows.Next() {
+		var item CurrencyLookupItem
+		if err := rows.Scan(&item.ID, &item.Code, &item.Name, &item.Symbol); err != nil {
+			return nil, fmt.Errorf("scan currency: %w", err)
 		}
 		out = append(out, item)
 	}

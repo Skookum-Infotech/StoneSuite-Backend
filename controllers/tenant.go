@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/config"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/middleware"
@@ -704,9 +706,11 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	// full_name is never updated by that flow, so it must not be treated as
 	// authoritative once a workspace user row exists.
 	displayName := identity.FullName
+	var pool *pgxpool.Pool
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
-			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+				pool = p
 				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
 					if u.Status == "suspended" {
 						fail(w, http.StatusForbidden, "Your account has been suspended. Contact your workspace administrator.")
@@ -764,10 +768,25 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the caller's effective grants live, so the frontend gets its
+	// permission set atomically with the token instead of needing a separate
+	// follow-up call to /api/tenant/users/me/permissions that could be
+	// skipped or raced, leaving stale permissions in the UI.
+	var grants []authz.Grant
+	if pool != nil {
+		if g, gErr := authz.EffectiveGrants(r.Context(), pool, identity.ID); gErr == nil {
+			grants = g
+		}
+	}
+	if grants == nil {
+		grants = []authz.Grant{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":   true,
 		"token":     token,
 		"expiresAt": accessExpiry.UnixMilli(),
+		"grants":    grants,
 		"user": map[string]any{
 			"id": identity.ID, "email": identity.Email,
 			"fullName": displayName, "tenantId": identity.TenantID,
@@ -910,9 +929,11 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reject suspended/disabled users — their refresh tokens must not extend sessions.
+	var pool *pgxpool.Pool
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
-			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+				pool = p
 				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
 					if u.Status == "suspended" || u.Status == "disabled" {
 						clearAuthCookies(w)
@@ -953,10 +974,25 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refresh always drops any active-role selection (see note above), so the
+	// grants below are always the caller's full aggregate — never a stale
+	// role-narrowed set left over from before the refresh.
+	var grants []authz.Grant
+	if pool != nil {
+		if g, gErr := authz.EffectiveGrants(r.Context(), pool, identity.ID); gErr == nil {
+			grants = g
+		}
+	}
+	if grants == nil {
+		grants = []authz.Grant{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"token":     newToken,
-		"expiresAt": accessExpiry.UnixMilli(),
+		"success":      true,
+		"token":        newToken,
+		"expiresAt":    accessExpiry.UnixMilli(),
+		"activeRoleId": "",
+		"grants":       grants,
 	})
 }
 

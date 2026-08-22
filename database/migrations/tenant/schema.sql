@@ -7680,3 +7680,55 @@ CREATE INDEX IF NOT EXISTS idx_exp_created_id      ON expense (expense_created_a
 CREATE INDEX IF NOT EXISTS idx_exp_custom_gin      ON expense USING GIN (expense_custom_fields);
 CREATE INDEX IF NOT EXISTS idx_exp_item_expense    ON expense_item (expense_id) WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_exp_history_expense ON expense_history (expense_id);
+
+-- ============================================================================
+-- Customer Portal: customer_identities / customer_note
+--
+-- A customer_identities row is a login for an external customer, 1:1 with an
+-- existing `customer` CRM record (lead/prospect/customer all live in that one
+-- table -- see its header). It is entirely tenant-local: unlike staff
+-- identities (control-plane `identities`, needed because a staff email must
+-- resolve to a tenant before auth), a customer already knows which tenant's
+-- portal they're logging into, so there's no cross-tenant registry to keep.
+--
+-- customer_note is a flat, non-workflow record (no lkp_record_type /
+-- lkp_record_status, no transitions) -- a customer submits free text, staff
+-- triage it via a plain status field. Structurally closest to crm_activity.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS customer_identities (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id          INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    email                VARCHAR(255) NOT NULL,
+    password_hash        VARCHAR(255) NOT NULL DEFAULT '',
+    full_name            VARCHAR(255) NOT NULL DEFAULT '',
+    status               VARCHAR(20)  NOT NULL DEFAULT 'invited', -- invited | active | disabled
+    invite_token         VARCHAR(64)      NULL,
+    invite_token_expiry  TIMESTAMPTZ      NULL,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_customer_identities_customer UNIQUE (customer_id),
+    CONSTRAINT chk_customer_identities_status CHECK (status IN ('invited','active','disabled'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_identities_email ON customer_identities (LOWER(email));
+
+CREATE TABLE IF NOT EXISTS customer_note (
+    customer_note_id         SERIAL       PRIMARY KEY,
+    customer_note_uuid       UUID         NOT NULL DEFAULT gen_random_uuid(),
+    customer_id              INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    customer_identity_id     UUID         NOT NULL REFERENCES customer_identities(id) ON DELETE CASCADE,
+    body                     TEXT         NOT NULL,
+    status                   VARCHAR(10)  NOT NULL DEFAULT 'new', -- new | read | resolved
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_employee_id   INTEGER          NULL REFERENCES employee(employee_id),
+    deleted_at               TIMESTAMPTZ      NULL,
+    deleted_by_employee_id   INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_customer_note_uuid UNIQUE (customer_note_uuid),
+    CONSTRAINT chk_customer_note_status CHECK (status IN ('new','read','resolved')),
+    CONSTRAINT chk_customer_note_soft_delete CHECK (
+        (deleted_at IS NULL AND deleted_by_employee_id IS NULL) OR
+        (deleted_at IS NOT NULL AND deleted_by_employee_id IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_customer_note_customer ON customer_note (customer_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_customer_note_identity ON customer_note (customer_identity_id, created_at DESC) WHERE deleted_at IS NULL;

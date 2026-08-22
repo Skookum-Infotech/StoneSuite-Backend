@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -370,6 +371,24 @@ func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// r.Context() still carries the payload from the token that authenticated
+	// this request (the OLD active role), so EffectiveGrants would narrow to
+	// the wrong role if called directly. Build a context reflecting the role
+	// we just switched to and resolve grants against that instead.
+	newCtx := context.WithValue(r.Context(), middleware.UserContextKey,
+		middleware.UserContextPayload{
+			ID: payload.ID, Email: payload.Email, TenantID: payload.TenantID,
+			UserID: payload.UserID, ActiveRoleID: activeRoleID,
+		})
+	grants, err := authz.EffectiveGrants(newCtx, pool, payload.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load permissions.")
+		return
+	}
+	if grants == nil {
+		grants = []authz.Grant{}
+	}
+
 	logSecurityEvent(r, "role_switched", "identity", payload.ID, "active_role_id", activeRoleID)
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -377,6 +396,7 @@ func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
 		"token":        token,
 		"expiresAt":    accessExpiry.UnixMilli(),
 		"activeRoleId": activeRoleID,
+		"grants":       grants,
 	})
 }
 

@@ -3,6 +3,14 @@ name: Backend CI
 # Runs on every PR and push before the deploy workflow (which only fires on
 # merge to master). Gates merges on build, vet, race-enabled tests, lint,
 # a dependency vulnerability scan, and a secret scan.
+#
+# go-version is pinned (not 'stable') across every job: golangci-lint v2.12.2
+# (below) was verified against go1.25.13, and a floating 'stable' resolving to
+# a newer patch broke its internal typechecker with errors attributed to a
+# placeholder ".github" path -- go build/vet/test stayed green on the same
+# commit, proving the break was in the linter's own toolchain compat, not
+# application code. Bump this version deliberately alongside the pinned
+# golangci-lint-action version, not automatically.
 on:
   pull_request:
   push:
@@ -17,7 +25,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version: '1.25.13'
           cache-dependency-path: go.sum
       # Deterministic and zero-cost. Catches the formatting drift that
       # copy-cloning a module produces -- e.g. quote/types.go's struct tags
@@ -66,7 +74,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version: '1.25.13'
           cache-dependency-path: go.sum
 
       # --single-transaction is REQUIRED, not tidiness: it matches what the Go
@@ -143,7 +151,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version: '1.25.13'
           cache-dependency-path: go.sum
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -158,7 +166,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          go-version: '1.25.13'
           cache-dependency-path: go.sum
       - name: Run govulncheck
         run: |

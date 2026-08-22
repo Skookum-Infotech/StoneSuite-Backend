@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -40,11 +41,21 @@ func (h *TenantOps) finalizeOnboarding(ctx context.Context, tenant *tenancy.Tena
 	// Create a setup-pending identity (empty password → cannot sign in yet).
 	identity, err := h.CP.CreateIdentity(ctx, tenant.ID, email, "", fullName, false)
 	if err != nil {
-		// Likely already exists (re-onboard) — reuse it.
-		identity, err = h.CP.IdentityByEmail(ctx, email)
-		if err != nil {
+		// identities.email is unique platform-wide. The insert can fail either
+		// because this is a genuine retry of THIS tenant's onboarding (safe to
+		// reuse), or because the email already belongs to a different tenant
+		// (must not silently reattach it — every login path trusts
+		// identity.TenantID as-is to mint the JWT, so misattaching here would
+		// hand the caller access to someone else's workspace instead of a
+		// clear error).
+		existing, lookupErr := h.CP.IdentityByEmail(ctx, email)
+		if lookupErr != nil {
 			return "", err
 		}
+		if existing.TenantID != tenant.ID {
+			return "", fmt.Errorf("%s is already registered to another workspace", email)
+		}
+		identity = existing
 	}
 
 	token, err := randomToken()

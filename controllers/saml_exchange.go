@@ -85,7 +85,7 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 		"expiresAt": accessExpiry.UnixMilli(),
 		"user": map[string]any{
 			"id": identity.ID, "email": identity.Email,
-			"fullName": identity.FullName, "tenantId": identity.TenantID,
+			"fullName": tenantDisplayName(ctx, h.cp, h.router, identity), "tenantId": identity.TenantID,
 			"isPlatformAdmin": isPlatformAdmin,
 		},
 	})

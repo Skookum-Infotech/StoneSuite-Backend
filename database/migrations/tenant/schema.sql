@@ -7704,6 +7704,58 @@ CREATE INDEX IF NOT EXISTS idx_exp_custom_gin      ON expense USING GIN (expense
 CREATE INDEX IF NOT EXISTS idx_exp_item_expense    ON expense_item (expense_id) WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_exp_history_expense ON expense_history (expense_id);
 
+-- ============================================================================
+-- Customer Portal: customer_identities / customer_note
+--
+-- A customer_identities row is a login for an external customer, 1:1 with an
+-- existing `customer` CRM record (lead/prospect/customer all live in that one
+-- table -- see its header). It is entirely tenant-local: unlike staff
+-- identities (control-plane `identities`, needed because a staff email must
+-- resolve to a tenant before auth), a customer already knows which tenant's
+-- portal they're logging into, so there's no cross-tenant registry to keep.
+--
+-- customer_note is a flat, non-workflow record (no lkp_record_type /
+-- lkp_record_status, no transitions) -- a customer submits free text, staff
+-- triage it via a plain status field. Structurally closest to crm_activity.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS customer_identities (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id          INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    email                VARCHAR(255) NOT NULL,
+    password_hash        VARCHAR(255) NOT NULL DEFAULT '',
+    full_name            VARCHAR(255) NOT NULL DEFAULT '',
+    status               VARCHAR(20)  NOT NULL DEFAULT 'invited', -- invited | active | disabled
+    invite_token         VARCHAR(64)      NULL,
+    invite_token_expiry  TIMESTAMPTZ      NULL,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_customer_identities_customer UNIQUE (customer_id),
+    CONSTRAINT chk_customer_identities_status CHECK (status IN ('invited','active','disabled'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_identities_email ON customer_identities (LOWER(email));
+
+CREATE TABLE IF NOT EXISTS customer_note (
+    customer_note_id         SERIAL       PRIMARY KEY,
+    customer_note_uuid       UUID         NOT NULL DEFAULT gen_random_uuid(),
+    customer_id              INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    customer_identity_id     UUID         NOT NULL REFERENCES customer_identities(id) ON DELETE CASCADE,
+    body                     TEXT         NOT NULL,
+    status                   VARCHAR(10)  NOT NULL DEFAULT 'new', -- new | read | resolved
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_employee_id   INTEGER          NULL REFERENCES employee(employee_id),
+    deleted_at               TIMESTAMPTZ      NULL,
+    deleted_by_employee_id   INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_customer_note_uuid UNIQUE (customer_note_uuid),
+    CONSTRAINT chk_customer_note_status CHECK (status IN ('new','read','resolved')),
+    CONSTRAINT chk_customer_note_soft_delete CHECK (
+        (deleted_at IS NULL AND deleted_by_employee_id IS NULL) OR
+        (deleted_at IS NOT NULL AND deleted_by_employee_id IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_customer_note_customer ON customer_note (customer_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_customer_note_identity ON customer_note (customer_identity_id, created_at DESC) WHERE deleted_at IS NULL;
+
 -- -- 000036_approval_chain_generic_phase1 ----------------------------------
 -- =====================================================================
 -- Tenant migration 036: extends the AD-8 approval gate (proven on
@@ -7894,3 +7946,82 @@ ALTER TABLE credit_memo_history ADD CONSTRAINT chk_credit_memo_history_action
 ALTER TABLE refund_history DROP CONSTRAINT IF EXISTS chk_refund_history_action;
 ALTER TABLE refund_history ADD CONSTRAINT chk_refund_history_action
     CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override'));
+
+-- =====================================================================
+-- CUSTOMER PORTAL
+-- =====================================================================
+-- External, customer-facing logins. A portal user is NOT a member of the
+-- workspace: it has no `users` row and no `employee` row, deliberately.
+--
+-- That absence is load-bearing. authz.EffectiveGrants resolves permissions via
+-- `JOIN users u ON u.identity_id = $1`, so an identity with no users row
+-- resolves to zero grants and every authz.Check denies. The same absence makes
+-- every `own`-scoped list return an empty page (the store's employee lookup
+-- misses and fails closed). Giving a portal user a `users` row would silently
+-- dismantle both protections -- do not do it.
+--
+-- Portal access is therefore NOT expressed as a role or a permission scope. It
+-- is a dedicated read surface (/api/portal/) served by dedicated store
+-- functions that take customer_id as a parameter and hard-code the predicate.
+CREATE TABLE IF NOT EXISTS customer_portal_user (
+    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_id UUID         NOT NULL,   -- control-plane identities.id; no cross-DB FK, same as users.identity_id
+    customer_id INTEGER      NOT NULL REFERENCES customer(customer_id),
+    email       VARCHAR(255) NOT NULL,
+    full_name   VARCHAR(150) NOT NULL DEFAULT '',
+    phone       VARCHAR(20)  NOT NULL DEFAULT '',
+    -- Access lives here, NOT on customer.customer_is_approved. That flag is
+    -- reset on every CRM state entry (see crmstore approval reset), so gating
+    -- live access on it would lock a customer out on a routine renewal
+    -- transition. Approval is checked once, when access is granted.
+    status      VARCHAR(16)  NOT NULL DEFAULT 'active',   -- active | revoked
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by  INTEGER          NULL REFERENCES employee(employee_id),
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revoked_at  TIMESTAMP        NULL,
+    revoked_by  INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_cpu_identity UNIQUE (identity_id),
+    CONSTRAINT chk_cpu_status  CHECK (status IN ('active', 'revoked'))
+);
+CREATE INDEX IF NOT EXISTS idx_cpu_customer ON customer_portal_user (customer_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_cpu_email    ON customer_portal_user (LOWER(email));
+
+-- Message thread hung off any portal-visible document.
+--
+-- One generic table rather than a comment table cloned into each of the four
+-- document modules: those modules are copy-paste twins with no shared base, so
+-- a fifth clone would be a fifth place to hand-port every fix.
+--
+-- portal_message_customer_id is a deliberate denormalization. It lets the
+-- portal read path filter a thread by the session's customer without joining
+-- out to four different document tables to discover ownership.
+CREATE TABLE IF NOT EXISTS portal_message (
+    portal_message_id            SERIAL      PRIMARY KEY,
+    portal_message_uuid          UUID        NOT NULL DEFAULT gen_random_uuid(),
+    portal_message_module        VARCHAR(32) NOT NULL,   -- sales_order | invoice | payment | refund
+    portal_message_document_uuid UUID        NOT NULL,
+    portal_message_customer_id   INTEGER     NOT NULL REFERENCES customer(customer_id),
+    portal_message_author_kind   VARCHAR(8)  NOT NULL,   -- portal | staff
+    portal_message_author_portal_user_id UUID    NULL REFERENCES customer_portal_user(id),
+    portal_message_author_employee_id    INTEGER NULL REFERENCES employee(employee_id),
+    portal_message_body          TEXT        NOT NULL,
+    portal_message_created_at    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    portal_message_deleted_at    TIMESTAMP       NULL,
+    CONSTRAINT uq_portal_message_uuid UNIQUE (portal_message_uuid),
+    CONSTRAINT chk_pm_module CHECK (portal_message_module IN
+        ('sales_order', 'invoice', 'payment', 'refund')),
+    CONSTRAINT chk_pm_author_kind CHECK (portal_message_author_kind IN ('portal', 'staff')),
+    -- Exactly one author, matching the declared kind.
+    CONSTRAINT chk_pm_author_xor CHECK (
+        (portal_message_author_kind = 'portal'
+            AND portal_message_author_portal_user_id IS NOT NULL
+            AND portal_message_author_employee_id    IS NULL)
+     OR (portal_message_author_kind = 'staff'
+            AND portal_message_author_employee_id    IS NOT NULL
+            AND portal_message_author_portal_user_id IS NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_pm_doc ON portal_message
+    (portal_message_module, portal_message_document_uuid) WHERE portal_message_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pm_customer ON portal_message
+    (portal_message_customer_id) WHERE portal_message_deleted_at IS NULL;

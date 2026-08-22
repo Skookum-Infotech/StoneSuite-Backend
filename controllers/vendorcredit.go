@@ -139,8 +139,12 @@ func vendorCreditFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
 	case errors.Is(err, vendorcredit.ErrNotFound):
 		fail(w, http.StatusNotFound, "Vendor credit not found.")
-	case errors.Is(err, vendorcredit.ErrInvalidTransition):
+	case errors.Is(err, vendorcredit.ErrInvalidTransition),
+		errors.Is(err, vendorcredit.ErrApprovalRequired),
+		errors.Is(err, vendorcredit.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, vendorcredit.ErrNotApprover):
+		fail(w, http.StatusForbidden, err.Error())
 	default:
 		var ce vendorcredit.ClientError
 		if errors.As(err, &ce) {
@@ -186,15 +190,54 @@ func (h *VendorCreditOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/vendor-credits/{uuid}
 func (h *VendorCreditOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authVendorCreditByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authVendorCreditByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	vc, err := vendorcredit.Get(r.Context(), pool, r.PathValue("uuid"))
+	vc, err := vendorcredit.Get(r.Context(), pool, uuid)
 	if err != nil {
 		vendorCreditFail(w, err, "Failed to load vendor credit.")
 		return
 	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vendorCreditFail(w, err, "Failed to load vendor credit.")
+		return
+	}
+	info, err := vendorcredit.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		vendorCreditFail(w, err, "Failed to load vendor credit.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorCredit": vc, "approval": info})
+}
+
+// Approve POST /api/tenant/vendor-credits/{uuid}/approve — approval sign-off (AD-8).
+// ActionApprove, not ActionTransition -- approving a vendor credit is what
+// authorizes real credit against AP, a deliberately distinct capability
+// from moving the record around (see authz/catalog.go).
+func (h *VendorCreditOps) Approve(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authVendorCreditByUUID(w, r, uuid, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vendorCreditFail(w, err, "Failed to approve vendor credit.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	vc, err := vendorcredit.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	if err != nil {
+		if errors.Is(err, vendorcredit.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		vendorCreditFail(w, err, "Failed to approve vendor credit.")
+		return
+	}
+	auditVC(r, pool, identityID, "approve", uuid, nil, vc)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorCredit": vc})
 }
 

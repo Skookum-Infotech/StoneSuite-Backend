@@ -239,11 +239,22 @@ func (h *ExpenseOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/expenses/{uuid}
 func (h *ExpenseOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, exp, ok := h.authExpByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, exp, ok := h.authExpByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "expense": exp})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		expFail(w, err, "Failed to load expense.")
+		return
+	}
+	info, err := expense.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		expFail(w, err, "Failed to load expense.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "expense": exp, "approval": info})
 }
 
 // Update PATCH /api/tenant/expenses/{uuid}
@@ -312,7 +323,12 @@ func (h *ExpenseOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	exp, err := expense.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		expFail(w, err, "Failed to approve expense claim.")
+		return
+	}
+	exp, err := expense.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, expense.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

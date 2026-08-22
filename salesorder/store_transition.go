@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // ----- Transition ------------------------------------------------------------
@@ -55,7 +57,7 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	if err != nil {
 		return nil, err
 	}
-	if requiredHere > 0 && approvalStatus != approvalApproved {
+	if requiredHere > 0 && approvalStatus != approvalApproved && !approvalchain.AlwaysAllowedExitCodes[toStatusCode] {
 		return nil, ErrApprovalRequired
 	}
 	// The status being entered may itself require approval → start it pending.

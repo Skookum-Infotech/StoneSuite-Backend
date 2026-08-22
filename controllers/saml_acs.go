@@ -240,6 +240,14 @@ func (h *SAMLAuthOps) ACS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		logSecurityEvent(r, "saml_jit_user_provisioned", "identity_id", identity.ID, "tenant_id", tenantID, "user_id", user.ID)
+		// Every employee_id-based FK (Sales Rep, approvers, "own"-scope
+		// ownership) resolves through the employee table, not users directly --
+		// without this the JIT-provisioned user would sign in but be invisible
+		// to all of that. Non-fatal, matching the default-role grant below.
+		if err := userstore.EnsureEmployeeForUser(ctx, pool, user.ID, fullName, email); err != nil {
+			logSecurityEvent(r, "saml_employee_ensure_failed", "identity_id", identity.ID, "tenant_id", tenantID,
+				"user_id", user.ID, "error", err.Error())
+		}
 		// Grant the config's default role, if the admin set one. Non-fatal on
 		// failure -- the user still gets a working login, just with no role
 		// (the original behaviour) until an admin assigns one manually.

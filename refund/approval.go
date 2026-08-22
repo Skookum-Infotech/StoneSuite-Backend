@@ -1,4 +1,4 @@
-package fabrication
+package refund
 
 import (
 	"context"
@@ -10,30 +10,30 @@ import (
 )
 
 // ErrNotApprover maps to HTTP 403.
-var ErrNotApprover = errors.New("you are not a configured approver for this job's current status")
+var ErrNotApprover = errors.New("you are not a configured approver for this refund's current status")
 
 // ErrApprovalRequired maps to HTTP 409.
-var ErrApprovalRequired = errors.New("this job must be approved before it can leave its current status")
+var ErrApprovalRequired = errors.New("this refund must be approved before it can leave its current status")
 
 // ErrApprovalNotRequired maps to HTTP 409.
-var ErrApprovalNotRequired = errors.New("this job's current status does not require approval")
+var ErrApprovalNotRequired = errors.New("this refund's current status does not require approval")
 
-// moduleConfig resolves the shared approvalchain.ModuleConfig for
-// Fabrication Job (workflows.key "installation") once, so callers don't
-// repeat the ForWorkflowKey lookup+panic-guard.
+// moduleConfig resolves the shared approvalchain.ModuleConfig for Refund
+// (workflows.key "refund") once, so callers don't repeat the
+// ForWorkflowKey lookup+panic-guard.
 func moduleConfig() approvalchain.ModuleConfig {
-	cfg, ok := approvalchain.ForWorkflowKey("installation")
+	cfg, ok := approvalchain.ForWorkflowKey("refund")
 	if !ok {
-		panic("approvalchain: \"installation\" is not registered")
+		panic("approvalchain: \"refund\" is not registered")
 	}
 	return cfg
 }
 
-// Approve records one approver's sign-off on a job at its current gate
-// (TAPV or QCPS, spec §2.7) via the shared approvalchain engine. Once every
-// configured approver has signed off -- or a super admin overrides -- the
-// job auto-advances to the gate's target status in the same call.
-func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*Job, error) {
+// Approve records one approver's sign-off on a refund at its current gate
+// (PEND, AD-8) via the shared approvalchain engine. Once every configured
+// approver has signed off -- or a super admin overrides -- the refund
+// auto-advances to the gate's target status in the same call.
+func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*Refund, error) {
 	_, err := approvalchain.Approve(ctx, pool, moduleConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
 	switch {
 	case errors.Is(err, approvalchain.ErrNotFound):
@@ -48,7 +48,7 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmplo
 	return Get(ctx, pool, uuid)
 }
 
-// GetApprovalInfo resolves approvalchain.ApprovalInfo for a job -- who is
+// GetApprovalInfo resolves approvalchain.ApprovalInfo for a refund -- who is
 // configured to sign off on its current gate, who already has, and whether
 // the requesting caller can approve it -- so the detail page can show a
 // banner instead of a transition control that would just 409.

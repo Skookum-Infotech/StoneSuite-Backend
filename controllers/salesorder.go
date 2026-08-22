@@ -195,11 +195,21 @@ func (h *SalesOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/sales-orders/{uuid}
 func (h *SalesOrderOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, order, ok := h.authSOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, order, ok := h.authSOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		soFail(w, err, "Failed to load sales order.")
+		return
+	}
+	info, err := salesorder.GetApprovalInfo(r.Context(), pool, order.ID, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		soFail(w, err, "Failed to load sales order.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order, "approval": info})
 }
 
 // Update PATCH /api/tenant/sales-orders/{uuid}
@@ -272,7 +282,12 @@ func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	order, err := salesorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		soFail(w, err, "Failed to approve sales order.")
+		return
+	}
+	order, err := salesorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, salesorder.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

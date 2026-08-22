@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // Transition moves a live vendor bill to toStatusCode, validating the move
@@ -51,23 +53,25 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	// AD-6 approval gate: a vendor bill may not leave a status that has
 	// configured approvers until it has been approved. Recalling to draft
 	// (-> DRFT) is always allowed -- it is how a submitter withdraws a
-	// pending bill for rework without an approver's sign-off.
+	// pending bill for rework without an approver's sign-off (on top of
+	// the engine's own always-allowed exits like Void/Cancel/Reject).
+	approverTable := moduleConfig().ApproverTable
 	if toStatusCode != draftStatusCode {
-		requiredHere, err := activeApproverCount(ctx, tx, recordTypeID, curStatusID)
+		requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, curStatusID)
 		if err != nil {
 			return nil, err
 		}
-		if requiredHere > 0 && approvalStatus != approvalApproved {
+		if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
 			return nil, ErrApprovalRequired
 		}
 	}
-	targetApprovers, err := activeApproverCount(ctx, tx, recordTypeID, toStatusID)
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, toStatusID)
 	if err != nil {
 		return nil, err
 	}
-	newApprovalStatus := approvalNone
+	newApprovalStatus := approvalchain.StatusNone
 	if targetApprovers > 0 {
-		newApprovalStatus = approvalPending
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	if _, err := tx.Exec(ctx, `

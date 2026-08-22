@@ -192,16 +192,27 @@ func (h *VendorPaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /api/tenant/vendor-payments/{uuid}.
 func (h *VendorPaymentOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authVendorPaymentByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authVendorPaymentByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	vp, err := vendorpayment.Get(r.Context(), pool, r.PathValue("uuid"))
+	vp, err := vendorpayment.Get(r.Context(), pool, uuid)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to load vendor payment.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vendorPaymentFail(w, err, "Failed to load vendor payment.")
+		return
+	}
+	info, err := vendorpayment.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		vendorPaymentFail(w, err, "Failed to load vendor payment.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp, "approval": info})
 }
 
 // Update handles PATCH /api/tenant/vendor-payments/{uuid}.

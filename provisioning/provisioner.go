@@ -16,6 +16,7 @@ import (
 	"stonesuite-backend/secret"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/userstore"
 	"stonesuite-backend/workflow"
 )
 
@@ -227,6 +228,15 @@ func (p *Provisioner) provision(ctx context.Context, jobID string, j Job) error 
 		RETURNING id`,
 		j.IdentityID, j.Email, j.FullName).Scan(&firstUserID); err != nil {
 		return err
+	}
+
+	// Every employee_id-based FK (Sales Rep, approvers, "own"-scope ownership)
+	// resolves through the employee table, not users directly -- without this
+	// the tenant's first (super admin) user would be invisible to all of that
+	// from day one. Non-fatal: log and continue rather than failing the whole
+	// provisioning job over it.
+	if err := userstore.EnsureEmployeeForUser(ctx, pool, firstUserID, j.FullName, j.Email); err != nil {
+		log.Printf("provision tenant %s: failed to ensure employee row for first user: %v", j.TenantID, err)
 	}
 
 	// Seed RBAC: super_admin system role + grant it to the first user (idempotent).

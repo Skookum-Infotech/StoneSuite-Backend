@@ -238,12 +238,16 @@ func TestApprove_SignOffFlipsApprovalStatus(t *testing.T) {
 		t.Fatalf("seed estimate_approver: %v", err)
 	}
 
+	// Approve auto-advances the estimate straight to APPV once quorum is met
+	// (estimate/approval.go's finalizeApproval), so ApprovalStatus now
+	// reflects APPV's own gate (none here) rather than "approved" -- the
+	// auto-advance itself is the signal that the sign-off succeeded.
 	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if approved.ApprovalStatus != "approved" {
-		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
+	if approved.StatusCode != "APPV" {
+		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}
 }
 

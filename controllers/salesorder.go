@@ -107,7 +107,8 @@ func soFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusNotFound, "Sales order not found.")
 	case errors.Is(err, salesorder.ErrInvalidTransition),
 		errors.Is(err, salesorder.ErrApprovalRequired),
-		errors.Is(err, salesorder.ErrApprovalNotRequired):
+		errors.Is(err, salesorder.ErrApprovalNotRequired),
+		errors.Is(err, salesorder.ErrAttachmentRequired):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, salesorder.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())

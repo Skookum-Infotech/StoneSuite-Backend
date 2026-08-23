@@ -106,7 +106,8 @@ func quoteFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusNotFound, "Quote not found.")
 	case errors.Is(err, quote.ErrInvalidTransition),
 		errors.Is(err, quote.ErrApprovalRequired),
-		errors.Is(err, quote.ErrApprovalNotRequired):
+		errors.Is(err, quote.ErrApprovalNotRequired),
+		errors.Is(err, quote.ErrAttachmentRequired):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, quote.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())

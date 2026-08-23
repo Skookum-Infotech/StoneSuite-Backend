@@ -84,7 +84,8 @@ func invoiceFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusNotFound, "Invoice not found.")
 	case errors.Is(err, invoice.ErrInvalidTransition),
 		errors.Is(err, invoice.ErrApprovalRequired),
-		errors.Is(err, invoice.ErrApprovalNotRequired):
+		errors.Is(err, invoice.ErrApprovalNotRequired),
+		errors.Is(err, invoice.ErrAttachmentRequired):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, invoice.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())

@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // Transition moves a refund to toStatusCode after validating the move
@@ -22,14 +24,14 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID, curStatusID, typeID int
-	var curStatusCode string
+	var curStatusCode, approvalStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT rfnd.refund_id, rfnd.refund_status, rfnd.record_type, rs.record_status_code
+		SELECT rfnd.refund_id, rfnd.refund_status, rfnd.record_type, rs.record_status_code, rfnd.refund_approval_status
 		FROM refund rfnd
 		JOIN lkp_record_status rs ON rs.record_status_id = rfnd.refund_status
 		WHERE rfnd.refund_uuid = $1 AND rfnd.refund_deleted_at IS NULL
 		FOR UPDATE OF rfnd`, id,
-	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode)
+	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode, &approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -42,6 +44,26 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	toStatusID, err := statusIDByCode(ctx, pool, typeID, toStatusCode)
 	if err != nil {
 		return nil, ClientError{Msg: "Unknown target status: " + toStatusCode}
+	}
+
+	// AD-8 approval gate: a refund may not leave a status that has
+	// configured approvers until it has been approved (except into an
+	// always-allowed exit like Void -- approvalchain.AlwaysAllowedExitCodes).
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, curStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
+		return nil, ErrApprovalRequired
+	}
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, toStatusID)
+	if err != nil {
+		return nil, err
+	}
+	newApprovalStatus := approvalchain.StatusNone
+	if targetApprovers > 0 {
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	if toStatusCode == "VOID" {
@@ -118,9 +140,9 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE refund SET refund_status = $1, refund_updated_at = NOW(),
-			refund_updated_by = $2, refund_record_version = refund_record_version + 1
-		WHERE refund_id = $3`, toStatusID, nullableInt(actorEmployeeID), internalID); err != nil {
+		UPDATE refund SET refund_status = $1, refund_approval_status = $2, refund_approved_by = NULL,
+			refund_updated_at = NOW(), refund_updated_by = $3, refund_record_version = refund_record_version + 1
+		WHERE refund_id = $4`, toStatusID, newApprovalStatus, nullableInt(actorEmployeeID), internalID); err != nil {
 		return nil, fmt.Errorf("update refund status: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

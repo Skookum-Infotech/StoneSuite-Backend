@@ -204,7 +204,7 @@ func TestApprove_RequiresConfiguredApprover(t *testing.T) {
 	}
 	// No quote_approver rows configured for (QUOT, PAPV) in this test DB by
 	// default, so Approve should report the status doesn't require approval.
-	if _, err := Approve(context.Background(), pool, created.ID, 1); !errors.Is(err, ErrApprovalNotRequired) {
+	if _, err := Approve(context.Background(), pool, created.ID, 1, false); !errors.Is(err, ErrApprovalNotRequired) {
 		t.Fatalf("Approve with no configured approvers = %v, want ErrApprovalNotRequired", err)
 	}
 }
@@ -238,7 +238,7 @@ func TestApprove_SignOffFlipsApprovalStatus(t *testing.T) {
 		t.Fatalf("seed quote_approver: %v", err)
 	}
 
-	approved, err := Approve(ctx, pool, created.ID, 1)
+	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}

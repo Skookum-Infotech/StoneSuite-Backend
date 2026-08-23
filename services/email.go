@@ -78,6 +78,31 @@ func SendUserInviteEmail(recipientEmail, recipientName, workspaceName, inviteLin
 }
 
 // SendPasswordResetEmail sends a password-reset link to an existing account holder.
+// SendPortalInviteEmail invites an approved customer to set up their portal
+// login. Distinct from SendUserInviteEmail: the recipient is a customer, not a
+// colleague joining the workspace, so the copy must not imply staff access.
+func SendPortalInviteEmail(recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) error {
+	subject := workspaceName + " \u2014 set up your customer portal access"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>Your %s customer portal</h2>
+			<p>Hello%s,</p>
+			<p><strong>%s</strong> has given you access to their customer portal, where you can
+			   view your sales orders, invoices, payments and refunds at any time.</p>
+			<p>Click below to set your password and sign in:</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Set up my access</a></p>
+			<p>If the button does not work, copy and paste this link into your browser:</p>
+			<p>%s</p>
+			<p>This link expires in %d hours. If you were not expecting this email, you can safely ignore it.</p>
+			<p>Best regards,<br>%s</p>
+		</body>
+		</html>
+	`, workspaceName, nameClause(recipientName), workspaceName,
+		setupLink, setupLink, expiryHours, workspaceName)
+	return sendEmail(recipientEmail, subject, body)
+}
+
 func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) error {
 	subject := "Reset your StoneSuite password"
 	body := fmt.Sprintf(`
@@ -95,6 +120,45 @@ func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) err
 		</body>
 		</html>
 	`, nameClause(recipientName), resetLink, resetLink)
+	return sendEmail(recipientEmail, subject, body)
+}
+
+// SendCustomerPortalInviteEmail invites an external customer to set a
+// password and activate their customer-portal login.
+func SendCustomerPortalInviteEmail(recipientEmail, recipientName, tenantDisplayName, setupLink string) error {
+	subject := "You've been invited to the " + tenantDisplayName + " customer portal"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>You're invited to the %s customer portal</h2>
+			<p>Hello%s,</p>
+			<p><strong>%s</strong> has invited you to their customer portal, where you can submit notes and questions directly to their team.</p>
+			<p>Click the link below to set your password and activate your account:</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Set Password</a></p>
+			<p>If the button does not work, copy and paste this link into your browser:</p>
+			<p>%s</p>
+			<p>This invitation link is time-limited for security.</p>
+			<p>Best regards,<br>%s</p>
+		</body>
+		</html>
+	`, tenantDisplayName, nameClause(recipientName), tenantDisplayName, setupLink, setupLink, tenantDisplayName)
+	return sendEmail(recipientEmail, subject, body)
+}
+
+// SendCustomerNoteConfirmationEmail confirms to a customer that a note they
+// submitted through the portal was received.
+func SendCustomerNoteConfirmationEmail(recipientEmail, recipientName, tenantDisplayName string) error {
+	subject := "Your note to " + tenantDisplayName + " was sent"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>Your note was sent successfully</h2>
+			<p>Hello%s,</p>
+			<p>Your note has been delivered to <strong>%s</strong>. Their team will follow up with you as needed.</p>
+			<p>Best regards,<br>%s</p>
+		</body>
+		</html>
+	`, nameClause(recipientName), tenantDisplayName, tenantDisplayName)
 	return sendEmail(recipientEmail, subject, body)
 }
 

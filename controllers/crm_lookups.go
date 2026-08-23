@@ -159,24 +159,22 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Employees: maps employee_id (integer FK) to display name, used for the
-	// Sales Rep field and any other employee FK selects. Filtered to staff
-	// whose user holds create/update permission on a CRM resource (customer,
-	// lead, prospect) so unrelated employees (accounting, warehouse, etc.)
-	// never show up as sales rep candidates. Gated behind user:read and
-	// returned empty to callers without it (the picker degrades rather than
-	// 403-ing the form).
-	employees := []LookupItem{}
-	userDecision, err := authz.Check(ctx, pool, payload.ID, authz.ResourceUser, authz.ActionRead)
+	// Sales Rep / Customer Owner fields on every document module (estimate,
+	// quote, sales order, invoice, credit memo, ...) and any other employee FK
+	// select. Filtered to staff whose user holds create/update permission on a
+	// CRM resource (customer, lead, prospect) so unrelated employees
+	// (accounting, warehouse, etc.) never show up as sales rep candidates.
+	// This is directory data (a name, not account/security details), so
+	// listing it follows the same rule as the other reference lookups above
+	// (customerTypes, currencies, ...): available to any caller who already
+	// cleared this endpoint's crmDecision check, no extra gate. It previously
+	// also required user:read (the tenant user-management permission from
+	// controllers/user.go) which no ordinary Sales Rep role holds, so the
+	// picker silently degraded to empty for exactly the roles that needed it.
+	employees, err := queryEligibleSalesRepEmployees(ctx, pool)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		fail(w, http.StatusInternalServerError, "Failed to load employees.")
 		return
-	}
-	if userDecision.Allowed {
-		employees, err = queryEligibleSalesRepEmployees(ctx, pool)
-		if err != nil {
-			fail(w, http.StatusInternalServerError, "Failed to load employees.")
-			return
-		}
 	}
 	// Parent customers: used for the Parent Customer (customer_parent_company) FK
 	// select, which stores the integer customer_id of the owning company record.

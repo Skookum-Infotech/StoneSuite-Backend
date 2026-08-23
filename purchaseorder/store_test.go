@@ -276,19 +276,16 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if _, err := Transition(ctx, pool, created.ID, "APPV", 1); !errors.Is(err, ErrApprovalRequired) {
 		t.Fatalf("Transition PAPV->APPV before approval = %v, want ErrApprovalRequired", err)
 	}
+	// Approve auto-advances the purchase order straight to APPV once quorum
+	// is met (purchaseorder/approval.go's finalizeApproval) -- no separate
+	// Transition call is needed or possible afterward, since the record is
+	// no longer at PAPV.
 	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
-	if approved.ApprovalStatus != "approved" {
-		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
-	}
-	after, err := Transition(ctx, pool, created.ID, "APPV", 1)
-	if err != nil {
-		t.Fatalf("Transition PAPV->APPV after approval: %v", err)
-	}
-	if after.StatusCode != "APPV" {
-		t.Errorf("StatusCode = %q, want APPV", after.StatusCode)
+	if approved.StatusCode != "APPV" {
+		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}
 }
 

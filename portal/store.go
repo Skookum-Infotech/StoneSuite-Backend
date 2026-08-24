@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -125,6 +126,34 @@ func CustomerEligible(ctx context.Context, q Querier, customerUUID string) (int,
 		return 0, "", ErrCustomerNotEligible
 	}
 	return id, name, nil
+}
+
+// ContactInfoForInvite resolves the email and display name to use when
+// auto-inviting a customer to the portal the moment their record is approved
+// (see controllers/crm.go's ApproveRecord). Prefers the named authorized
+// contact; falls back to the customer/company name when no person is on file.
+//
+// Returns email == "" (not an error) when the customer has no contact email
+// on record — callers should treat that as "nothing to invite", not a failure.
+func ContactInfoForInvite(ctx context.Context, q Querier, customerUUID string) (email, fullName string, err error) {
+	var companyName, fname, lname string
+	err = q.QueryRow(ctx, `
+		SELECT c.customer_contact_email, c.customer_name,
+		       c.customer_authorized_person_fname, c.customer_authorized_person_lname
+		FROM customer c
+		WHERE c.customer_uuid = $1 AND c.customer_deleted_at IS NULL`, customerUUID,
+	).Scan(&email, &companyName, &fname, &lname)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", ErrPortalUserNotFound
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("contact info for invite: %w", err)
+	}
+	fullName = strings.TrimSpace(fname + " " + lname)
+	if fullName == "" {
+		fullName = companyName
+	}
+	return strings.TrimSpace(email), fullName, nil
 }
 
 // CustomerIDByUUID resolves a live customer without any eligibility check.

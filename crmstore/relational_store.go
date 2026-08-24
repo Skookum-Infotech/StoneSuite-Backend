@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -473,11 +474,22 @@ func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool
 	typeID, statusID, ownerEmp int, approvalStatus, typeCode string,
 	parentInternalID *int, core, custom map[string]any) (string, error) {
 
+	// A status with no configured approver auto-approves on entry (see
+	// entryApprovalStatus), so a brand-new record can already be approved the
+	// moment it's created or converted in — set is_approved/approved_at here
+	// rather than leaving them at their FALSE/NULL column defaults.
+	isApproved := approvalStatus == "approved"
+	var approvedAt any
+	if isApproved {
+		approvedAt = time.Now()
+	}
+
 	cols := []string{
 		"record_type", "customer_crm_status", "customer_crm_owner_user_id",
-		"customer_approval_status", "customer_custom_fields", "customer_created_by",
+		"customer_approval_status", "customer_is_approved", "customer_approved_at",
+		"customer_custom_fields", "customer_created_by",
 	}
-	args := []any{typeID, statusID, nullableInt(ownerEmp), approvalStatus, custom, nullableInt(ownerEmp)}
+	args := []any{typeID, statusID, nullableInt(ownerEmp), approvalStatus, isApproved, approvedAt, custom, nullableInt(ownerEmp)}
 	if parentInternalID != nil {
 		cols = append(cols, "customer_parent_id")
 		args = append(args, *parentInternalID)
@@ -509,6 +521,21 @@ func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool
 	return newUUID, nil
 }
 
+// requireContactEmailForCustomer enforces that a record newly entering CUST
+// stage carries a contact email, regardless of which of the three paths gets
+// it there (direct create, explicit convert, or a status transition whose
+// target status is itself CUST-typed — e.g. "Closed Won"). The customer
+// portal's auto-invite (controllers/crm.go's ApproveRecord) sends to exactly
+// this field the moment the record is approved; a CUST record without one
+// would approve successfully and simply never invite anyone, silently.
+// No-ops for any other target stage — lead/prospect records are unaffected.
+func requireContactEmailForCustomer(targetCode, contactEmail string) error {
+	if targetCode != "CUST" || contactEmail != "" {
+		return nil
+	}
+	return ClientError{Msg: "A contact email is required to create a customer — it's used to invite them to the customer portal."}
+}
+
 func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error) {
 	code, ok := crmKeyToCode[key]
 	if !ok {
@@ -520,6 +547,9 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	}
 	if getStr(core, "customer_name") == "" {
 		return nil, ClientError{Msg: "Company name is required."}
+	}
+	if err := requireContactEmailForCustomer(code, getStr(core, "customer_contact_email")); err != nil {
+		return nil, err
 	}
 	typeID, err := s.typeIDByCode(ctx, pool, code)
 	if err != nil {
@@ -623,6 +653,22 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	if err != nil {
 		return nil, err
 	}
+	// A record newly crossing into CUST must already have a contact email —
+	// checked only on the crossing transition (curTypeCode != "CUST"), not on
+	// every later status change within CUST, since re-validating on each
+	// internal transition would block unrelated edits to an already-live
+	// customer. See requireContactEmailForCustomer.
+	if targetTypeCode == "CUST" && curTypeCode != "CUST" {
+		var contactEmail string
+		if err := pool.QueryRow(ctx,
+			`SELECT customer_contact_email FROM customer WHERE customer_uuid = $1`, id,
+		).Scan(&contactEmail); err != nil {
+			return nil, fmt.Errorf("load contact email for transition: %w", err)
+		}
+		if err := requireContactEmailForCustomer(targetTypeCode, contactEmail); err != nil {
+			return nil, err
+		}
+	}
 	// Every state entry re-evaluates approval against the stage being entered:
 	// if it has active approvers configured the record always lands back in
 	// "pending", so each new state requires its own fresh sign-off rather than
@@ -637,8 +683,10 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 			record_type = $2, customer_crm_status = $3,
 			customer_updated_at = NOW(),
 			customer_record_version = customer_record_version + 1,
-			customer_approval_status = $4, customer_is_approved = FALSE,
-			customer_approved_by = NULL, customer_approved_at = NULL
+			customer_approval_status = $4,
+			customer_is_approved = ($4 = 'approved'),
+			customer_approved_by = NULL,
+			customer_approved_at = CASE WHEN $4 = 'approved' THEN NOW() ELSE NULL END
 		WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`,
 		id, targetTypeID, statusID, newApprovalStatus)
 	if err != nil {
@@ -701,6 +749,9 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 		if _, exists := custom[k]; !exists {
 			custom[k] = v
 		}
+	}
+	if err := requireContactEmailForCustomer(code, getStr(core, "customer_contact_email")); err != nil {
+		return nil, "", err
 	}
 	// Resolve the source's internal id for the lineage FK.
 	parentInternalID, _, _, err := s.recordKeyInfo(ctx, pool, id)
@@ -884,7 +935,11 @@ func (s *relationalStore) PendingApprovals(ctx context.Context, pool *pgxpool.Po
 
 // entryApprovalStatus returns "pending" if statusID currently has at least
 // one active approver configured — either scoped to that exact status or a
-// wildcard (any-status) approver for recordTypeCode — else "none". Called
+// wildcard (any-status) approver for recordTypeCode — else "approved": a
+// status nobody is configured to gate can't ever be signed off (Approve
+// rejects a non-"pending" record), so leaving it "none" would strand the
+// record unapprovable forever. No approver configured means nothing gates
+// the status, so the record auto-approves the moment it enters it. Called
 // whenever a record enters a record type/stage — creation, conversion, or a
 // same- or later-stage transition — so approval is required for the specific
 // status being entered, not for every status of the record type.
@@ -896,7 +951,7 @@ func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool
 	if anyApprover {
 		return "pending", nil
 	}
-	return "none", nil
+	return "approved", nil
 }
 
 // hasAnyActiveApprover reports whether at least one active approver is

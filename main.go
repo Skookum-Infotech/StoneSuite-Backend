@@ -581,7 +581,10 @@ func main() {
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
-		crm := controllers.NewCRMOps()
+		// portalAccessOps backs ApproveRecord's auto-invite (see crm.go) — it's
+		// constructed above (line ~233), inside this same control-plane-configured
+		// block, so it's always non-nil by the time we get here.
+		crm := controllers.NewCRMOps(portalAccessOps)
 		// Reference data for the unified CRM core-field selects (design-agnostic).
 		crmLookups := controllers.NewCRMLookups()
 		mux.Handle("GET /api/tenant/crm/lookups", tenantChain(crmLookups.GetLookups))

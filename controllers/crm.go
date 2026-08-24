@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -13,6 +14,7 @@ import (
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/portal"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
@@ -40,10 +42,17 @@ import (
 //	GET    /api/tenant/crm/{workflowKey}/approvals/pending  — caller's approval queue
 //	GET    /api/tenant/crm/records/{id}/activities          — list activity log (CRMActivityOps)
 //	POST   /api/tenant/crm/records/{id}/activities          — log an activity (CRMActivityOps)
-type CRMOps struct{}
+type CRMOps struct {
+	// PortalAccess backs the auto-invite ApproveRecord triggers when a
+	// customer record becomes approved (see autoInviteApprovedCustomer). Nil
+	// is tolerated (auto-invite silently no-ops) so a caller that never
+	// constructs the portal surface — a unit test, say — doesn't need to wire
+	// it up.
+	PortalAccess *PortalAccessOps
+}
 
 // NewCRMOps constructs the handler group.
-func NewCRMOps() *CRMOps { return &CRMOps{} }
+func NewCRMOps(portalAccess *PortalAccessOps) *CRMOps { return &CRMOps{PortalAccess: portalAccess} }
 
 // resourceForKey maps a workflow key to the RBAC resource used for auth.
 func resourceForKey(key string) authz.Resource {
@@ -394,6 +403,10 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to create record.")
 		return
 	}
+	// A CUST record created directly into a status with no configured
+	// approver auto-approves on entry (see entryApprovalStatus) — the invite
+	// hook no-ops for anything that isn't actually an approved CUST record.
+	h.autoInviteApprovedCustomer(r, pool, rec.ID, identityID)
 	auditCRM(r, pool, identityID, "create", key, rec.ID, nil, rec)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "record": rec})
 }
@@ -512,6 +525,9 @@ func (h *CRMOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to apply transition.")
 		return
 	}
+	// A transition into a CUST status with no configured approver
+	// auto-approves on entry — see entryApprovalStatus.
+	h.autoInviteApprovedCustomer(r, pool, id, identityID)
 	auditCRM(r, pool, identityID, "transition", key, id, nil, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": updated})
 }
@@ -560,6 +576,9 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to convert record.")
 		return
 	}
+	// Converting into a CUST status with no configured approver auto-approves
+	// on entry — see entryApprovalStatus.
+	h.autoInviteApprovedCustomer(r, pool, newRec.ID, identityID)
 	auditCRM(r, pool, identityID, "convert", req.TargetWorkflowKey, newRec.ID, nil, newRec)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"success":        true,
@@ -591,8 +610,63 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to approve record.")
 		return
 	}
+	// Best-effort: a customer record reaching approved fires the portal
+	// invite automatically (see autoInviteApprovedCustomer). Never lets a
+	// portal-side failure affect this response — the approval itself is the
+	// primary action and has already succeeded.
+	h.autoInviteApprovedCustomer(r, pool, id, identityID)
 	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
+}
+
+// autoInviteApprovedCustomer sends a portal invite to a customer's contact
+// email the moment their record becomes an approved CUST record — no staff
+// click required, per the deliberate product decision to send access
+// automatically at approval time (docs: identical trust boundary as the
+// staff-initiated grant at PortalAccessOps.CreatePortalUser, just triggered
+// by a different event).
+//
+// portal.CustomerEligible is the single source of truth for "is this
+// approved right now" — calling it here means a record that isn't actually a
+// newly-finalized CUST approval (e.g. an intermediate call in a
+// multi-approver quorum) silently no-ops rather than needing its own copy of
+// that logic. Every failure is logged, never surfaced — approval has already
+// succeeded and remains the primary action.
+func (h *CRMOps) autoInviteApprovedCustomer(r *http.Request, pool *pgxpool.Pool, recordID, actorIdentityID string) {
+	if h.PortalAccess == nil {
+		return
+	}
+	customerID, customerName, err := portal.CustomerEligible(r.Context(), pool, recordID)
+	if err != nil {
+		// Not a CUST record, not yet finalized (quorum still open), or
+		// genuinely gone — nothing to invite.
+		return
+	}
+	email, fullName, err := portal.ContactInfoForInvite(r.Context(), pool, recordID)
+	if err != nil {
+		log.Printf("warn: auto-invite for customer %s: load contact info: %v", recordID, err)
+		return
+	}
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" || !strings.Contains(email, "@") {
+		// No usable contact email on file — nothing to invite. Not an error:
+		// most customer records will not have this set.
+		return
+	}
+	tenant, err := tenancy.TenantFromContext(r.Context())
+	if err != nil {
+		log.Printf("warn: auto-invite for customer %s: resolve tenant: %v", recordID, err)
+		return
+	}
+	if _, _, err := h.PortalAccess.grantPortalAccess(r, tenant, pool, customerID,
+		recordID, customerName, email, fullName, actorIdentityID); err != nil {
+		if errors.Is(err, errStaffEmailConflict) {
+			logSecurityEvent(r, "customer_auto_invite_skipped_staff_email",
+				"customer", recordID, "actor", actorIdentityID)
+			return
+		}
+		log.Printf("warn: auto-invite for customer %s: %v", recordID, err)
+	}
 }
 
 // PendingApprovals GET /api/tenant/crm/{workflowKey}/approvals/pending

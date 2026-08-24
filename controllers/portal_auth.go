@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -56,10 +57,15 @@ func portalTokenDuration() time.Duration {
 // servableWorkspaces filters links down to workspaces that can actually serve a
 // request, and marks which one is active. A suspended or still-provisioning
 // tenant is omitted rather than offered and then rejected by the resolver.
-func (h *PortalAuthOps) servableWorkspaces(r *http.Request, links []tenancy.PortalLink, activeTenantID string) []workspaceView {
+//
+// Package-level rather than a PortalAuthOps method so TenantOps.tryPortalLogin
+// (the merged-login fallback in tenant.go) can call it too without needing a
+// PortalAuthOps instance — both mint the same workspace list off the same
+// control-plane links.
+func servableWorkspaces(ctx context.Context, cp *tenancy.ControlPlane, links []tenancy.PortalLink, activeTenantID string) []workspaceView {
 	out := []workspaceView{}
 	for _, l := range links {
-		t, err := h.CP.TenantByID(r.Context(), l.TenantID)
+		t, err := cp.TenantByID(ctx, l.TenantID)
 		if err != nil || !t.Servable() {
 			continue
 		}
@@ -126,7 +132,7 @@ func (h *PortalAuthOps) Login(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Login failed.")
 		return
 	}
-	workspaces := h.servableWorkspaces(r, links, "")
+	workspaces := servableWorkspaces(r.Context(), h.CP, links, "")
 	if len(workspaces) == 0 {
 		// Correct password, but this identity is not a portal customer (or its
 		// access was revoked, or no workspace is currently servable). Same
@@ -184,7 +190,7 @@ func (h *PortalAuthOps) Workspaces(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
-		"workspaces": h.servableWorkspaces(r, links, payload.TenantID),
+		"workspaces": servableWorkspaces(r.Context(), h.CP, links, payload.TenantID),
 	})
 }
 
@@ -704,8 +710,12 @@ func (h *PortalAuthOps) identityForPortalToken(w http.ResponseWriter, r *http.Re
 }
 
 // portalInviteLink is where an invited customer sets their initial password.
+//
+// Points at the shared /accept-invite page (not /portal/accept-invite): the
+// login surfaces are merged, so there is one accept-invite page for every
+// identity kind, not a portal-specific one.
 func portalInviteLink(token string) string {
-	return frontendBase() + "/portal/accept-invite?token=" + token
+	return frontendBase() + "/accept-invite?token=" + token
 }
 
 // inviteExpiryHours is the configured invite lifetime in hours, for display in
@@ -719,6 +729,9 @@ func inviteExpiryHours() int {
 }
 
 // portalResetLink is where a customer resets a forgotten password.
+//
+// Points at the shared /reset-password page, same reasoning as
+// portalInviteLink above — one reset-password page for every identity kind.
 func portalResetLink(token string) string {
-	return frontendBase() + "/portal/reset-password?token=" + token
+	return frontendBase() + "/reset-password?token=" + token
 }

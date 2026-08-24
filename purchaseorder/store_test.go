@@ -283,12 +283,11 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if approved.ApprovalStatus != "approved" {
 		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
 	}
-	after, err := Transition(ctx, pool, created.ID, "APPV", 1)
-	if err != nil {
-		t.Fatalf("Transition PAPV->APPV after approval: %v", err)
-	}
-	if after.StatusCode != "APPV" {
-		t.Errorf("StatusCode = %q, want APPV", after.StatusCode)
+	// Approve auto-advances to APPV in the same call once quorum is met --
+	// no separate Transition call needed (or possible: PAPV->APPV is the
+	// only edge, so a second one here would just error).
+	if approved.StatusCode != "APPV" {
+		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}
 }
 

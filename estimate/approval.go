@@ -183,7 +183,10 @@ func finalizeApproval(ctx context.Context, tx pgx.Tx, pool *pgxpool.Pool, uuid s
 	if err != nil {
 		return nil, err
 	}
-	newApprovalStatus := approvalNone
+	// This round of sign-off just completed, so the floor is approvalApproved
+	// (not approvalNone -- that would erase the fact that approval happened).
+	// approvalPending only overrides it when APPV is itself a further gate.
+	newApprovalStatus := approvalApproved
 	if targetApprovers > 0 {
 		newApprovalStatus = approvalPending
 	}

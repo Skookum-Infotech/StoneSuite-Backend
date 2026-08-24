@@ -252,6 +252,10 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if _, err := Transition(ctx, pool, created.ID, "APPV", 1); !errors.Is(err, ErrApprovalRequired) {
 		t.Fatalf("Transition SUBM->APPV before approval = %v, want ErrApprovalRequired", err)
 	}
+	// Approve auto-advances the expense straight to APPV once quorum is met
+	// (expense/approval.go's finalizeApproval) -- no separate Transition
+	// call is needed or possible afterward, since the record is no longer
+	// at SUBM.
 	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
@@ -259,9 +263,6 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if approved.ApprovalStatus != "approved" {
 		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
 	}
-	// Approve auto-advances to APPV in the same call once quorum is met --
-	// no separate Transition call needed (or possible: SUBM->APPV is the
-	// only edge, so a second one here would just error).
 	if approved.StatusCode != "APPV" {
 		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}

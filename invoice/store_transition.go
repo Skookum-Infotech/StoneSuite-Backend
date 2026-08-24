@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/workflow"
 )
 
 // Transition moves an invoice to toStatusCode after validating the move against
@@ -39,6 +40,15 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 
 	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
 		return nil, err
+	}
+	if curStatusCode == "DRFT" && toStatusCode == "PAPV" {
+		has, err := workflow.HasAttachments(ctx, tx, id)
+		if err != nil {
+			return nil, fmt.Errorf("check attachments: %w", err)
+		}
+		if !has {
+			return nil, ErrAttachmentRequired
+		}
 	}
 
 	toStatusID, err := statusIDByCode(ctx, pool, typeID, toStatusCode)

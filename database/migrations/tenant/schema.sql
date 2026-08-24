@@ -4031,7 +4031,7 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_invoice_history_action') THEN
     ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
-      CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit'));
+      CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert','approve','approve_override'));
   END IF;
 END $$;
 
@@ -4122,9 +4122,15 @@ ALTER TABLE sales_order_history DROP CONSTRAINT IF EXISTS chk_sales_order_histor
 ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
     CHECK (action IN ('create','transition','cancel','update','approve','convert'));
 
+-- Also carries 'approve'/'approve_override' (not just 'convert'): this
+-- statement runs unconditionally on every schema.sql replay, so an earlier
+-- version of this same list that omitted them would silently re-narrow the
+-- constraint back down on every boot, even after the approval-chain feature
+-- widened it live on running tenant DBs -- which is exactly what broke
+-- migrateAllTenants for any tenant with an existing 'approve' history row.
 ALTER TABLE invoice_history DROP CONSTRAINT IF EXISTS chk_invoice_history_action;
 ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
-    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert'));
+    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert','approve','approve_override'));
 
 -- 3. CRM activity log (call | email | meeting | note | task).
 CREATE TABLE IF NOT EXISTS crm_activity (

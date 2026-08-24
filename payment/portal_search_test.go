@@ -67,3 +67,23 @@ func TestPortalWhereParameterizesCustomer(t *testing.T) {
 	}
 	assert.Equal(t, 999999, args[0])
 }
+
+// redactForPortal must clear internal notes and staff assignment, since
+// headerSelect/scanPayment are shared verbatim with the staff-facing
+// Search/Get — nothing upstream of this function withholds them.
+func TestRedactForPortalStripsInternalFields(t *testing.T) {
+	owner := 22
+	rec := &Payment{
+		ID:              "pay-1",
+		InternalNotes:   "do not tell the customer",
+		OwnerEmployeeID: &owner,
+		Memo:            "customer-visible memo",
+	}
+	out := redactForPortal(rec)
+
+	assert.Empty(t, out.InternalNotes)
+	assert.Nil(t, out.OwnerEmployeeID)
+	// Only the internal fields are touched — customer-visible data survives.
+	assert.Equal(t, "pay-1", out.ID)
+	assert.Equal(t, "customer-visible memo", out.Memo)
+}

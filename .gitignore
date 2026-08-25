@@ -31,4 +31,8 @@ Thumbs.db
 
 # Local Claude Code settings (personal overrides, not team-wide)
 .claude/settings.local.json
-gen-apidocs
+# The compiled generator binary, if someone runs `go build ./cmd/gen-apidocs`
+# from the repo root. Anchored with a leading slash on purpose: an unanchored
+# `gen-apidocs` also matches the DIRECTORY cmd/gen-apidocs/ and silently
+# excludes the generator's source from every commit.
+/gen-apidocs

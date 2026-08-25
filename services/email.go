@@ -333,7 +333,7 @@ func buildMIME(from string, to, cc []string, subject, htmlBody string, attachmen
 				if end > len(b64) {
 					end = len(b64)
 				}
-				pw.Write([]byte(b64[i:end] + "\r\n"))
+				_, _ = pw.Write([]byte(b64[i:end] + "\r\n"))
 			}
 		}
 	}

@@ -25,13 +25,26 @@ const UserContextKey contextKey = "userContext"
 //	UserID       - tenant-local users.id (profile within the tenant DB)
 //	ActiveRoleID - tenant role id the caller switched to, if any (empty means
 //	               all assigned roles apply — see /api/tenant/auth/switch-role)
+//	Kind         - principal class: KindPortal for customer-portal sessions, empty
+//	               for staff. Staff tokens carry no kind claim, so absence means
+//	               staff and every token issued before the portal existed keeps
+//	               working unchanged.
 type UserContextPayload struct {
 	ID           string
 	Email        string
 	TenantID     string
 	UserID       string
 	ActiveRoleID string
+	Kind         string
 }
+
+const (
+	// KindPortal is the `kind` JWT claim carried by customer-portal tokens.
+	KindPortal = "portal"
+
+	// PortalPathPrefix is the only route subtree a portal token may reach.
+	PortalPathPrefix = "/api/portal/"
+)
 
 // RequireAuth is the HTTP middleware that verifies incoming JWT tokens and injects user context.
 func RequireAuth(next http.Handler) http.Handler {
@@ -129,6 +142,30 @@ func RequireAuth(next http.Handler) http.Handler {
 		tenantID, _ := claims["tenant_id"].(string)
 		userID, _ := claims["user_id"].(string)
 		activeRoleID, _ := claims["active_role_id"].(string)
+		kind, _ := claims["kind"].(string)
+
+		// Structural containment of portal sessions.
+		//
+		// A customer-portal token is valid ONLY under /api/portal/. Enforcing it
+		// here — at the single point every authenticated request passes through —
+		// rather than per-route means a tenant or platform route added later
+		// cannot forget the guard. Staff tokens carry no kind claim and are
+		// unaffected; the portal chain applies RequirePortal for the converse.
+		if kind == KindPortal && !strings.HasPrefix(r.URL.Path, PortalPathPrefix) {
+			slog.Warn("security event",
+				slog.String("security_event", "portal_token_outside_portal"),
+				slog.String("request_id", RequestIDFromContext(r.Context())),
+				slog.String("ip", ClientIP(r)),
+				slog.String("identity", identityID),
+				slog.String("path", r.URL.Path),
+			)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(models.APIResponse{
+				Success: false,
+				Message: "This session does not have access to this resource.",
+			})
+			return
+		}
 
 		// Double-submit CSRF check for state-changing requests. No-op unless
 		// CookieSameSite is "none" — see csrf.go for why.
@@ -154,6 +191,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			TenantID:     tenantID,
 			UserID:       userID,
 			ActiveRoleID: activeRoleID,
+			Kind:         kind,
 		}
 
 		ctx := context.WithValue(r.Context(), UserContextKey, ctxPayload)

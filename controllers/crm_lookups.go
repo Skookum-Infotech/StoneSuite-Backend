@@ -159,26 +159,22 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Employees: maps employee_id (integer FK) to display name, used for the
-	// Sales Rep field and any other employee FK selects. This is the tenant
-	// staff directory, so it is gated behind user:read and returned empty to
-	// callers without it (the picker degrades rather than 403-ing the form).
-	employees := []LookupItem{}
-	userDecision, err := authz.Check(ctx, pool, payload.ID, authz.ResourceUser, authz.ActionRead)
+	// Sales Rep / Customer Owner fields on every document module (estimate,
+	// quote, sales order, invoice, credit memo, ...) and any other employee FK
+	// select. Filtered to staff whose user holds create/update permission on a
+	// CRM resource (customer, lead, prospect) so unrelated employees
+	// (accounting, warehouse, etc.) never show up as sales rep candidates.
+	// This is directory data (a name, not account/security details), so
+	// listing it follows the same rule as the other reference lookups above
+	// (customerTypes, currencies, ...): available to any caller who already
+	// cleared this endpoint's crmDecision check, no extra gate. It previously
+	// also required user:read (the tenant user-management permission from
+	// controllers/user.go) which no ordinary Sales Rep role holds, so the
+	// picker silently degraded to empty for exactly the roles that needed it.
+	employees, err := queryEligibleSalesRepEmployees(ctx, pool)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		fail(w, http.StatusInternalServerError, "Failed to load employees.")
 		return
-	}
-	if userDecision.Allowed {
-		employees, err = queryLookupItems(ctx, pool,
-			`SELECT e.employee_id, '', COALESCE(NULLIF(u.full_name,''), u.email)
-			 FROM employee e
-			 JOIN users u ON u.id = e.employee_user_id
-			 WHERE e.employee_deleted_at IS NULL AND u.status = 'active'
-			 ORDER BY COALESCE(NULLIF(u.full_name,''), u.email)`)
-		if err != nil {
-			fail(w, http.StatusInternalServerError, "Failed to load employees.")
-			return
-		}
 	}
 	// Parent customers: used for the Parent Customer (customer_parent_company) FK
 	// select, which stores the integer customer_id of the owning company record.
@@ -265,6 +261,29 @@ func queryCurrencyLookupItems(ctx context.Context, pool *pgxpool.Pool) ([]Curren
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// queryEligibleSalesRepEmployees returns active employees whose linked user
+// holds create or update permission on a CRM resource (customer, lead,
+// prospect), i.e. staff who actually work CRM records — not every employee
+// in the tenant.
+func queryEligibleSalesRepEmployees(ctx context.Context, pool *pgxpool.Pool) ([]LookupItem, error) {
+	return queryLookupItems(ctx, pool,
+		`SELECT e.employee_id, '', COALESCE(NULLIF(u.full_name,''), u.email)
+		 FROM employee e
+		 JOIN users u ON u.id = e.employee_user_id
+		 WHERE e.employee_deleted_at IS NULL
+		   AND e.employee_is_active
+		   AND u.status = 'active'
+		   AND EXISTS (
+		     SELECT 1
+		     FROM user_roles ur
+		     JOIN role_permissions rp ON rp.role_id = ur.role_id
+		     WHERE ur.user_id = u.id
+		       AND rp.resource IN ('customer', 'lead', 'prospect', '*')
+		       AND rp.action IN ('create', 'update', '*')
+		   )
+		 ORDER BY COALESCE(NULLIF(u.full_name,''), u.email)`)
 }
 
 func queryStateLookupItems(ctx context.Context, pool *pgxpool.Pool) ([]StateLookupItem, error) {

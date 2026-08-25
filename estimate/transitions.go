@@ -5,6 +5,11 @@ import "errors"
 // ErrInvalidTransition is returned when a status change is not permitted.
 var ErrInvalidTransition = errors.New("invalid estimate status transition")
 
+// ErrAttachmentRequired is returned when a record has no attachments and is
+// being submitted for approval (DRFT -> PAPV) — every estimate must carry at
+// least one supporting file before review.
+var ErrAttachmentRequired = errors.New("at least one attachment is required before submitting for approval")
+
 // allowedTransitions maps a status code to the set of codes reachable from it
 // (spec §7). Terminal states (RJCT, EXPR, CANC) map to an empty set. There is
 // no "Accepted" status: acceptance is expressed by converting the estimate

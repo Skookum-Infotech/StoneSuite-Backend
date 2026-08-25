@@ -192,11 +192,22 @@ func (h *VendorBillOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/vendor-bills/{uuid}
 func (h *VendorBillOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, bill, ok := h.authVBByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, bill, ok := h.authVBByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": bill})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vbFail(w, err, "Failed to load vendor bill.")
+		return
+	}
+	info, err := vendorbill.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		vbFail(w, err, "Failed to load vendor bill.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": bill, "approval": info})
 }
 
 // Update PATCH /api/tenant/vendor-bills/{uuid}
@@ -265,7 +276,12 @@ func (h *VendorBillOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bill, err := vendorbill.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vbFail(w, err, "Failed to approve vendor bill.")
+		return
+	}
+	bill, err := vendorbill.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, vendorbill.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

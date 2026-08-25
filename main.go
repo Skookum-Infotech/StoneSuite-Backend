@@ -26,12 +26,18 @@ import (
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/database"
+	"stonesuite-backend/docpdf"
+	"stonesuite-backend/estimate"
+	"stonesuite-backend/invoice"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/logship"
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/portal"
 	"stonesuite-backend/provisioning"
+	"stonesuite-backend/quote"
+	"stonesuite-backend/salesorder"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
@@ -100,6 +106,8 @@ func main() {
 	var resolver *tenancy.Resolver
 	var tenantOps *controllers.TenantOps
 	var userOps *controllers.UserOps
+	var portalAuthOps *controllers.PortalAuthOps
+	var portalAccessOps *controllers.PortalAccessOps
 	var crmAdminOps *controllers.CRMAdminOps
 	var customerAuthOps *controllers.CustomerAuthOps
 	var provisioner *provisioning.Provisioner
@@ -227,6 +235,8 @@ func main() {
 		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue).
 			WithCFClient(cfClient, corsOrigins)
 		userOps = controllers.NewUserOps(cp, tenantRouter)
+		portalAuthOps = controllers.NewPortalAuthOps(cp, tenantRouter)
+		portalAccessOps = controllers.NewPortalAccessOps(cp, tenantRouter)
 		crmAdminOps = controllers.NewCRMAdminOps(cp)
 		customerAuthOps = controllers.NewCustomerAuthOps(cp, tenantRouter)
 		log.Println("Multi-tenant control plane initialized.")
@@ -375,6 +385,94 @@ func main() {
 			return middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(h)))
 		}
 
+		// ---- Customer portal ------------------------------------------------
+		//
+		// A separate route tree with its own chain. Portal tokens carry
+		// kind="portal"; middleware.RequireAuth confines those tokens to this
+		// /api/portal/ prefix, and middleware.RequirePortal keeps staff tokens
+		// out of it. A portal identity has no users row and no employee row, so
+		// even if a token reached an internal handler it would resolve zero
+		// grants — the chain below is the first of several independent layers,
+		// not the only one.
+		portalDocOps := controllers.NewPortalDocumentOps()
+		portalMessageOps := controllers.NewPortalMessageOps()
+
+		// Unauthenticated portal endpoints: per-IP limited on the same budget
+		// as staff credential endpoints (0.2 req/s, burst 10).
+		portalPublic := func(h http.HandlerFunc) http.Handler {
+			return authRateLimiter.PerIPFunc(h)
+		}
+		// Authenticated portal endpoints that must NOT resolve a tenant pool,
+		// because they operate across workspaces (the switcher) or before one
+		// is chosen.
+		portalCrossTenant := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(middleware.RequirePortal(http.HandlerFunc(h)))
+		}
+		// The main portal chain: authenticated, portal-only, tenant-resolved,
+		// per-tenant rate limited.
+		portalChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(middleware.RequirePortal(
+				tenantRateLimiter.PerTenant(resolver.Middleware(h))))
+		}
+
+		mux.Handle("POST /api/portal/auth/login", portalPublic(portalAuthOps.Login))
+		mux.Handle("POST /api/portal/auth/refresh", portalPublic(portalAuthOps.Refresh))
+		mux.Handle("POST /api/portal/auth/logout", portalPublic(portalAuthOps.Logout))
+		mux.Handle("GET /api/portal/auth/invite/{token}", portalPublic(portalAuthOps.GetInvite))
+		mux.Handle("POST /api/portal/auth/accept-invite", portalPublic(portalAuthOps.AcceptInvite))
+		mux.Handle("POST /api/portal/auth/forgot-password", portalPublic(portalAuthOps.ForgotPassword))
+		mux.Handle("GET /api/portal/auth/reset-password/{token}", portalPublic(portalAuthOps.ValidateResetToken))
+		mux.Handle("POST /api/portal/auth/reset-password", portalPublic(portalAuthOps.ResetPassword))
+
+		mux.Handle("POST /api/portal/auth/change-password", portalCrossTenant(portalAuthOps.ChangePassword))
+		mux.Handle("POST /api/portal/auth/switch-workspace", portalCrossTenant(portalAuthOps.SwitchWorkspace))
+		mux.Handle("GET /api/portal/workspaces", portalCrossTenant(portalAuthOps.Workspaces))
+
+		mux.Handle("/api/portal/me", portalChain(portalDocOps.Me))
+
+		mux.Handle("GET /api/portal/sales-orders", portalChain(portalDocOps.ListSalesOrders))
+		mux.Handle("POST /api/portal/sales-orders/search", portalChain(portalDocOps.SearchSalesOrders))
+		mux.Handle("GET /api/portal/sales-orders/{uuid}", portalChain(portalDocOps.GetSalesOrder))
+		mux.Handle("GET /api/portal/invoices", portalChain(portalDocOps.ListInvoices))
+		mux.Handle("POST /api/portal/invoices/search", portalChain(portalDocOps.SearchInvoices))
+		mux.Handle("GET /api/portal/invoices/{uuid}", portalChain(portalDocOps.GetInvoice))
+		mux.Handle("GET /api/portal/payments", portalChain(portalDocOps.ListPayments))
+		mux.Handle("POST /api/portal/payments/search", portalChain(portalDocOps.SearchPayments))
+		mux.Handle("GET /api/portal/payments/{uuid}", portalChain(portalDocOps.GetPayment))
+		mux.Handle("GET /api/portal/refunds", portalChain(portalDocOps.ListRefunds))
+		mux.Handle("POST /api/portal/refunds/search", portalChain(portalDocOps.SearchRefunds))
+		mux.Handle("GET /api/portal/refunds/{uuid}", portalChain(portalDocOps.GetRefund))
+
+		// Message threads are registered per module rather than with a
+		// {module} wildcard. A wildcard segment here is five segments deep and
+		// collides with /api/portal/auth/invite/{token}; neither pattern is more
+		// specific than the other, so ServeMux panics at registration. Explicit
+		// paths also keep the thread URL matching its document's URL.
+		for slug, mod := range map[string]portal.Module{
+			"sales-orders": portal.ModuleSalesOrder,
+			"invoices":     portal.ModuleInvoice,
+			"payments":     portal.ModulePayment,
+			"refunds":      portal.ModuleRefund,
+		} {
+			mux.Handle("/api/portal/"+slug+"/{uuid}/messages", portalChain(portalDocOps.MessagesFor(mod)))
+			mux.Handle("/api/tenant/"+slug+"/{uuid}/portal-messages", tenantChain(portalMessageOps.MessagesFor(mod)))
+		}
+
+		// Staff side of the portal: who may sign in as this customer.
+		mux.Handle("GET /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.ListPortalUsers))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.CreatePortalUser))
+		mux.Handle("DELETE /api/tenant/customers/{customerUuid}/portal-users/{id}", tenantChain(portalAccessOps.RevokePortalUser))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resend", tenantChain(portalAccessOps.ResendPortalInvite))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/suspend", tenantChain(portalAccessOps.SuspendPortalUser))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resume", tenantChain(portalAccessOps.ResumePortalUser))
+		// Tenant-wide roster across every customer, for Config > Customer Portal
+		// Users — distinct from the per-customer list above.
+		mux.Handle("GET /api/tenant/portal-users", tenantChain(portalAccessOps.ListAllPortalUsers))
+		// The staff side of each document's customer conversation is registered
+		// alongside the portal side, in the loop above. It is gated on the
+		// document's own resource (invoice:read to read the thread,
+		// invoice:update to reply), so message access follows document access.
+
 		// aiChain layers the AI-specific rate limit on top of tenantChain's
 		// generic one, for routes that make a synchronous embedding/LLM call.
 		aiChain := func(h http.HandlerFunc) http.Handler {
@@ -476,6 +574,7 @@ func main() {
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))
+		mux.Handle("GET /api/tenant/workflows/enabled", tenantChain(wf.ListEnabledWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
@@ -483,8 +582,8 @@ func main() {
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/approvers", tenantChain(wf.GetWorkflowApprovers))
 		mux.Handle("PATCH /api/tenant/workflows/{id}/approvers", tenantChain(wf.SetWorkflowApprovers))
-		mux.Handle("GET /api/tenant/workflows/{id}/states/{stateId}/approvers", tenantChain(wf.GetStateApprovers))
-		mux.Handle("PUT /api/tenant/workflows/{id}/states/{stateId}/approvers", tenantChain(wf.SetStateApprovers))
+		mux.Handle("GET /api/tenant/workflows/{id}/approval-chain", tenantChain(wf.GetApprovalChain))
+		mux.Handle("PUT /api/tenant/workflows/{id}/approval-chain", tenantChain(wf.SetApprovalChain))
 		mux.Handle("PUT /api/tenant/workflows/{id}/numbering", tenantChain(wf.SetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records/search", tenantChain(wf.SearchRecords))
@@ -515,7 +614,56 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/attachments/{attachmentId}/download", tenantChain(attachOps.DownloadAttachment))
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
 
+		// Documents: generic PDF render/send/history endpoints for the four
+		// document modules, dispatching by the record's resolved workflow key
+		// to the owning module's ToPrintable/Recipient/Get adapters.
+		docLoaders := map[string]controllers.DocumentLoader{
+			"invoice": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				inv, err := invoice.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load invoice: %w", err)
+				}
+				email, name := invoice.Recipient(*inv)
+				return invoice.ToPrintable(*inv, seller),
+					controllers.DocMeta{WorkflowKey: "invoice", Number: inv.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Invoice " + inv.Number}, nil
+			},
+			"quote": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				q, err := quote.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load quote: %w", err)
+				}
+				email, name := quote.Recipient(*q)
+				return quote.ToPrintable(*q, seller),
+					controllers.DocMeta{WorkflowKey: "quote", Number: q.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Quote " + q.Number}, nil
+			},
+			"estimate": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				es, err := estimate.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load estimate: %w", err)
+				}
+				email, name := estimate.Recipient(*es)
+				return estimate.ToPrintable(*es, seller),
+					controllers.DocMeta{WorkflowKey: "estimate", Number: es.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Estimate " + es.Number}, nil
+			},
+			"sales_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				so, err := salesorder.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load sales order: %w", err)
+				}
+				email, name := salesorder.Recipient(*so)
+				return salesorder.ToPrintable(*so, seller),
+					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
+			},
+		}
+		docOps := controllers.NewDocumentOps(docLoaders)
+		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
+		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
+		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
+
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
+		// Portal access is granted separately and explicitly by staff (Portal
+		// Access tab / portalAccessOps below) — approving a CRM record no
+		// longer auto-grants it.
 		crm := controllers.NewCRMOps()
 		// Reference data for the unified CRM core-field selects (design-agnostic).
 		crmLookups := controllers.NewCRMLookups()
@@ -930,6 +1078,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Update))
 		mux.Handle("DELETE /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/transition", tenantChain(vcOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/approve", tenantChain(vcOps.Approve))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/apply", tenantChain(vcOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
 		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))
@@ -961,6 +1110,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/invoices/{uuid}", tenantChain(invOps.Update))
 		mux.Handle("DELETE /api/tenant/invoices/{uuid}", tenantChain(invOps.Delete))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/transition", tenantChain(invOps.Transition))
+		mux.Handle("POST /api/tenant/invoices/{uuid}/approve", tenantChain(invOps.Approve))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/payment", tenantChain(invOps.RecordPayment))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/audit", tenantChain(invOps.Audit))
 
@@ -975,6 +1125,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/payments/{uuid}", tenantChain(payOps.Update))
 		mux.Handle("DELETE /api/tenant/payments/{uuid}", tenantChain(payOps.Delete))
 		mux.Handle("POST /api/tenant/payments/{uuid}/transition", tenantChain(payOps.Transition))
+		mux.Handle("POST /api/tenant/payments/{uuid}/approve", tenantChain(payOps.Approve))
 		mux.Handle("POST /api/tenant/payments/{uuid}/apply", tenantChain(payOps.Apply))
 		mux.Handle("POST /api/tenant/payments/{uuid}/unapply", tenantChain(payOps.Unapply))
 		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
@@ -994,6 +1145,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Update))
 		mux.Handle("DELETE /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Delete))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/transition", tenantChain(cmOps.Transition))
+		mux.Handle("POST /api/tenant/credit-memos/{uuid}/approve", tenantChain(cmOps.Approve))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/apply", tenantChain(cmOps.Apply))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/unapply", tenantChain(cmOps.Unapply))
 		mux.Handle("GET /api/tenant/credit-memos/{uuid}/audit", tenantChain(cmOps.Audit))
@@ -1014,6 +1166,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Update))
 		mux.Handle("DELETE /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Delete))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/transition", tenantChain(rfndOps.Transition))
+		mux.Handle("POST /api/tenant/refunds/{uuid}/approve", tenantChain(rfndOps.Approve))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/apply", tenantChain(rfndOps.Apply))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/unapply", tenantChain(rfndOps.Unapply))
 		mux.Handle("GET /api/tenant/refunds/{uuid}/audit", tenantChain(rfndOps.Audit))
@@ -1064,7 +1217,10 @@ func main() {
 		// Unmatched routes under ServeMux will fall through. Let's make sure we handle a standard 404 response
 		// if the path doesn't start with registered prefixes.
 		path := r.URL.Path
-		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") {
+		// NOTE: this is an allowlist. A route registered on the mux under a
+		// prefix that is missing here is unreachable — it 404s before the mux
+		// ever sees it. Add new top-level prefixes here as well as on the mux.
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

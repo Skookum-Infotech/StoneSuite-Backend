@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/vendorbill"
 )
 
@@ -46,9 +47,33 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock the credit first -- the global order is vendor_credit < vendor_bill.
-	if _, err := tx.Exec(ctx,
-		`SELECT vendor_credit_id FROM vendor_credit WHERE vendor_credit_id = $1 FOR UPDATE`, internalID); err != nil {
+	var approvalStatus string
+	if err := tx.QueryRow(ctx,
+		`SELECT vendor_credit_approval_status FROM vendor_credit WHERE vendor_credit_id = $1 FOR UPDATE`, internalID,
+	).Scan(&approvalStatus); err != nil {
 		return nil, fmt.Errorf("lock vendor credit for transition: %w", err)
+	}
+
+	// AD-8 approval gate: a vendor credit may not leave a status that has
+	// configured approvers until it has been approved (except into an
+	// always-allowed exit like Void -- approvalchain.AlwaysAllowedExitCodes).
+	// Vendor Credit has no separate pending status -- the gate sits on DRFT
+	// itself, so Void stays reachable from an unapproved draft.
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, fromStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
+		return nil, ErrApprovalRequired
+	}
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, toStatusID)
+	if err != nil {
+		return nil, err
+	}
+	newApprovalStatus := approvalchain.StatusNone
+	if targetApprovers > 0 {
+		newApprovalStatus = approvalchain.StatusPending
 	}
 
 	if toStatusCode == "VOID" {
@@ -105,10 +130,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE vendor_credit SET vendor_credit_status = $1, vendor_credit_updated_at = NOW(),
-			vendor_credit_updated_by = $2, vendor_credit_record_version = vendor_credit_record_version + 1
-		WHERE vendor_credit_id = $3`,
-		toStatusID, nullableInt(actorEmployeeID), internalID); err != nil {
+		UPDATE vendor_credit SET vendor_credit_status = $1, vendor_credit_approval_status = $2, vendor_credit_approved_by = NULL,
+			vendor_credit_updated_at = NOW(), vendor_credit_updated_by = $3, vendor_credit_record_version = vendor_credit_record_version + 1
+		WHERE vendor_credit_id = $4`,
+		toStatusID, newApprovalStatus, nullableInt(actorEmployeeID), internalID); err != nil {
 		return nil, fmt.Errorf("update vendor credit status: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

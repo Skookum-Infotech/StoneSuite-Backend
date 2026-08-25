@@ -310,3 +310,84 @@ CREATE INDEX IF NOT EXISTS cp_rag_chunks_embedding_idx
 ALTER TABLE cp_rag_chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector
     GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
 CREATE INDEX IF NOT EXISTS cp_rag_chunks_tsv_idx ON cp_rag_chunks USING gin (content_tsv);
+
+-- ── identity_tenants ──────────────────────────────────────────────────
+-- Which workspaces a login may enter, and as what class of principal.
+--
+-- Exists because identities.tenant_id is a single NOT NULL column: one email,
+-- one identity, one tenant. That holds fine for staff (an employee belongs to
+-- one workspace) but not for a customer, who may buy from two StoneSuite
+-- tenants and needs one login that reaches both.
+--
+-- This table is PORTAL-ONLY in v1 and there is deliberately no backfill: staff
+-- auth continues to read identities.tenant_id exactly as before, so the blast
+-- radius of the multi-tenant change is zero for existing users. The `kind`
+-- column reserves 'staff' for a future migration of that path.
+--
+-- For a portal identity, identities.tenant_id degrades to a HOME HINT — the
+-- workspace it was first created in. It is NOT the authority on which tenant a
+-- portal session is operating in; the JWT's tenant_id claim is. Any code that
+-- derives a portal user's active tenant from identities.tenant_id is a bug
+-- (the session would silently jump workspaces). The column cannot be dropped
+-- or relaxed here: down-migrations are forbidden and it is still load-bearing
+-- for every staff identity.
+--
+-- The link carries no customer_id. The customer lives in the tenant database,
+-- so that link belongs there (customer_portal_user) where it can be a real
+-- foreign key — putting it here would invite a cross-database join.
+CREATE TABLE IF NOT EXISTS identity_tenants (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_id UUID        NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    tenant_id   UUID        NOT NULL REFERENCES tenants(id)    ON DELETE CASCADE,
+    kind        VARCHAR(16) NOT NULL DEFAULT 'portal',   -- portal | staff (staff reserved, unused in v1)
+    status      VARCHAR(16) NOT NULL DEFAULT 'active',   -- active | revoked
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at  TIMESTAMPTZ     NULL,
+    CONSTRAINT uq_identity_tenant         UNIQUE (identity_id, tenant_id),
+    CONSTRAINT chk_identity_tenant_kind   CHECK (kind   IN ('portal', 'staff')),
+    CONSTRAINT chk_identity_tenant_status CHECK (status IN ('active', 'revoked'))
+);
+CREATE INDEX IF NOT EXISTS idx_identity_tenants_identity
+    ON identity_tenants (identity_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_identity_tenants_tenant
+    ON identity_tenants (tenant_id) WHERE status = 'active';
+
+-- ── portal_invites ────────────────────────────────────────────────────
+-- Customer-portal invitations, mirroring user_invites for workspace staff.
+--
+-- A dedicated table rather than reusing identities.password_reset_token,
+-- which serves staff invites, staff password resets AND (previously) portal
+-- setup from one column. Three flows sharing one credential column means a
+-- token minted for one surface can be redeemed on another; separating the
+-- portal onto its own token removes that class of bug rather than guarding
+-- against it at every endpoint.
+--
+-- customer_uuid has no foreign key: the customer lives in the tenant database.
+-- It is recorded so a resend can rebuild the invite without re-reading the
+-- tenant DB, and so an invite remains attributable after the portal user row
+-- is revoked.
+CREATE TABLE IF NOT EXISTS portal_invites (
+    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    identity_id   UUID         NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    email         VARCHAR(255) NOT NULL,
+    full_name     VARCHAR(255) NOT NULL DEFAULT '',
+    customer_uuid UUID         NOT NULL,   -- tenant-DB customer.customer_uuid; no cross-DB FK
+    token         VARCHAR(128) UNIQUE NOT NULL,
+    status        VARCHAR(16)  NOT NULL DEFAULT 'pending',
+    invited_by    UUID         REFERENCES identities(id) ON DELETE SET NULL,
+    expires_at    TIMESTAMPTZ  NOT NULL,
+    accepted_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT portal_invites_status_chk CHECK (status IN ('pending', 'accepted', 'revoked'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_portal_invites_token  ON portal_invites(token);
+CREATE INDEX IF NOT EXISTS idx_portal_invites_tenant        ON portal_invites(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_portal_invites_identity      ON portal_invites(identity_id);
+-- One live invite per email per workspace; a resend refreshes that row rather
+-- than stacking a second one.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_portal_invites_tenant_email_pending
+    ON portal_invites(tenant_id, LOWER(email)) WHERE status = 'pending';

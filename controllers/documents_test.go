@@ -11,10 +11,9 @@ import (
 )
 
 func TestDocumentOps_RequiresAuth(t *testing.T) {
-	h := NewDocumentOps(nil, map[string]DocumentLoader{})
-	// Task 6 implements only GetPDF; Send/Sends are added and covered in Task 7.
+	h := NewDocumentOps(map[string]DocumentLoader{})
 	for name, fn := range map[string]http.HandlerFunc{
-		"GetPDF": h.GetPDF,
+		"GetPDF": h.GetPDF, "Send": h.Send, "Sends": h.Sends,
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/tenant/records/x/document/pdf", nil)

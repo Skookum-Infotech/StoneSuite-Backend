@@ -208,7 +208,12 @@ func finalize(ctx context.Context, tx pgx.Tx, cfg ModuleConfig, recordTypeID, in
 	if err != nil {
 		return err
 	}
-	newApprovalStatus := StatusNone
+	// This round of sign-off just completed, so the floor is StatusApproved
+	// (not StatusNone -- that would erase the fact that approval happened).
+	// StatusPending only overrides it when the target status is itself a
+	// further gate (e.g. fabrication's TAPV/QCPS chain), matching how
+	// Transition treats a target it's moving into.
+	newApprovalStatus := StatusApproved
 	if targetApprovers > 0 {
 		newApprovalStatus = StatusPending
 	}

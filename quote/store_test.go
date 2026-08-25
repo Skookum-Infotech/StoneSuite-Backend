@@ -256,12 +256,14 @@ func TestApprove_SignOffFlipsApprovalStatus(t *testing.T) {
 	}
 
 	// Approve auto-advances the quote straight to APPV once quorum is met
-	// (quote/approval.go's finalizeApproval), so ApprovalStatus now reflects
-	// APPV's own gate (none here) rather than "approved" -- the auto-advance
-	// itself is the signal that the sign-off succeeded.
+	// (quote/approval.go's finalizeApproval) -- no separate Transition call
+	// is needed or possible afterward, since the record is no longer at PAPV.
 	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
+	}
+	if approved.ApprovalStatus != "approved" {
+		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
 	}
 	if approved.StatusCode != "APPV" {
 		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)

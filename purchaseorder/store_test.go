@@ -284,6 +284,9 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
+	if approved.ApprovalStatus != "approved" {
+		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
+	}
 	if approved.StatusCode != "APPV" {
 		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}

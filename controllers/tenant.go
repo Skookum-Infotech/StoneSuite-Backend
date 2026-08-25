@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/config"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/middleware"
@@ -299,6 +301,20 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	slug := slugify(companyName)
 	if slug == "" || superAdminEmail == "" {
 		fail(w, http.StatusBadRequest, "A company name and a super-admin email are required.")
+		return
+	}
+
+	// identities.email is unique platform-wide (login identity, not per-tenant).
+	// Reject up front so we never create a tenant shell for an email that's
+	// already claimed elsewhere — finalizeOnboarding's create-or-reuse fallback
+	// cannot safely tell "retry of this same tenant" apart from "belongs to a
+	// different tenant" without this check, and used to silently misattach.
+	if existing, err := h.CP.IdentityByEmail(r.Context(), superAdminEmail); err == nil && existing != nil {
+		fail(w, http.StatusConflict, fmt.Sprintf(
+			"%q is already registered on another workspace. Use a different admin email.", superAdminEmail))
+		return
+	} else if err != nil && !errors.Is(err, tenancy.ErrIdentityNotFound) {
+		fail(w, http.StatusInternalServerError, "Failed to validate admin email.")
 		return
 	}
 
@@ -724,22 +740,34 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	// Check the user's workspace standing — suspended/disabled accounts must not
 	// be able to log in even though their control-plane identity still exists.
 	//
-	// A missing users row is a hard denial, not a skip. Staff membership IS the
-	// users row: an identity without one is not a member of this workspace, and
-	// portal customers specifically hold a control-plane identity but never a
-	// users row (see customer_portal_user). Swallowing this lookup's error would
-	// hand such an identity a full staff token — one that carries no grants, but
-	// is a valid session on the internal surface all the same.
+	// A missing users row is not an automatic denial: staff membership IS the
+	// users row, but a customer-portal identity holds a control-plane identity
+	// and never a users row (see customer_portal_user) by design, not by
+	// mistake. So a missing row falls through to tryPortalLogin below instead
+	// of failing outright — this is the merged login entry point for both
+	// surfaces. Only once THAT also finds nothing is the generic failure
+	// (loginFailed) correct. A real lookup error is still a hard denial, same
+	// as before: swallowing it would hand a staff-shaped token with no grants
+	// to a session that never resolved either way.
+	//
+	// The tenant-scoped users.full_name is also picked up here when present —
+	// it's the field Config > Users edits, and the control-plane identity's
+	// full_name is never updated by that flow, so it must not be treated as
+	// authoritative once a workspace user row exists.
+	loginFailed := false
+	displayName := identity.FullName
+	var pool *pgxpool.Pool
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
-			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+				pool = p
 				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)
 				switch {
 				case errors.Is(uErr, userstore.ErrUserNotFound):
-					logSecurityEvent(r, "login_failed", "email", req.Email,
-						"identity", identity.ID, "reason", "no_workspace_user")
-					fail(w, http.StatusUnauthorized, "Invalid email or password.")
-					return
+					if h.tryPortalLogin(w, r, identity) {
+						return
+					}
+					loginFailed = true
 				case uErr != nil:
 					fail(w, http.StatusInternalServerError, "Login failed.")
 					return
@@ -750,8 +778,21 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 					fail(w, http.StatusForbidden, "Your account has been deactivated.")
 					return
 				}
+				if u != nil && u.FullName != "" {
+					displayName = u.FullName
+				}
 			}
 		}
+	}
+	if loginFailed {
+		// Every failure above (unknown identity, bad password, no workspace
+		// standing on either surface) returns this same message and reason —
+		// distinguishing them would let this endpoint be used to enumerate
+		// which emails have a StoneSuite account of any kind.
+		logSecurityEvent(r, "login_failed", "email", req.Email,
+			"identity", identity.ID, "reason", "no_workspace_user")
+		fail(w, http.StatusUnauthorized, "Invalid email or password.")
+		return
 	}
 
 	accessDur := config.AppConfig.JWTExpiresIn
@@ -794,16 +835,125 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the caller's effective grants live, so the frontend gets its
+	// permission set atomically with the token instead of needing a separate
+	// follow-up call to /api/tenant/users/me/permissions that could be
+	// skipped or raced, leaving stale permissions in the UI.
+	var grants []authz.Grant
+	if pool != nil {
+		if g, gErr := authz.EffectiveGrants(r.Context(), pool, identity.ID); gErr == nil {
+			grants = g
+		}
+	}
+	if grants == nil {
+		grants = []authz.Grant{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":   true,
 		"token":     token,
 		"expiresAt": accessExpiry.UnixMilli(),
+		"grants":    grants,
 		"user": map[string]any{
 			"id": identity.ID, "email": identity.Email,
-			"fullName": identity.FullName, "tenantId": identity.TenantID,
+			"fullName": displayName, "tenantId": identity.TenantID,
 			"isPlatformAdmin": isPlatformAdmin,
 		},
 	})
+}
+
+// tryPortalLogin completes TenantLogin as a customer-portal session, once the
+// staff branch above has determined this identity holds no `users` row under
+// its home tenant. Mirrors PortalAuthOps.Login's token-minting exactly (same
+// claim shape, same cookie path) so a session started here is indistinguishable
+// from one started at the old dedicated portal endpoint — every downstream
+// check (RequireAuth's path confinement, RequirePortal, the portal document
+// predicates) keys off the token, not off which handler minted it.
+//
+// Returns false, having written nothing, when the identity has never held
+// portal access at all — the caller then falls through to the shared
+// "Invalid email or password." response. That fall-through is the point: this
+// endpoint must not reveal whether a rejected email belongs to a customer, a
+// staff member, or neither, when the password check alone couldn't tell.
+//
+// A correct password is a different story: once that has already succeeded,
+// telling a customer whose access is suspended or revoked "invalid password"
+// instead is actively misleading, not a security feature — it sends them
+// down a forgot-password loop that can never restore access on its own,
+// mirroring the same UX the staff branch above already gives a suspended
+// workspace user. So a former-or-current portal identity with zero
+// currently-active links gets a specific, honest response here instead.
+func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity) bool {
+	links, err := h.CP.PortalTenantsForIdentity(r.Context(), identity.ID)
+	if err != nil {
+		return false
+	}
+	workspaces := servableWorkspaces(r.Context(), h.CP, links, "")
+	if len(workspaces) == 0 {
+		everLinked, everErr := h.CP.AnyPortalLinkExists(r.Context(), identity.ID)
+		if everErr == nil && everLinked {
+			logSecurityEvent(r, "portal_login_blocked_no_active_access", "identity", identity.ID)
+			fail(w, http.StatusForbidden,
+				"Your portal access is not currently active. Contact the business you work with to restore it.")
+			return true
+		}
+		return false
+	}
+	active := workspaces[0].TenantID
+	workspaces[0].Active = true
+
+	d := portalTokenDuration()
+	token, err := generatePortalJWT(identity.ID, identity.Email, active, d)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to sign token.")
+		return true
+	}
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID)
+	if err != nil {
+		log.Printf("warn: failed to issue portal refresh token for identity %s: %v", identity.ID, err)
+		refreshRaw = ""
+	}
+	if err := setAuthCookiesAt(w, token, d, refreshRaw, refreshExpiry, portalRefreshCookiePath); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to establish session.")
+		return true
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"token":      token,
+		"expiresAt":  time.Now().Add(d).UnixMilli(),
+		"tenantId":   active,
+		"kind":       middleware.KindPortal,
+		"workspaces": workspaces,
+		"user": map[string]any{
+			"id": identity.ID, "email": identity.Email, "fullName": identity.FullName,
+		},
+	})
+	return true
+}
+
+// tenantDisplayName resolves the name to show for a signed-in identity. The
+// tenant-scoped users.full_name — the field Config > Users edits — is
+// authoritative once a workspace user row exists; the control-plane
+// identity.full_name is only a fallback for platform-admin-only identities
+// with no tenant workspace.
+func tenantDisplayName(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, identity *tenancy.Identity) string {
+	if identity.TenantID == "" {
+		return identity.FullName
+	}
+	tenant, err := cp.TenantByID(ctx, identity.TenantID)
+	if err != nil || !tenant.Servable() {
+		return identity.FullName
+	}
+	pool, err := router.PoolFor(ctx, tenant)
+	if err != nil {
+		return identity.FullName
+	}
+	u, err := userstore.GetUserByIdentityID(ctx, pool, identity.ID)
+	if err != nil || u.FullName == "" {
+		return identity.FullName
+	}
+	return u.FullName
 }
 
 // ChangePassword updates the authenticated caller's password. Requires the
@@ -915,16 +1065,33 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject suspended/disabled users — their refresh tokens must not extend sessions.
+	// Reject suspended/disabled users — their refresh tokens must not extend
+	// sessions. A missing users row is a hard denial, not a skip: same
+	// reasoning as TenantLogin above — staff membership IS the users row, and
+	// portal customers hold a control-plane identity but never one. Refresh
+	// tokens for both are minted through the same issueRefreshToken /
+	// RefreshTokenByHash store, so swallowing this lookup's error here would
+	// let a portal customer's refresh token mint a fresh staff-scoped access
+	// token with this handler.
+	var pool *pgxpool.Pool
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
-			if pool, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
-				if u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID); uErr == nil {
-					if u.Status == "suspended" || u.Status == "disabled" {
-						clearAuthCookies(w)
-						fail(w, http.StatusForbidden, "Account suspended. Please contact your administrator.")
-						return
-					}
+			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
+				pool = p
+				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)
+				switch {
+				case errors.Is(uErr, userstore.ErrUserNotFound):
+					logSecurityEvent(r, "login_failed", "identity", identity.ID, "reason", "no_workspace_user_refresh")
+					clearAuthCookies(w)
+					fail(w, http.StatusUnauthorized, "Session invalid. Please sign in again.")
+					return
+				case uErr != nil:
+					fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+					return
+				case u.Status == "suspended" || u.Status == "disabled":
+					clearAuthCookies(w)
+					fail(w, http.StatusForbidden, "Account suspended. Please contact your administrator.")
+					return
 				}
 			}
 		}
@@ -959,10 +1126,25 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refresh always drops any active-role selection (see note above), so the
+	// grants below are always the caller's full aggregate — never a stale
+	// role-narrowed set left over from before the refresh.
+	var grants []authz.Grant
+	if pool != nil {
+		if g, gErr := authz.EffectiveGrants(r.Context(), pool, identity.ID); gErr == nil {
+			grants = g
+		}
+	}
+	if grants == nil {
+		grants = []authz.Grant{}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"token":     newToken,
-		"expiresAt": accessExpiry.UnixMilli(),
+		"success":      true,
+		"token":        newToken,
+		"expiresAt":    accessExpiry.UnixMilli(),
+		"activeRoleId": "",
+		"grants":       grants,
 	})
 }
 

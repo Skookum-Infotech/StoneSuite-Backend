@@ -67,6 +67,14 @@ func seedSentInvoice(t *testing.T, pool *pgxpool.Pool, amount float64) (custUUID
 	if err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
+	// Transition requires an attachment before an invoice can leave DRFT.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workflow_record_attachments
+			(record_id, file_name, content_type, size_bytes, storage_key, status)
+		VALUES ($1::uuid, 'test.pdf', 'application/pdf', 100, $2, 'clean')`,
+		inv.ID, "test-key/"+inv.ID+"/test.pdf"); err != nil {
+		t.Fatalf("seed attachment: %v", err)
+	}
 	for _, st := range []string{"PAPV", "APPV", "SENT"} {
 		if inv, err = invoice.Transition(ctx, pool, inv.ID, st, 1); err != nil {
 			t.Fatalf("transition invoice to %s: %v", st, err)
@@ -263,6 +271,27 @@ func TestApply_ReapplyIncreasesExistingRow(t *testing.T) {
 	}
 	if p2.Applications[0].Amount != 100 {
 		t.Fatalf("expected merged application amount 100, got %v", p2.Applications[0].Amount)
+	}
+}
+
+func TestApply_PartialAmountLeavesInvoicePartiallyPaid(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, invUUID := seedSentInvoice(t, pool, 100)
+	methodID := firstMethodID(t, pool)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 40, 1); err != nil {
+		t.Fatalf("apply partial: %v", err)
+	}
+	inv, err := invoice.Get(ctx, pool, invUUID)
+	if err != nil {
+		t.Fatalf("get invoice: %v", err)
+	}
+	if inv.AmountPaid != 40 || inv.BalanceDue != 60 || inv.StatusCode != "PART" {
+		t.Fatalf("expected paid=40 balance=60 status=PART, got paid=%v balance=%v status=%s", inv.AmountPaid, inv.BalanceDue, inv.StatusCode)
 	}
 }
 

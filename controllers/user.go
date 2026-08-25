@@ -765,6 +765,14 @@ func (h *UserOps) AcceptUserInvite(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Every employee_id-based FK (Sales Rep, approvers, "own"-scope ownership)
+	// resolves through the employee table, not users directly -- without this
+	// the new member would sign in but be invisible to all of that. Non-fatal:
+	// log and continue rather than blocking account activation over it.
+	if err := userstore.EnsureEmployeeForUser(r.Context(), pool, user.ID, fullName, invite.Email); err != nil {
+		log.Printf("accept invite: failed to ensure employee row for user %s: %v", user.ID, err)
+	}
+
 	// Assign initial role if the invite specified one and it still exists.
 	if invite.InitialRoleID != "" {
 		if _, err := authz.GetRole(r.Context(), pool, invite.InitialRoleID); err == nil {

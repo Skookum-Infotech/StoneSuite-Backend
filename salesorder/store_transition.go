@@ -7,6 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/workflow"
 )
 
 // ----- Transition ------------------------------------------------------------
@@ -39,6 +42,15 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
 		return nil, err
 	}
+	if curStatusCode == "DRFT" && toStatusCode == "PAPV" {
+		has, err := workflow.HasAttachments(ctx, tx, uuid)
+		if err != nil {
+			return nil, fmt.Errorf("check attachments: %w", err)
+		}
+		if !has {
+			return nil, ErrAttachmentRequired
+		}
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, sordRecordTypeCode)
 	if err != nil {
@@ -55,7 +67,7 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	if err != nil {
 		return nil, err
 	}
-	if requiredHere > 0 && approvalStatus != approvalApproved {
+	if requiredHere > 0 && approvalStatus != approvalApproved && !approvalchain.AlwaysAllowedExitCodes[toStatusCode] {
 		return nil, ErrApprovalRequired
 	}
 	// The status being entered may itself require approval → start it pending.

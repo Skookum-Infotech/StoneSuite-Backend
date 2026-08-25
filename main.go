@@ -104,6 +104,7 @@ func main() {
 	var portalAuthOps *controllers.PortalAuthOps
 	var portalAccessOps *controllers.PortalAccessOps
 	var crmAdminOps *controllers.CRMAdminOps
+	var customerAuthOps *controllers.CustomerAuthOps
 	var provisioner *provisioning.Provisioner
 	var cpPool *pgxpool.Pool     // control-plane pool; used by AIOps for cp_rag_chunks
 	var cp *tenancy.ControlPlane // control-plane handle; also used by AIOps for the reindex-help platform-admin check
@@ -232,6 +233,7 @@ func main() {
 		portalAuthOps = controllers.NewPortalAuthOps(cp, tenantRouter)
 		portalAccessOps = controllers.NewPortalAccessOps(cp, tenantRouter)
 		crmAdminOps = controllers.NewCRMAdminOps(cp)
+		customerAuthOps = controllers.NewCustomerAuthOps(cp, tenantRouter)
 		log.Println("Multi-tenant control plane initialized.")
 	} else {
 		log.Fatalf("CRITICAL ERROR: CONTROL_PLANE_DB_URL is required (the legacy single-tenant backend has been removed).")
@@ -456,6 +458,11 @@ func main() {
 		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.CreatePortalUser))
 		mux.Handle("DELETE /api/tenant/customers/{customerUuid}/portal-users/{id}", tenantChain(portalAccessOps.RevokePortalUser))
 		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resend", tenantChain(portalAccessOps.ResendPortalInvite))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/suspend", tenantChain(portalAccessOps.SuspendPortalUser))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resume", tenantChain(portalAccessOps.ResumePortalUser))
+		// Tenant-wide roster across every customer, for Config > Customer Portal
+		// Users — distinct from the per-customer list above.
+		mux.Handle("GET /api/tenant/portal-users", tenantChain(portalAccessOps.ListAllPortalUsers))
 		// The staff side of each document's customer conversation is registered
 		// alongside the portal side, in the loop above. It is gated on the
 		// document's own resource (invoice:read to read the thread,
@@ -466,6 +473,27 @@ func main() {
 		aiChain := func(h http.HandlerFunc) http.Handler {
 			return middleware.RequireAuth(aiRateLimiter.PerTenant(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
 		}
+
+		// Public: customer-portal auth. A separate rate limiter from
+		// authRateLimiter above so a customer-login brute force can never
+		// throttle staff logins (customer credentials are a lower-trust,
+		// externally-facing surface).
+		customerAuthRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 10)
+		mux.Handle("POST /api/customer/auth/login", customerAuthRateLimiter.PerIPFunc(customerAuthOps.Login))
+		mux.Handle("POST /api/customer/auth/accept-invite", customerAuthRateLimiter.PerIPFunc(customerAuthOps.AcceptInvite))
+
+		// customerChain applies RequireCustomerAuth → per-IP rate limit →
+		// tenancy resolver before every customer-portal handler, mirroring
+		// tenantChain's shape. Uses customerAuthRateLimiter.PerIP rather than
+		// PerTenant: PerTenant keys off middleware.UserContextPayload (the
+		// staff context), which a customer request never populates, so it
+		// would silently pass through unthrottled.
+		customerChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireCustomerAuth(customerAuthRateLimiter.PerIP(resolver.CustomerMiddleware(h)))
+		}
+		customerPortal := controllers.NewCustomerPortalOps()
+		mux.Handle("POST /api/customer/notes", customerChain(customerPortal.CreateNote))
+		mux.Handle("GET /api/customer/notes", customerChain(customerPortal.ListMyNotes))
 
 		// Tenant-scoped RBAC management (role editor API). Each handler runs
 		// after RequireAuth + the tenancy resolver, then enforces the relevant
@@ -541,6 +569,7 @@ func main() {
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))
+		mux.Handle("GET /api/tenant/workflows/enabled", tenantChain(wf.ListEnabledWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
@@ -548,8 +577,8 @@ func main() {
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/approvers", tenantChain(wf.GetWorkflowApprovers))
 		mux.Handle("PATCH /api/tenant/workflows/{id}/approvers", tenantChain(wf.SetWorkflowApprovers))
-		mux.Handle("GET /api/tenant/workflows/{id}/states/{stateId}/approvers", tenantChain(wf.GetStateApprovers))
-		mux.Handle("PUT /api/tenant/workflows/{id}/states/{stateId}/approvers", tenantChain(wf.SetStateApprovers))
+		mux.Handle("GET /api/tenant/workflows/{id}/approval-chain", tenantChain(wf.GetApprovalChain))
+		mux.Handle("PUT /api/tenant/workflows/{id}/approval-chain", tenantChain(wf.SetApprovalChain))
 		mux.Handle("PUT /api/tenant/workflows/{id}/numbering", tenantChain(wf.SetNumberingConfig))
 		mux.Handle("GET /api/tenant/workflows/{id}/records", tenantChain(wf.ListRecords))
 		mux.Handle("POST /api/tenant/workflows/{id}/records/search", tenantChain(wf.SearchRecords))
@@ -581,6 +610,9 @@ func main() {
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
+		// Portal access is granted separately and explicitly by staff (Portal
+		// Access tab / portalAccessOps below) — approving a CRM record no
+		// longer auto-grants it.
 		crm := controllers.NewCRMOps()
 		// Reference data for the unified CRM core-field selects (design-agnostic).
 		crmLookups := controllers.NewCRMLookups()
@@ -613,6 +645,17 @@ func main() {
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/activities", tenantChain(crmActivity.Create))
 		mux.Handle("PATCH /api/tenant/crm/{workflowKey}/records/{id}/activities/{activityId}", tenantChain(crmActivity.Update))
 		mux.Handle("DELETE /api/tenant/crm/{workflowKey}/records/{id}/activities/{activityId}", tenantChain(crmActivity.Delete))
+
+		// Customer-submitted notes (staff-facing view) and the invite
+		// endpoint staff use to onboard a customer to the self-serve portal
+		// that creates them. "customer" is a literal path segment here (not
+		// {workflowKey}) since notes only ever attach to customer records.
+		customerPortalAdmin := controllers.NewCustomerPortalAdminOps()
+		mux.Handle("POST /api/tenant/crm/customer/records/{id}/portal-invite", tenantChain(customerPortalAdmin.PortalInvite))
+		customerNoteStaff := controllers.NewCustomerNoteOps()
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/notes", tenantChain(customerNoteStaff.List))
+		mux.Handle("PATCH /api/tenant/crm/customer/records/{id}/notes/{noteId}", tenantChain(customerNoteStaff.UpdateStatus))
+		mux.Handle("DELETE /api/tenant/crm/customer/records/{id}/notes/{noteId}", tenantChain(customerNoteStaff.Delete))
 
 		// CRM admin: switch the tenant's database design, and configure approvers.
 		mux.Handle("GET /api/tenant/admin/design-version", tenantChain(crmAdminOps.GetDesignVersion))
@@ -984,6 +1027,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Update))
 		mux.Handle("DELETE /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/transition", tenantChain(vcOps.Transition))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/approve", tenantChain(vcOps.Approve))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/apply", tenantChain(vcOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
 		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))
@@ -1015,6 +1059,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/invoices/{uuid}", tenantChain(invOps.Update))
 		mux.Handle("DELETE /api/tenant/invoices/{uuid}", tenantChain(invOps.Delete))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/transition", tenantChain(invOps.Transition))
+		mux.Handle("POST /api/tenant/invoices/{uuid}/approve", tenantChain(invOps.Approve))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/payment", tenantChain(invOps.RecordPayment))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/audit", tenantChain(invOps.Audit))
 
@@ -1029,6 +1074,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/payments/{uuid}", tenantChain(payOps.Update))
 		mux.Handle("DELETE /api/tenant/payments/{uuid}", tenantChain(payOps.Delete))
 		mux.Handle("POST /api/tenant/payments/{uuid}/transition", tenantChain(payOps.Transition))
+		mux.Handle("POST /api/tenant/payments/{uuid}/approve", tenantChain(payOps.Approve))
 		mux.Handle("POST /api/tenant/payments/{uuid}/apply", tenantChain(payOps.Apply))
 		mux.Handle("POST /api/tenant/payments/{uuid}/unapply", tenantChain(payOps.Unapply))
 		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
@@ -1048,6 +1094,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Update))
 		mux.Handle("DELETE /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Delete))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/transition", tenantChain(cmOps.Transition))
+		mux.Handle("POST /api/tenant/credit-memos/{uuid}/approve", tenantChain(cmOps.Approve))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/apply", tenantChain(cmOps.Apply))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/unapply", tenantChain(cmOps.Unapply))
 		mux.Handle("GET /api/tenant/credit-memos/{uuid}/audit", tenantChain(cmOps.Audit))
@@ -1068,6 +1115,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Update))
 		mux.Handle("DELETE /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Delete))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/transition", tenantChain(rfndOps.Transition))
+		mux.Handle("POST /api/tenant/refunds/{uuid}/approve", tenantChain(rfndOps.Approve))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/apply", tenantChain(rfndOps.Apply))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/unapply", tenantChain(rfndOps.Unapply))
 		mux.Handle("GET /api/tenant/refunds/{uuid}/audit", tenantChain(rfndOps.Audit))

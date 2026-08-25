@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"stonesuite-backend/authz"
@@ -43,9 +44,17 @@ func (h *VendorPaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Approve(r.Context(), pool, id, empID)
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
 	if err != nil {
+		vendorPaymentFail(w, err, "Failed to approve vendor payment.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	vp, err := vendorpayment.Approve(r.Context(), pool, id, empID, isSuperAdmin)
+	if err != nil {
+		if errors.Is(err, vendorpayment.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", id)
+		}
 		vendorPaymentFail(w, err, "Failed to approve vendor payment.")
 		return
 	}

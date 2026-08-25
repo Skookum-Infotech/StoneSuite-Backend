@@ -4,6 +4,7 @@ package invoice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -49,6 +50,20 @@ func seedCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, itemUUID s
 		t.Fatalf("seed inventory item: %v", err)
 	}
 	return custUUID, itemUUID
+}
+
+// seedAttachment inserts a minimal non-infected attachment row for recordUUID,
+// satisfying the DRFT->PAPV "must have an attachment" guard in Transition.
+func seedAttachment(t *testing.T, pool *pgxpool.Pool, recordUUID string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO workflow_record_attachments
+			(record_id, file_name, content_type, size_bytes, storage_key, status)
+		VALUES ($1::uuid, 'test.pdf', 'application/pdf', 100, $2, 'clean')`,
+		recordUUID, "test-key/"+recordUUID+"/test.pdf")
+	if err != nil {
+		t.Fatalf("seed attachment: %v", err)
+	}
 }
 
 func TestCreate_SnapshotsAndTotals(t *testing.T) {
@@ -203,6 +218,7 @@ func TestUpdate_RejectsBelowAmountPaid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	seedAttachment(t, pool, inv.ID)
 	for _, st := range []string{"PAPV", "APPV", "SENT"} {
 		if inv, err = Transition(ctx, pool, inv.ID, st, 1); err != nil {
 			t.Fatalf("transition to %s: %v", st, err)
@@ -220,6 +236,60 @@ func TestUpdate_RejectsBelowAmountPaid(t *testing.T) {
 	if _, ok := err.(ClientError); !ok {
 		t.Fatalf("expected ClientError reducing total below amount paid, got %T: %v", err, err)
 	}
+}
+
+func TestTransition_RequiresAttachmentForSubmission(t *testing.T) {
+	pool := testPool(t)
+	custUUID, itemUUID := seedCustomerAndItem(t, pool)
+	ctx := context.Background()
+
+	createDraft := func() string {
+		inv, err := Create(ctx, pool, CreateInvoiceInput{
+			CustomerUUID: custUUID,
+			Items:        []InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: 10}},
+		}, 1)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		return inv.ID
+	}
+
+	t.Run("blocks DRFT->PAPV with zero attachments", func(t *testing.T) {
+		id := createDraft()
+		if _, err := Transition(ctx, pool, id, "PAPV", 1); !errors.Is(err, ErrAttachmentRequired) {
+			t.Fatalf("Transition DRFT->PAPV with no attachments = %v, want ErrAttachmentRequired", err)
+		}
+	})
+
+	t.Run("allows DRFT->PAPV with >=1 non-infected attachment", func(t *testing.T) {
+		id := createDraft()
+		seedAttachment(t, pool, id)
+		if _, err := Transition(ctx, pool, id, "PAPV", 1); err != nil {
+			t.Fatalf("Transition DRFT->PAPV with attachment: %v", err)
+		}
+	})
+
+	t.Run("does not block DRFT->VOID with zero attachments", func(t *testing.T) {
+		id := createDraft()
+		if _, err := Transition(ctx, pool, id, "VOID", 1); err != nil {
+			t.Fatalf("Transition DRFT->VOID should not require attachment: %v", err)
+		}
+	})
+
+	t.Run("ignores infected-status attachments when counting", func(t *testing.T) {
+		id := createDraft()
+		_, err := pool.Exec(ctx, `
+			INSERT INTO workflow_record_attachments
+				(record_id, file_name, content_type, size_bytes, storage_key, status)
+			VALUES ($1::uuid, 'bad.pdf', 'application/pdf', 100, $2, 'infected')`,
+			id, "test-key/"+id+"/bad.pdf")
+		if err != nil {
+			t.Fatalf("seed infected attachment: %v", err)
+		}
+		if _, err := Transition(ctx, pool, id, "PAPV", 1); !errors.Is(err, ErrAttachmentRequired) {
+			t.Fatalf("Transition DRFT->PAPV with only an infected attachment = %v, want ErrAttachmentRequired", err)
+		}
+	})
 }
 
 func TestCreate_UnknownCustomer_IsClientError(t *testing.T) {

@@ -127,8 +127,12 @@ func creditMemoFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
 	case errors.Is(err, creditmemo.ErrNotFound):
 		fail(w, http.StatusNotFound, "Credit memo not found.")
-	case errors.Is(err, creditmemo.ErrInvalidTransition):
+	case errors.Is(err, creditmemo.ErrInvalidTransition),
+		errors.Is(err, creditmemo.ErrApprovalRequired),
+		errors.Is(err, creditmemo.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, creditmemo.ErrNotApprover):
+		fail(w, http.StatusForbidden, err.Error())
 	default:
 		var ce creditmemo.ClientError
 		if errors.As(err, &ce) {
@@ -178,15 +182,54 @@ func (h *CreditMemoOps) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CreditMemoOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, _, ok := h.authCreditMemoByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authCreditMemoByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	cm, err := creditmemo.Get(r.Context(), pool, r.PathValue("uuid"))
+	cm, err := creditmemo.Get(r.Context(), pool, uuid)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to load credit memo.")
 		return
 	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		creditMemoFail(w, err, "Failed to load credit memo.")
+		return
+	}
+	info, err := creditmemo.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		creditMemoFail(w, err, "Failed to load credit memo.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm, "approval": info})
+}
+
+// Approve POST /api/tenant/credit-memos/{uuid}/approve — approval sign-off (AD-8).
+func (h *CreditMemoOps) Approve(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	// ActionApprove, not ActionTransition -- approving a credit memo (DRFT->
+	// APPV) is what authorizes real credit against AR, a deliberately distinct
+	// capability from moving the record around (see authz/catalog.go).
+	pool, identityID, _, ok := h.authCreditMemoByUUID(w, r, uuid, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		creditMemoFail(w, err, "Failed to approve credit memo.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	cm, err := creditmemo.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	if err != nil {
+		if errors.Is(err, creditmemo.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		creditMemoFail(w, err, "Failed to approve credit memo.")
+		return
+	}
+	auditCreditMemo(r, pool, empID, "approve", uuid, nil, cm)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }
 

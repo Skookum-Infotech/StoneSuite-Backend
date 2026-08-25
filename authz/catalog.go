@@ -25,6 +25,7 @@ const (
 	ResourceProspect       Resource = "prospect"        // CRM prospects
 	ResourceCustomer       Resource = "customer"        // CRM customers
 	ResourceCRMActivity    Resource = "crm_activity"    // CRM activity log (calls/emails/meetings/notes/tasks)
+	ResourceCustomerNote   Resource = "customer_note"   // notes submitted by external customers via the portal
 	ResourceUser           Resource = "user"            // tenant users
 	ResourceRole           Resource = "role"            // roles & permissions
 	ResourceWorkflowConfig Resource = "workflow_config" // states/transitions/fields config
@@ -166,6 +167,13 @@ var catalog = []Permission{
 	{ResourceCRMActivity, ActionRead},
 	{ResourceCRMActivity, ActionUpdate},
 	{ResourceCRMActivity, ActionDelete},
+
+	// No ActionCreate: notes are created only by an authenticated external
+	// customer through the portal (middleware.RequireCustomerAuth), which
+	// sits entirely outside RBAC — staff only ever read/triage/delete them.
+	{ResourceCustomerNote, ActionRead},
+	{ResourceCustomerNote, ActionUpdate},
+	{ResourceCustomerNote, ActionDelete},
 
 	{ResourceInventoryItem, ActionCreate},
 	{ResourceInventoryItem, ActionRead},
@@ -349,12 +357,16 @@ var catalog = []Permission{
 	{ResourceExpense, ActionDelete},
 	{ResourceExpense, ActionTransition},
 
-	// Portal access has no `update`: a login is granted or withdrawn, never
-	// edited. The customer it belongs to is fixed at creation — repointing an
-	// existing credential at a different customer would be a silent data-access
+	// `update` covers suspend/resume only: a reversible pause distinct from
+	// create (mints a new credential) and delete (permanent withdrawal), so a
+	// support role can be granted the ability to pause a login without also
+	// being able to mint new ones or revoke them outright. The customer a
+	// login belongs to is still fixed at creation — repointing an existing
+	// credential at a different customer would be a silent data-access
 	// change, so that path does not exist.
 	{ResourcePortalAccess, ActionCreate},
 	{ResourcePortalAccess, ActionRead},
+	{ResourcePortalAccess, ActionUpdate},
 	{ResourcePortalAccess, ActionDelete},
 
 	{ResourceChartOfAccount, ActionCreate},

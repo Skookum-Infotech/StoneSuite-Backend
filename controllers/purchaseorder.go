@@ -192,11 +192,22 @@ func (h *PurchaseOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/purchase-orders/{uuid}
 func (h *PurchaseOrderOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, po, ok := h.authPOByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	uuid := r.PathValue("uuid")
+	pool, identityID, po, ok := h.authPOByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": po})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		poFail(w, err, "Failed to load purchase order.")
+		return
+	}
+	info, err := purchaseorder.GetApprovalInfo(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		poFail(w, err, "Failed to load purchase order.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": po, "approval": info})
 }
 
 // Update PATCH /api/tenant/purchase-orders/{uuid}
@@ -265,7 +276,12 @@ func (h *PurchaseOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	po, err := purchaseorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		poFail(w, err, "Failed to approve purchase order.")
+		return
+	}
+	po, err := purchaseorder.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, purchaseorder.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

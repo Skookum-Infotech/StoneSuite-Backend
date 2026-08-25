@@ -339,38 +339,6 @@ func PendingApprovals(ctx context.Context, q Querier, callerUserID string) ([]Re
 	return out, rows.Err()
 }
 
-// ----- config ----------------------------------------------------------------
-
-// ReplaceStateApprovers sets the active approver set for stateID to exactly
-// userIDs (validated by the caller to be real tenant users), replacing whatever
-// was there. No count cap is enforced in the backend — the 2-approver limit is
-// a UI concern; the backend holds any number. createdBy may be empty.
-func ReplaceStateApprovers(ctx context.Context, pool Beginner, stateID string, userIDs []string, createdBy string) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin replace approvers: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM workflow_state_approver WHERE state_id = $1`, stateID); err != nil {
-		return fmt.Errorf("clear state approvers: %w", err)
-	}
-	for _, uid := range userIDs {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO workflow_state_approver (state_id, approver_user_id, created_by)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (state_id, approver_user_id) DO UPDATE SET is_active = TRUE`,
-			stateID, uid, nullIfEmpty(createdBy)); err != nil {
-			return fmt.Errorf("insert state approver: %w", err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit replace approvers: %w", err)
-	}
-	return nil
-}
-
 // contains reports whether s is in xs.
 func contains(xs []string, s string) bool {
 	for _, x := range xs {

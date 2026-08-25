@@ -591,6 +591,11 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to approve record.")
 		return
 	}
+	// Portal access is a deliberate, staff-initiated action (Portal Access
+	// tab / PortalAccessOps.CreatePortalUser) — approving a customer record no
+	// longer auto-grants it or emails an invite. Approving is a CRM decision;
+	// deciding who gets an external login is a separate one, made per
+	// customer rather than for every approved record.
 	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }

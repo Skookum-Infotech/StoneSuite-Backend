@@ -120,6 +120,29 @@ func (c *ControlPlane) HasAnyPortalLink(ctx context.Context, identityID string) 
 	return exists, nil
 }
 
+// AnyPortalLinkExists reports whether the identity has ever been granted
+// portal access anywhere, regardless of current status.
+//
+// Distinct from HasAnyPortalLink, which filters to status='active' and
+// answers "may this identity act as a portal customer right now." This one
+// exists purely to pick an honest login-failure message: a correct password
+// with zero currently-active links means either "never a portal customer
+// here" (stay fully generic, same as an unknown email) or "was one, but
+// access is suspended or revoked" (say so, rather than "invalid password") —
+// and only a query unfiltered by status can tell those two apart.
+func (c *ControlPlane) AnyPortalLinkExists(ctx context.Context, identityID string) (bool, error) {
+	var exists bool
+	err := c.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM identity_tenants
+			WHERE identity_id = $1 AND kind = 'portal')`,
+		identityID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("any portal link exists: %w", err)
+	}
+	return exists, nil
+}
+
 // RevokePortalLink withdraws portal access to one workspace.
 //
 // Never deletes: the row is the audit record of access having been granted.

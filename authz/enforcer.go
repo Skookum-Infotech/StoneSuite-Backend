@@ -75,3 +75,17 @@ func CheckAny(ctx context.Context, q Querier, identityID string, resources []Res
 	}
 	return DecideAny(grants, resources, a), nil
 }
+
+// IsSuperAdmin reports whether identityID holds the literal (ResourceAny,
+// ActionAny) wildcard grant -- reserved for the seeded super_admin role (see
+// SeedSuperAdmin); the catalog rejects granting wildcards to any other role,
+// so this is precise, not a heuristic. Used by approval gates that let a
+// super admin override a specific approver list rather than being blocked by
+// it.
+func IsSuperAdmin(ctx context.Context, q Querier, identityID string) (bool, error) {
+	d, err := Check(ctx, q, identityID, ResourceAny, ActionAny)
+	if err != nil {
+		return false, err
+	}
+	return d.Allowed, nil
+}

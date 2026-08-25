@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -468,16 +469,29 @@ func (s *relationalStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, 
 
 // insertCustomer inserts a customer row from the registry-mapped core map plus
 // the explicit stage/status/owner/approval columns, generates its document
-// number, and returns the new external uuid.
+// number, and returns the new external uuid. workflowID is the target stage's
+// workflows.id (Lead/Prospect/Customer), used to honor that workflow's
+// Record Numbering config if one is enabled.
 func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool,
-	typeID, statusID, ownerEmp int, approvalStatus, typeCode string,
+	typeID, statusID, ownerEmp int, approvalStatus, typeCode, workflowID string,
 	parentInternalID *int, core, custom map[string]any) (string, error) {
+
+	// A status with no configured approver auto-approves on entry (see
+	// entryApprovalStatus), so a brand-new record can already be approved the
+	// moment it's created or converted in — set is_approved/approved_at here
+	// rather than leaving them at their FALSE/NULL column defaults.
+	isApproved := approvalStatus == "approved"
+	var approvedAt any
+	if isApproved {
+		approvedAt = time.Now()
+	}
 
 	cols := []string{
 		"record_type", "customer_crm_status", "customer_crm_owner_user_id",
-		"customer_approval_status", "customer_custom_fields", "customer_created_by",
+		"customer_approval_status", "customer_is_approved", "customer_approved_at",
+		"customer_custom_fields", "customer_created_by",
 	}
-	args := []any{typeID, statusID, nullableInt(ownerEmp), approvalStatus, custom, nullableInt(ownerEmp)}
+	args := []any{typeID, statusID, nullableInt(ownerEmp), approvalStatus, isApproved, approvedAt, custom, nullableInt(ownerEmp)}
 	if parentInternalID != nil {
 		cols = append(cols, "customer_parent_id")
 		args = append(args, *parentInternalID)
@@ -500,13 +514,36 @@ func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool
 	if err := pool.QueryRow(ctx, q, args...).Scan(&newUUID, &newID); err != nil {
 		return "", fmt.Errorf("insert customer: %w", err)
 	}
-	// Generate the document number from the stage code + serial id (e.g. LEAD-000001).
-	docNum := fmt.Sprintf("%s-%06d", typeCode, newID)
+	// Honor the workflow's configured numbering (prefix/suffix/digits/next#) if
+	// enabled; otherwise fall back to the legacy stage-code + serial id format
+	// (e.g. LEAD-000001).
+	docNum, err := workflow.GenerateRecordNumber(ctx, pool, workflowID)
+	if err != nil {
+		return "", fmt.Errorf("generate record number: %w", err)
+	}
+	if docNum == "" {
+		docNum = fmt.Sprintf("%s-%06d", typeCode, newID)
+	}
 	if _, err := pool.Exec(ctx,
 		`UPDATE customer SET customer_doc_num = $1 WHERE customer_id = $2`, docNum, newID); err != nil {
 		return "", fmt.Errorf("set customer doc number: %w", err)
 	}
 	return newUUID, nil
+}
+
+// requireContactEmailForCustomer enforces that a record newly entering CUST
+// stage carries a contact email, regardless of which of the three paths gets
+// it there (direct create, explicit convert, or a status transition whose
+// target status is itself CUST-typed — e.g. "Closed Won"). The customer
+// portal's auto-invite (controllers/crm.go's ApproveRecord) sends to exactly
+// this field the moment the record is approved; a CUST record without one
+// would approve successfully and simply never invite anyone, silently.
+// No-ops for any other target stage — lead/prospect records are unaffected.
+func requireContactEmailForCustomer(targetCode, contactEmail string) error {
+	if targetCode != "CUST" || contactEmail != "" {
+		return nil
+	}
+	return ClientError{Msg: "A contact email is required to create a customer — it's used to invite them to the customer portal."}
 }
 
 func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error) {
@@ -521,6 +558,9 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if getStr(core, "customer_name") == "" {
 		return nil, ClientError{Msg: "Company name is required."}
 	}
+	if err := requireContactEmailForCustomer(code, getStr(core, "customer_contact_email")); err != nil {
+		return nil, err
+	}
 	typeID, err := s.typeIDByCode(ctx, pool, code)
 	if err != nil {
 		return nil, err
@@ -532,6 +572,10 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if err := s.validateCustom(ctx, pool, key, in.CustomFields); err != nil {
 		return nil, err
 	}
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow for numbering: %w", err)
+	}
 	custom := in.CustomFields
 	if custom == nil {
 		custom = map[string]any{}
@@ -541,7 +585,7 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if err != nil {
 		return nil, err
 	}
-	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, nil, core, custom)
+	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, wf.ID, nil, core, custom)
 	if err != nil {
 		return nil, err
 	}
@@ -623,6 +667,22 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	if err != nil {
 		return nil, err
 	}
+	// A record newly crossing into CUST must already have a contact email —
+	// checked only on the crossing transition (curTypeCode != "CUST"), not on
+	// every later status change within CUST, since re-validating on each
+	// internal transition would block unrelated edits to an already-live
+	// customer. See requireContactEmailForCustomer.
+	if targetTypeCode == "CUST" && curTypeCode != "CUST" {
+		var contactEmail string
+		if err := pool.QueryRow(ctx,
+			`SELECT customer_contact_email FROM customer WHERE customer_uuid = $1`, id,
+		).Scan(&contactEmail); err != nil {
+			return nil, fmt.Errorf("load contact email for transition: %w", err)
+		}
+		if err := requireContactEmailForCustomer(targetTypeCode, contactEmail); err != nil {
+			return nil, err
+		}
+	}
 	// Every state entry re-evaluates approval against the stage being entered:
 	// if it has active approvers configured the record always lands back in
 	// "pending", so each new state requires its own fresh sign-off rather than
@@ -637,8 +697,10 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 			record_type = $2, customer_crm_status = $3,
 			customer_updated_at = NOW(),
 			customer_record_version = customer_record_version + 1,
-			customer_approval_status = $4, customer_is_approved = FALSE,
-			customer_approved_by = NULL, customer_approved_at = NULL
+			customer_approval_status = $4,
+			customer_is_approved = ($4 = 'approved'),
+			customer_approved_by = NULL,
+			customer_approved_at = CASE WHEN $4 = 'approved' THEN NOW() ELSE NULL END
 		WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`,
 		id, targetTypeID, statusID, newApprovalStatus)
 	if err != nil {
@@ -648,11 +710,19 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 		return nil, fmt.Errorf("clear stale approvals: %w", err)
 	}
 	// When the record moves to a new stage, regenerate the document number so
-	// its prefix matches the new stage (e.g. LEAD-000042 → PROS-000042).
+	// its prefix matches the new stage (e.g. LEAD-000042 → PROS-000042),
+	// honoring the target stage's Record Numbering config if one is enabled.
 	// This is best-effort: the record is already moved, so we do not surface
-	// any error from this secondary update.
+	// any error from this secondary update — any failure to resolve the
+	// workflow or claim a configured number just falls back to the legacy
+	// stage-code + serial id format.
 	if targetTypeCode != curTypeCode {
 		newDocNum := fmt.Sprintf("%s-%06d", targetTypeCode, internalID)
+		if wf, wfErr := workflow.GetWorkflowByKey(ctx, pool, crmCodeToKey[targetTypeCode]); wfErr == nil {
+			if generated, genErr := workflow.GenerateRecordNumber(ctx, pool, wf.ID); genErr == nil && generated != "" {
+				newDocNum = generated
+			}
+		}
 		_, _ = pool.Exec(ctx,
 			`UPDATE customer SET customer_doc_num = $1 WHERE customer_uuid = $2`,
 			newDocNum, id)
@@ -685,6 +755,10 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		return nil, "", err
 	}
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, targetKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve workflow for numbering: %w", err)
+	}
 	// Seed core/custom from source where the caller did not override.
 	if core == nil {
 		core = map[string]any{}
@@ -702,6 +776,9 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 			custom[k] = v
 		}
 	}
+	if err := requireContactEmailForCustomer(code, getStr(core, "customer_contact_email")); err != nil {
+		return nil, "", err
+	}
 	// Resolve the source's internal id for the lineage FK.
 	parentInternalID, _, _, err := s.recordKeyInfo(ctx, pool, id)
 	if err != nil {
@@ -712,7 +789,7 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		return nil, "", err
 	}
-	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, &parentInternalID, core, custom)
+	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, wf.ID, &parentInternalID, core, custom)
 	if err != nil {
 		return nil, "", err
 	}
@@ -884,7 +961,11 @@ func (s *relationalStore) PendingApprovals(ctx context.Context, pool *pgxpool.Po
 
 // entryApprovalStatus returns "pending" if statusID currently has at least
 // one active approver configured — either scoped to that exact status or a
-// wildcard (any-status) approver for recordTypeCode — else "none". Called
+// wildcard (any-status) approver for recordTypeCode — else "approved": a
+// status nobody is configured to gate can't ever be signed off (Approve
+// rejects a non-"pending" record), so leaving it "none" would strand the
+// record unapprovable forever. No approver configured means nothing gates
+// the status, so the record auto-approves the moment it enters it. Called
 // whenever a record enters a record type/stage — creation, conversion, or a
 // same- or later-stage transition — so approval is required for the specific
 // status being entered, not for every status of the record type.
@@ -896,7 +977,7 @@ func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool
 	if anyApprover {
 		return "pending", nil
 	}
-	return "none", nil
+	return "approved", nil
 }
 
 // hasAnyActiveApprover reports whether at least one active approver is

@@ -246,11 +246,21 @@ func (h *FabricationOps) Fabricate(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/fabrication-jobs/{uuid}
 func (h *FabricationOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, job, ok := h.authFJByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, job, ok := h.authFJByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		fjFail(w, err, "Failed to load fabrication job.")
+		return
+	}
+	info, err := fabrication.GetApprovalInfo(r.Context(), pool, job.ID, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		fjFail(w, err, "Failed to load fabrication job.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job, "approval": info})
 }
 
 // Update PATCH /api/tenant/fabrication-jobs/{uuid}

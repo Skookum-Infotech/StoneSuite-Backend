@@ -870,11 +870,19 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 // check (RequireAuth's path confinement, RequirePortal, the portal document
 // predicates) keys off the token, not off which handler minted it.
 //
-// Returns false, having written nothing, when the identity has no active
-// portal access either — the caller then falls through to the shared
+// Returns false, having written nothing, when the identity has never held
+// portal access at all — the caller then falls through to the shared
 // "Invalid email or password." response. That fall-through is the point: this
 // endpoint must not reveal whether a rejected email belongs to a customer, a
-// staff member, or neither.
+// staff member, or neither, when the password check alone couldn't tell.
+//
+// A correct password is a different story: once that has already succeeded,
+// telling a customer whose access is suspended or revoked "invalid password"
+// instead is actively misleading, not a security feature — it sends them
+// down a forgot-password loop that can never restore access on its own,
+// mirroring the same UX the staff branch above already gives a suspended
+// workspace user. So a former-or-current portal identity with zero
+// currently-active links gets a specific, honest response here instead.
 func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity) bool {
 	links, err := h.CP.PortalTenantsForIdentity(r.Context(), identity.ID)
 	if err != nil {
@@ -882,6 +890,13 @@ func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, ident
 	}
 	workspaces := servableWorkspaces(r.Context(), h.CP, links, "")
 	if len(workspaces) == 0 {
+		everLinked, everErr := h.CP.AnyPortalLinkExists(r.Context(), identity.ID)
+		if everErr == nil && everLinked {
+			logSecurityEvent(r, "portal_login_blocked_no_active_access", "identity", identity.ID)
+			fail(w, http.StatusForbidden,
+				"Your portal access is not currently active. Contact the business you work with to restore it.")
+			return true
+		}
 		return false
 	}
 	active := workspaces[0].TenantID

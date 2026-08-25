@@ -28,7 +28,7 @@ type CustomerPortalAdminOps struct {
 
 // NewCustomerPortalAdminOps constructs the handler group.
 func NewCustomerPortalAdminOps() *CustomerPortalAdminOps {
-	return &CustomerPortalAdminOps{crm: NewCRMOps(nil)}
+	return &CustomerPortalAdminOps{crm: NewCRMOps()}
 }
 
 type portalInviteRequest struct {

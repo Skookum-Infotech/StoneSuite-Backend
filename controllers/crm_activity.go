@@ -32,9 +32,8 @@ type CRMActivityOps struct {
 }
 
 // NewCRMActivityOps constructs the handler group. Its embedded CRMOps is only
-// ever used for authCRMByRecordID's IDOR guard (never ApproveRecord), so it
-// doesn't need a PortalAccessOps.
-func NewCRMActivityOps() *CRMActivityOps { return &CRMActivityOps{crm: NewCRMOps(nil)} }
+// ever used for authCRMByRecordID's IDOR guard.
+func NewCRMActivityOps() *CRMActivityOps { return &CRMActivityOps{crm: NewCRMOps()} }
 
 // authActivity resolves the parent CRM record (IDOR-guarded, read access
 // required) then checks crm_activity:<action>.

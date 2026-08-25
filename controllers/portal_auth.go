@@ -134,10 +134,20 @@ func (h *PortalAuthOps) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaces := servableWorkspaces(r.Context(), h.CP, links, "")
 	if len(workspaces) == 0 {
-		// Correct password, but this identity is not a portal customer (or its
-		// access was revoked, or no workspace is currently servable). Same
-		// generic message: a staff member must not learn that their password
-		// was accepted here.
+		// Correct password, but no workspace is currently active for this
+		// identity. Distinguish "never a portal customer here" (stay generic —
+		// a staff member must not learn their password was accepted on this
+		// endpoint) from "was one, but access is suspended/revoked" (say so —
+		// once the password has already matched, "invalid email or password"
+		// is actively misleading, not a security feature; see tryPortalLogin's
+		// doc comment in tenant.go for the mirrored staff-side precedent).
+		everLinked, everErr := h.CP.AnyPortalLinkExists(r.Context(), identity.ID)
+		if everErr == nil && everLinked {
+			logSecurityEvent(r, "portal_login_blocked_no_active_access", "identity", identity.ID)
+			fail(w, http.StatusForbidden,
+				"Your portal access is not currently active. Contact the business you work with to restore it.")
+			return
+		}
 		logSecurityEvent(r, "portal_login_failed", "email", req.Email,
 			"identity", identity.ID, "reason", "no_active_portal_workspace")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")

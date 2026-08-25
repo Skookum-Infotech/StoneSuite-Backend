@@ -15,7 +15,9 @@ func Stale(dir string, routes []Route, meta Meta) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	// Cleanup of a temp dir cannot meaningfully fail the caller — the compare
+	// has already happened — but the discard is explicit rather than silent.
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	var stale []string
 	for _, t := range Targets() {

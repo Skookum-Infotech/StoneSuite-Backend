@@ -363,10 +363,6 @@ func EmitPostman(path string, routes []Route, meta Meta) error {
 		if method == "ANY" {
 			method = "GET"
 		}
-		name := r.Handler
-		if name == "" {
-			name = r.Path
-		}
 		desc := fmt.Sprintf("Requires: %s\nRegistered at main.go:%d", r.Auth, r.Line)
 		if r.Unreachable {
 			desc = "⚠️ UNREACHABLE — rejected by the prefix allowlist in main.go.\n\n" + desc

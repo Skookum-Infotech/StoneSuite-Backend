@@ -171,6 +171,57 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 		return RecordAccessInfo{}, fmt.Errorf("lookup sales order: %w", err)
 	}
 
+	// quote: dedicated relational document module (twin of estimate/sales_order),
+	// owner resolved the same way (employee -> users.id); no team column.
+	var quoteOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM quote qt
+		LEFT JOIN employee e ON e.employee_id = qt.quote_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE qt.quote_uuid = $1::uuid AND qt.quote_deleted_at IS NULL`,
+		recordID).Scan(&quoteOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "quote", OwnerUserID: quoteOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup quote: %w", err)
+	}
+
+	// estimate: dedicated relational document module, owner resolved the same
+	// way (employee -> users.id); no team column.
+	var estimateOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM estimate est
+		LEFT JOIN employee e ON e.employee_id = est.estimate_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE est.estimate_uuid = $1::uuid AND est.estimate_deleted_at IS NULL`,
+		recordID).Scan(&estimateOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "estimate", OwnerUserID: estimateOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup estimate: %w", err)
+	}
+
+	// invoice: dedicated relational document module, owner resolved the same
+	// way (employee -> users.id); no team column.
+	var invoiceOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM invoice inv
+		LEFT JOIN employee e ON e.employee_id = inv.invoice_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE inv.invoice_uuid = $1::uuid AND inv.invoice_deleted_at IS NULL`,
+		recordID).Scan(&invoiceOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "invoice", OwnerUserID: invoiceOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup invoice: %w", err)
+	}
+
 	// cash_transfer: dedicated relational module (Cash Transfer spec), owner
 	// resolved the same way (employee -> users.id); no team column.
 	var ctOwnerUserID string

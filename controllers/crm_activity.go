@@ -31,7 +31,8 @@ type CRMActivityOps struct {
 	crm *CRMOps
 }
 
-// NewCRMActivityOps constructs the handler group.
+// NewCRMActivityOps constructs the handler group. Its embedded CRMOps is only
+// ever used for authCRMByRecordID's IDOR guard.
 func NewCRMActivityOps() *CRMActivityOps { return &CRMActivityOps{crm: NewCRMOps()} }
 
 // authActivity resolves the parent CRM record (IDOR-guarded, read access

@@ -47,6 +47,18 @@ func portalWhere(customerID int) ([]string, []any, int, error) {
 	return where, []any{customerID, vis.StatusCodes}, 3, nil
 }
 
+// redactForPortal strips fields a customer must never see. PortalSearch and
+// PortalGet share headerSelect/scanPayment with the staff-facing Search/Get —
+// deliberately, so the portal path can never drift out of sync with the real
+// schema — so this is the one point where the two diverge: internal notes and
+// staff assignment are removed here, right before the record leaves this
+// package, rather than filtered in SQL or hidden only in the frontend.
+func redactForPortal(rec *Payment) *Payment {
+	rec.InternalNotes = ""
+	rec.OwnerEmployeeID = nil
+	return rec
+}
+
 // PortalSearch lists the documents belonging to one customer, with the same
 // filter/sort/keyset pagination the internal search offers.
 //
@@ -85,7 +97,7 @@ func PortalSearch(ctx context.Context, pool *pgxpool.Pool, customerID int, req q
 		if err != nil {
 			return Page{}, fmt.Errorf("scan payment: %w", err)
 		}
-		out = append(out, *rec)
+		out = append(out, *redactForPortal(rec))
 		metas = append(metas, meta)
 	}
 	if err := rows.Err(); err != nil {
@@ -132,5 +144,5 @@ func PortalGet(ctx context.Context, pool *pgxpool.Pool, customerID int, uuid str
 	}
 	rec.Applications = apps
 
-	return rec, nil
+	return redactForPortal(rec), nil
 }

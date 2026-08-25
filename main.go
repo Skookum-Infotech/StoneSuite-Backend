@@ -458,6 +458,11 @@ func main() {
 		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.CreatePortalUser))
 		mux.Handle("DELETE /api/tenant/customers/{customerUuid}/portal-users/{id}", tenantChain(portalAccessOps.RevokePortalUser))
 		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resend", tenantChain(portalAccessOps.ResendPortalInvite))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/suspend", tenantChain(portalAccessOps.SuspendPortalUser))
+		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resume", tenantChain(portalAccessOps.ResumePortalUser))
+		// Tenant-wide roster across every customer, for Config > Customer Portal
+		// Users — distinct from the per-customer list above.
+		mux.Handle("GET /api/tenant/portal-users", tenantChain(portalAccessOps.ListAllPortalUsers))
 		// The staff side of each document's customer conversation is registered
 		// alongside the portal side, in the loop above. It is gated on the
 		// document's own resource (invoice:read to read the thread,
@@ -605,6 +610,9 @@ func main() {
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
+		// Portal access is granted separately and explicitly by staff (Portal
+		// Access tab / portalAccessOps below) — approving a CRM record no
+		// longer auto-grants it.
 		crm := controllers.NewCRMOps()
 		// Reference data for the unified CRM core-field selects (design-agnostic).
 		crmLookups := controllers.NewCRMLookups()

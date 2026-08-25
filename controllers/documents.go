@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -47,34 +48,34 @@ func NewDocumentOps(loaders map[string]DocumentLoader) *DocumentOps {
 // written the HTTP error.
 func (h *DocumentOps) loadForRender(
 	w http.ResponseWriter, r *http.Request, recordID string, action authz.Action,
-) (*pgxpool.Pool, docpdf.PrintableDoc, DocMeta, string, bool) {
+) (*pgxpool.Pool, docpdf.PrintableDoc, DocMeta, string, string, bool) {
 	pool, info, identityID, ok := authRecordAccess(w, r, recordID, action)
 	if !ok {
-		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", false
+		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", "", false
 	}
 	loader, ok := h.loaders[info.WorkflowKey]
 	if !ok {
 		fail(w, http.StatusNotFound, "This record type has no printable document.")
-		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", false
+		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", "", false
 	}
 	tenant, err := tenancy.TenantFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
-		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", false
+		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", "", false
 	}
 	seller := sellerFromTenant(tenant)
 	doc, meta, err := loader(r.Context(), pool, recordID, seller)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load document.")
-		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", false
+		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", "", false
 	}
-	return pool, doc, meta, identityID, true
+	return pool, doc, meta, identityID, info.OwnerUserID, true
 }
 
 // GetPDF renders the document on the fly and streams it. RBAC: <type>:read.
 func (h *DocumentOps) GetPDF(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
-	_, doc, meta, _, ok := h.loadForRender(w, r, recordID, authz.ActionRead)
+	_, doc, meta, _, _, ok := h.loadForRender(w, r, recordID, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -137,7 +138,7 @@ type sendDocRequest struct {
 // records the send. RBAC: <type>:update.
 func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
-	pool, doc, meta, identityID, ok := h.loadForRender(w, r, recordID, authz.ActionUpdate)
+	pool, doc, meta, identityID, ownerUserID, ok := h.loadForRender(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -197,6 +198,12 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	_ = workflow.LogAudit(r.Context(), pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
 
+	tenant, tErr := tenancy.TenantFromContext(r.Context())
+	if tErr == nil {
+		notifyOwnerOfSend(r.Context(), services.SendNotification, tenant.ID, ownerUserID,
+			doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "sendId": sendID, "sentTo": to,
 	})
@@ -251,4 +258,39 @@ func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
 	return `<html><body style="font-family:Arial,sans-serif;color:#333;">` +
 		`<p>` + msg + `</p>` +
 		`<p>Regards,<br>` + d.Seller.Name + `</p></body></html>`
+}
+
+// notifyOwnerOfSend best-effort-notifies the record's internal owner that
+// the document was sent, with the same PDF the customer received attached.
+// notify is injected (defaults to services.SendNotification) so tests don't
+// need a live notify service. A failure here is logged and swallowed —
+// the document has already been sent and recorded by the time this runs,
+// and a Notify outage must never undo that.
+func notifyOwnerOfSend(
+	ctx context.Context,
+	notify func(context.Context, services.NotificationRequest) error,
+	tenantID, ownerUserID string,
+	doc docpdf.PrintableDoc, number, workflowKey, recordID string,
+	sentTo []string, pdf []byte, fileName string,
+) {
+	if ownerUserID == "" {
+		return
+	}
+	err := notify(ctx, services.NotificationRequest{
+		TenantID:   tenantID,
+		Recipients: []services.RecipientTarget{{UserID: ownerUserID}},
+		EventType:  "document.sent",
+		Resource:   workflowKey,
+		ResourceID: recordID,
+		Title:      doc.Kind + " " + number + " sent",
+		Body:       "Sent to " + strings.Join(sentTo, ", "),
+		Channels:   []string{"email"},
+		Attachments: []services.NotifyAttachment{
+			{FileName: fileName, ContentType: "application/pdf", Content: pdf},
+		},
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "documents: notify owner of send failed",
+			"record_id", recordID, "error", err)
+	}
 }

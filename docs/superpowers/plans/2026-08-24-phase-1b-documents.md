@@ -1268,8 +1268,9 @@ import (
 
 func TestDocumentOps_RequiresAuth(t *testing.T) {
 	h := NewDocumentOps(nil, map[string]DocumentLoader{})
+	// Task 6 implements only GetPDF; Send/Sends are added and covered in Task 7.
 	for name, fn := range map[string]http.HandlerFunc{
-		"GetPDF": h.GetPDF, "Send": h.Send, "Sends": h.Sends,
+		"GetPDF": h.GetPDF,
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/tenant/records/x/document/pdf", nil)
@@ -1426,20 +1427,10 @@ func sellerFromTenantMeta(displayName, metadataJSON string) docpdf.Seller {
 }
 ```
 
-- [ ] **Step 6: Add Task-7 handler stubs so the package compiles**
+- [ ] **Step 6: (none — no stubs needed)**
 
-Append to `controllers/documents.go` (fleshed out in Task 7):
-```go
-// Send is implemented in Task 7.
-func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
-	fail(w, http.StatusNotImplemented, "Not implemented.")
-}
-
-// Sends is implemented in Task 7.
-func (h *DocumentOps) Sends(w http.ResponseWriter, r *http.Request) {
-	fail(w, http.StatusNotImplemented, "Not implemented.")
-}
-```
+Task 6 delivers only `GetPDF`. `Send`/`Sends` are added as full methods in Task 7,
+so no placeholder stubs are introduced here. The Task 6 test references only `GetPDF`.
 
 - [ ] **Step 7: Run to verify tests pass**
 
@@ -1466,23 +1457,22 @@ git commit -m "feat(controllers): add DocumentOps PDF endpoint and shared record
 - Consumes: `docpdf.Render`, `storage.Client.Put`, `workflow.GenerateStorageKey`, `workflow.SanitizeFileName`, `workflow.InsertAttachment`, `workflow.InsertDocumentSend`, `workflow.ListDocumentSends`, `workflow.UserIDByIdentity`, `workflow.LogAudit`, `services.SendDocumentEmail`, each module's `ToPrintable`/`Recipient`/`Get`.
 - Produces: fully implemented `Send` / `Sends`; wired routes.
 
-- [ ] **Step 1: Write the failing validation + 503 tests**
+- [ ] **Step 1: Extend the auth-gating test to cover Send and Sends**
 
-Add to `controllers/documents_test.go`:
+In `controllers/documents_test.go`, add `Send` and `Sends` to the handler map in
+`TestDocumentOps_RequiresAuth` (they are implemented in this task and, like `GetPDF`,
+run the auth gate first, so an unauthenticated call returns 401):
 ```go
-func TestSend_BadBodyIsRejectedAfterAuthStub(t *testing.T) {
-	// With a nil R2 client the Send handler must refuse (503) rather than
-	// attempt to persist. Auth still runs first, so an unauthenticated call is
-	// 401; this documents the R2 precondition via the handler contract.
-	h := NewDocumentOps(nil, map[string]DocumentLoader{})
-	assert.Nil(t, h.r2)
-}
+	for name, fn := range map[string]http.HandlerFunc{
+		"GetPDF": h.GetPDF, "Send": h.Send, "Sends": h.Sends,
+	} {
 ```
-(The full happy-path send is covered by the dbtest in Step 5; unit-level we assert the R2 precondition and rely on the injected fakes there.)
+Run: `go test ./controllers/ -run TestDocumentOps_RequiresAuth -v`
+Expected: FAIL to compile — `h.Send`/`h.Sends` undefined (they are added in Step 2).
 
 - [ ] **Step 2: Implement `Send` and `Sends` in `controllers/documents.go`**
 
-Replace the two stubs with:
+Append to `controllers/documents.go`:
 ```go
 type sendDocRequest struct {
 	To      []string `json:"to"`
@@ -1493,14 +1483,18 @@ type sendDocRequest struct {
 
 // Send renders the document, persists the PDF to R2 as an attachment, emails it
 // to the customer, and records the send. RBAC: <type>:update.
+//
+// Order matters: the RBAC + IDOR gate (loadForRender) runs BEFORE the storage
+// precondition check, so an unauthenticated caller cannot probe whether R2 is
+// configured, and TestDocumentOps_RequiresAuth sees 401 (not 503) for Send.
 func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
-	if !h.r2.IsConfigured() {
-		fail(w, http.StatusServiceUnavailable, "File storage is not configured.")
-		return
-	}
 	recordID := r.PathValue("id")
 	pool, doc, meta, identityID, ok := h.loadForRender(w, r, recordID, authz.ActionUpdate)
 	if !ok {
+		return
+	}
+	if !h.r2.IsConfigured() {
+		fail(w, http.StatusServiceUnavailable, "File storage is not configured.")
 		return
 	}
 	tenant, err := tenancy.TenantFromContext(r.Context())
@@ -1696,27 +1690,28 @@ Expected: PASS; build succeeds.
 
 - [ ] **Step 5: Write the happy-path dbtest**
 
-Create `controllers/document_send_dbtest_test.go`:
-```go
-//go:build dbtest
+Create `controllers/document_send_dbtest_test.go` as a **real** integration test (no
+`t.Skip` — a skipped test that asserts nothing is a review defect). First read
+`controllers/customer_portal_dbtest_test.go` to learn this package's dbtest bootstrap
+(tenant creation, authed-request construction, pool access), then write a test that:
+1. Bootstraps a tenant DB and seeds one invoice (reuse the existing helpers — do not
+   hand-roll SQL).
+2. Constructs a `DocumentOps` whose `renderPDF` is a stub returning `[]byte("%PDF-1.4 x")`
+   and whose `r2` is a real configured `*storage.Client` pointed at a test bucket, OR —
+   if hitting R2 in tests is undesirable — inject a fake object-store seam (add an
+   `putObject func(ctx, key, ct string, body []byte) error` field to `DocumentOps`
+   defaulting to `h.r2.WithBucket(...).Put`, and override it in the test). Choose the
+   seam consistent with how `storage` is faked elsewhere in the package; if none exists,
+   add the `putObject` field.
+3. Issues an authed `POST .../document/send` with `{"to":["bob@buyer.example"]}`.
+4. Asserts HTTP 200, that a `document_sends` row exists for the invoice
+   (`workflow.ListDocumentSends`), and that a `workflow_record_attachments` row was
+   written (`workflow.ListAttachments`).
 
-package controllers
-
-import (
-	"testing"
-)
-
-// TestDocumentSend_HappyPath exercises render→store→email→track against a real
-// tenant DB with a fake R2/email, following the existing *_dbtest_test.go setup
-// helpers in this package (see customer_portal_dbtest_test.go for the tenant
-// bootstrap + authed-request pattern). It creates an invoice, calls Send with a
-// stubbed renderPDF and a fake storage/email, and asserts a document_sends row
-// and an attachment row were written.
-func TestDocumentSend_HappyPath(t *testing.T) {
-	t.Skip("implement using the package's dbtest tenant harness once wired")
-}
-```
-(This placeholder is intentionally skipped: the full harness reuses the package's existing dbtest bootstrap, which the implementing engineer wires to the real helpers. The unit tests + the four unit-tested building blocks already cover the logic; this dbtest is the integration safety net.)
+Guard the file with `//go:build dbtest` so it skips cleanly without `TEST_DATABASE_URL`.
+If the injected-seam approach is chosen, also update Task 6's `DocumentOps` struct and
+`NewDocumentOps` to carry `putObject`, and update the Send implementation in Step 2 to
+call `h.putObject(...)` instead of `h.r2.WithBucket(tenant.R2Bucket).Put(...)`.
 
 - [ ] **Step 6: Run the security + drift reviewers**
 
@@ -1750,6 +1745,6 @@ git commit -m "feat(documents): add send + history endpoints and wire document r
 - Testing + post-impl agents (`migration-auditor`, `tenancy-security-reviewer`, `module-drift-checker`) → Tasks 4/5/7. ✓
 - Out-of-scope items (logo, receipts, headless-chrome) are not planned. ✓
 
-**Placeholder scan:** The only deliberate `t.Skip` is the integration dbtest in Task 7 Step 5, whose harness depends on the package's existing (unshown) dbtest bootstrap; the logic it would cover is unit-tested in Tasks 1–3, 6. Field-name confirmations in Task 5 are explicit grep-and-adjust steps, not vague "handle it" placeholders.
+**Placeholder scan:** No `t.Skip`/no-op tests remain — Task 7's integration dbtest is a real assertion built on the package's existing dbtest harness (Step 5), and the auth gate runs before the storage check so `Send`/`Sends` are covered by `TestDocumentOps_RequiresAuth`. Field-name confirmations in Task 5 are explicit grep-and-adjust steps, not vague "handle it" placeholders.
 
 **Type consistency:** `PrintableDoc`, `Seller`, `Address`, `PrintLine` (Task 1) are used unchanged in Tasks 5–7. `DocumentLoader`/`DocMeta` signatures (Task 6) match the `main.go` registry literals (Task 7). `authRecordAccess` return tuple matches both `attachAuth` and `DocumentOps.loadForRender`/`Sends`. `SendDocumentEmail`/`EmailAttachment` (Task 3) match the Task 7 call site. `storage.Client.Put` (Task 2) matches the Task 7 call site. Module `ToPrintable(x T, seller)`/`Recipient(x T)` (Task 5) match the loader closures (Task 7).

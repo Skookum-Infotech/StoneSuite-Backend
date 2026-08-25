@@ -106,7 +106,8 @@ func estimateFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusNotFound, "Estimate not found.")
 	case errors.Is(err, estimate.ErrInvalidTransition),
 		errors.Is(err, estimate.ErrApprovalRequired),
-		errors.Is(err, estimate.ErrApprovalNotRequired):
+		errors.Is(err, estimate.ErrApprovalNotRequired),
+		errors.Is(err, estimate.ErrAttachmentRequired):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, estimate.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())
@@ -192,11 +193,21 @@ func (h *EstimateOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/estimates/{uuid}
 func (h *EstimateOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, est, ok := h.authEstimateByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, est, ok := h.authEstimateByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "estimate": est})
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		estimateFail(w, err, "Failed to load estimate.")
+		return
+	}
+	info, err := estimate.GetApprovalInfo(r.Context(), pool, est.ID, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		estimateFail(w, err, "Failed to load estimate.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "estimate": est, "approval": info})
 }
 
 // Update PATCH /api/tenant/estimates/{uuid}
@@ -265,7 +276,12 @@ func (h *EstimateOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	est, err := estimate.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		estimateFail(w, err, "Failed to approve estimate.")
+		return
+	}
+	est, err := estimate.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, estimate.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)

@@ -114,7 +114,7 @@ func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definitio
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	recordNumber, err := generateRecordNumber(ctx, tx, def.Workflow.ID)
+	recordNumber, err := GenerateRecordNumber(ctx, tx, def.Workflow.ID)
 	if err != nil {
 		return nil, err
 	}

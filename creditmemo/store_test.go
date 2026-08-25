@@ -72,6 +72,14 @@ func seedSentInvoice(t *testing.T, pool *pgxpool.Pool, custUUID string, amount f
 	if err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
+	// Transition requires an attachment before an invoice can leave DRFT.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workflow_record_attachments
+			(record_id, file_name, content_type, size_bytes, storage_key, status)
+		VALUES ($1::uuid, 'test.pdf', 'application/pdf', 100, $2, 'clean')`,
+		inv.ID, "test-key/"+inv.ID+"/test.pdf"); err != nil {
+		t.Fatalf("seed attachment: %v", err)
+	}
 	for _, st := range []string{"PAPV", "APPV", "SENT"} {
 		if inv, err = invoice.Transition(ctx, pool, inv.ID, st, 1); err != nil {
 			t.Fatalf("transition invoice to %s: %v", st, err)

@@ -306,6 +306,21 @@ func CurrentAttachmentBytes(ctx context.Context, q Querier, recordID string) (in
 	return total, nil
 }
 
+// HasAttachments reports whether a record has at least one non-infected
+// attachment — used to gate the DRFT -> PAPV (submit for approval) transition
+// across quote/estimate/salesorder/invoice (and any future module that wires
+// into the generic attachment mechanism).
+func HasAttachments(ctx context.Context, q Querier, recordID string) (bool, error) {
+	var exists bool
+	err := q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM workflow_record_attachments
+		  WHERE record_id = $1::uuid AND status != 'infected')`, recordID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check attachments exist (record=%s): %w", recordID, err)
+	}
+	return exists, nil
+}
+
 // ListAttachments returns all attachments for a record in insertion order.
 func ListAttachments(ctx context.Context, q Querier, recordID string) ([]Attachment, error) {
 	rows, err := q.Query(ctx, `

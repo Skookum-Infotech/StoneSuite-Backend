@@ -7,9 +7,11 @@
 //   - PresignPut: browser-uploadable PUT URL (TTL ~5 min)
 //   - PresignGet: download URL with Content-Disposition:attachment (TTL ~60 s)
 //   - Delete:     server-side object removal (best-effort)
+//   - Put:        server-side authenticated PUT for generated documents
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -107,6 +109,67 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 		return ErrStorageNotConfigured
 	}
 	return c.signedDelete(ctx, key)
+}
+
+// Put uploads bytes to R2 under key with the given content type, using an
+// authenticated SigV4 header PUT (the server-side counterpart to PresignPut,
+// which only issues browser-upload URLs). Used to persist server-generated
+// documents such as rendered PDFs. Returns ErrStorageNotConfigured on a nil
+// client.
+func (c *Client) Put(ctx context.Context, key, contentType string, body []byte) error {
+	if c == nil {
+		return ErrStorageNotConfigured
+	}
+	now := time.Now().UTC()
+	dateStamp := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+
+	credScope := dateStamp + "/" + awsRegion + "/" + awsService + "/aws4_request"
+	signedHdrs := "content-type;host;x-amz-content-sha256;x-amz-date"
+	payloadHash := hexSHA256(body)
+
+	canonURI := "/" + awsEncodeSegment(c.bucket) + "/" + encodeKeyPath(key)
+	canonHeaders := "content-type:" + contentType + "\n" +
+		"host:" + c.host + "\n" +
+		"x-amz-content-sha256:" + payloadHash + "\n" +
+		"x-amz-date:" + amzDate + "\n"
+
+	canonReq := strings.Join([]string{
+		"PUT", canonURI, "", canonHeaders, signedHdrs, payloadHash,
+	}, "\n")
+
+	s2s := strings.Join([]string{
+		awsAlgorithm, amzDate, credScope, hexSHA256([]byte(canonReq)),
+	}, "\n")
+	sig := hexHMAC(signingKey(c.secretKey, dateStamp, awsRegion, awsService), []byte(s2s))
+
+	authHeader := fmt.Sprintf(
+		"%s Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
+	)
+
+	objURL := "https://" + c.host + "/" + c.bucket + "/" + encodeKeyPath(key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, objURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build r2 put request: %w", err)
+	}
+	req.Header.Set("Host", c.host)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", payloadHash)
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute r2 put: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return fmt.Errorf("r2 put returned HTTP %d", resp.StatusCode)
 }
 
 // ---- presigning (AWS SigV4 query-parameter auth) ----------------------------

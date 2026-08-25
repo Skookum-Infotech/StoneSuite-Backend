@@ -81,7 +81,8 @@ var allowedExt = map[string]string{
 
 // ---- authorisation ----------------------------------------------------------
 
-// attachAuth is the RBAC + IDOR gate for attachment handlers. It resolves the
+// attachAuth is the RBAC + IDOR gate for attachment handlers. It delegates to
+// the shared authRecordAccess free function (see below), which resolves the
 // record's actual type — regardless of which of the three storage models
 // backs it (v1 workflow_records, v2 relational customer/CRM, or the
 // relational sales_order) — and checks the SPECIFIC resource:action
@@ -95,7 +96,17 @@ var allowedExt = map[string]string{
 func (h *AttachmentOps) attachAuth(
 	w http.ResponseWriter, r *http.Request, recordID string, action authz.Action,
 ) (*pgxpool.Pool, workflow.RecordAccessInfo, string, bool) {
+	return authRecordAccess(w, r, recordID, action)
+}
 
+// authRecordAccess is the shared RBAC + IDOR gate for record-keyed endpoints
+// (attachments and documents). It resolves the record's real type, checks the
+// type-specific resource:action permission, and enforces the row-level
+// ownership scope. Denial is always 404 (never 403) so ids cannot be
+// enumerated. Returns pool, resolved record info, identityID, ok.
+func authRecordAccess(
+	w http.ResponseWriter, r *http.Request, recordID string, action authz.Action,
+) (*pgxpool.Pool, workflow.RecordAccessInfo, string, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
@@ -106,7 +117,6 @@ func (h *AttachmentOps) attachAuth(
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
-
 	info, err := workflow.ResolveRecordAccess(r.Context(), pool, recordID)
 	if errors.Is(err, workflow.ErrRecordNotFound) {
 		fail(w, http.StatusNotFound, "Record not found.")
@@ -116,7 +126,6 @@ func (h *AttachmentOps) attachAuth(
 		fail(w, http.StatusInternalServerError, "Failed to load record.")
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
-
 	resource := resourceForKey(info.WorkflowKey)
 	decision, err := authz.Check(r.Context(), pool, payload.ID, resource, action)
 	if err != nil {
@@ -124,7 +133,7 @@ func (h *AttachmentOps) attachAuth(
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to access attachments.")
+		fail(w, http.StatusForbidden, "You do not have permission to access this record.")
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 	if decision.Scope != authz.ScopeAll {

@@ -7704,6 +7704,24 @@ CREATE INDEX IF NOT EXISTS idx_exp_custom_gin      ON expense USING GIN (expense
 CREATE INDEX IF NOT EXISTS idx_exp_item_expense    ON expense_item (expense_id) WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_exp_history_expense ON expense_history (expense_id);
 
+-- -- 000036_document_sends --------------------------------------------------
+-- Migration 036: document_sends — history of emailed documents (Phase 1b).
+-- Generic + record-keyed (like workflow_record_attachments): one table serves
+-- every document type (quote/estimate/sales_order/invoice). record_id is the
+-- document UUID; no FK (documents live in per-module relational tables).
+CREATE TABLE IF NOT EXISTS document_sends (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    record_id       UUID        NOT NULL,
+    workflow_key    TEXT        NOT NULL,
+    attachment_id   UUID        NULL,
+    sent_to         TEXT        NOT NULL,
+    cc              TEXT        NOT NULL DEFAULT '',
+    subject         TEXT        NOT NULL DEFAULT '',
+    sent_by_user_id UUID        REFERENCES users(id) ON DELETE SET NULL,
+    sent_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_document_sends_record ON document_sends(record_id, sent_at DESC);
+
 -- ============================================================================
 -- Customer Portal: customer_identities / customer_note
 --

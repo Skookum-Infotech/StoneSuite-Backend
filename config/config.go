@@ -62,6 +62,9 @@ type Config struct {
 	SMTPPort       string
 	SenderEmail    string
 	SenderPassword string
+	// Notify Service
+	NotifyURL    string
+	NotifyAPIKey string
 	// Platform owner seeding: when set and no owner exists on startup, the backend
 	// auto-creates the owner tenant and prints a one-time setup token to stdout.
 	// Read the token from `fly logs`, then POST to /api/platform/activate.
@@ -160,6 +163,9 @@ func Load() {
 		SMTPPort:       getEnv("SMTP_PORT", "587"),
 		SenderEmail:    getEnv("SENDER_EMAIL", ""),
 		SenderPassword: getEnv("SENDER_PASSWORD", ""),
+		// Notify Service
+		NotifyURL:    getEnv("NOTIFY_URL", "http://localhost:8081"),
+		NotifyAPIKey: getEnv("NOTIFY_API_KEY", ""),
 		// Platform owner seeding
 		PlatformAdminEmail:   getEnv("PLATFORM_ADMIN_EMAIL", ""),
 		PlatformAdminSlug:    getEnv("PLATFORM_ADMIN_SLUG", ""),

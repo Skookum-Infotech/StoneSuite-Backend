@@ -26,6 +26,9 @@ import (
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/database"
+	"stonesuite-backend/docpdf"
+	"stonesuite-backend/estimate"
+	"stonesuite-backend/invoice"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/logship"
 	"stonesuite-backend/metrics"
@@ -33,6 +36,8 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/portal"
 	"stonesuite-backend/provisioning"
+	"stonesuite-backend/quote"
+	"stonesuite-backend/salesorder"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
@@ -608,6 +613,52 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/attachments", tenantChain(attachOps.ListAttachments))
 		mux.Handle("GET /api/tenant/records/{id}/attachments/{attachmentId}/download", tenantChain(attachOps.DownloadAttachment))
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
+
+		// Documents: generic PDF render/send/history endpoints for the four
+		// document modules, dispatching by the record's resolved workflow key
+		// to the owning module's ToPrintable/Recipient/Get adapters.
+		docLoaders := map[string]controllers.DocumentLoader{
+			"invoice": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				inv, err := invoice.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load invoice: %w", err)
+				}
+				email, name := invoice.Recipient(*inv)
+				return invoice.ToPrintable(*inv, seller),
+					controllers.DocMeta{WorkflowKey: "invoice", Number: inv.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Invoice " + inv.Number}, nil
+			},
+			"quote": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				q, err := quote.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load quote: %w", err)
+				}
+				email, name := quote.Recipient(*q)
+				return quote.ToPrintable(*q, seller),
+					controllers.DocMeta{WorkflowKey: "quote", Number: q.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Quote " + q.Number}, nil
+			},
+			"estimate": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				es, err := estimate.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load estimate: %w", err)
+				}
+				email, name := estimate.Recipient(*es)
+				return estimate.ToPrintable(*es, seller),
+					controllers.DocMeta{WorkflowKey: "estimate", Number: es.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Estimate " + es.Number}, nil
+			},
+			"sales_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				so, err := salesorder.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load sales order: %w", err)
+				}
+				email, name := salesorder.Recipient(*so)
+				return salesorder.ToPrintable(*so, seller),
+					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
+			},
+		}
+		docOps := controllers.NewDocumentOps(docLoaders)
+		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
+		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
+		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
 		// Portal access is granted separately and explicitly by staff (Portal

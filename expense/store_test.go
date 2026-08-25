@@ -212,7 +212,7 @@ func TestApprove_RequiresConfiguredApprover(t *testing.T) {
 	}
 	// No expense_approver rows configured for (EXPN, SUBM) in this test DB by
 	// default, so Approve should report the status doesn't require approval.
-	if _, err := Approve(ctx, pool, created.ID, 1); !errors.Is(err, ErrApprovalNotRequired) {
+	if _, err := Approve(ctx, pool, created.ID, 1, false); !errors.Is(err, ErrApprovalNotRequired) {
 		t.Fatalf("Approve with no configured approvers = %v, want ErrApprovalNotRequired", err)
 	}
 }
@@ -252,19 +252,19 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if _, err := Transition(ctx, pool, created.ID, "APPV", 1); !errors.Is(err, ErrApprovalRequired) {
 		t.Fatalf("Transition SUBM->APPV before approval = %v, want ErrApprovalRequired", err)
 	}
-	approved, err := Approve(ctx, pool, created.ID, 1)
+	// Approve auto-advances the expense straight to APPV once quorum is met
+	// (expense/approval.go's finalizeApproval) -- no separate Transition
+	// call is needed or possible afterward, since the record is no longer
+	// at SUBM.
+	approved, err := Approve(ctx, pool, created.ID, 1, false)
 	if err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 	if approved.ApprovalStatus != "approved" {
 		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
 	}
-	after, err := Transition(ctx, pool, created.ID, "APPV", 1)
-	if err != nil {
-		t.Fatalf("Transition SUBM->APPV after approval: %v", err)
-	}
-	if after.StatusCode != "APPV" {
-		t.Errorf("StatusCode = %q, want APPV", after.StatusCode)
+	if approved.StatusCode != "APPV" {
+		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}
 	// APPV -> REIM ("process") requires no approval (zero approvers configured there).
 	reimbursed, err := Transition(ctx, pool, created.ID, "REIM", 1)

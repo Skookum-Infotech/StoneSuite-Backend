@@ -18,7 +18,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: 'stable'
+          # Pinned to match ci-backend.yml's Setup Go steps (bumped together,
+          # not automatically) -- not 'stable', which let the runner's
+          # resolved Go patch drift ahead of what golangci-lint v2.12.2 was
+          # verified against there and broke CI with an unrelated go/types
+          # panic (see ci-backend.yml's header comment, PR #134).
+          go-version: '1.25.13'
           cache-dependency-path: go.sum
 
       - name: Run tests

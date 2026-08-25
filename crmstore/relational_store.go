@@ -469,9 +469,11 @@ func (s *relationalStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, 
 
 // insertCustomer inserts a customer row from the registry-mapped core map plus
 // the explicit stage/status/owner/approval columns, generates its document
-// number, and returns the new external uuid.
+// number, and returns the new external uuid. workflowID is the target stage's
+// workflows.id (Lead/Prospect/Customer), used to honor that workflow's
+// Record Numbering config if one is enabled.
 func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool,
-	typeID, statusID, ownerEmp int, approvalStatus, typeCode string,
+	typeID, statusID, ownerEmp int, approvalStatus, typeCode, workflowID string,
 	parentInternalID *int, core, custom map[string]any) (string, error) {
 
 	// A status with no configured approver auto-approves on entry (see
@@ -512,8 +514,16 @@ func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool
 	if err := pool.QueryRow(ctx, q, args...).Scan(&newUUID, &newID); err != nil {
 		return "", fmt.Errorf("insert customer: %w", err)
 	}
-	// Generate the document number from the stage code + serial id (e.g. LEAD-000001).
-	docNum := fmt.Sprintf("%s-%06d", typeCode, newID)
+	// Honor the workflow's configured numbering (prefix/suffix/digits/next#) if
+	// enabled; otherwise fall back to the legacy stage-code + serial id format
+	// (e.g. LEAD-000001).
+	docNum, err := workflow.GenerateRecordNumber(ctx, pool, workflowID)
+	if err != nil {
+		return "", fmt.Errorf("generate record number: %w", err)
+	}
+	if docNum == "" {
+		docNum = fmt.Sprintf("%s-%06d", typeCode, newID)
+	}
 	if _, err := pool.Exec(ctx,
 		`UPDATE customer SET customer_doc_num = $1 WHERE customer_id = $2`, docNum, newID); err != nil {
 		return "", fmt.Errorf("set customer doc number: %w", err)
@@ -562,6 +572,10 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if err := s.validateCustom(ctx, pool, key, in.CustomFields); err != nil {
 		return nil, err
 	}
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow for numbering: %w", err)
+	}
 	custom := in.CustomFields
 	if custom == nil {
 		custom = map[string]any{}
@@ -571,7 +585,7 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if err != nil {
 		return nil, err
 	}
-	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, nil, core, custom)
+	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, wf.ID, nil, core, custom)
 	if err != nil {
 		return nil, err
 	}
@@ -696,11 +710,19 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 		return nil, fmt.Errorf("clear stale approvals: %w", err)
 	}
 	// When the record moves to a new stage, regenerate the document number so
-	// its prefix matches the new stage (e.g. LEAD-000042 → PROS-000042).
+	// its prefix matches the new stage (e.g. LEAD-000042 → PROS-000042),
+	// honoring the target stage's Record Numbering config if one is enabled.
 	// This is best-effort: the record is already moved, so we do not surface
-	// any error from this secondary update.
+	// any error from this secondary update — any failure to resolve the
+	// workflow or claim a configured number just falls back to the legacy
+	// stage-code + serial id format.
 	if targetTypeCode != curTypeCode {
 		newDocNum := fmt.Sprintf("%s-%06d", targetTypeCode, internalID)
+		if wf, wfErr := workflow.GetWorkflowByKey(ctx, pool, crmCodeToKey[targetTypeCode]); wfErr == nil {
+			if generated, genErr := workflow.GenerateRecordNumber(ctx, pool, wf.ID); genErr == nil && generated != "" {
+				newDocNum = generated
+			}
+		}
 		_, _ = pool.Exec(ctx,
 			`UPDATE customer SET customer_doc_num = $1 WHERE customer_uuid = $2`,
 			newDocNum, id)
@@ -733,6 +755,10 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		return nil, "", err
 	}
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, targetKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve workflow for numbering: %w", err)
+	}
 	// Seed core/custom from source where the caller did not override.
 	if core == nil {
 		core = map[string]any{}
@@ -763,7 +789,7 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	if err != nil {
 		return nil, "", err
 	}
-	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, &parentInternalID, core, custom)
+	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, wf.ID, &parentInternalID, core, custom)
 	if err != nil {
 		return nil, "", err
 	}

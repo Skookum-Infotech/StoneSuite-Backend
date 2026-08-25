@@ -546,6 +546,22 @@ SELECT setval(
     GREATEST((SELECT MAX(employee_id) FROM employee), 1)
 );
 
+-- Backfill: link every existing users row to an employee row if it doesn't
+-- have one yet. Every employee_id-based FK (Sales Rep, CRM/module approvers,
+-- "own"-scope record ownership via workflow.EmployeeIDByIdentity) resolves
+-- through employee, not users directly -- new signups get this immediately
+-- now (provisioning/provisioner.go, controllers/user.go AcceptUserInvite,
+-- controllers/saml_acs.go all call userstore.EnsureEmployeeForUser), this
+-- catches everyone who signed up before that existed. Re-runs safely: the
+-- NOT EXISTS guard skips users that already have a row, and ON CONFLICT
+-- guards the rare case where employee_email already collides with a stale
+-- row (skipped for manual reconciliation rather than erroring).
+INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email)
+SELECT u.id, COALESCE(NULLIF(TRIM(u.full_name), ''), u.email), '', u.email
+FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM employee e WHERE e.employee_user_id = u.id)
+ON CONFLICT (employee_email) DO NOTHING;
+
 
 -- -- 000014_lkp_tables --------------------------------------------------
 -- =====================================================================
@@ -4122,12 +4138,13 @@ ALTER TABLE sales_order_history DROP CONSTRAINT IF EXISTS chk_sales_order_histor
 ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
     CHECK (action IN ('create','transition','cancel','update','approve','convert'));
 
--- Also carries 'approve'/'approve_override' (not just 'convert'): this
--- statement runs unconditionally on every schema.sql replay, so an earlier
--- version of this same list that omitted them would silently re-narrow the
--- constraint back down on every boot, even after the approval-chain feature
--- widened it live on running tenant DBs -- which is exactly what broke
--- migrateAllTenants for any tenant with an existing 'approve' history row.
+-- Also widened (migration 038) to allow 'approve'/'approve_override', which
+-- approvalchain.Approve (engine.go) writes once Invoice's status transitions
+-- moved onto the shared engine -- this is the last unconditional definition
+-- of this constraint in the file, so it's the one that must carry the fix
+-- (the guarded 'IF NOT EXISTS conname' block above it is a no-op forever on
+-- any tenant DB where the constraint already exists, i.e. every already-
+-- provisioned tenant).
 ALTER TABLE invoice_history DROP CONSTRAINT IF EXISTS chk_invoice_history_action;
 ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
     CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert','approve','approve_override'));
@@ -7686,6 +7703,249 @@ CREATE INDEX IF NOT EXISTS idx_exp_created_id      ON expense (expense_created_a
 CREATE INDEX IF NOT EXISTS idx_exp_custom_gin      ON expense USING GIN (expense_custom_fields);
 CREATE INDEX IF NOT EXISTS idx_exp_item_expense    ON expense_item (expense_id) WHERE item_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_exp_history_expense ON expense_history (expense_id);
+
+-- ============================================================================
+-- Customer Portal: customer_identities / customer_note
+--
+-- A customer_identities row is a login for an external customer, 1:1 with an
+-- existing `customer` CRM record (lead/prospect/customer all live in that one
+-- table -- see its header). It is entirely tenant-local: unlike staff
+-- identities (control-plane `identities`, needed because a staff email must
+-- resolve to a tenant before auth), a customer already knows which tenant's
+-- portal they're logging into, so there's no cross-tenant registry to keep.
+--
+-- customer_note is a flat, non-workflow record (no lkp_record_type /
+-- lkp_record_status, no transitions) -- a customer submits free text, staff
+-- triage it via a plain status field. Structurally closest to crm_activity.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS customer_identities (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id          INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    email                VARCHAR(255) NOT NULL,
+    password_hash        VARCHAR(255) NOT NULL DEFAULT '',
+    full_name            VARCHAR(255) NOT NULL DEFAULT '',
+    status               VARCHAR(20)  NOT NULL DEFAULT 'invited', -- invited | active | disabled
+    invite_token         VARCHAR(64)      NULL,
+    invite_token_expiry  TIMESTAMPTZ      NULL,
+    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_customer_identities_customer UNIQUE (customer_id),
+    CONSTRAINT chk_customer_identities_status CHECK (status IN ('invited','active','disabled'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_identities_email ON customer_identities (LOWER(email));
+
+CREATE TABLE IF NOT EXISTS customer_note (
+    customer_note_id         SERIAL       PRIMARY KEY,
+    customer_note_uuid       UUID         NOT NULL DEFAULT gen_random_uuid(),
+    customer_id              INTEGER      NOT NULL REFERENCES customer(customer_id) ON DELETE CASCADE,
+    customer_identity_id     UUID         NOT NULL REFERENCES customer_identities(id) ON DELETE CASCADE,
+    body                     TEXT         NOT NULL,
+    status                   VARCHAR(10)  NOT NULL DEFAULT 'new', -- new | read | resolved
+    created_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_by_employee_id   INTEGER          NULL REFERENCES employee(employee_id),
+    deleted_at               TIMESTAMPTZ      NULL,
+    deleted_by_employee_id   INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_customer_note_uuid UNIQUE (customer_note_uuid),
+    CONSTRAINT chk_customer_note_status CHECK (status IN ('new','read','resolved')),
+    CONSTRAINT chk_customer_note_soft_delete CHECK (
+        (deleted_at IS NULL AND deleted_by_employee_id IS NULL) OR
+        (deleted_at IS NOT NULL AND deleted_by_employee_id IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_customer_note_customer ON customer_note (customer_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_customer_note_identity ON customer_note (customer_identity_id, created_at DESC) WHERE deleted_at IS NULL;
+
+-- -- 000036_approval_chain_generic_phase1 ----------------------------------
+-- =====================================================================
+-- Tenant migration 036: extends the AD-8 approval gate (proven on
+-- Estimate/Quote/Sales Order, and already configured for Purchase Order/
+-- Requisition/Vendor Bill/Vendor Payment/Expense/Fabrication Job) to
+-- Invoice, Payment, Credit Memo and Refund -- the approvalchain "Sales"
+-- rollout group. Every new approver/approval table is an exact structural
+-- copy of estimate_approver/estimate_approval (approvalchain/engine.go
+-- drives all of them generically; see approvalchain/registry.go for the
+-- gate config).
+--
+-- Invoice already had a PAPV status (Pending Approval) from its original
+-- design, so its gate is PAPV -> APPV, identical in shape to Estimate.
+-- Payment and Refund already had PEND, so their gate is PEND -> APPV.
+-- Credit Memo has no separate pending status at all -- its gate sits on
+-- DRFT itself, with Void always exempt (approvalchain.AlwaysAllowedExitCodes)
+-- so a draft credit memo can still be voided without approval sign-off.
+--
+-- Fabrication Job needs no schema change here -- it already has
+-- job_approval_status/job_approved_by and its approver/approval tables from
+-- migration 035; only its Go code moves onto the shared engine.
+-- =====================================================================
+
+ALTER TABLE invoice     ADD COLUMN IF NOT EXISTS invoice_approval_status     VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE invoice     ADD COLUMN IF NOT EXISTS invoice_approved_by         INTEGER         NULL REFERENCES employee(employee_id);
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_approval_status     VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_approved_by         INTEGER         NULL REFERENCES employee(employee_id);
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_approval_status VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_approved_by     INTEGER         NULL REFERENCES employee(employee_id);
+ALTER TABLE refund      ADD COLUMN IF NOT EXISTS refund_approval_status      VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE refund      ADD COLUMN IF NOT EXISTS refund_approved_by          INTEGER         NULL REFERENCES employee(employee_id);
+
+CREATE TABLE IF NOT EXISTS invoice_approver (
+    invoice_approver_id     SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = INVC
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PAPV
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_invoice_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS invoice_approval (
+    invoice_approval_id     SERIAL      PRIMARY KEY,
+    invoice_id                INTEGER     NOT NULL REFERENCES invoice(invoice_id) ON DELETE CASCADE,
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_invoice_approval UNIQUE (invoice_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_invoice_approver_lookup ON invoice_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_invoice_approval_invoice ON invoice_approval (invoice_id);
+
+CREATE TABLE IF NOT EXISTS payment_approver (
+    payment_approver_id     SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = PYMT
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PEND
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_payment_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS payment_approval (
+    payment_approval_id     SERIAL      PRIMARY KEY,
+    payment_id                INTEGER     NOT NULL REFERENCES payment(payment_id) ON DELETE CASCADE,
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_payment_approval UNIQUE (payment_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_payment_approver_lookup ON payment_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_payment_approval_payment ON payment_approval (payment_id);
+
+CREATE TABLE IF NOT EXISTS credit_memo_approver (
+    credit_memo_approver_id SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = CRDT
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. DRFT
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_credit_memo_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS credit_memo_approval (
+    credit_memo_approval_id SERIAL      PRIMARY KEY,
+    credit_memo_id             INTEGER     NOT NULL REFERENCES credit_memo(credit_memo_id) ON DELETE CASCADE,
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                 TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_credit_memo_approval UNIQUE (credit_memo_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_credit_memo_approver_lookup ON credit_memo_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_credit_memo_approval_memo ON credit_memo_approval (credit_memo_id);
+
+CREATE TABLE IF NOT EXISTS refund_approver (
+    refund_approver_id      SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = RFND
+    record_status_id        INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. PEND
+    approver_employee_id    INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_refund_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS refund_approval (
+    refund_approval_id      SERIAL      PRIMARY KEY,
+    refund_id                  INTEGER     NOT NULL REFERENCES refund(refund_id) ON DELETE CASCADE,
+    record_status_id           INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id       INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_refund_approval UNIQUE (refund_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_refund_approver_lookup ON refund_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_refund_approval_refund ON refund_approval (refund_id);
+
+-- -- 000037_approval_chain_generic_phase2 ----------------------------------
+-- =====================================================================
+-- Tenant migration 037: extends the AD-8 approval gate to Vendor Credit --
+-- the approvalchain "Purchases" rollout group's one net-new module (every
+-- other Purchases module -- Requisition, Purchase Order, Vendor Bill,
+-- Vendor Payment, Expense -- already had its approver/approval tables from
+-- an earlier migration; only their Go code moved onto the shared engine).
+--
+-- Vendor Credit has no separate pending status, mirroring Credit Memo
+-- (migration 036) -- its gate sits on DRFT itself, with Void always exempt
+-- (approvalchain.AlwaysAllowedExitCodes) so a draft vendor credit can still
+-- be voided without approval sign-off.
+-- =====================================================================
+
+ALTER TABLE vendor_credit ADD COLUMN IF NOT EXISTS vendor_credit_approval_status VARCHAR(10) NOT NULL DEFAULT 'none';
+ALTER TABLE vendor_credit ADD COLUMN IF NOT EXISTS vendor_credit_approved_by     INTEGER         NULL REFERENCES employee(employee_id);
+
+CREATE TABLE IF NOT EXISTS vendor_credit_approver (
+    vendor_credit_approver_id SERIAL      PRIMARY KEY,
+    record_type_id            INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = VCRD
+    record_status_id          INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- e.g. DRFT
+    approver_employee_id      INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by                  INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_vendor_credit_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS vendor_credit_approval (
+    vendor_credit_approval_id SERIAL      PRIMARY KEY,
+    vendor_credit_id             INTEGER     NOT NULL REFERENCES vendor_credit(vendor_credit_id) ON DELETE CASCADE,
+    record_status_id             INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id         INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at                   TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_vendor_credit_approval UNIQUE (vendor_credit_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_vendor_credit_approver_lookup ON vendor_credit_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_vendor_credit_approval_credit ON vendor_credit_approval (vendor_credit_id);
+
+-- -- 000038_approval_chain_history_action_fix --------------------------------
+-- =====================================================================
+-- Tenant migration 038: payment_history / credit_memo_history / refund_history's
+-- action CHECK constraints (added in earlier migrations before these modules
+-- had an approval gate) never got widened to allow 'approve' and
+-- 'approve_override' the way estimate_history / quote_history /
+-- sales_order_history / fabrication_job_history / requisition_history /
+-- expense_history already were (invoice_history's own equivalent constraint
+-- is fixed in place above, at its existing unconditional widening from
+-- migration 034 -- see the comment there for why it can't be fixed here
+-- instead). approvalchain.Approve (engine.go) writes exactly those two action
+-- values for every sign-off and every super-admin override -- the INSERT
+-- violated the CHECK, aborting the transaction and surfacing as a generic
+-- "failed to approve" 500 on every Payment/Credit Memo/Refund approval, while
+-- the modules with the wider CHECK (Estimate/Quote/Sales Order) worked fine.
+--
+-- Each of these three has no prior *unconditional* redefinition of its CHECK
+-- (only the original migration's 'IF NOT EXISTS conname' guard, which is a
+-- no-op forever on any tenant DB where the constraint already exists -- i.e.
+-- every already-provisioned tenant), so adding the first unconditional
+-- DROP+ADD here is safe and is what actually reaches already-broken tenants.
+-- Widening-only, mirrors the sales_order_history / invoice_history 'convert'
+-- widening in migration 034 and chk_fab_history_action's widening above.
+-- =====================================================================
+
+ALTER TABLE payment_history DROP CONSTRAINT IF EXISTS chk_payment_history_action;
+ALTER TABLE payment_history ADD CONSTRAINT chk_payment_history_action
+    CHECK (action IN ('create','apply','unapply','transition','approve','approve_override'));
+
+ALTER TABLE credit_memo_history DROP CONSTRAINT IF EXISTS chk_credit_memo_history_action;
+ALTER TABLE credit_memo_history ADD CONSTRAINT chk_credit_memo_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override'));
+
+ALTER TABLE refund_history DROP CONSTRAINT IF EXISTS chk_refund_history_action;
+ALTER TABLE refund_history ADD CONSTRAINT chk_refund_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override'));
 
 -- =====================================================================
 -- CUSTOMER PORTAL

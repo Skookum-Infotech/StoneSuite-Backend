@@ -293,6 +293,54 @@ func UserIDByIdentityID(ctx context.Context, q Querier, identityID string) (stri
 	return id, nil
 }
 
+// EnsureEmployeeForUser links userID to an employee row, creating one if none
+// exists yet. Every employee_id-based FK across the app (Sales Rep, CRM and
+// per-module approvers, "own"-scope record ownership via
+// workflow.EmployeeIDByIdentity) resolves through the employee table, not
+// users directly -- a user with no linked employee row can sign in and act,
+// but is invisible to all of that. Idempotent: safe to call on every login
+// or invite-accept, not just first creation.
+func EnsureEmployeeForUser(ctx context.Context, q Querier, userID, fullName, email string) error {
+	var exists bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM employee WHERE employee_user_id = $1)`, userID).Scan(&exists); err != nil {
+		return fmt.Errorf("check existing employee: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	first, last := splitName(fullName)
+	// ON CONFLICT (employee_email) DO NOTHING: employee_email is unique, and a
+	// stale/orphaned row could already hold this address -- in that rare case
+	// we skip rather than error, leaving the row for an admin to reconcile
+	// manually rather than blocking login.
+	if _, err := q.Exec(ctx, `
+		INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (employee_email) DO NOTHING`,
+		userID, first, last, email,
+	); err != nil {
+		return fmt.Errorf("create employee for user: %w", err)
+	}
+	return nil
+}
+
+// splitName splits a display name into first/last parts for the employee
+// table's separate first_name/last_name columns. Best-effort only -- every
+// employee display in this app reads users.full_name directly, not these
+// columns.
+func splitName(fullName string) (first, last string) {
+	fullName = strings.TrimSpace(fullName)
+	if fullName == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(fullName, " ", 2)
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
+}
+
 // attachRoles loads the role summaries for u and sets u.Roles.
 func attachRoles(ctx context.Context, q Querier, u *User) error {
 	rows, err := q.Query(ctx, `

@@ -7,6 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/workflow"
 )
 
 // Transition moves an invoice to toStatusCode after validating the move against
@@ -20,14 +23,14 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID, curStatusID, typeID int
-	var curStatusCode string
+	var curStatusCode, approvalStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT i.invoice_id, i.invoice_status, i.record_type, rs.record_status_code
+		SELECT i.invoice_id, i.invoice_status, i.record_type, rs.record_status_code, i.invoice_approval_status
 		FROM invoice i
 		JOIN lkp_record_status rs ON rs.record_status_id = i.invoice_status
 		WHERE i.invoice_uuid = $1 AND i.invoice_deleted_at IS NULL
 		FOR UPDATE OF i`, id,
-	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode)
+	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode, &approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -38,16 +41,45 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
 		return nil, err
 	}
+	if curStatusCode == "DRFT" && toStatusCode == "PAPV" {
+		has, err := workflow.HasAttachments(ctx, tx, id)
+		if err != nil {
+			return nil, fmt.Errorf("check attachments: %w", err)
+		}
+		if !has {
+			return nil, ErrAttachmentRequired
+		}
+	}
 
 	toStatusID, err := statusIDByCode(ctx, pool, typeID, toStatusCode)
 	if err != nil {
 		return nil, ClientError{Msg: "Unknown target status: " + toStatusCode}
 	}
 
+	// AD-8 approval gate: an invoice may not leave a status that has
+	// configured approvers until it has been approved (except into an
+	// always-allowed exit like Void -- approvalchain.AlwaysAllowedExitCodes).
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, curStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if err := approvalchain.CheckTransitionGate(requiredHere, approvalStatus, toStatusCode); err != nil {
+		return nil, ErrApprovalRequired
+	}
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, toStatusID)
+	if err != nil {
+		return nil, err
+	}
+	newApprovalStatus := approvalchain.StatusNone
+	if targetApprovers > 0 {
+		newApprovalStatus = approvalchain.StatusPending
+	}
+
 	if _, err := tx.Exec(ctx, `
-		UPDATE invoice SET invoice_status = $1, invoice_updated_at = NOW(),
-			invoice_updated_by = $2, invoice_record_version = invoice_record_version + 1
-		WHERE invoice_id = $3`, toStatusID, nullableInt(actorEmployeeID), internalID); err != nil {
+		UPDATE invoice SET invoice_status = $1, invoice_approval_status = $2, invoice_approved_by = NULL,
+			invoice_updated_at = NOW(), invoice_updated_by = $3, invoice_record_version = invoice_record_version + 1
+		WHERE invoice_id = $4`, toStatusID, newApprovalStatus, nullableInt(actorEmployeeID), internalID); err != nil {
 		return nil, fmt.Errorf("update invoice status: %w", err)
 	}
 

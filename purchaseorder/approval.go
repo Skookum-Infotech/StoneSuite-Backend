@@ -1,23 +1,14 @@
 // purchaseorder/approval.go — AD-6: the configuration-driven approval gate,
-// an exact structural mirror of estimate/approval.go (AD-8 pattern).
+// delegating to the shared approvalchain engine (see approvalchain/engine.go).
 package purchaseorder
 
 import (
 	"context"
 	"errors"
-	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stonesuite-backend/workflow"
-)
-
-// Approval status values stored in purchase_order.purchase_order_approval_status (AD-6).
-const (
-	approvalNone     = "none"     // no approvers configured for the current status
-	approvalPending  = "pending"  // gated: awaiting the required sign-offs
-	approvalApproved = "approved" // enough configured approvers have signed off
+	"stonesuite-backend/approvalchain"
 )
 
 // ErrNotApprover is returned when a caller who is not a configured approver
@@ -32,119 +23,44 @@ var ErrApprovalRequired = errors.New("this purchase order must be approved befor
 // purchase order whose current status has no configured approvers. Maps to 409.
 var ErrApprovalNotRequired = errors.New("this purchase order's current status does not require approval")
 
-// activeApproverCount returns how many active approvers are configured for
-// the PORD record type at a status. Zero means no approval gate there.
-func activeApproverCount(ctx context.Context, q workflow.Querier, recordTypeID, statusID int) (int, error) {
-	var n int
-	if err := q.QueryRow(ctx, `
-		SELECT COUNT(*) FROM purchase_order_approver
-		WHERE record_type_id = $1 AND record_status_id = $2 AND is_active`,
-		recordTypeID, statusID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count purchase order approvers: %w", err)
-	}
-	return n, nil
-}
-
-// signOffCount returns how many distinct approvers have signed off on a
-// purchase order at a status.
-func signOffCount(ctx context.Context, q workflow.Querier, poInternalID, statusID int) (int, error) {
-	var n int
-	if err := q.QueryRow(ctx, `
-		SELECT COUNT(*) FROM purchase_order_approval
-		WHERE purchase_order_id = $1 AND record_status_id = $2`,
-		poInternalID, statusID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count purchase order approvals: %w", err)
-	}
-	return n, nil
-}
-
-// isConfiguredApprover reports whether an employee is an active configured
-// approver for the PORD record type at a status.
-func isConfiguredApprover(ctx context.Context, q workflow.Querier, recordTypeID, statusID, employeeID int) (bool, error) {
-	var exists bool
-	if err := q.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM purchase_order_approver
-			WHERE record_type_id = $1 AND record_status_id = $2 AND approver_employee_id = $3 AND is_active)`,
-		recordTypeID, statusID, employeeID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("check purchase order approver: %w", err)
-	}
-	return exists, nil
-}
-
-// Approve records one approver's sign-off on a purchase order at its current
-// status (AD-6). Requires the caller to be a configured approver for that
-// status, is idempotent per (order, status, approver), and flips the header's
-// approval_status to 'approved' once the sign-off count reaches the
-// configured approver count.
-func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int) (*PurchaseOrder, error) {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin approve purchase order: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var internalID, curStatusID int
-	err = tx.QueryRow(ctx, `
-		SELECT purchase_order_id, purchase_order_status FROM purchase_order
-		WHERE purchase_order_uuid = $1 AND purchase_order_deleted_at IS NULL
-		FOR UPDATE`, uuid).Scan(&internalID, &curStatusID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load purchase order for approval: %w", err)
-	}
-
-	recordTypeID, err := recordTypeIDByCode(ctx, tx, pordRecordTypeCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve PORD record type: %w", err)
-	}
-
-	required, err := activeApproverCount(ctx, tx, recordTypeID, curStatusID)
-	if err != nil {
-		return nil, err
-	}
-	if required == 0 {
-		return nil, ErrApprovalNotRequired
-	}
-
-	ok, err := isConfiguredApprover(ctx, tx, recordTypeID, curStatusID, approverEmployeeID)
-	if err != nil {
-		return nil, err
-	}
+// moduleConfig resolves the shared approvalchain.ModuleConfig for Purchase
+// Order (workflows.key "purchase_order") once, so callers don't repeat the
+// ForWorkflowKey lookup+panic-guard.
+func moduleConfig() approvalchain.ModuleConfig {
+	cfg, ok := approvalchain.ForWorkflowKey("purchase_order")
 	if !ok {
+		panic("approvalchain: \"purchase_order\" is not registered")
+	}
+	return cfg
+}
+
+// Approve records one approver's sign-off on a purchase order at its
+// current gate (PAPV, AD-6) via the shared approvalchain engine. Once every
+// configured approver has signed off -- or a super admin overrides -- the
+// order auto-advances to the gate's target status in the same call.
+func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*PurchaseOrder, error) {
+	_, err := approvalchain.Approve(ctx, pool, moduleConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
+	switch {
+	case errors.Is(err, approvalchain.ErrNotFound):
+		return nil, ErrNotFound
+	case errors.Is(err, approvalchain.ErrNotApprover):
 		return nil, ErrNotApprover
-	}
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO purchase_order_approval (purchase_order_id, record_status_id, approver_employee_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (purchase_order_id, record_status_id, approver_employee_id) DO NOTHING`,
-		internalID, curStatusID, approverEmployeeID); err != nil {
-		return nil, fmt.Errorf("record purchase order approval: %w", err)
-	}
-
-	approved, err := signOffCount(ctx, tx, internalID, curStatusID)
-	if err != nil {
+	case errors.Is(err, approvalchain.ErrApprovalNotRequired):
+		return nil, ErrApprovalNotRequired
+	case err != nil:
 		return nil, err
-	}
-	newStatus := approvalPending
-	var approvedBy any
-	if approved >= required {
-		newStatus = approvalApproved
-		approvedBy = approverEmployeeID
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE purchase_order SET
-			purchase_order_approval_status = $2, purchase_order_approved_by = $3, purchase_order_updated_at = NOW()
-		WHERE purchase_order_id = $1`, internalID, newStatus, approvedBy); err != nil {
-		return nil, fmt.Errorf("update purchase order approval status: %w", err)
-	}
-
-	writeHistory(ctx, tx, internalID, "approve", &curStatusID, &curStatusID, approverEmployeeID)
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit approve purchase order: %w", err)
 	}
 	return Get(ctx, pool, uuid)
+}
+
+// GetApprovalInfo resolves approvalchain.ApprovalInfo for a purchase order
+// -- who is configured to sign off on its current gate, who already has,
+// and whether the requesting caller can approve it -- so the detail page
+// can show a banner instead of a transition control that would just 409.
+func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, callerEmployeeID int, callerIsSuperAdmin bool) (approvalchain.ApprovalInfo, error) {
+	info, err := approvalchain.GetInfo(ctx, pool, moduleConfig(), uuid, callerEmployeeID, callerIsSuperAdmin)
+	if errors.Is(err, approvalchain.ErrNotFound) {
+		return approvalchain.ApprovalInfo{}, ErrNotFound
+	}
+	return info, err
 }

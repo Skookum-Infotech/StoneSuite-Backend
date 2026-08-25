@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"stonesuite-backend/authz"
@@ -81,9 +82,14 @@ func (h *FabricationOps) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	job, err := fabrication.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
 	if err != nil {
-		if err == fabrication.ErrNotApprover {
+		fjFail(w, err, "Failed to approve fabrication job.")
+		return
+	}
+	job, err := fabrication.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	if err != nil {
+		if errors.Is(err, fabrication.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
 		}
 		fjFail(w, err, "Failed to approve fabrication job.")

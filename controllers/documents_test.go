@@ -76,6 +76,49 @@ func TestNotifyOwnerOfSend_NoOwnerID_DoesNotCall(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestLooksLikeEmail(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want bool
+	}{
+		{"valid simple", "bob@buyer.example", true},
+		{"valid with subdomain", "bob@mail.buyer.example", true},
+		{"no at sign", "bobbuyer.example", false},
+		{"at sign first", "@buyer.example", false},
+		{"at sign last", "bob@", false},
+		{"no dot after at", "bob@buyer", false},
+		{"CRLF injection in local part", "bob\r\nBcc:evil@attacker.example@buyer.example", false},
+		{"CRLF injection after address", "bob@buyer.example\r\nBcc:evil@attacker.example", false},
+		{"bare LF injection", "bob@buyer.example\nBcc:evil@attacker.example", false},
+		{"bare CR injection", "bob@buyer.example\rBcc:evil@attacker.example", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, looksLikeEmail(tt.addr))
+		})
+	}
+}
+
+func TestHasHeaderInjection(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		want bool
+	}{
+		{"plain subject", "Invoice INV-1 for review", false},
+		{"empty string", "", false},
+		{"CRLF pair", "Invoice INV-1\r\nBcc: evil@attacker.example", true},
+		{"bare LF", "Invoice INV-1\nBcc: evil@attacker.example", true},
+		{"bare CR", "Invoice INV-1\rBcc: evil@attacker.example", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasHeaderInjection(tt.s))
+		})
+	}
+}
+
 func TestNotifyOwnerOfSend_NotifyErrors_DoesNotPanicOrReturnError(t *testing.T) {
 	notify := func(_ context.Context, _ services.NotificationRequest) error {
 		return assert.AnError

@@ -166,6 +166,10 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	if subject == "" {
 		subject = meta.DefaultSubject
 	}
+	if hasHeaderInjection(subject) {
+		fail(w, http.StatusBadRequest, "Invalid subject.")
+		return
+	}
 
 	// 1. Render.
 	pdf, err := h.renderPDF(doc)
@@ -243,9 +247,23 @@ func normalizeRecipients(in []string) []string {
 func joinRecipients(in []string) string { return strings.Join(in, ", ") }
 
 // looksLikeEmail is a minimal, allocation-free sanity check (not full RFC 5322).
+// Rejecting header-injection characters here is required, not just cosmetic:
+// this value ends up unsanitized in buildMIME's "To:"/"Cc:" header lines, and
+// an address carrying \r\n could inject arbitrary extra headers or SMTP
+// commands into the outgoing message.
 func looksLikeEmail(s string) bool {
 	at := strings.IndexByte(s, '@')
-	return at > 0 && at < len(s)-1 && strings.IndexByte(s[at+1:], '.') >= 0
+	if at <= 0 || at >= len(s)-1 || strings.IndexByte(s[at+1:], '.') < 0 {
+		return false
+	}
+	return !hasHeaderInjection(s)
+}
+
+// hasHeaderInjection reports whether s contains a CR or LF byte, which would
+// let it inject additional headers (or, over raw SMTP, additional commands)
+// into a message assembled by simple string/Sprintf header building.
+func hasHeaderInjection(s string) bool {
+	return strings.ContainsAny(s, "\r\n")
 }
 
 // documentEmailHTML is the transactional email body wrapping an optional

@@ -1,6 +1,6 @@
 # Phase 1b — Documents (PDF · Attachments · R2 · Email · Send Flow) — Backend Design Spec
 
-**Date:** 2026-08-24 · **Status:** Approved architecture; ready for implementation planning
+**Date:** 2026-08-24 · **Status:** Implemented — see §10 for two decisions revised during implementation
 **Author:** Backend architecture pass (Claude)
 **Scope:** `quote`, `estimate`, `salesorder`, `invoice` (the "core four" customer-facing sales documents).
 
@@ -207,3 +207,31 @@ serves all document types) and records full history rather than only "last sent"
 method (`Put`), 1 new email function (`SendDocumentEmail` + `EmailAttachment`), 1 generic
 controller (`DocumentOps`) with 3 endpoints, 1 generic table (`document_sends`), and the
 `go-pdf/fpdf` dependency. Everything security-sensitive reuses existing, reviewed gates.
+
+## 10. Decisions revised during implementation
+
+Two things changed after this spec was approved and while Task 7 was in progress. Both
+were explicit product decisions, made when implementation surfaced facts the design
+phase didn't have.
+
+**D4 reversed — Send no longer persists to R2.** §2's D4 ("Persist + attach + track")
+and §4.4's `Send` description are **superseded**: `Send` now renders the PDF in Go
+(`docpdf.Render`) and emails it directly from the in-memory bytes — there is no
+`storage.Put`, no `workflow.InsertAttachment`, and no re-downloadable copy afterward.
+`document_sends` still records who/what/when was sent (recipients, subject, timestamp,
+actor), but its `attachment_id` column is now permanently unpopulated (nullable, so this
+is harmless) — a send is tracked as an event, not as a stored file. `storage.Client.Put`
+(Task 2) still exists as a general-purpose capability on the storage client; `DocumentOps`
+simply no longer calls it. §4.3's R2-required-503 behavior for `Send` no longer applies
+(there is nothing left to persist); `GetPDF` was always render-only and is unaffected.
+
+**New dependency — `workflow.ResolveRecordAccess` needed a resolver gap closed.** §1's
+claim that `ResolveRecordAccess` "already resolves all four modules" was true only on
+the sibling branch `feat/document-status-rejection` (commit `2181526`), not on `master`
+— the base this feature actually branched from only resolved `sales_order` among the
+four. The missing `quote`/`estimate`/`invoice` branches were ported verbatim (same
+`employee → users.id` ownership-resolution pattern already used for
+`sales_order`/`cash_transfer`/`vendor_bill`/`expense` in that function) directly onto
+this branch, rather than rebasing onto or waiting for the other branch. Both branches now
+carry the same lines, so merging `feat/document-status-rejection` into `master` later
+should be a clean, redundant no-op for this specific function.

@@ -28,7 +28,7 @@ type CustomerNoteOps struct {
 }
 
 // NewCustomerNoteOps constructs the handler group.
-func NewCustomerNoteOps() *CustomerNoteOps { return &CustomerNoteOps{crm: NewCRMOps()} }
+func NewCustomerNoteOps() *CustomerNoteOps { return &CustomerNoteOps{crm: NewCRMOps(nil)} }
 
 // authNote resolves the parent CRM record (IDOR-guarded, read access
 // required) then checks customer_note:<action>.

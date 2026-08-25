@@ -7974,17 +7974,36 @@ CREATE TABLE IF NOT EXISTS customer_portal_user (
     -- reset on every CRM state entry (see crmstore approval reset), so gating
     -- live access on it would lock a customer out on a routine renewal
     -- transition. Approval is checked once, when access is granted.
-    status      VARCHAR(16)  NOT NULL DEFAULT 'active',   -- active | revoked
+    --
+    -- 'suspended' is a reversible pause distinct from 'revoked': resuming a
+    -- suspended login re-activates the existing row without re-running
+    -- CustomerEligible, so a customer paused mid-renewal (when
+    -- customer_is_approved happens to be false) is never stuck. 'revoked' is
+    -- the permanent withdrawal and re-granting it goes back through
+    -- CustomerEligible, same as a first-time grant.
+    status      VARCHAR(16)  NOT NULL DEFAULT 'active',   -- active | suspended | revoked
     created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by  INTEGER          NULL REFERENCES employee(employee_id),
     updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    suspended_at TIMESTAMP       NULL,
+    suspended_by INTEGER         NULL REFERENCES employee(employee_id),
     revoked_at  TIMESTAMP        NULL,
     revoked_by  INTEGER          NULL REFERENCES employee(employee_id),
     CONSTRAINT uq_cpu_identity UNIQUE (identity_id),
-    CONSTRAINT chk_cpu_status  CHECK (status IN ('active', 'revoked'))
+    CONSTRAINT chk_cpu_status  CHECK (status IN ('active', 'suspended', 'revoked'))
 );
 CREATE INDEX IF NOT EXISTS idx_cpu_customer ON customer_portal_user (customer_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_cpu_email    ON customer_portal_user (LOWER(email));
+
+-- Migration: widen chk_cpu_status for the reversible 'suspended' state and add
+-- the columns that record who suspended a login and when (widening-only,
+-- existing rows remain valid; CREATE TABLE IF NOT EXISTS above is a no-op on
+-- every already-provisioned tenant, so these must be repeated unconditionally).
+ALTER TABLE customer_portal_user ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMP NULL;
+ALTER TABLE customer_portal_user ADD COLUMN IF NOT EXISTS suspended_by INTEGER NULL REFERENCES employee(employee_id);
+ALTER TABLE customer_portal_user DROP CONSTRAINT IF EXISTS chk_cpu_status;
+ALTER TABLE customer_portal_user ADD CONSTRAINT chk_cpu_status
+    CHECK (status IN ('active', 'suspended', 'revoked'));
 
 -- Message thread hung off any portal-visible document.
 --

@@ -288,7 +288,12 @@ func (h *PortalAccessOps) ResendPortalInvite(w http.ResponseWriter, r *http.Requ
 		fail(w, http.StatusInternalServerError, "Failed to load portal login.")
 		return
 	}
-	if user.Status != portal.StatusActive {
+	switch user.Status {
+	case portal.StatusSuspended:
+		fail(w, http.StatusConflict,
+			"That portal login is suspended. Resume it before resending the invitation.")
+		return
+	case portal.StatusRevoked:
 		fail(w, http.StatusConflict, "That portal login has been revoked. Grant access again instead.")
 		return
 	}
@@ -330,6 +335,9 @@ func portalUserView(u *portal.User, invite *tenancy.PortalInvite) map[string]any
 	view := map[string]any{
 		"id": u.ID, "email": u.Email, "fullName": u.FullName,
 		"status": u.Status, "createdAt": u.CreatedAt, "inviteStatus": "none",
+	}
+	if u.SuspendedAt != nil {
+		view["suspendedAt"] = u.SuspendedAt
 	}
 	if u.RevokedAt != nil {
 		view["revokedAt"] = u.RevokedAt
@@ -453,6 +461,148 @@ func (h *PortalAccessOps) RevokePortalUser(w http.ResponseWriter, r *http.Reques
 		"identity", user.IdentityID, "tenant", tenant.ID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// SuspendPortalUser pauses one portal login without withdrawing it.
+// Path: POST /api/tenant/customers/{customerUuid}/portal-users/{id}/suspend
+//
+// Unlike RevokePortalUser, this leaves any pending invitation alone — a
+// suspension is expected to be undone, so an in-flight invite should still be
+// there to resend once the login is resumed.
+func (h *PortalAccessOps) SuspendPortalUser(w http.ResponseWriter, r *http.Request) {
+	pool, actorIdentityID, ok := h.authPortalAccess(w, r, authz.ActionUpdate)
+	if !ok {
+		return
+	}
+	tenant, err := tenancy.TenantFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+	customerID, _, ok := h.customerForPortal(w, r, pool, false)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		fail(w, http.StatusBadRequest, "Portal user id is required.")
+		return
+	}
+
+	user, err := portal.GetUser(r.Context(), pool, customerID, id)
+	if errors.Is(err, portal.ErrPortalUserNotFound) {
+		fail(w, http.StatusNotFound, "Portal login not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load portal login.")
+		return
+	}
+
+	actorEmp := employeeIDOrNil(r, pool, actorIdentityID)
+	if err := portal.SuspendUser(r.Context(), pool, customerID, id, actorEmp); err != nil {
+		if errors.Is(err, portal.ErrPortalUserNotFound) {
+			fail(w, http.StatusConflict, "That portal login is not active.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to suspend portal login.")
+		return
+	}
+	// Same control-plane withdrawal as a revoke — the workspace switcher and
+	// login must stop accepting this identity for this tenant immediately.
+	if err := h.CP.RevokePortalLink(r.Context(), user.IdentityID, tenant.ID); err != nil &&
+		!errors.Is(err, tenancy.ErrPortalLinkNotFound) {
+		log.Printf("warn: revoke portal link for identity %s: %v", user.IdentityID, err)
+	}
+	if err := h.CP.RevokeAllRefreshTokens(r.Context(), user.IdentityID); err != nil {
+		log.Printf("warn: revoke refresh tokens for identity %s: %v", user.IdentityID, err)
+	}
+
+	logSecurityEvent(r, "portal_access_suspended", "actor", actorIdentityID,
+		"identity", user.IdentityID, "tenant", tenant.ID)
+
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// ResumePortalUser reactivates a suspended portal login.
+// Path: POST /api/tenant/customers/{customerUuid}/portal-users/{id}/resume
+func (h *PortalAccessOps) ResumePortalUser(w http.ResponseWriter, r *http.Request) {
+	pool, actorIdentityID, ok := h.authPortalAccess(w, r, authz.ActionUpdate)
+	if !ok {
+		return
+	}
+	tenant, err := tenancy.TenantFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+	customerID, _, ok := h.customerForPortal(w, r, pool, false)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		fail(w, http.StatusBadRequest, "Portal user id is required.")
+		return
+	}
+
+	user, err := portal.GetUser(r.Context(), pool, customerID, id)
+	if errors.Is(err, portal.ErrPortalUserNotFound) {
+		fail(w, http.StatusNotFound, "Portal login not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load portal login.")
+		return
+	}
+
+	if err := portal.ResumeUser(r.Context(), pool, customerID, id); err != nil {
+		if errors.Is(err, portal.ErrPortalUserNotFound) {
+			fail(w, http.StatusConflict, "That portal login is not suspended.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to resume portal login.")
+		return
+	}
+	// Deliberately CreatePortalLink, not a status flip on the existing row: it
+	// is idempotent (ON CONFLICT DO UPDATE) and identical to how a fresh grant
+	// reactivates a link, so resume and grant share one code path here.
+	if _, err := h.CP.CreatePortalLink(r.Context(), user.IdentityID, tenant.ID); err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to resume portal login.")
+		return
+	}
+
+	logSecurityEvent(r, "portal_access_resumed", "actor", actorIdentityID,
+		"identity", user.IdentityID, "tenant", tenant.ID)
+
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// ListAllPortalUsers lists every portal login in the tenant, across all
+// customers — the roster staff use to see who from outside can get into the
+// workspace, without visiting each customer record individually.
+// Path: GET /api/tenant/portal-users
+func (h *PortalAccessOps) ListAllPortalUsers(w http.ResponseWriter, r *http.Request) {
+	pool, _, ok := h.authPortalAccess(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	users, err := portal.ListUsersForTenant(r.Context(), pool)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to list portal logins.")
+		return
+	}
+
+	views := make([]map[string]any, 0, len(users))
+	for i := range users {
+		u := users[i]
+		view := portalUserView(&u.User, nil)
+		view["customerUuid"] = u.CustomerUUID
+		view["customerName"] = u.CustomerName
+		view["grantedByName"] = u.GrantedByName
+		views = append(views, view)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "portalUsers": views})
 }
 
 // identityIsStaff reports whether an identity is a workspace member anywhere.

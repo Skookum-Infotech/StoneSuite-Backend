@@ -357,12 +357,16 @@ var catalog = []Permission{
 	{ResourceExpense, ActionDelete},
 	{ResourceExpense, ActionTransition},
 
-	// Portal access has no `update`: a login is granted or withdrawn, never
-	// edited. The customer it belongs to is fixed at creation — repointing an
-	// existing credential at a different customer would be a silent data-access
+	// `update` covers suspend/resume only: a reversible pause distinct from
+	// create (mints a new credential) and delete (permanent withdrawal), so a
+	// support role can be granted the ability to pause a login without also
+	// being able to mint new ones or revoke them outright. The customer a
+	// login belongs to is still fixed at creation — repointing an existing
+	// credential at a different customer would be a silent data-access
 	// change, so that path does not exist.
 	{ResourcePortalAccess, ActionCreate},
 	{ResourcePortalAccess, ActionRead},
+	{ResourcePortalAccess, ActionUpdate},
 	{ResourcePortalAccess, ActionDelete},
 
 	{ResourceChartOfAccount, ActionCreate},

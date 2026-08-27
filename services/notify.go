@@ -21,17 +21,22 @@ type RecipientTarget struct {
 
 // NotificationRequest is the payload sent to the notify service.
 type NotificationRequest struct {
-	TenantID    string             `json:"tenantId"`
-	Recipients  []RecipientTarget  `json:"recipients"`
-	ActorUserID string             `json:"actorUserId,omitempty"`
-	EventType   string             `json:"eventType"`
-	Resource    string             `json:"resource"`
-	ResourceID  string             `json:"resourceId"`
-	Title       string             `json:"title"`
-	Body        string             `json:"body,omitempty"`
-	Link        string             `json:"link,omitempty"`
-	Channels    []string           `json:"channels,omitempty"`
-	Attachments []NotifyAttachment `json:"attachments,omitempty"`
+	TenantID    string            `json:"tenantId"`
+	Recipients  []RecipientTarget `json:"recipients"`
+	ActorUserID string            `json:"actorUserId,omitempty"`
+	EventType   string            `json:"eventType"`
+	Resource    string            `json:"resource"`
+	ResourceID  string            `json:"resourceId"`
+	Title       string            `json:"title"`
+	Body        string            `json:"body,omitempty"`
+	Link        string            `json:"link,omitempty"`
+	Channels    []string          `json:"channels,omitempty"`
+	// EmailBodyHTML, when set, is used by stonesuite-notify verbatim as the
+	// email's HTML body instead of its generic title/body template — for
+	// callers (e.g. a document-send customer email) that need their own
+	// branding.
+	EmailBodyHTML string             `json:"emailBodyHtml,omitempty"`
+	Attachments   []NotifyAttachment `json:"attachments,omitempty"`
 }
 
 // NotifyAttachment is a single file attached to a notification's email

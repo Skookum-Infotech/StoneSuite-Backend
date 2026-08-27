@@ -247,4 +247,3 @@ func sendViaSMTP(cfg config.Config, to, subject, body string) error {
 	log.Printf("Email sent via SMTP to %s", to)
 	return nil
 }
-

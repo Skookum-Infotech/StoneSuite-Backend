@@ -76,6 +76,38 @@ func TestNotifyOwnerOfSend_NoOwnerID_DoesNotCall(t *testing.T) {
 	assert.False(t, called)
 }
 
+func TestCustomerSendRequest_OneRecipientPerToAndCCAddress(t *testing.T) {
+	req := customerSendRequest("tenant-1", DocMeta{WorkflowKey: "salesorder"}, "rec-1", "Sales Order SO-1",
+		docpdf.PrintableDoc{Kind: "SALES ORDER", Number: "SO-1", Seller: docpdf.Seller{Name: "Acme"}},
+		"Please review.", []string{"buyer@example.com"}, []string{"ap@example.com"},
+		"SO-1.pdf", []byte("%PDF-1.4"))
+
+	require.Len(t, req.Recipients, 2)
+	assert.Equal(t, "buyer@example.com", req.Recipients[0].Email)
+	assert.Empty(t, req.Recipients[0].UserID)
+	assert.Equal(t, "ap@example.com", req.Recipients[1].Email)
+	assert.Equal(t, "tenant-1", req.TenantID)
+	assert.Equal(t, "document.sent", req.EventType)
+	assert.Equal(t, "salesorder", req.Resource)
+	assert.Equal(t, "rec-1", req.ResourceID)
+	assert.Equal(t, "Sales Order SO-1", req.Title)
+	assert.Contains(t, req.EmailBodyHTML, "Please review.")
+	assert.Contains(t, req.EmailBodyHTML, "Acme")
+	assert.Equal(t, []string{"email"}, req.Channels)
+	require.Len(t, req.Attachments, 1)
+	assert.Equal(t, "SO-1.pdf", req.Attachments[0].FileName)
+	assert.Equal(t, "application/pdf", req.Attachments[0].ContentType)
+}
+
+func TestCustomerSendRequest_NoCC_OneRecipient(t *testing.T) {
+	req := customerSendRequest("tenant-1", DocMeta{WorkflowKey: "invoice"}, "rec-1", "Invoice INV-1",
+		docpdf.PrintableDoc{Kind: "INVOICE", Number: "INV-1", Seller: docpdf.Seller{Name: "Acme"}},
+		"", []string{"buyer@example.com"}, nil, "INV-1.pdf", []byte("%PDF-1.4"))
+
+	require.Len(t, req.Recipients, 1)
+	assert.Equal(t, "buyer@example.com", req.Recipients[0].Email)
+}
+
 func TestLooksLikeEmail(t *testing.T) {
 	tests := []struct {
 		name string

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/config"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/salesorder"
@@ -144,6 +145,16 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 		},
 	})
 	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
+
+	// Send() now emails the customer copy via the Notify service
+	// (services.SendNotification), not a direct Resend/SMTP call -- stub it
+	// out the same way services/notify_test.go does, since CI runs this
+	// dbtest without a live Notify service.
+	notifyStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(notifyStub.Close)
+	config.AppConfig = config.Config{NotifyURL: notifyStub.URL, NotifyAPIKey: "nk_dbtest_stub_secret"}
 
 	resolver := tenancy.NewResolver(cp, router)
 	handler := resolver.Middleware(http.HandlerFunc(docOps.Send))

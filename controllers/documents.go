@@ -143,6 +143,15 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Needed up front (not just for the owner ping, as before): the
+	// customer email itself is now a Notify create-request, which requires
+	// a real tenantId.
+	tenant, tErr := tenancy.TenantFromContext(r.Context())
+	if tErr != nil {
+		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+
 	var req sendDocRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
@@ -156,7 +165,8 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "At least one recipient is required.")
 		return
 	}
-	for _, addr := range append(append([]string{}, to...), normalizeRecipients(req.CC)...) {
+	cc := normalizeRecipients(req.CC)
+	for _, addr := range append(append([]string{}, to...), cc...) {
 		if !looksLikeEmail(addr) {
 			fail(w, http.StatusBadRequest, "Invalid recipient email: "+addr)
 			return
@@ -180,10 +190,11 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	fileName := workflow.SanitizeFileName(meta.Number + ".pdf")
 	actorUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
 
-	// 2. Email with the PDF attached.
-	if err := services.SendDocumentEmail(to, normalizeRecipients(req.CC), subject,
-		documentEmailHTML(doc, req.Message),
-		[]services.EmailAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
+	// 2. Email with the PDF attached, via Notify — gets the same
+	// queue/retry/audit reliability layer the owner ping below already
+	// uses, instead of a direct, unretried Resend/SMTP call.
+	if err := services.SendNotification(r.Context(),
+		customerSendRequest(tenant.ID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
 	); err != nil {
 		fail(w, http.StatusBadGateway, "Failed to send email.")
 		return
@@ -192,7 +203,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	// 3. Record the send + audit (best-effort audit).
 	sendID, err := workflow.InsertDocumentSend(r.Context(), pool, workflow.DocumentSend{
 		RecordID: recordID, WorkflowKey: meta.WorkflowKey,
-		SentTo: joinRecipients(to), CC: joinRecipients(normalizeRecipients(req.CC)),
+		SentTo: joinRecipients(to), CC: joinRecipients(cc),
 		Subject: subject, SentByUserID: actorUserID,
 	})
 	if err != nil {
@@ -202,15 +213,39 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	_ = workflow.LogAudit(r.Context(), pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
 
-	tenant, tErr := tenancy.TenantFromContext(r.Context())
-	if tErr == nil {
-		notifyOwnerOfSend(r.Context(), services.SendNotification, tenant.ID, ownerUserID,
-			doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
-	}
+	notifyOwnerOfSend(r.Context(), services.SendNotification, tenant.ID, ownerUserID,
+		doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "sendId": sendID, "sentTo": to,
 	})
+}
+
+// customerSendRequest builds the Notify create request for a document-send's
+// customer copy: one email-only recipient per to/cc address (Notify has no
+// CC concept — each address becomes its own notification, delivery, and
+// audit entry, individually addressed rather than sharing a To/Cc header),
+// sharing the same branded HTML body and PDF attachment.
+func customerSendRequest(
+	tenantID string, meta DocMeta, recordID, subject string,
+	doc docpdf.PrintableDoc, message string, to, cc []string, fileName string, pdf []byte,
+) services.NotificationRequest {
+	recipients := make([]services.RecipientTarget, 0, len(to)+len(cc))
+	for _, addr := range append(append([]string{}, to...), cc...) {
+		recipients = append(recipients, services.RecipientTarget{Email: addr})
+	}
+	return services.NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    recipients,
+		EventType:     "document.sent",
+		Resource:      meta.WorkflowKey,
+		ResourceID:    recordID,
+		Title:         subject,
+		Body:          "Document sent.",
+		EmailBodyHTML: documentEmailHTML(doc, message),
+		Channels:      []string{"email"},
+		Attachments:   []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
+	}
 }
 
 // Sends returns a record's document send history. RBAC: <type>:read.
@@ -248,9 +283,9 @@ func joinRecipients(in []string) string { return strings.Join(in, ", ") }
 
 // looksLikeEmail is a minimal, allocation-free sanity check (not full RFC 5322).
 // Rejecting header-injection characters here is required, not just cosmetic:
-// this value ends up unsanitized in buildMIME's "To:"/"Cc:" header lines, and
-// an address carrying \r\n could inject arbitrary extra headers or SMTP
-// commands into the outgoing message.
+// this value is forwarded unsanitized to stonesuite-notify, which builds raw
+// SMTP header lines from it, and an address carrying \r\n could inject
+// arbitrary extra headers or SMTP commands into the outgoing message.
 func looksLikeEmail(s string) bool {
 	at := strings.IndexByte(s, '@')
 	if at <= 0 || at >= len(s)-1 || strings.IndexByte(s[at+1:], '.') < 0 {

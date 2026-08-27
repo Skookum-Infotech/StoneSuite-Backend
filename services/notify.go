@@ -76,7 +76,12 @@ func SendNotification(ctx context.Context, req NotificationRequest) error {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Api-Key", cfg.NotifyAPIKey)
+	// stonesuite-notify's /api/notifications/internal is gated by
+	// middleware.RequireInternalSecret, which checks X-Internal-Secret
+	// against a single shared secret (INTERNAL_SERVICE_SECRET) -- not a
+	// scoped X-Api-Key. NotifyAPIKey holds that shared secret's value; only
+	// the header name here needs to match notify's actual auth model.
+	httpReq.Header.Set("X-Internal-Secret", cfg.NotifyAPIKey)
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {

@@ -15,9 +15,11 @@ import (
 
 func TestSendNotification_PostsToCorrectPath(t *testing.T) {
 	var gotPath string
+	var gotHeader string
 	var gotBody NotificationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotHeader = r.Header.Get("X-Internal-Secret")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -39,6 +41,9 @@ func TestSendNotification_PostsToCorrectPath(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "/api/notifications/internal", gotPath)
+	// stonesuite-notify's RequireInternalSecret middleware checks this exact
+	// header name (middleware/auth.go) -- X-Api-Key would 401 in production.
+	assert.Equal(t, "nk_dev_test_secret", gotHeader)
 	assert.Equal(t, "tenant-1", gotBody.TenantID)
 	require.Len(t, gotBody.Attachments, 1)
 	assert.Equal(t, "INV-1.pdf", gotBody.Attachments[0].FileName)

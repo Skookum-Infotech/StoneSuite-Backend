@@ -283,9 +283,9 @@ func joinRecipients(in []string) string { return strings.Join(in, ", ") }
 
 // looksLikeEmail is a minimal, allocation-free sanity check (not full RFC 5322).
 // Rejecting header-injection characters here is required, not just cosmetic:
-// this value ends up unsanitized in buildMIME's "To:"/"Cc:" header lines, and
-// an address carrying \r\n could inject arbitrary extra headers or SMTP
-// commands into the outgoing message.
+// this value is forwarded unsanitized to stonesuite-notify, which builds raw
+// SMTP header lines from it, and an address carrying \r\n could inject
+// arbitrary extra headers or SMTP commands into the outgoing message.
 func looksLikeEmail(s string) bool {
 	at := strings.IndexByte(s, '@')
 	if at <= 0 || at >= len(s)-1 || strings.IndexByte(s[at+1:], '.') < 0 {

@@ -1241,7 +1241,7 @@ func (h *TenantOps) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := resetLink(token)
-	if err := services.SendPasswordResetEmail(identity.Email, identity.FullName, link); err != nil {
+	if err := services.SendPasswordResetEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, identity.FullName, link); err != nil {
 		log.Printf("password reset email to %s failed (token still valid): %v", identity.Email, err)
 	}
 

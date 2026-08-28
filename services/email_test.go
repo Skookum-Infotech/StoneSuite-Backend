@@ -53,3 +53,18 @@ func TestBuildUserInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/accept?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
 }
+
+func TestBuildPasswordResetNotification(t *testing.T) {
+	req := buildPasswordResetNotification("tenant-1", "identity-1", "user@example.com", "Sam User", "https://app.example/reset?token=abc")
+
+	assert.Equal(t, "tenant-1", req.TenantID)
+	require.Len(t, req.Recipients, 1)
+	assert.Equal(t, "user@example.com", req.Recipients[0].Email)
+	assert.Equal(t, "identity.password_reset", req.EventType)
+	assert.Equal(t, "identity", req.Resource)
+	assert.Equal(t, "identity-1", req.ResourceID)
+	assert.Equal(t, "Reset your StoneSuite password", req.Title)
+	assert.Contains(t, req.EmailBodyHTML, "Sam User")
+	assert.Contains(t, req.EmailBodyHTML, "https://app.example/reset?token=abc")
+	assert.Equal(t, []string{"email"}, req.Channels)
+}

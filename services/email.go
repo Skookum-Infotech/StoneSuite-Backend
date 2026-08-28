@@ -126,7 +126,42 @@ func SendUserInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail
 	return SendNotification(ctx, buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink))
 }
 
-// SendPasswordResetEmail sends a password-reset link to an existing account holder.
+// buildPasswordResetNotification builds the Notify request for a
+// forgot-password reset-link email.
+func buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipientName, resetLink string) NotificationRequest {
+	subject := "Reset your StoneSuite password"
+	body := fmt.Sprintf(`
+		<html>
+		<body style="font-family: Arial, sans-serif; color: #333;">
+			<h2>Reset your password</h2>
+			<p>Hello%s,</p>
+			<p>We received a request to reset the password for your StoneSuite account.</p>
+			<p>Click the link below to choose a new password (expires in 1 hour):</p>
+			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
+			<p>If the button does not work, copy and paste this link into your browser:</p>
+			<p>%s</p>
+			<p>If you did not request a password reset, you can safely ignore this email — your password will not change.</p>
+			<p>Best regards,<br>StoneSuite Team</p>
+		</body>
+		</html>
+	`, nameClause(recipientName), resetLink, resetLink)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "identity.password_reset",
+		Resource:      "identity",
+		ResourceID:    identityID,
+		Title:         subject,
+		Body:          "Password reset email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+func SendPasswordResetEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName, resetLink string) error {
+	return SendNotification(ctx, buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipientName, resetLink))
+}
+
 // SendPortalInviteEmail invites an approved customer to set up their portal
 // login. Distinct from SendUserInviteEmail: the recipient is a customer, not a
 // colleague joining the workspace, so the copy must not imply staff access.
@@ -149,26 +184,6 @@ func SendPortalInviteEmail(recipientEmail, recipientName, workspaceName, setupLi
 		</html>
 	`, workspaceName, nameClause(recipientName), workspaceName,
 		setupLink, setupLink, expiryHours, workspaceName)
-	return sendEmail(recipientEmail, subject, body)
-}
-
-func SendPasswordResetEmail(recipientEmail, recipientName, resetLink string) error {
-	subject := "Reset your StoneSuite password"
-	body := fmt.Sprintf(`
-		<html>
-		<body style="font-family: Arial, sans-serif; color: #333;">
-			<h2>Reset your password</h2>
-			<p>Hello%s,</p>
-			<p>We received a request to reset the password for your StoneSuite account.</p>
-			<p>Click the link below to choose a new password (expires in 1 hour):</p>
-			<p><a href="%s" style="background-color: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
-			<p>If the button does not work, copy and paste this link into your browser:</p>
-			<p>%s</p>
-			<p>If you did not request a password reset, you can safely ignore this email — your password will not change.</p>
-			<p>Best regards,<br>StoneSuite Team</p>
-		</body>
-		</html>
-	`, nameClause(recipientName), resetLink, resetLink)
 	return sendEmail(recipientEmail, subject, body)
 }
 

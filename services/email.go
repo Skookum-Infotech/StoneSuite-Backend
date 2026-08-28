@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +14,9 @@ import (
 	"stonesuite-backend/config"
 )
 
-// SendOnboardingInviteEmail sends an invitation email for customer onboarding.
-func SendOnboardingInviteEmail(recipientEmail, recipientName, inviteLink string) error {
+// buildOnboardingInviteNotification builds the Notify request for a tenant
+// onboarding invite email.
+func buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink string) NotificationRequest {
 	subject := "Your StoneSuite Onboarding Invitation"
 	body := fmt.Sprintf(`
 		<html>
@@ -31,7 +33,22 @@ func SendOnboardingInviteEmail(recipientEmail, recipientName, inviteLink string)
 		</body>
 		</html>
 	`, recipientName, inviteLink, inviteLink)
-	return sendEmail(recipientEmail, subject, body)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "tenant.onboarding_invited",
+		Resource:      "tenant",
+		ResourceID:    inviteID,
+		Title:         subject,
+		Body:          "Onboarding invite email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+// SendOnboardingInviteEmail sends an invitation email for customer onboarding.
+func SendOnboardingInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, inviteLink string) error {
+	return SendNotification(ctx, buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink))
 }
 
 // SendPasswordSetupEmail sends the "set your password" email after a customer's

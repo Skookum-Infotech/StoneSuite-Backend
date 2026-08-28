@@ -409,7 +409,7 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := applyLink(token)
-	emailErr := services.SendOnboardingInviteEmail(req.ContactEmail, req.RecipientName, link)
+	emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, req.ContactEmail, req.RecipientName, link)
 	if emailErr != nil {
 		log.Printf("WARNING: invite email to %s failed: %v", req.ContactEmail, emailErr)
 	}
@@ -674,7 +674,7 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		// the owner can always copy the link if delivery is unavailable (e.g. no
 		// SMTP configured in dev). Surface the outcome via emailSent.
 		link := applyLink(token)
-		emailErr := services.SendOnboardingInviteEmail(contactEmail, tenant.DisplayName, link)
+		emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
 		if emailErr != nil {
 			log.Printf("WARNING: resend invite email to %s failed: %v", contactEmail, emailErr)
 		}

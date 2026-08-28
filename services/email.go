@@ -89,8 +89,9 @@ func SendPasswordSetupEmail(ctx context.Context, tenantID, identityID, recipient
 	return SendNotification(ctx, buildPasswordSetupNotification(tenantID, identityID, recipientEmail, recipientName, setupLink))
 }
 
-// SendUserInviteEmail sends an email to a colleague invited to join a tenant workspace.
-func SendUserInviteEmail(recipientEmail, recipientName, workspaceName, inviteLink string) error {
+// buildUserInviteNotification builds the Notify request for a colleague
+// workspace invite email.
+func buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink string) NotificationRequest {
 	subject := "You've been invited to " + workspaceName
 	body := fmt.Sprintf(`
 		<html>
@@ -107,7 +108,22 @@ func SendUserInviteEmail(recipientEmail, recipientName, workspaceName, inviteLin
 		</body>
 		</html>
 	`, workspaceName, nameClause(recipientName), workspaceName, inviteLink, inviteLink)
-	return sendEmail(recipientEmail, subject, body)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "user.invited",
+		Resource:      "user",
+		ResourceID:    inviteID,
+		Title:         subject,
+		Body:          "User invite email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+// SendUserInviteEmail sends an email to a colleague invited to join a tenant workspace.
+func SendUserInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink string) error {
+	return SendNotification(ctx, buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink))
 }
 
 // SendPasswordResetEmail sends a password-reset link to an existing account holder.

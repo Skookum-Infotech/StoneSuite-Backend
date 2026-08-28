@@ -216,7 +216,7 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := userInviteLink(token)
-	if err := services.SendUserInviteEmail(req.Email, req.FullName, tenant.DisplayName, link); err != nil {
+	if err := services.SendUserInviteEmail(r.Context(), tenant.ID, invite.ID, req.Email, req.FullName, tenant.DisplayName, link); err != nil {
 		log.Printf("user invite email to %s failed (invite still valid): %v", req.Email, err)
 	}
 
@@ -495,7 +495,7 @@ func (h *UserOps) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := userInviteLink(token)
-	if err := services.SendUserInviteEmail(refreshed.Email, refreshed.FullName, tenant.DisplayName, link); err != nil {
+	if err := services.SendUserInviteEmail(r.Context(), tenant.ID, refreshed.ID, refreshed.Email, refreshed.FullName, tenant.DisplayName, link); err != nil {
 		log.Printf("resend user invite email to %s failed (link still valid): %v", refreshed.Email, err)
 	}
 

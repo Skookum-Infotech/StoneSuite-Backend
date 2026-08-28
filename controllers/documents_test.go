@@ -45,7 +45,7 @@ func TestNotifyOwnerOfSend_CallsWithOwnerID(t *testing.T) {
 		return nil
 	}
 
-	notifyOwnerOfSend(context.Background(), notify, "tenant-1", "owner-1",
+	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1",
 		docpdf.PrintableDoc{Kind: "INVOICE", Seller: docpdf.Seller{Name: "Acme"}},
 		"INV-1", "invoice", "rec-1", []string{"bob@buyer.example"},
 		[]byte("%PDF-1.4"), "INV-1.pdf")
@@ -54,6 +54,7 @@ func TestNotifyOwnerOfSend_CallsWithOwnerID(t *testing.T) {
 	assert.Equal(t, "tenant-1", gotReq.TenantID)
 	require.Len(t, gotReq.Recipients, 1)
 	assert.Equal(t, "owner-1", gotReq.Recipients[0].UserID)
+	assert.Equal(t, "owner@example.com", gotReq.Recipients[0].Email)
 	assert.Equal(t, "document.sent", gotReq.EventType)
 	assert.Equal(t, "invoice", gotReq.Resource)
 	assert.Equal(t, "rec-1", gotReq.ResourceID)
@@ -69,7 +70,7 @@ func TestNotifyOwnerOfSend_NoOwnerID_DoesNotCall(t *testing.T) {
 		return nil
 	}
 
-	notifyOwnerOfSend(context.Background(), notify, "tenant-1", "",
+	notifyOwnerOfSend(context.Background(), notify, "", "tenant-1", "",
 		docpdf.PrintableDoc{Kind: "INVOICE"}, "INV-1", "invoice", "rec-1",
 		[]string{"bob@buyer.example"}, []byte("%PDF-1.4"), "INV-1.pdf")
 
@@ -157,7 +158,7 @@ func TestNotifyOwnerOfSend_NotifyErrors_DoesNotPanicOrReturnError(t *testing.T) 
 	}
 	// Must not panic; notifyOwnerOfSend has no return value to check —
 	// reaching this line without panicking is the assertion.
-	notifyOwnerOfSend(context.Background(), notify, "tenant-1", "owner-1",
+	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1",
 		docpdf.PrintableDoc{Kind: "INVOICE"}, "INV-1", "invoice", "rec-1",
 		[]string{"bob@buyer.example"}, []byte("%PDF-1.4"), "INV-1.pdf")
 }

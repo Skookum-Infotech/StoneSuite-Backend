@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +16,7 @@ import (
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/query"
+	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
 )
@@ -395,6 +398,9 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditCRM(r, pool, identityID, "create", key, rec.ID, nil, rec)
+	if key == "customer" {
+		notifyCustomerWelcome(r.Context(), services.SendNotification, rec)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "record": rec})
 }
 
@@ -561,11 +567,68 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditCRM(r, pool, identityID, "convert", req.TargetWorkflowKey, newRec.ID, nil, newRec)
+	if req.TargetWorkflowKey == "customer" {
+		notifyCustomerWelcome(r.Context(), services.SendNotification, newRec)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"success":        true,
 		"record":         newRec,
 		"sourceRecordId": sourceID,
 	})
+}
+
+// notifyCustomerWelcome best-effort-emails a newly minted customer record's
+// contact a branded welcome message (with the company logo — see
+// welcomeEmailHTML). Fire-and-forget: the customer record has already been
+// created by the time this runs, and a Notify outage must never undo that —
+// same reasoning as documents.go's notifyOwnerOfSend. No-ops silently if the
+// record has no contact email (CreateInput only requires one for a CUST
+// record minted directly via CreateRecord; a converted lead/prospect may
+// still lack one if the source record never collected it).
+func notifyCustomerWelcome(
+	ctx context.Context,
+	notify func(context.Context, services.NotificationRequest) error,
+	rec *workflow.Record,
+) {
+	email, _ := rec.CoreFields["customer_contact_email"].(string)
+	if email == "" {
+		return
+	}
+	tenant, err := tenancy.TenantFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "crm: tenant not resolved for customer welcome email", "record_id", rec.ID, "error", err)
+		return
+	}
+	name, _ := rec.CoreFields["customer_name"].(string)
+	err = notify(ctx, services.NotificationRequest{
+		TenantID:      tenant.ID,
+		Recipients:    []services.RecipientTarget{{Email: email}},
+		EventType:     "customer.welcome",
+		Resource:      "customer",
+		ResourceID:    rec.ID,
+		Title:         "Welcome to " + tenant.DisplayName + "!",
+		Body:          "Welcome email sent to " + email + ".",
+		EmailBodyHTML: welcomeEmailHTML(tenant.DisplayName, name),
+		Channels:      []string{"email"},
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "crm: welcome email for new customer failed", "record_id", rec.ID, "error", err)
+	}
+}
+
+// welcomeEmailHTML is the branded welcome message sent to a new customer's
+// contact — mirrors documents.go's documentEmailHTML (same logo, same
+// minimal inline styling for broad email-client support).
+func welcomeEmailHTML(tenantName, customerName string) string {
+	greeting := "Hello,"
+	if customerName != "" {
+		greeting = "Hello " + customerName + ","
+	}
+	return `<html><body style="font-family:Arial,sans-serif;color:#333;">` +
+		`<img src="` + frontendBase() + `/logo-dark.png" alt="Logo" style="height:40px;margin-bottom:16px;" />` +
+		`<p>` + greeting + `</p>` +
+		`<p>Welcome to ` + tenantName + `! We're glad to have you as a customer.</p>` +
+		`<p>Regards,<br>` + tenantName + `</p></body></html>`
 }
 
 // ---- approval ---------------------------------------------------------------

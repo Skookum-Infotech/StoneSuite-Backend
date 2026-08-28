@@ -1,17 +1,8 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"net/smtp"
-	"strings"
-
-	"stonesuite-backend/config"
 )
 
 // buildOnboardingInviteNotification builds the Notify request for a tenant
@@ -282,80 +273,3 @@ func nameClause(name string) string {
 	return " " + name
 }
 
-// sendEmail routes through the first available provider:
-//  1. Resend API  — when RESEND_API_KEY is set
-//  2. SMTP        — when SMTP_HOST + SENDER_EMAIL are set
-//  3. No-op       — logs that no provider is configured, returns nil (non-fatal)
-func sendEmail(to, subject, body string) error {
-	cfg := config.AppConfig
-
-	if cfg.ResendAPIKey != "" {
-		return sendViaResend(cfg.ResendAPIKey, cfg.SenderEmail, to, subject, body)
-	}
-	if cfg.SMTPHost != "" && cfg.SenderEmail != "" {
-		return sendViaSMTP(cfg, to, subject, body)
-	}
-
-	log.Printf("INFO: no email provider configured (set RESEND_API_KEY or SMTP_HOST+SENDER_EMAIL) — skipping email to %s", to)
-	return nil
-}
-
-// sendViaResend delivers the email through the Resend HTTP API.
-// Docs: https://resend.com/docs/api-reference/emails/send-email
-func sendViaResend(apiKey, from, to, subject, html string) error {
-	if from == "" {
-		from = "noreply@stonesuite.app"
-	}
-	payload, err := json.Marshal(map[string]any{
-		"from":    from,
-		"to":      []string{to},
-		"subject": subject,
-		"html":    html,
-	})
-	if err != nil {
-		return fmt.Errorf("resend: marshal payload: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("resend: build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("resend: send to %s: %w", to, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("ERROR: Resend API to %s returned HTTP %d: %s", to, resp.StatusCode, respBody)
-		return fmt.Errorf("resend: HTTP %d for %s: %s", resp.StatusCode, to, respBody)
-	}
-
-	log.Printf("Email sent via Resend to %s", to)
-	return nil
-}
-
-// sendViaSMTP delivers the email through the configured SMTP server.
-func sendViaSMTP(cfg config.Config, to, subject, body string) error {
-	auth := smtp.PlainAuth("", cfg.SenderEmail, cfg.SenderPassword, cfg.SMTPHost)
-	toList := strings.Split(to, ",")
-
-	headers := fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-version: 1.0;\r\nContent-Type: text/html; charset=\"UTF-8\";\r\n",
-		cfg.SenderEmail, to, subject,
-	)
-	message := []byte(headers + "\r\n" + body)
-
-	addr := fmt.Sprintf("%s:%s", cfg.SMTPHost, cfg.SMTPPort)
-	if err := smtp.SendMail(addr, auth, cfg.SenderEmail, toList, message); err != nil {
-		log.Printf("ERROR: smtp.SendMail to %s via %s failed: %v", to, addr, err)
-		return fmt.Errorf("send email to %s: %w", to, err)
-	}
-
-	log.Printf("Email sent via SMTP to %s", to)
-	return nil
-}

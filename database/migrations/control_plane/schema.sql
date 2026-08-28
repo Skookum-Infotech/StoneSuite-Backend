@@ -421,6 +421,11 @@ CREATE TABLE IF NOT EXISTS platform_feedback (
     reporter_name               VARCHAR(255) NOT NULL DEFAULT '',
 
     category                    VARCHAR(32)  NOT NULL,
+    -- Which section of the app the reporter had open — "area", not
+    -- "workspace": that word already means the tenant a customer-portal
+    -- identity is signed into (identity_tenants). '' means unspecified
+    -- (older rows, or a reporter who skipped it).
+    area                        VARCHAR(32)  NOT NULL DEFAULT '',
     rating                      SMALLINT,
     description                 TEXT         NOT NULL,
     -- Captured silently from the reporter's browser at submission time (no
@@ -450,6 +455,22 @@ CREATE TABLE IF NOT EXISTS platform_feedback (
     CONSTRAINT chk_platform_feedback_priority CHECK (priority IN
         ('low', 'normal', 'high', 'urgent'))
 );
+
+-- Guard for a platform_feedback table created before the area column
+-- existed (this table itself is new, but the guard costs nothing and
+-- matches how every other column added after initial creation is done here).
+ALTER TABLE platform_feedback ADD COLUMN IF NOT EXISTS area VARCHAR(32) NOT NULL DEFAULT '';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_platform_feedback_area'
+    ) THEN
+        ALTER TABLE platform_feedback
+            ADD CONSTRAINT chk_platform_feedback_area CHECK (area = '' OR area IN
+                ('dashboard', 'crm', 'sales', 'purchases', 'inventory', 'finance', 'configuration', 'account', 'other'));
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_platform_feedback_tenant ON platform_feedback(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_platform_feedback_reporter

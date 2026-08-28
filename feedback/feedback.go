@@ -47,6 +47,26 @@ const (
 	CategoryGeneral        = "general"
 )
 
+// Ticket areas — which section of the app the reporter had open, so an
+// admin has some idea where to reproduce a bug without guessing from
+// page_url alone. Named "area", not "workspace": in StoneSuite "workspace"
+// already means the tenant a customer-portal identity is signed into (see
+// PortalWorkspace on the frontend) — reusing that word here would collide
+// with an unrelated concept. The frontend auto-selects one of these from the
+// reporter's current route, but the value is still just their choice at
+// submit time — not re-derived or verified server-side.
+const (
+	AreaDashboard     = "dashboard"
+	AreaCRM           = "crm"
+	AreaSales         = "sales"
+	AreaPurchases     = "purchases"
+	AreaInventory     = "inventory"
+	AreaFinance       = "finance"
+	AreaConfiguration = "configuration"
+	AreaAccount       = "account"
+	AreaOther         = "other"
+)
+
 // Ticket statuses. Platform admins move a ticket through these; the reporter
 // only ever reads the current value.
 const (
@@ -101,6 +121,19 @@ var validCategories = map[string]bool{
 	CategoryGeneral:        true,
 }
 
+// validAreas also accepts "" (unspecified) — see ValidArea.
+var validAreas = map[string]bool{
+	AreaDashboard:     true,
+	AreaCRM:           true,
+	AreaSales:         true,
+	AreaPurchases:     true,
+	AreaInventory:     true,
+	AreaFinance:       true,
+	AreaConfiguration: true,
+	AreaAccount:       true,
+	AreaOther:         true,
+}
+
 var validStatuses = map[string]bool{
 	StatusNew:        true,
 	StatusInProgress: true,
@@ -122,6 +155,10 @@ var validReporterKinds = map[string]bool{
 
 // ValidCategory reports whether c is one of the fixed category values.
 func ValidCategory(c string) bool { return validCategories[c] }
+
+// ValidArea reports whether a is one of the fixed area values, or empty
+// (older tickets predating this field, or a reporter who skipped it).
+func ValidArea(a string) bool { return a == "" || validAreas[a] }
 
 // ValidStatus reports whether s is one of the fixed status values.
 func ValidStatus(s string) bool { return validStatuses[s] }
@@ -151,6 +188,7 @@ type Ticket struct {
 	ReporterEmail           string    `json:"reporterEmail"`
 	ReporterName            string    `json:"reporterName"`
 	Category                string    `json:"category"`
+	Area                    string    `json:"area,omitempty"`
 	Rating                  *int      `json:"rating,omitempty"`
 	Description             string    `json:"description"`
 	PageURL                 string    `json:"pageUrl,omitempty"`
@@ -202,6 +240,7 @@ type CreateInput struct {
 	ReporterEmail      string
 	ReporterName       string
 	Category           string
+	Area               string
 	Rating             *int
 	Description        string
 	PageURL            string
@@ -215,7 +254,7 @@ type CreateInput struct {
 // scanAdminTicket instead, which does select it.
 const ticketColumns = `
 	id, ticket_seq, tenant_id, COALESCE(reporter_identity_id::text, ''), reporter_kind,
-	reporter_email, reporter_name, category, rating, description, page_url, user_agent,
+	reporter_email, reporter_name, category, area, rating, description, page_url, user_agent,
 	status, priority, COALESCE(assigned_admin_identity_id::text, ''),
 	reporter_last_seen_at, created_at, updated_at`
 
@@ -223,7 +262,7 @@ func scanTicket(row pgx.Row) (*Ticket, error) {
 	var t Ticket
 	if err := row.Scan(
 		&t.ID, &t.TicketSeq, &t.TenantID, &t.ReporterIdentityID, &t.ReporterKind,
-		&t.ReporterEmail, &t.ReporterName, &t.Category, &t.Rating, &t.Description, &t.PageURL, &t.UserAgent,
+		&t.ReporterEmail, &t.ReporterName, &t.Category, &t.Area, &t.Rating, &t.Description, &t.PageURL, &t.UserAgent,
 		&t.Status, &t.Priority, &t.AssignedAdminIdentityID,
 		&t.ReporterLastSeenAt, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
@@ -241,11 +280,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInput) (*Ticket, e
 	row := pool.QueryRow(ctx, `
 		INSERT INTO platform_feedback (
 			tenant_id, reporter_identity_id, reporter_kind, reporter_email, reporter_name,
-			category, rating, description, page_url, user_agent
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			category, area, rating, description, page_url, user_agent
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING `+ticketColumns,
 		in.TenantID, nullable(in.ReporterIdentityID), in.ReporterKind, in.ReporterEmail, in.ReporterName,
-		in.Category, in.Rating, in.Description, in.PageURL, in.UserAgent,
+		in.Category, in.Area, in.Rating, in.Description, in.PageURL, in.UserAgent,
 	)
 	return scanTicket(row)
 }
@@ -364,7 +403,7 @@ func ListForAdmin(ctx context.Context, pool *pgxpool.Pool, f AdminFilter) ([]Tic
 const adminTicketColumns = `
 	pf.id, pf.ticket_seq, pf.tenant_id, COALESCE(t.display_name, ''),
 	COALESCE(pf.reporter_identity_id::text, ''), pf.reporter_kind,
-	pf.reporter_email, pf.reporter_name, pf.category, pf.rating, pf.description,
+	pf.reporter_email, pf.reporter_name, pf.category, pf.area, pf.rating, pf.description,
 	pf.page_url, pf.user_agent, pf.status, pf.priority,
 	COALESCE(pf.assigned_admin_identity_id::text, ''), COALESCE(admin.full_name, ''),
 	pf.internal_notes, pf.reporter_last_seen_at, pf.created_at, pf.updated_at`
@@ -374,7 +413,7 @@ func scanAdminTicket(row pgx.Row) (*Ticket, error) {
 	if err := row.Scan(
 		&t.ID, &t.TicketSeq, &t.TenantID, &t.TenantName,
 		&t.ReporterIdentityID, &t.ReporterKind,
-		&t.ReporterEmail, &t.ReporterName, &t.Category, &t.Rating, &t.Description,
+		&t.ReporterEmail, &t.ReporterName, &t.Category, &t.Area, &t.Rating, &t.Description,
 		&t.PageURL, &t.UserAgent, &t.Status, &t.Priority,
 		&t.AssignedAdminIdentityID, &t.AssignedAdminName,
 		&t.InternalNotes, &t.ReporterLastSeenAt, &t.CreatedAt, &t.UpdatedAt,

@@ -14,6 +14,9 @@ func ValidateCreate(in CreateInput) error {
 	if !ValidCategory(in.Category) {
 		return fmt.Errorf("invalid category %q", in.Category)
 	}
+	if !ValidArea(in.Area) {
+		return fmt.Errorf("invalid area %q", in.Area)
+	}
 	if strings.TrimSpace(in.Description) == "" {
 		return fmt.Errorf("description is required")
 	}

@@ -99,6 +99,7 @@ func truncate(s string, max int) string {
 
 type submitFeedbackRequest struct {
 	Category    string `json:"category"`
+	Area        string `json:"area,omitempty"`
 	Rating      *int   `json:"rating,omitempty"`
 	Description string `json:"description"`
 	PageURL     string `json:"pageUrl,omitempty"`
@@ -139,6 +140,7 @@ func (h *FeedbackOps) Submit(w http.ResponseWriter, r *http.Request) {
 		ReporterEmail:      identity.Email,
 		ReporterName:       reporterDisplayName(identity),
 		Category:           req.Category,
+		Area:               req.Area,
 		Rating:             req.Rating,
 		Description:        req.Description,
 		PageURL:            truncate(req.PageURL, maxPageURLLength),

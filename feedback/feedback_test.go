@@ -49,6 +49,33 @@ func TestValidCategory(t *testing.T) {
 	}
 }
 
+func TestValidArea(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"dashboard", AreaDashboard, true},
+		{"crm", AreaCRM, true},
+		{"sales", AreaSales, true},
+		{"purchases", AreaPurchases, true},
+		{"inventory", AreaInventory, true},
+		{"finance", AreaFinance, true},
+		{"configuration", AreaConfiguration, true},
+		{"account", AreaAccount, true},
+		{"other", AreaOther, true},
+		{"empty is valid (unspecified)", "", true},
+		{"unknown", "not_a_real_area", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ValidArea(tc.in); got != tc.want {
+				t.Errorf("ValidArea(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidStatus(t *testing.T) {
 	cases := []struct {
 		name string
@@ -116,6 +143,13 @@ func TestValidateCreate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid report with area",
+			in: CreateInput{
+				ReporterKind: KindStaff, Category: CategoryBug, Area: AreaCRM, Description: "Lead form won't save",
+			},
+			wantErr: false,
+		},
+		{
 			name:    "invalid reporter kind",
 			in:      CreateInput{ReporterKind: "admin", Category: CategoryBug, Description: "x"},
 			wantErr: true,
@@ -123,6 +157,11 @@ func TestValidateCreate(t *testing.T) {
 		{
 			name:    "invalid category",
 			in:      CreateInput{ReporterKind: KindStaff, Category: "student_feedback", Description: "x"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid area",
+			in:      CreateInput{ReporterKind: KindStaff, Category: CategoryBug, Area: "not_a_real_area", Description: "x"},
 			wantErr: true,
 		},
 		{

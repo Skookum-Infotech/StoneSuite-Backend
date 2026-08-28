@@ -391,3 +391,115 @@ CREATE INDEX IF NOT EXISTS idx_portal_invites_identity      ON portal_invites(id
 -- than stacking a second one.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_portal_invites_tenant_email_pending
     ON portal_invites(tenant_id, LOWER(email)) WHERE status = 'pending';
+
+-- ── platform_feedback ─────────────────────────────────────────────────
+-- In-app feedback/bug/feature-request tickets raised by tenant staff or
+-- customer-portal users, reviewed by StoneSuite platform admins. Lives in
+-- the control-plane DB (not the tenant DB) because the admin ticket list is
+-- inherently cross-tenant — scoping it per-tenant would force a fan-out
+-- read across every tenant database just to render one list.
+--
+-- ticket_seq backs the human-facing ticket number ("FB-000123"), formatted
+-- in application code (see feedback.FormatTicketNumber) rather than stored
+-- as text, so the sequence is the single source of truth and can never
+-- drift out of sync with a duplicated string column.
+CREATE SEQUENCE IF NOT EXISTS platform_feedback_ticket_seq;
+
+CREATE TABLE IF NOT EXISTS platform_feedback (
+    id                          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_seq                  BIGINT       NOT NULL DEFAULT nextval('platform_feedback_ticket_seq'),
+    tenant_id                   UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+
+    -- Reporter identity, kept nullable (ON DELETE SET NULL) because a ticket
+    -- must survive the reporter's account being removed later. reporter_email
+    -- / reporter_name are snapshotted at submission time for the same reason
+    -- — the admin list must keep showing who reported it even after the
+    -- identity row is gone.
+    reporter_identity_id        UUID         REFERENCES identities(id) ON DELETE SET NULL,
+    reporter_kind               VARCHAR(16)  NOT NULL,
+    reporter_email              VARCHAR(255) NOT NULL DEFAULT '',
+    reporter_name               VARCHAR(255) NOT NULL DEFAULT '',
+
+    category                    VARCHAR(32)  NOT NULL,
+    rating                      SMALLINT,
+    description                 TEXT         NOT NULL,
+    -- Captured silently from the reporter's browser at submission time (no
+    -- extra field for them to fill in) so admins have repro context for free.
+    page_url                    TEXT         NOT NULL DEFAULT '',
+    user_agent                  TEXT         NOT NULL DEFAULT '',
+
+    status                      VARCHAR(16)  NOT NULL DEFAULT 'new',
+    priority                    VARCHAR(16)  NOT NULL DEFAULT 'normal',
+    assigned_admin_identity_id  UUID         REFERENCES identities(id) ON DELETE SET NULL,
+    internal_notes              TEXT         NOT NULL DEFAULT '',
+
+    -- Last time the reporter viewed this ticket's thread; comments/status
+    -- changes after this timestamp count toward their unread badge.
+    reporter_last_seen_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    created_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_platform_feedback_ticket_seq UNIQUE (ticket_seq),
+    CONSTRAINT chk_platform_feedback_reporter_kind CHECK (reporter_kind IN ('staff', 'portal')),
+    CONSTRAINT chk_platform_feedback_category CHECK (category IN
+        ('bug', 'feature_request', 'ux_improvement', 'performance', 'general')),
+    CONSTRAINT chk_platform_feedback_rating CHECK (rating IS NULL OR (rating BETWEEN 1 AND 5)),
+    CONSTRAINT chk_platform_feedback_status CHECK (status IN
+        ('new', 'in_progress', 'done', 'cancelled')),
+    CONSTRAINT chk_platform_feedback_priority CHECK (priority IN
+        ('low', 'normal', 'high', 'urgent'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_feedback_tenant ON platform_feedback(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_platform_feedback_reporter
+    ON platform_feedback(reporter_identity_id, tenant_id);
+CREATE INDEX IF NOT EXISTS idx_platform_feedback_status ON platform_feedback(status);
+CREATE INDEX IF NOT EXISTS idx_platform_feedback_created ON platform_feedback(created_at DESC);
+
+-- ── platform_feedback_comments ───────────────────────────────────────
+-- Reply thread for a ticket, shared by the reporter's "My Tickets" view and
+-- the platform admin detail page. A status change is appended as a row with
+-- event_type='status_change' rather than living in a separate history
+-- table, so the reporter sees one unified timeline. is_internal rows are
+-- admin-only notes and are filtered out of every reporter-facing response.
+CREATE TABLE IF NOT EXISTS platform_feedback_comments (
+    id                  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    feedback_id         UUID         NOT NULL REFERENCES platform_feedback(id) ON DELETE CASCADE,
+    author_identity_id  UUID         REFERENCES identities(id) ON DELETE SET NULL,
+    author_kind         VARCHAR(16)  NOT NULL,
+    author_name         VARCHAR(255) NOT NULL DEFAULT '',
+    body                TEXT         NOT NULL DEFAULT '',
+    is_internal         BOOLEAN      NOT NULL DEFAULT FALSE,
+    event_type          VARCHAR(16)  NOT NULL DEFAULT 'comment',
+    old_status          VARCHAR(16),
+    new_status          VARCHAR(16),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_platform_feedback_comments_author_kind CHECK
+        (author_kind IN ('staff', 'portal', 'platform_admin')),
+    CONSTRAINT chk_platform_feedback_comments_event_type CHECK
+        (event_type IN ('comment', 'status_change'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_feedback_comments_feedback
+    ON platform_feedback_comments(feedback_id, created_at);
+
+-- ── platform_feedback_attachments ────────────────────────────────────
+-- Files are stored in the REPORTING TENANT's own R2 bucket (tenants.r2_bucket)
+-- under key prefix `feedback/{feedback_id}/...` — that bucket already exists
+-- and already has the app origin in its CORS policy for every tenant, so
+-- submitting a feedback attachment needs no new bucket or CORS change.
+CREATE TABLE IF NOT EXISTS platform_feedback_attachments (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    feedback_id      UUID         NOT NULL REFERENCES platform_feedback(id) ON DELETE CASCADE,
+    file_name        TEXT         NOT NULL,
+    content_type     TEXT         NOT NULL,
+    size_bytes       BIGINT       NOT NULL DEFAULT 0,
+    storage_key      TEXT         NOT NULL UNIQUE,
+    checksum_sha256  TEXT         NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_feedback_attachments_feedback
+    ON platform_feedback_attachments(feedback_id);

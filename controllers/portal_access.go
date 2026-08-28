@@ -251,7 +251,7 @@ func (h *PortalAccessOps) issueInvite(r *http.Request, tenant *tenancy.Tenant,
 		return nil, fmt.Errorf("issue portal invite: %w", err)
 	}
 
-	if merr := services.SendPortalInviteEmail(email, fullName, tenant.DisplayName,
+	if merr := services.SendPortalInviteEmail(r.Context(), tenant.ID, invite.ID, email, fullName, tenant.DisplayName,
 		portalInviteLink(token), inviteExpiryHours()); merr != nil {
 		log.Printf("warn: portal invite email to %s failed: %v", email, merr)
 	}

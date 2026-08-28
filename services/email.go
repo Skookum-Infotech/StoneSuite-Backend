@@ -241,9 +241,9 @@ func SendCustomerPortalInviteEmail(ctx context.Context, tenantID, resourceID, re
 	return SendNotification(ctx, buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink))
 }
 
-// SendCustomerNoteConfirmationEmail confirms to a customer that a note they
-// submitted through the portal was received.
-func SendCustomerNoteConfirmationEmail(recipientEmail, recipientName, tenantDisplayName string) error {
+// buildCustomerNoteConfirmationNotification builds the Notify request
+// confirming a portal-submitted note was received.
+func buildCustomerNoteConfirmationNotification(tenantID, noteID, recipientEmail, recipientName, tenantDisplayName string) NotificationRequest {
 	subject := "Your note to " + tenantDisplayName + " was sent"
 	body := fmt.Sprintf(`
 		<html>
@@ -255,7 +255,23 @@ func SendCustomerNoteConfirmationEmail(recipientEmail, recipientName, tenantDisp
 		</body>
 		</html>
 	`, nameClause(recipientName), tenantDisplayName, tenantDisplayName)
-	return sendEmail(recipientEmail, subject, body)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "customer_note.confirmed",
+		Resource:      "customer_note",
+		ResourceID:    noteID,
+		Title:         subject,
+		Body:          "Note confirmation email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+// SendCustomerNoteConfirmationEmail confirms to a customer that a note they
+// submitted through the portal was received.
+func SendCustomerNoteConfirmationEmail(ctx context.Context, tenantID, noteID, recipientEmail, recipientName, tenantDisplayName string) error {
+	return SendNotification(ctx, buildCustomerNoteConfirmationNotification(tenantID, noteID, recipientEmail, recipientName, tenantDisplayName))
 }
 
 // nameClause formats " {name}" with a leading space, or "" when name is blank.

@@ -99,3 +99,17 @@ func TestBuildCustomerPortalInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "https://portal.example/set-password?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
 }
+
+func TestBuildCustomerNoteConfirmationNotification(t *testing.T) {
+	req := buildCustomerNoteConfirmationNotification("tenant-1", "note-1", "buyer@example.com", "Casey Buyer", "Acme Stone Co")
+
+	assert.Equal(t, "tenant-1", req.TenantID)
+	require.Len(t, req.Recipients, 1)
+	assert.Equal(t, "buyer@example.com", req.Recipients[0].Email)
+	assert.Equal(t, "customer_note.confirmed", req.EventType)
+	assert.Equal(t, "customer_note", req.Resource)
+	assert.Equal(t, "note-1", req.ResourceID)
+	assert.Equal(t, "Your note to Acme Stone Co was sent", req.Title)
+	assert.Contains(t, req.EmailBodyHTML, "Acme Stone Co")
+	assert.Equal(t, []string{"email"}, req.Channels)
+}

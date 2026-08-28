@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/userstore"
 	"stonesuite-backend/workflow"
 )
 
@@ -213,8 +214,8 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	_ = workflow.LogAudit(r.Context(), pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
 
-	notifyOwnerOfSend(r.Context(), services.SendNotification, tenant.ID, ownerUserID,
-		doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
+	notifyOwnerOfSend(r.Context(), services.SendNotification, ownerEmail(r.Context(), pool, ownerUserID),
+		tenant.ID, ownerUserID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "sendId": sendID, "sentTo": to,
@@ -313,6 +314,26 @@ func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
 		`<p>Regards,<br>` + d.Seller.Name + `</p></body></html>`
 }
 
+// ownerEmail best-effort-looks-up the record owner's email for the owner
+// ping below — Notify never resolves an email from a bare userId (it owns
+// no user directory; see services/notify.go), so the caller must supply one
+// alongside the userId for the email channel to have anywhere to send.
+// Lookup failure is logged and swallowed, same as the ping itself: the
+// in-app bell notification still works without an email, since Notify's
+// UserID-scoped preference resolution doesn't depend on it.
+func ownerEmail(ctx context.Context, pool *pgxpool.Pool, ownerUserID string) string {
+	if ownerUserID == "" {
+		return ""
+	}
+	u, err := userstore.GetUserByID(ctx, pool, ownerUserID)
+	if err != nil {
+		slog.WarnContext(ctx, "documents: load owner email for send notification failed",
+			"owner_user_id", ownerUserID, "error", err)
+		return ""
+	}
+	return u.Email
+}
+
 // notifyOwnerOfSend best-effort-notifies the record's internal owner that
 // the document was sent, with the same PDF the customer received attached.
 // notify is injected (defaults to services.SendNotification) so tests don't
@@ -322,7 +343,7 @@ func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
 func notifyOwnerOfSend(
 	ctx context.Context,
 	notify func(context.Context, services.NotificationRequest) error,
-	tenantID, ownerUserID string,
+	ownerUserEmail, tenantID, ownerUserID string,
 	doc docpdf.PrintableDoc, number, workflowKey, recordID string,
 	sentTo []string, pdf []byte, fileName string,
 ) {
@@ -331,7 +352,7 @@ func notifyOwnerOfSend(
 	}
 	err := notify(ctx, services.NotificationRequest{
 		TenantID:   tenantID,
-		Recipients: []services.RecipientTarget{{UserID: ownerUserID}},
+		Recipients: []services.RecipientTarget{{UserID: ownerUserID, Email: ownerUserEmail}},
 		EventType:  "document.sent",
 		Resource:   workflowKey,
 		ResourceID: recordID,

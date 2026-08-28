@@ -86,7 +86,7 @@ func (h *CustomerPortalOps) CreateNote(w http.ResponseWriter, r *http.Request) {
 	// saved regardless of whether it succeeds, matching the existing
 	// invite-email precedent (controllers/user.go InviteUser).
 	if tenant, tErr := tenancy.TenantFromContext(r.Context()); tErr == nil {
-		if mErr := services.SendCustomerNoteConfirmationEmail(note.Submitter.Email, note.Submitter.Name, tenant.DisplayName); mErr != nil {
+		if mErr := services.SendCustomerNoteConfirmationEmail(r.Context(), tenant.ID, note.ID, note.Submitter.Email, note.Submitter.Name, tenant.DisplayName); mErr != nil {
 			log.Printf("customer note confirmation email to %s failed (note still saved): %v", note.Submitter.Email, mErr)
 		}
 	}

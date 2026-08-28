@@ -310,6 +310,7 @@ func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
 		msg = message
 	}
 	return `<html><body style="font-family:Arial,sans-serif;color:#333;">` +
+		`<img src="` + frontendBase() + `/logo-dark.png" alt="Logo" style="height:40px;margin-bottom:16px;" />` +
 		`<p>` + msg + `</p>` +
 		`<p>Regards,<br>` + d.Seller.Name + `</p></body></html>`
 }

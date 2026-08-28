@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,7 +120,7 @@ func (h *CustomerPortalAdminOps) PortalInvite(w http.ResponseWriter, r *http.Req
 	}
 
 	link := customerInviteLink(tenant.Slug, token)
-	if err := services.SendCustomerPortalInviteEmail(req.Email, req.FullName, tenant.DisplayName, link); err != nil {
+	if err := services.SendCustomerPortalInviteEmail(r.Context(), tenant.ID, strconv.Itoa(custInternalID), req.Email, req.FullName, tenant.DisplayName, link); err != nil {
 		log.Printf("customer portal invite email to %s failed (invite still valid): %v", req.Email, err)
 	}
 

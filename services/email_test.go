@@ -68,3 +68,19 @@ func TestBuildPasswordResetNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/reset?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
 }
+
+func TestBuildPortalInviteNotification(t *testing.T) {
+	req := buildPortalInviteNotification("tenant-1", "invite-1", "staffer@example.com", "Pat Staffer", "Acme Stone Co", "https://app.example/portal-setup?token=abc", 72)
+
+	assert.Equal(t, "tenant-1", req.TenantID)
+	require.Len(t, req.Recipients, 1)
+	assert.Equal(t, "staffer@example.com", req.Recipients[0].Email)
+	assert.Equal(t, "portal_user.invited", req.EventType)
+	assert.Equal(t, "portal_user", req.Resource)
+	assert.Equal(t, "invite-1", req.ResourceID)
+	assert.Equal(t, "Acme Stone Co — set up your customer portal access", req.Title)
+	assert.Contains(t, req.EmailBodyHTML, "Pat Staffer")
+	assert.Contains(t, req.EmailBodyHTML, "72 hours")
+	assert.Contains(t, req.EmailBodyHTML, "https://app.example/portal-setup?token=abc")
+	assert.Equal(t, []string{"email"}, req.Channels)
+}

@@ -162,10 +162,9 @@ func SendPasswordResetEmail(ctx context.Context, tenantID, identityID, recipient
 	return SendNotification(ctx, buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipientName, resetLink))
 }
 
-// SendPortalInviteEmail invites an approved customer to set up their portal
-// login. Distinct from SendUserInviteEmail: the recipient is a customer, not a
-// colleague joining the workspace, so the copy must not imply staff access.
-func SendPortalInviteEmail(recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) error {
+// buildPortalInviteNotification builds the Notify request for an approved
+// customer's portal-login setup invite.
+func buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) NotificationRequest {
 	subject := workspaceName + " \u2014 set up your customer portal access"
 	body := fmt.Sprintf(`
 		<html>
@@ -184,7 +183,24 @@ func SendPortalInviteEmail(recipientEmail, recipientName, workspaceName, setupLi
 		</html>
 	`, workspaceName, nameClause(recipientName), workspaceName,
 		setupLink, setupLink, expiryHours, workspaceName)
-	return sendEmail(recipientEmail, subject, body)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "portal_user.invited",
+		Resource:      "portal_user",
+		ResourceID:    inviteID,
+		Title:         subject,
+		Body:          "Portal invite email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+// SendPortalInviteEmail invites an approved customer to set up their portal
+// login. Distinct from SendUserInviteEmail: the recipient is a customer, not a
+// colleague joining the workspace, so the copy must not imply staff access.
+func SendPortalInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) error {
+	return SendNotification(ctx, buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink, expiryHours))
 }
 
 // SendCustomerPortalInviteEmail invites an external customer to set a

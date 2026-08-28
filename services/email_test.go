@@ -84,3 +84,18 @@ func TestBuildPortalInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/portal-setup?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
 }
+
+func TestBuildCustomerPortalInviteNotification(t *testing.T) {
+	req := buildCustomerPortalInviteNotification("tenant-1", "42", "buyer@example.com", "Casey Buyer", "Acme Stone Co", "https://portal.example/set-password?token=abc")
+
+	assert.Equal(t, "tenant-1", req.TenantID)
+	require.Len(t, req.Recipients, 1)
+	assert.Equal(t, "buyer@example.com", req.Recipients[0].Email)
+	assert.Equal(t, "customer_portal.invited", req.EventType)
+	assert.Equal(t, "customer_portal", req.Resource)
+	assert.Equal(t, "42", req.ResourceID)
+	assert.Equal(t, "You've been invited to the Acme Stone Co customer portal", req.Title)
+	assert.Contains(t, req.EmailBodyHTML, "Casey Buyer")
+	assert.Contains(t, req.EmailBodyHTML, "https://portal.example/set-password?token=abc")
+	assert.Equal(t, []string{"email"}, req.Channels)
+}

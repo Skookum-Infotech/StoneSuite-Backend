@@ -203,9 +203,9 @@ func SendPortalInviteEmail(ctx context.Context, tenantID, inviteID, recipientEma
 	return SendNotification(ctx, buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink, expiryHours))
 }
 
-// SendCustomerPortalInviteEmail invites an external customer to set a
-// password and activate their customer-portal login.
-func SendCustomerPortalInviteEmail(recipientEmail, recipientName, tenantDisplayName, setupLink string) error {
+// buildCustomerPortalInviteNotification builds the Notify request for an
+// external customer's portal-login setup invite.
+func buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) NotificationRequest {
 	subject := "You've been invited to the " + tenantDisplayName + " customer portal"
 	body := fmt.Sprintf(`
 		<html>
@@ -222,7 +222,23 @@ func SendCustomerPortalInviteEmail(recipientEmail, recipientName, tenantDisplayN
 		</body>
 		</html>
 	`, tenantDisplayName, nameClause(recipientName), tenantDisplayName, setupLink, setupLink, tenantDisplayName)
-	return sendEmail(recipientEmail, subject, body)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "customer_portal.invited",
+		Resource:      "customer_portal",
+		ResourceID:    resourceID,
+		Title:         subject,
+		Body:          "Customer portal invite email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+// SendCustomerPortalInviteEmail invites an external customer to set a
+// password and activate their customer-portal login.
+func SendCustomerPortalInviteEmail(ctx context.Context, tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) error {
+	return SendNotification(ctx, buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink))
 }
 
 // SendCustomerNoteConfirmationEmail confirms to a customer that a note they

@@ -51,9 +51,9 @@ func SendOnboardingInviteEmail(ctx context.Context, tenantID, inviteID, recipien
 	return SendNotification(ctx, buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink))
 }
 
-// SendPasswordSetupEmail sends the "set your password" email after a customer's
-// onboarding application is approved (or they are onboarded directly).
-func SendPasswordSetupEmail(recipientEmail, recipientName, setupLink string) error {
+// buildPasswordSetupNotification builds the Notify request for a
+// post-approval "set your password" email.
+func buildPasswordSetupNotification(tenantID, identityID, recipientEmail, recipientName, setupLink string) NotificationRequest {
 	subject := "Set up your StoneSuite account"
 	body := fmt.Sprintf(`
 		<html>
@@ -70,7 +70,23 @@ func SendPasswordSetupEmail(recipientEmail, recipientName, setupLink string) err
 		</body>
 		</html>
 	`, recipientName, setupLink, setupLink)
-	return sendEmail(recipientEmail, subject, body)
+	return NotificationRequest{
+		TenantID:      tenantID,
+		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		EventType:     "identity.password_setup",
+		Resource:      "identity",
+		ResourceID:    identityID,
+		Title:         subject,
+		Body:          "Password setup email sent.",
+		EmailBodyHTML: body,
+		Channels:      []string{"email"},
+	}
+}
+
+// SendPasswordSetupEmail sends the "set your password" email after a customer's
+// onboarding application is approved (or they are onboarded directly).
+func SendPasswordSetupEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName, setupLink string) error {
+	return SendNotification(ctx, buildPasswordSetupNotification(tenantID, identityID, recipientEmail, recipientName, setupLink))
 }
 
 // SendUserInviteEmail sends an email to a colleague invited to join a tenant workspace.

@@ -79,7 +79,7 @@ func (h *TenantOps) finalizeOnboarding(ctx context.Context, tenant *tenancy.Tena
 	h.recordOwnerCustomer(ctx, formData)
 
 	link := setupLink(token)
-	if err := services.SendPasswordSetupEmail(email, fullName, link); err != nil {
+	if err := services.SendPasswordSetupEmail(ctx, tenant.ID, identity.ID, email, fullName, link); err != nil {
 		log.Printf("password-setup email to %s not sent (link still valid): %v", email, err)
 	}
 	return link, nil

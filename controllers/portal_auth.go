@@ -576,7 +576,7 @@ func (h *PortalAuthOps) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ok)
 		return
 	}
-	if err := services.SendPasswordResetEmail(identity.Email, identity.FullName,
+	if err := services.SendPasswordResetEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, identity.FullName,
 		portalResetLink(token)); err != nil {
 		log.Printf("warn: portal reset email to %s failed: %v", identity.Email, err)
 	}

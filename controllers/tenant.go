@@ -409,7 +409,7 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := applyLink(token)
-	emailErr := services.SendOnboardingInviteEmail(req.ContactEmail, req.RecipientName, link)
+	emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, req.ContactEmail, req.RecipientName, link)
 	if emailErr != nil {
 		log.Printf("WARNING: invite email to %s failed: %v", req.ContactEmail, emailErr)
 	}
@@ -672,9 +672,9 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 
 		// Email is best-effort: the invite (key + link) is valid regardless, so
 		// the owner can always copy the link if delivery is unavailable (e.g. no
-		// SMTP configured in dev). Surface the outcome via emailSent.
+		// Notify configured in dev). Surface the outcome via emailSent.
 		link := applyLink(token)
-		emailErr := services.SendOnboardingInviteEmail(contactEmail, tenant.DisplayName, link)
+		emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
 		if emailErr != nil {
 			log.Printf("WARNING: resend invite email to %s failed: %v", contactEmail, emailErr)
 		}
@@ -1241,7 +1241,7 @@ func (h *TenantOps) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := resetLink(token)
-	if err := services.SendPasswordResetEmail(identity.Email, identity.FullName, link); err != nil {
+	if err := services.SendPasswordResetEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, identity.FullName, link); err != nil {
 		log.Printf("password reset email to %s failed (token still valid): %v", identity.Email, err)
 	}
 

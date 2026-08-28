@@ -672,7 +672,7 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 
 		// Email is best-effort: the invite (key + link) is valid regardless, so
 		// the owner can always copy the link if delivery is unavailable (e.g. no
-		// SMTP configured in dev). Surface the outcome via emailSent.
+		// Notify configured in dev). Surface the outcome via emailSent.
 		link := applyLink(token)
 		emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
 		if emailErr != nil {

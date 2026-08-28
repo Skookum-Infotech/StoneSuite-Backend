@@ -149,6 +149,7 @@ func buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipi
 	}
 }
 
+// SendPasswordResetEmail sends a password-reset link to an existing account holder.
 func SendPasswordResetEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName, resetLink string) error {
 	return SendNotification(ctx, buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipientName, resetLink))
 }
@@ -272,4 +273,3 @@ func nameClause(name string) string {
 	}
 	return " " + name
 }
-

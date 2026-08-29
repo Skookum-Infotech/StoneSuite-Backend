@@ -4,17 +4,17 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-462 endpoints across 7 surfaces, read from `main.go`.
+486 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 396 |
+| staff token + tenant | 405 |
+| portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 17 |
-| portal token + tenant | 17 |
-| staff token | 7 |
+| staff token | 13 |
 | portal token | 3 |
 | customer token | 2 |
 
@@ -164,7 +164,7 @@ Public tenant onboarding and workspace-user invitations.
 | `POST` | `/api/onboarding/user-invite/accept` | none | `userOps.AcceptUserInvite` |
 | `GET` | `/api/onboarding/user-invite/{token}` | none | `userOps.GetUserInvite` |
 
-## `portal` — 28 endpoints
+## `portal` — 37 endpoints
 
 Customer portal — scoped read access, invitations, workspace switching.
 
@@ -182,6 +182,20 @@ Customer portal — scoped read access, invitations, workspace switching.
 | `POST` | `/api/portal/auth/reset-password` | none (rate-limited) | `portalAuthOps.ResetPassword` |
 | `GET` | `/api/portal/auth/reset-password/{token}` | none (rate-limited) | `portalAuthOps.ValidateResetToken` |
 | `POST` | `/api/portal/auth/switch-workspace` | portal token | `portalAuthOps.SwitchWorkspace` |
+
+### feedback
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/portal/feedback` | portal token + tenant | `feedbackOps.ListMine` |
+| `POST` | `/api/portal/feedback` | portal token + tenant | `feedbackOps.Submit` |
+| `POST` | `/api/portal/feedback/mark-seen` | portal token + tenant | `feedbackOps.MarkSeen` |
+| `GET` | `/api/portal/feedback/unread-count` | portal token + tenant | `feedbackOps.UnreadCount` |
+| `GET` | `/api/portal/feedback/{id}` | portal token + tenant | `feedbackOps.Get` |
+| `POST` | `/api/portal/feedback/{id}/attachments` | portal token + tenant | `feedbackOps.ConfirmAttachments` |
+| `POST` | `/api/portal/feedback/{id}/attachments/presign` | portal token + tenant | `feedbackOps.PresignAttachments` |
+| `GET` | `/api/portal/feedback/{id}/attachments/{attachmentId}/download` | portal token + tenant | `feedbackOps.DownloadAttachment` |
+| `POST` | `/api/portal/feedback/{id}/comments` | portal token + tenant | `feedbackOps.AddComment` |
 
 ### invoices
 
@@ -249,7 +263,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 8 endpoints
+## `platform` — 14 endpoints
 
 Platform-admin operations across tenants.
 
@@ -264,6 +278,17 @@ Platform-admin operations across tenants.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `POST` | `/api/platform/ai/reindex-help` | staff token | `aiOps.ReindexHelp` |
+
+### feedback
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/platform/feedback` | staff token | `feedbackAdminOps.List` |
+| `GET` | `/api/platform/feedback/stats` | staff token | `feedbackAdminOps.Stats` |
+| `GET` | `/api/platform/feedback/{id}` | staff token | `feedbackAdminOps.Get` |
+| `PATCH` | `/api/platform/feedback/{id}` | staff token | `feedbackAdminOps.Patch` |
+| `GET` | `/api/platform/feedback/{id}/attachments/{attachmentId}/download` | staff token | `feedbackAdminOps.DownloadAttachment` |
+| `POST` | `/api/platform/feedback/{id}/comments` | staff token | `feedbackAdminOps.AddComment` |
 
 ### invites
 
@@ -286,7 +311,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 395 endpoints
+## `tenant` — 404 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -441,6 +466,20 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition` | staff token + tenant | `fj.Disposition` |
 | `GET` | `/api/tenant/fabrication-jobs/{uuid}/steps` | staff token + tenant | `fj.Steps` |
 | `PATCH` | `/api/tenant/fabrication-jobs/{uuid}/steps/{stepCode}` | staff token + tenant | `fj.UpdateStep` |
+
+### feedback
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/feedback` | staff token + tenant | `feedbackOps.ListMine` |
+| `POST` | `/api/tenant/feedback` | staff token + tenant | `feedbackOps.Submit` |
+| `POST` | `/api/tenant/feedback/mark-seen` | staff token + tenant | `feedbackOps.MarkSeen` |
+| `GET` | `/api/tenant/feedback/unread-count` | staff token + tenant | `feedbackOps.UnreadCount` |
+| `GET` | `/api/tenant/feedback/{id}` | staff token + tenant | `feedbackOps.Get` |
+| `POST` | `/api/tenant/feedback/{id}/attachments` | staff token + tenant | `feedbackOps.ConfirmAttachments` |
+| `POST` | `/api/tenant/feedback/{id}/attachments/presign` | staff token + tenant | `feedbackOps.PresignAttachments` |
+| `GET` | `/api/tenant/feedback/{id}/attachments/{attachmentId}/download` | staff token + tenant | `feedbackOps.DownloadAttachment` |
+| `POST` | `/api/tenant/feedback/{id}/comments` | staff token + tenant | `feedbackOps.AddComment` |
 
 ### finance
 

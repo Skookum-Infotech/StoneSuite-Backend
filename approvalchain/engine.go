@@ -75,6 +75,12 @@ type RecordSpec struct {
 	UpdatedByColumn      string
 	RecordVersionColumn  string
 	DeletedAtColumn      string
+	// OwnerColumn and NumberColumn are only read by notify.go's approval
+	// notification hooks -- e.g. "credit_memo_owner_id" (employee FK) and
+	// "credit_memo_number". Left blank for any module not configured for
+	// approval notifications (see ModuleConfig.DisplayName).
+	OwnerColumn  string
+	NumberColumn string
 }
 
 // ApproveOutcome reports what Approve actually did, before the caller
@@ -150,6 +156,7 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		if err := tx.Commit(ctx); err != nil {
 			return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
 		}
+		notifyApproved(ctx, pool, cfg, uuid, internalID, approverEmployeeID)
 		return ApproveOutcome{Finalized: true, Override: true}, nil
 	}
 
@@ -172,6 +179,7 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		if err := tx.Commit(ctx); err != nil {
 			return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
 		}
+		notifyApproved(ctx, pool, cfg, uuid, internalID, approverEmployeeID)
 		return ApproveOutcome{Finalized: true}, nil
 	}
 
@@ -190,7 +198,26 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	if err := tx.Commit(ctx); err != nil {
 		return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
 	}
+	NotifyRemainingApprovers(ctx, pool, EventContext{
+		Table: rec.Table, IDColumn: rec.IDColumn, NumberColumn: rec.NumberColumn,
+		ApproverTable: cfg.ApproverTable, ApprovalTable: cfg.ApprovalTable,
+		RecordTypeID: recordTypeID, StatusID: curStatusID, InternalID: internalID,
+		ActorEmployeeID: approverEmployeeID, Resource: cfg.Resource, DisplayName: cfg.DisplayName,
+		RecordUUID: uuid,
+	})
 	return ApproveOutcome{}, nil
+}
+
+// notifyApproved wraps NotifyApproved with the ModuleConfig fields it needs,
+// so both Approve commit paths above (quorum met, super-admin override) can
+// call it in one line.
+func notifyApproved(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid string, internalID, approverEmployeeID int) {
+	rec := cfg.Record
+	NotifyApproved(ctx, pool, EventContext{
+		Table: rec.Table, IDColumn: rec.IDColumn, NumberColumn: rec.NumberColumn, OwnerColumn: rec.OwnerColumn,
+		InternalID: internalID, ActorEmployeeID: approverEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
 }
 
 // finalize moves the record from curStatusID to targetStatusCode inside the

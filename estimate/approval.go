@@ -163,6 +163,7 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmplo
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit approve estimate: %w", err)
 	}
+	notifyRemainingApprovers(ctx, pool, uuid, internalID, recordTypeID, curStatusID, approverEmployeeID)
 	return Get(ctx, pool, uuid)
 }
 
@@ -201,6 +202,7 @@ func finalizeApproval(ctx context.Context, tx pgx.Tx, pool *pgxpool.Pool, uuid s
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit approve estimate: %w", err)
 	}
+	notifyApproved(ctx, pool, uuid, internalID, approverEmployeeID)
 	return Get(ctx, pool, uuid)
 }
 

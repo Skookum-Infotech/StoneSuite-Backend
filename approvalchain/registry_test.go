@@ -92,6 +92,52 @@ func TestRegistry_RecordSpecComplete(t *testing.T) {
 	}
 }
 
+// TestRegistry_ApprovalNotificationScope guards the deliberate scope line
+// notify.go's Notify* helpers rely on: DisplayName == "" is what makes them
+// a no-op, so engine.Approve stays behavior-identical for every module not
+// yet wired for approval notifications. Only the four engine-based in-scope
+// modules (invoice, payment, credit_memo, refund) may set DisplayName (and,
+// alongside it, Resource/OwnerColumn/NumberColumn) -- every other entry must
+// stay at the zero value. If this test ever needs updating because a new
+// module was deliberately wired for approval notifications, that's fine;
+// it's here so that doesn't happen by accident.
+func TestRegistry_ApprovalNotificationScope(t *testing.T) {
+	inScope := map[string]bool{
+		"invoice": true, "payment": true, "credit_memo": true, "refund": true,
+	}
+	for key, cfg := range registry {
+		t.Run(key, func(t *testing.T) {
+			if inScope[key] {
+				if cfg.DisplayName == "" {
+					t.Errorf("%q is approval-notification in-scope but DisplayName is empty", key)
+				}
+				if cfg.Resource == "" {
+					t.Errorf("%q is approval-notification in-scope but Resource is empty", key)
+				}
+				if cfg.Record.OwnerColumn == "" {
+					t.Errorf("%q is approval-notification in-scope but Record.OwnerColumn is empty", key)
+				}
+				if cfg.Record.NumberColumn == "" {
+					t.Errorf("%q is approval-notification in-scope but Record.NumberColumn is empty", key)
+				}
+				return
+			}
+			if cfg.DisplayName != "" {
+				t.Errorf("%q is not approval-notification in-scope but DisplayName = %q, want empty", key, cfg.DisplayName)
+			}
+			if cfg.Resource != "" {
+				t.Errorf("%q is not approval-notification in-scope but Resource = %q, want empty", key, cfg.Resource)
+			}
+			if cfg.Record.OwnerColumn != "" {
+				t.Errorf("%q is not approval-notification in-scope but Record.OwnerColumn = %q, want empty", key, cfg.Record.OwnerColumn)
+			}
+			if cfg.Record.NumberColumn != "" {
+				t.Errorf("%q is not approval-notification in-scope but Record.NumberColumn = %q, want empty", key, cfg.Record.NumberColumn)
+			}
+		})
+	}
+}
+
 func TestModuleConfig_HasGate(t *testing.T) {
 	fjob, _ := ForWorkflowKey("installation")
 	if !fjob.HasGate("TMPL") {

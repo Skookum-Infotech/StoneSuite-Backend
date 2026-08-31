@@ -40,6 +40,18 @@ type ModuleConfig struct {
 	ApprovalTable  string // e.g. "estimate_approval" -- per-approver sign-off rows
 	Record         RecordSpec
 	Gates          []Gate
+	// DisplayName is the human label used in approval notification text
+	// (e.g. "Invoice"). Left blank (the zero value) for any module not yet
+	// wired for approval notifications -- notify.go's helpers no-op
+	// immediately when DisplayName == "", so engine.Approve's behavior is
+	// unchanged for every module that doesn't set this.
+	DisplayName string
+	// Resource is the workflow key this config is registered under (e.g.
+	// "invoice"), duplicated here so notify.go's hooks can build a
+	// notification's Resource/EventType without engine.go needing the
+	// registry's map key threaded through as a separate parameter. Only
+	// set alongside DisplayName.
+	Resource string
 }
 
 // HasGate reports whether statusCode is one of this module's configured
@@ -176,8 +188,11 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "invoice_approval_status", ApprovedByColumn: "invoice_approved_by",
 			UpdatedAtColumn: "invoice_updated_at", UpdatedByColumn: "invoice_updated_by",
 			RecordVersionColumn: "invoice_record_version", DeletedAtColumn: "invoice_deleted_at",
+			OwnerColumn: "invoice_owner_id", NumberColumn: "invoice_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		DisplayName: "Invoice",
+		Resource:    "invoice",
 	},
 	"payment": {
 		RecordTypeCode: "PYMT", ApproverTable: "payment_approver", ApprovalTable: "payment_approval",
@@ -187,8 +202,11 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "payment_approval_status", ApprovedByColumn: "payment_approved_by",
 			UpdatedAtColumn: "payment_updated_at", UpdatedByColumn: "payment_updated_by",
 			RecordVersionColumn: "payment_record_version", DeletedAtColumn: "payment_deleted_at",
+			OwnerColumn: "payment_owner_id", NumberColumn: "payment_number",
 		},
-		Gates: []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
+		DisplayName: "Payment",
+		Resource:    "payment",
 	},
 	"credit_memo": {
 		RecordTypeCode: "CRDT", ApproverTable: "credit_memo_approver", ApprovalTable: "credit_memo_approval",
@@ -198,11 +216,14 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "credit_memo_approval_status", ApprovedByColumn: "credit_memo_approved_by",
 			UpdatedAtColumn: "credit_memo_updated_at", UpdatedByColumn: "credit_memo_updated_by",
 			RecordVersionColumn: "credit_memo_record_version", DeletedAtColumn: "credit_memo_deleted_at",
+			OwnerColumn: "credit_memo_owner_id", NumberColumn: "credit_memo_number",
 		},
 		// Credit Memo has no separate Pending status -- the gate sits on
 		// Draft itself. Void always escapes (AlwaysAllowedExitCodes), so a
 		// draft credit memo can still be voided without approval.
-		Gates: []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+		DisplayName: "Credit Memo",
+		Resource:    "credit_memo",
 	},
 	"refund": {
 		RecordTypeCode: "RFND", ApproverTable: "refund_approver", ApprovalTable: "refund_approval",
@@ -212,8 +233,11 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "refund_approval_status", ApprovedByColumn: "refund_approved_by",
 			UpdatedAtColumn: "refund_updated_at", UpdatedByColumn: "refund_updated_by",
 			RecordVersionColumn: "refund_record_version", DeletedAtColumn: "refund_deleted_at",
+			OwnerColumn: "refund_owner_id", NumberColumn: "refund_number",
 		},
-		Gates: []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
+		DisplayName: "Refund",
+		Resource:    "refund",
 	},
 	"vendor_credit": {
 		RecordTypeCode: "VCRD", ApproverTable: "vendor_credit_approver", ApprovalTable: "vendor_credit_approval",

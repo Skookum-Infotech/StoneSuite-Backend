@@ -40,7 +40,8 @@ import (
 //	GET    /api/tenant/crm/records/{id}/transitions         — edit-form statuses
 //	POST   /api/tenant/crm/records/{id}/transition          — apply a transition
 //	POST   /api/tenant/crm/records/{id}/convert             — convert to next stage
-//	POST   /api/tenant/crm/records/{id}/approve             — approve a Closed-Won customer
+//	POST   /api/tenant/crm/records/{id}/approve             — sign off on a record pending approval
+//	POST   /api/tenant/crm/records/{id}/reject              — reject a record pending approval, with a reason
 //	GET    /api/tenant/crm/{workflowKey}/approvals/pending  — caller's approval queue
 //	GET    /api/tenant/crm/records/{id}/activities          — list activity log (CRMActivityOps)
 //	POST   /api/tenant/crm/records/{id}/activities          — log an activity (CRMActivityOps)
@@ -257,6 +258,12 @@ func crmFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusConflict, "No approver is configured for this workflow. Please contact your administrator.")
 	case errors.Is(err, crmstore.ErrAlreadyApprovedByYou):
 		fail(w, http.StatusConflict, "You have already approved this document. Waiting on the other assigned approver.")
+	case errors.Is(err, crmstore.ErrApprovalRequired):
+		fail(w, http.StatusConflict, "This record must be approved before it can leave its current status.")
+	case errors.Is(err, crmstore.ErrLockedPendingApproval):
+		fail(w, http.StatusConflict, "This record is awaiting approval and cannot be edited until it is approved or resubmitted.")
+	case errors.Is(err, crmstore.ErrNotRejectable):
+		fail(w, http.StatusConflict, "This record is not pending approval.")
 	case crmstore.IsClientError(err):
 		fail(w, http.StatusBadRequest, err.Error())
 	default:
@@ -419,12 +426,19 @@ func (h *CRMOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 		crmFail(w, err, "Failed to load record.")
 		return
 	}
-	canApprove, err := st.IsApprover(r.Context(), pool, id, identityID)
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
 	if err != nil {
 		crmFail(w, err, "Failed to load record.")
 		return
 	}
-	resp := map[string]any{"success": true, "record": rec, "canApprove": canApprove}
+	approval, err := st.GetApprovalInfo(r.Context(), pool, id, identityID, isSuperAdmin)
+	if err != nil {
+		crmFail(w, err, "Failed to load record.")
+		return
+	}
+	// canApprove is kept alongside the richer `approval` object for backward
+	// compatibility with any caller still reading the flat field.
+	resp := map[string]any{"success": true, "record": rec, "canApprove": approval.CanApprove, "approval": approval}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -661,7 +675,12 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rec, err := st.Approve(r.Context(), pool, id, identityID)
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		crmFail(w, err, "Failed to approve record.")
+		return
+	}
+	rec, err := st.Approve(r.Context(), pool, id, identityID, isSuperAdmin)
 	if errors.Is(err, crmstore.ErrNotSupported) {
 		fail(w, http.StatusBadRequest, "Approval is not available for this workspace's design.")
 		return
@@ -679,6 +698,44 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	// deciding who gets an external login is a separate one, made per
 	// customer rather than for every approved record.
 	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
+}
+
+// RejectRecord POST /api/tenant/crm/{workflowKey}/records/{id}/reject  body {"reason":"..."}
+// Rejects a record pending approval if the caller is a configured approver
+// (or a super admin). A veto, not a vote — one rejection is decisive; it
+// doesn't wait on other configured approvers the way Approve's quorum does.
+func (h *CRMOps) RejectRecord(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, pool, key, identityID, ok := h.authCRMByRecordID(w, r, id, authz.ActionUpdate)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Reason == "" {
+		fail(w, http.StatusBadRequest, "reason is required.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		crmFail(w, err, "Failed to reject record.")
+		return
+	}
+	rec, err := st.Reject(r.Context(), pool, id, identityID, req.Reason, isSuperAdmin)
+	if errors.Is(err, crmstore.ErrNotSupported) {
+		fail(w, http.StatusBadRequest, "Rejection is not available for this workspace's design.")
+		return
+	}
+	if errors.Is(err, crmstore.ErrNotApprover) {
+		logSecurityEvent(r, "approval_denied", "identity", identityID, "record", id)
+	}
+	if err != nil {
+		crmFail(w, err, "Failed to reject record.")
+		return
+	}
+	auditCRM(r, pool, identityID, "reject", key, id, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }
 

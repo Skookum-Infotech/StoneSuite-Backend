@@ -8062,3 +8062,48 @@ CREATE INDEX IF NOT EXISTS idx_pm_doc ON portal_message
     (portal_message_module, portal_message_document_uuid) WHERE portal_message_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pm_customer ON portal_message
     (portal_message_customer_id) WHERE portal_message_deleted_at IS NULL;
+
+-- =====================================================================
+-- CRM APPROVAL: reject action + stage-level-only approver config (2026-08-31)
+-- =====================================================================
+-- Adds a Reject action to the CRM (Lead/Prospect/Customer) approval flow
+-- alongside Approve -- see crmstore/relational_approval.go. A rejected
+-- record stays at its current status with customer_approval_status =
+-- 'rejected' and the reason recorded; editing it resubmits it (resets it
+-- back to 'pending' / 'approved' per current config) rather than requiring a
+-- separate resubmit action.
+--
+-- Also collapses crm_workflow_approver to record-type-level ("wildcard",
+-- crm_status_id IS NULL) approver sets only -- one config per CRM stage
+-- (Lead/Prospect/Customer), matching every relational Sales/Purchases
+-- module's single gate per module (approvalchain/registry.go) instead of
+-- CRM's previous per-status model. Existing per-status rows are removed
+-- one time below -- a deliberate product decision (not a general
+-- destructive-migration precedent): crm_workflow_approver is workspace
+-- config, not a business record, and any tenant that had one configured can
+-- simply re-add it as a stage-level approver via Configure > Workflows.
+
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_rejected_by INTEGER NULL REFERENCES employee(employee_id);
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_rejected_at TIMESTAMP NULL;
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_rejection_reason TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE customer DROP CONSTRAINT IF EXISTS chk_customer_approval_status;
+ALTER TABLE customer ADD CONSTRAINT chk_customer_approval_status
+    CHECK (customer_approval_status IN ('none','pending','approved','rejected'));
+
+ALTER TABLE customer_history DROP CONSTRAINT IF EXISTS chk_customer_history_action;
+ALTER TABLE customer_history ADD CONSTRAINT chk_customer_history_action
+    CHECK (action IN ('create','transition','convert','approve','approve_override','reject'));
+
+-- One-time cleanup: remove now-unsupported per-status approver rows.
+-- CreateApprover (controllers/crm_admin.go) rejects new ones going forward.
+DELETE FROM crm_workflow_approver WHERE crm_status_id IS NOT NULL;
+
+-- Postgres does not treat two NULLs as equal for UNIQUE purposes, so the
+-- table's own uq_crm_workflow_approver (record_type_id, crm_status_id,
+-- approver_employee_id) never actually deduplicated wildcard rows -- harmless
+-- while wildcard was one approver shape among several, load-bearing now that
+-- it is the only shape crm_workflow_approver holds.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_workflow_approver_wildcard
+    ON crm_workflow_approver (record_type_id, approver_employee_id)
+    WHERE crm_status_id IS NULL;

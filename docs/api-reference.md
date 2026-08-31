@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-486 endpoints across 7 surfaces, read from `main.go`.
+487 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 405 |
+| staff token + tenant | 406 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 17 |
@@ -311,7 +311,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 404 endpoints
+## `tenant` — 405 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -390,6 +390,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/crm/{workflowKey}/records/{id}/approve` | staff token + tenant | `crm.ApproveRecord` |
 | `GET` | `/api/tenant/crm/{workflowKey}/records/{id}/audit` | staff token + tenant | `crm.RecordAudit` |
 | `POST` | `/api/tenant/crm/{workflowKey}/records/{id}/convert` | staff token + tenant | `crm.ConvertRecord` |
+| `POST` | `/api/tenant/crm/{workflowKey}/records/{id}/reject` | staff token + tenant | `crm.RejectRecord` |
 | `POST` | `/api/tenant/crm/{workflowKey}/records/{id}/transition` | staff token + tenant | `crm.TransitionRecord` |
 | `GET` | `/api/tenant/crm/{workflowKey}/records/{id}/transitions` | staff token + tenant | `crm.AvailableTransitions` |
 | `GET` | `/api/tenant/crm/{workflowKey}/statuses` | staff token + tenant | `crm.WorkflowStatuses` |

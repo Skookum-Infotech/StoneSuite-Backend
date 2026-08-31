@@ -79,7 +79,10 @@ func seedCreditMemoWithOwner(t *testing.T, pool *pgxpool.Pool) (internalID int, 
 		t.Fatalf("resolve DRFT status: %v", err)
 	}
 
-	number = "CRDT-NOTIFY-" + suffix
+	// credit_memo_number is VARCHAR(20) -- the full nanosecond suffix (19
+	// digits) doesn't fit alongside a prefix, so only its last 9 digits are
+	// used here (still unique enough for sequential calls within a test run).
+	number = "CRDT-" + suffix[len(suffix)-9:]
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO credit_memo (record_type, credit_memo_status, credit_memo_customer_id, credit_memo_number, credit_memo_owner_id, credit_memo_created_by)
 		VALUES ($1, $2, $3, $4, $5, 1) RETURNING credit_memo_id, credit_memo_uuid`,
@@ -146,7 +149,7 @@ func TestOwnerContact_NoOwnerSet(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO credit_memo (record_type, credit_memo_status, credit_memo_customer_id, credit_memo_number, credit_memo_created_by)
 		VALUES ($1, $2, $3, $4, 1) RETURNING credit_memo_id`,
-		recordTypeID, draftStatusID, custID, "CRDT-NOOWNER-"+suffix).Scan(&internalID); err != nil {
+		recordTypeID, draftStatusID, custID, "CRDX-"+suffix[len(suffix)-9:]).Scan(&internalID); err != nil {
 		t.Fatalf("seed credit memo: %v", err)
 	}
 

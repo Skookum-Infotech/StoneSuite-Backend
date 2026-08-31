@@ -15,6 +15,7 @@ import (
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/portal"
 	"stonesuite-backend/query"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
@@ -468,6 +469,24 @@ func (h *CRMOps) DeleteRecord(w http.ResponseWriter, r *http.Request) {
 		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	// A customer record must not be deleted while it still has a portal login
+	// that can sign in. The soft-delete here would orphan the customer_portal_user
+	// row (and its control-plane link, invites and refresh tokens); staff must
+	// revoke portal access first, which tears all of that down together.
+	if resourceForKey(key) == authz.ResourceCustomer {
+		live, err := portal.HasLivePortalUsers(r.Context(), pool, id)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to check portal access.")
+			return
+		}
+		if live {
+			fail(w, http.StatusConflict,
+				"This customer has portal logins that can still access the workspace. "+
+					"Revoke their portal access before deleting this record.")
+			return
+		}
+	}
 
 	before, _ := st.GetRecord(r.Context(), pool, id)
 	if err := st.DeleteRecord(r.Context(), pool, id); err != nil {

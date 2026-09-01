@@ -189,6 +189,13 @@ func (h *TenantOps) FormSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": []any{}})
 		return
 	}
+	// Custom Fields is opt-in per workflow -- don't render fields for a
+	// section the tenant hasn't switched on (definitions may still exist
+	// from before it was disabled; see Workflow.CustomFieldsEnabled).
+	if !def.Workflow.CustomFieldsEnabled {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": []any{}})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": def.Fields})
 }
 

@@ -140,7 +140,7 @@ func (s *workflowStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, id
 	for k, v := range custom {
 		merged[k] = v
 	}
-	if err := workflow.ValidateCustomFields(def.Fields, merged); err != nil {
+	if err := workflow.ValidateCustomFields(def.Fields, merged, def.Workflow.CustomFieldsEnabled); err != nil {
 		return ClientError{Msg: err.Error()}
 	}
 	mergedCore := rec.CoreFields
@@ -247,14 +247,20 @@ func (s *workflowStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, i
 }
 
 // Approve is not part of the DesignV1 workflow model.
-func (s *workflowStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error) {
+func (s *workflowStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string, callerIsSuperAdmin bool) (*workflow.Record, error) {
 	return nil, ErrNotSupported
 }
 
-// IsApprover is not part of the DesignV1 workflow model; always false, not an
-// error, since this is a read-only UI-affordance check, not an action.
-func (s *workflowStore) IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error) {
-	return false, nil
+// Reject is not part of the DesignV1 workflow model.
+func (s *workflowStore) Reject(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID, reason string, callerIsSuperAdmin bool) (*workflow.Record, error) {
+	return nil, ErrNotSupported
+}
+
+// GetApprovalInfo is not part of the DesignV1 workflow model; always a
+// not-gated ApprovalInfo, not an error, since this is a read-only
+// UI-affordance check, not an action.
+func (s *workflowStore) GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, id, callerIdentityID string, callerIsSuperAdmin bool) (ApprovalInfo, error) {
+	return ApprovalInfo{}, nil
 }
 
 // PendingApprovals is not part of the DesignV1 workflow model; approval is

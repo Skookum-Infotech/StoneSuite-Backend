@@ -32,7 +32,13 @@ func (e ValidationErrors) Error() string {
 // ValidateCustomFields checks a record's custom_fields against the workflow's
 // field definitions: rejects unknown keys, enforces required, and type/format/
 // constraint checks. Returns nil or a ValidationErrors with all problems.
-func ValidateCustomFields(defs []FieldDefinition, values map[string]any) error {
+//
+// customFieldsEnabled is the workflow's Custom Fields section switch
+// (Workflow.CustomFieldsEnabled). When false, defined keys stay known —
+// values already stored under them still round-trip and are still
+// type-checked — but "required" is not enforced, since the section (and any
+// UI for filling it in) is not shown to the user.
+func ValidateCustomFields(defs []FieldDefinition, values map[string]any, customFieldsEnabled bool) error {
 	defByKey := make(map[string]FieldDefinition, len(defs))
 	for _, d := range defs {
 		defByKey[d.Key] = d
@@ -50,7 +56,7 @@ func ValidateCustomFields(defs []FieldDefinition, values map[string]any) error {
 	for _, d := range defs {
 		v, present := values[d.Key]
 		if !present || isEmpty(v) {
-			if d.Required {
+			if d.Required && customFieldsEnabled {
 				errs = append(errs, ValidationError{Field: d.Key, Message: "is required"})
 			}
 			continue

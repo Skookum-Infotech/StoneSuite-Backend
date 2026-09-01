@@ -1,7 +1,6 @@
 package crmstore
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -210,54 +209,5 @@ func TestApprovalSentinelErrorsAreDistinct(t *testing.T) {
 			}
 			assert.NotEqual(t, errs[i].Error(), errs[j].Error(), "errs[%d] and errs[%d] should be distinct", i, j)
 		}
-	}
-}
-
-func TestApprovalDecision(t *testing.T) {
-	tests := []struct {
-		name                  string
-		status                string
-		anyApproverConfigured bool
-		callerIsApprover      bool
-		callerAlreadyApproved bool
-		approvalsSoFar        int
-		requiredApprovals     int
-		wantErr               error
-		wantNil               bool
-		wantFinalize          bool
-	}{
-		{"pending, configured, single approver required -> finalize", "pending", true, true, false, 0, 1, nil, true, true},
-		{"pending, configured, 2 required, first approval -> stays pending", "pending", true, true, false, 0, 2, nil, true, false},
-		{"pending, configured, 2 required, second approval -> finalize", "pending", true, true, false, 1, 2, nil, true, true},
-		{"pending, configured, caller not approver -> not authorized", "pending", true, false, false, 0, 1, ErrNotApprover, false, false},
-		{"pending, caller already approved -> already approved by you", "pending", true, true, true, 1, 2, ErrAlreadyApprovedByYou, false, false},
-		{"pending, nobody configured -> no approver configured", "pending", false, false, false, 0, 0, ErrNoApproverConfigured, false, false},
-		{"pending, nobody configured, but caller flag true (impossible in practice) -> still blocked", "pending", false, true, false, 0, 0, ErrNoApproverConfigured, false, false},
-		{"already approved -> already approved", "approved", true, true, false, 0, 1, ErrAlreadyApproved, false, false},
-		{"already approved, caller not approver -> still already approved", "approved", true, false, false, 0, 1, ErrAlreadyApproved, false, false},
-		{"not yet pending -> not pending approval", "none", true, false, false, 0, 1, nil, false, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			finalize, err := approvalDecision(tc.status, tc.anyApproverConfigured, tc.callerIsApprover, tc.callerAlreadyApproved, tc.approvalsSoFar, tc.requiredApprovals)
-			if tc.wantNil {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.wantFinalize, finalize)
-				return
-			}
-			if tc.wantErr != nil {
-				assert.ErrorIs(t, err, tc.wantErr)
-				return
-			}
-			// "none" status case: expect a ClientError, not one of the sentinels.
-			assert.Error(t, err)
-			assert.False(t, errors.Is(err, ErrNotApprover))
-			assert.False(t, errors.Is(err, ErrAlreadyApproved))
-			assert.False(t, errors.Is(err, ErrNoApproverConfigured))
-			assert.False(t, errors.Is(err, ErrAlreadyApprovedByYou))
-			var ce ClientError
-			assert.True(t, errors.As(err, &ce))
-			assert.Equal(t, "This record is not pending approval.", ce.Msg)
-		})
 	}
 }

@@ -4754,6 +4754,55 @@
         ]
       }
     },
+    "/api/tenant/crm/{workflowKey}/records/{id}/reject": {
+      "post": {
+        "operationId": "post_tenant_crm_workflowKey_records_id_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflowKey",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "crm.RejectRecord",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/crm/{workflowKey}/records/{id}/transition": {
       "post": {
         "operationId": "post_tenant_crm_workflowKey_records_id_transition",
@@ -18424,6 +18473,47 @@
           }
         ],
         "summary": "wf.SetWorkflowApprovers",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/workflows/{id}/custom-fields/enabled": {
+      "post": {
+        "operationId": "post_tenant_workflows_id_custom_fields_enabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "wf.SetCustomFieldsEnabled",
         "tags": [
           "tenant"
         ]

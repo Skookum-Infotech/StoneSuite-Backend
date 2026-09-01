@@ -40,7 +40,7 @@ var (
 // ListWorkflows returns all workflows (config view).
 func ListWorkflows(ctx context.Context, q Querier) ([]Workflow, error) {
 	rows, err := q.Query(ctx, `
-		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		SELECT id, key, name, description, enabled, is_default, pipeline_order, custom_fields_enabled
 		FROM workflows ORDER BY pipeline_order, is_default DESC, name`)
 	if err != nil {
 		return nil, fmt.Errorf("list workflows: %w", err)
@@ -49,7 +49,8 @@ func ListWorkflows(ctx context.Context, q Querier) ([]Workflow, error) {
 	var out []Workflow
 	for rows.Next() {
 		var w Workflow
-		if err := rows.Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault, &w.PipelineOrder); err != nil {
+		if err := rows.Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault,
+			&w.PipelineOrder, &w.CustomFieldsEnabled); err != nil {
 			return nil, fmt.Errorf("scan workflow: %w", err)
 		}
 		out = append(out, w)
@@ -61,9 +62,10 @@ func ListWorkflows(ctx context.Context, q Querier) ([]Workflow, error) {
 func GetWorkflowByKey(ctx context.Context, q Querier, key string) (*Workflow, error) {
 	var w Workflow
 	err := q.QueryRow(ctx, `
-		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		SELECT id, key, name, description, enabled, is_default, pipeline_order, custom_fields_enabled
 		FROM workflows WHERE LOWER(key) = LOWER($1)`, key).
-		Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault, &w.PipelineOrder)
+		Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault,
+			&w.PipelineOrder, &w.CustomFieldsEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrWorkflowNotFound
 	}
@@ -77,9 +79,10 @@ func GetWorkflowByKey(ctx context.Context, q Querier, key string) (*Workflow, er
 func GetWorkflowByID(ctx context.Context, q Querier, id string) (*Workflow, error) {
 	var w Workflow
 	err := q.QueryRow(ctx, `
-		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		SELECT id, key, name, description, enabled, is_default, pipeline_order, custom_fields_enabled
 		FROM workflows WHERE id = $1`, id).
-		Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault, &w.PipelineOrder)
+		Scan(&w.ID, &w.Key, &w.Name, &w.Description, &w.Enabled, &w.IsDefault,
+			&w.PipelineOrder, &w.CustomFieldsEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrWorkflowNotFound
 	}
@@ -156,6 +159,24 @@ func checkDisableDependency(ctx context.Context, q Querier, id string) error {
 	return nil
 }
 
+// SetCustomFieldsEnabled toggles the Custom Fields section for a workflow.
+// This is a display/validation switch, not a data-destructive one: existing
+// workflow_field_definitions rows and any values already stored under their
+// keys are left untouched either way (see ValidateCustomFields). No pipeline
+// dependency applies — each workflow's Custom Fields section is independent.
+func SetCustomFieldsEnabled(ctx context.Context, q Querier, id string, enabled bool) error {
+	tag, err := q.Exec(ctx,
+		`UPDATE workflows SET custom_fields_enabled = $2, updated_at = NOW() WHERE id = $1`, id, enabled)
+	if err != nil {
+		return fmt.Errorf("set custom fields enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrWorkflowNotFound
+	}
+	invalidateDefinition(q, id)
+	return nil
+}
+
 // defCacheKey identifies a cached Definition by tenant pool + workflow id.
 type defCacheKey struct {
 	pool       *pgxpool.Pool
@@ -198,10 +219,10 @@ func LoadDefinition(ctx context.Context, q Querier, workflowID string) (*Definit
 func loadDefinition(ctx context.Context, q Querier, workflowID string) (*Definition, error) {
 	var d Definition
 	err := q.QueryRow(ctx, `
-		SELECT id, key, name, description, enabled, is_default, pipeline_order
+		SELECT id, key, name, description, enabled, is_default, pipeline_order, custom_fields_enabled
 		FROM workflows WHERE id = $1`, workflowID).
 		Scan(&d.Workflow.ID, &d.Workflow.Key, &d.Workflow.Name, &d.Workflow.Description,
-			&d.Workflow.Enabled, &d.Workflow.IsDefault, &d.Workflow.PipelineOrder)
+			&d.Workflow.Enabled, &d.Workflow.IsDefault, &d.Workflow.PipelineOrder, &d.Workflow.CustomFieldsEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrWorkflowNotFound
 	}

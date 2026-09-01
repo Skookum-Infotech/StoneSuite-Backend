@@ -1421,18 +1421,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'lead') THEN
       ('lead_qualified', 'lead_dead', 'Mark Dead', 6)
   ) AS t(from_key, to_key, name, sort_order);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order)
-  VALUES
-    (v_workflow_id, 'company_name', 'Company Name', 'string', TRUE, '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'email', 'Email', 'email', TRUE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'phone', 'Phone', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'first_name', 'First Name', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 3),
-    (v_workflow_id, 'last_name', 'Last Name', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 4),
-    (v_workflow_id, 'source', 'Source', 'enum', FALSE, '["web", "referral", "event", "cold_call", "partner"]'::jsonb, '{}'::jsonb, 5),
-    (v_workflow_id, 'estimated_value', 'Estimated Value', 'number', FALSE, '[]'::jsonb, '{}'::jsonb, 6),
-    (v_workflow_id, 'sales_rep', 'Sales Rep', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 7),
-    (v_workflow_id, 'territory', 'Territory', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 8);
-
   DELETE FROM _wf_states WHERE workflow_key = 'lead';
 END IF;
 
@@ -1477,14 +1465,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'prospect') THEN
       ('prospect_in_negotiation', 'prospect_closed_lost', 'Close Lost', 9)
   ) AS t(from_key, to_key, name, sort_order);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order)
-  VALUES
-    (v_workflow_id, 'company_name', 'Company Name', 'string', TRUE, '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'email', 'Email', 'email', TRUE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'phone', 'Phone', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'deal_size', 'Deal Size', 'number', FALSE, '[]'::jsonb, '{}'::jsonb, 3),
-    (v_workflow_id, 'close_date', 'Expected Close Date', 'date', FALSE, '[]'::jsonb, '{}'::jsonb, 4);
-
   DELETE FROM _wf_states WHERE workflow_key = 'prospect';
 END IF;
 
@@ -1518,24 +1498,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'customer') THEN
       ('customer_renewal', 'customer_closed_won', 'Renew', 2),
       ('customer_renewal', 'customer_closed_lost', 'Mark Lost', 3)
   ) AS t(from_key, to_key, name, sort_order);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order)
-  VALUES
-    (v_workflow_id, 'company_name', 'Company Name', 'string', TRUE, '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'email', 'Email', 'email', FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'phone', 'Phone', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'legal_name', 'Legal Name', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 3),
-    (v_workflow_id, 'industry', 'Industry', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 4),
-    (v_workflow_id, 'website', 'Website', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 5),
-    (v_workflow_id, 'country', 'Country', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 6),
-    (v_workflow_id, 'currency', 'Currency', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 7),
-    (v_workflow_id, 'timezone', 'Timezone', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 8),
-    (v_workflow_id, 'tax_id', 'Tax / VAT ID', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 9),
-    (v_workflow_id, 'billing_address', 'Billing Address', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 10),
-    (v_workflow_id, 'shipping_address', 'Shipping Address', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 11),
-    (v_workflow_id, 'super_admin_name', 'Super Admin Name', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 12),
-    (v_workflow_id, 'super_admin_email', 'Super Admin Email', 'email', TRUE, '[]'::jsonb, '{}'::jsonb, 13),
-    (v_workflow_id, 'super_admin_phone', 'Super Admin Phone', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 14);
 
   DELETE FROM _wf_states WHERE workflow_key = 'customer';
 END IF;
@@ -1588,12 +1550,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'estimate') THEN
     ('estimate_sent',  'estimate_expired',  'Mark Expired',     3)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name', 'Customer Name', 'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'total_amount',  'Total Amount',  'number', FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'valid_until',   'Valid Until',   'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'notes',         'Notes',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 3);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'estimate';
 END IF;
 
@@ -1623,12 +1579,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'quote') THEN
     ('quote_sent',  'quote_accepted', 'Accept',     1),
     ('quote_sent',  'quote_rejected', 'Reject',     2)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name', 'Customer Name', 'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'total_amount',  'Total Amount',  'number', FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'valid_until',   'Valid Until',   'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'notes',         'Notes',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 3);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'quote';
 END IF;
@@ -1663,12 +1613,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'sales_order') THEN
     ('so_processing','so_fulfilled',  'Mark Fulfilled', 4),
     ('so_processing','so_cancelled',  'Cancel',         5)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name', 'Customer Name', 'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'order_date',    'Order Date',    'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'total_amount',  'Total Amount',  'number', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'notes',         'Notes',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 3);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'sales_order';
 END IF;
@@ -1705,13 +1649,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'installation') THEN
     ('inst_on_hold',    'inst_cancelled',  'Cancel',       6)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name',  'Customer Name',   'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'scheduled_date', 'Scheduled Date',  'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'location',       'Location/Address','string', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'technician',     'Assigned Technician','string',FALSE,'[]'::jsonb,'{}'::jsonb, 3),
-    (v_workflow_id, 'notes',          'Notes',           'string', FALSE, '[]'::jsonb, '{}'::jsonb, 4);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'installation';
 END IF;
 
@@ -1747,13 +1684,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'invoice') THEN
     ('inv_overdue','inv_void',    'Void',           6)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name', 'Customer Name', 'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'invoice_date',  'Invoice Date',  'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'due_date',      'Due Date',      'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'total_amount',  'Total Amount',  'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 3),
-    (v_workflow_id, 'notes',         'Notes',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 4);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'invoice';
 END IF;
 
@@ -1783,13 +1713,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'payment') THEN
     ('pmt_pending', 'pmt_voided',   'Void',          1),
     ('pmt_received','pmt_refunded', 'Issue Refund',  2)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name',  'Customer Name',  'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'amount',         'Amount',         'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'payment_date',   'Payment Date',   'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'payment_method', 'Payment Method', 'enum',   FALSE,
-      '["cash","check","credit_card","bank_transfer","other"]'::jsonb, '{}'::jsonb, 3);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'payment';
 END IF;
@@ -1822,11 +1745,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'credit_memo') THEN
     ('cm_issued', 'cm_void',    'Void',              3)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name', 'Customer Name', 'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'credit_amount', 'Credit Amount', 'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'reason',        'Reason',        'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'credit_memo';
 END IF;
 
@@ -1857,11 +1775,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'refund') THEN
     ('ref_approved',  'ref_processed', 'Process',  2)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'customer_name',  'Customer Name',  'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'refund_amount',  'Refund Amount',  'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'reason',         'Reason',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'refund';
 END IF;
 
@@ -1891,13 +1804,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'vendor') THEN
     ('vendor_on_hold', 'vendor_active',   'Reactivate',   2),
     ('vendor_on_hold', 'vendor_inactive', 'Deactivate',   3)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'company_name', 'Company Name',  'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'email',        'Email',         'email',  FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'phone',        'Phone',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'contact_name', 'Contact Name',  'string', FALSE, '[]'::jsonb, '{}'::jsonb, 3),
-    (v_workflow_id, 'payment_terms','Payment Terms', 'string', FALSE, '[]'::jsonb, '{}'::jsonb, 4);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'vendor';
 END IF;
@@ -1935,12 +1841,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'requisition') THEN
     ('req_approved',  'req_cancelled', 'Cancel',        6)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'description',    'Description',    'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'requested_by',   'Requested By',   'string', FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'estimated_cost', 'Estimated Cost', 'number', FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'needed_by',      'Needed By Date', 'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 3);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'requisition';
 END IF;
 
@@ -1976,12 +1876,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'purchase_order') THEN
     ('po_partially_received', 'po_cancelled',          'Cancel',             6)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'vendor_name',   'Vendor Name',   'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'order_date',    'Order Date',    'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'expected_date', 'Expected Date', 'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'total_amount',  'Total Amount',  'number', FALSE, '[]'::jsonb, '{}'::jsonb, 3);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'purchase_order';
 END IF;
 
@@ -2011,11 +1905,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'item_receipt') THEN
     ('ir_received', 'ir_reconciled',  'Reconcile',      1),
     ('ir_received', 'ir_discrepancy', 'Flag Discrepancy',2)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'vendor_name',   'Vendor Name',   'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'received_date', 'Received Date', 'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'notes',         'Notes',         'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'item_receipt';
 END IF;
@@ -2054,12 +1943,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'vendor_bill') THEN
     ('vb_disputed', 'vb_void',     'Void',          7)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'vendor_name',  'Vendor Name',  'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'bill_date',    'Bill Date',    'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'due_date',     'Due Date',     'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'total_amount', 'Total Amount', 'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 3);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'vendor_bill';
 END IF;
 
@@ -2094,13 +1977,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'vendor_payment') THEN
     ('vp_sent',      'vp_voided',    'Void',       5)
   ) AS t(fk, tk, name, so);
 
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'vendor_name',    'Vendor Name',    'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'amount',         'Amount',         'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'payment_date',   'Payment Date',   'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'payment_method', 'Payment Method', 'enum',   FALSE,
-      '["check","bank_transfer","credit_card","other"]'::jsonb, '{}'::jsonb, 3);
-
   DELETE FROM _wf_states10 WHERE workflow_key = 'vendor_payment';
 END IF;
 
@@ -2131,11 +2007,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'vendor_credit') THEN
     ('vc_issued', 'vc_applied', 'Apply to Bill',   2),
     ('vc_issued', 'vc_void',    'Void',            3)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'vendor_name',   'Vendor Name',   'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'credit_amount', 'Credit Amount', 'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'reason',        'Reason',        'string', FALSE, '[]'::jsonb, '{}'::jsonb, 2);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'vendor_credit';
 END IF;
@@ -2168,14 +2039,6 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'expense') THEN
     ('exp_submitted', 'exp_rejected',   'Reject',     2),
     ('exp_approved',  'exp_reimbursed', 'Reimburse',  3)
   ) AS t(fk, tk, name, so);
-
-  INSERT INTO workflow_field_definitions (workflow_id, key, label, data_type, required, options, validation, sort_order) VALUES
-    (v_workflow_id, 'submitted_by',  'Submitted By',  'string', TRUE,  '[]'::jsonb, '{}'::jsonb, 0),
-    (v_workflow_id, 'amount',        'Amount',        'number', TRUE,  '[]'::jsonb, '{}'::jsonb, 1),
-    (v_workflow_id, 'expense_date',  'Expense Date',  'date',   FALSE, '[]'::jsonb, '{}'::jsonb, 2),
-    (v_workflow_id, 'category',      'Category',      'enum',   FALSE,
-      '["travel","meals","office_supplies","equipment","software","other"]'::jsonb, '{}'::jsonb, 3),
-    (v_workflow_id, 'description',   'Description',   'string', FALSE, '[]'::jsonb, '{}'::jsonb, 4);
 
   DELETE FROM _wf_states10 WHERE workflow_key = 'expense';
 END IF;
@@ -8062,3 +7925,63 @@ CREATE INDEX IF NOT EXISTS idx_pm_doc ON portal_message
     (portal_message_module, portal_message_document_uuid) WHERE portal_message_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pm_customer ON portal_message
     (portal_message_customer_id) WHERE portal_message_deleted_at IS NULL;
+
+-- =====================================================================
+-- CRM APPROVAL: reject action + stage-level-only approver config (2026-08-31)
+-- =====================================================================
+-- Adds a Reject action to the CRM (Lead/Prospect/Customer) approval flow
+-- alongside Approve -- see crmstore/relational_approval.go. A rejected
+-- record stays at its current status with customer_approval_status =
+-- 'rejected' and the reason recorded; editing it resubmits it (resets it
+-- back to 'pending' / 'approved' per current config) rather than requiring a
+-- separate resubmit action.
+--
+-- Also collapses crm_workflow_approver to record-type-level ("wildcard",
+-- crm_status_id IS NULL) approver sets only -- one config per CRM stage
+-- (Lead/Prospect/Customer), matching every relational Sales/Purchases
+-- module's single gate per module (approvalchain/registry.go) instead of
+-- CRM's previous per-status model. Existing per-status rows are removed
+-- one time below -- a deliberate product decision (not a general
+-- destructive-migration precedent): crm_workflow_approver is workspace
+-- config, not a business record, and any tenant that had one configured can
+-- simply re-add it as a stage-level approver via Configure > Workflows.
+
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_rejected_by INTEGER NULL REFERENCES employee(employee_id);
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_rejected_at TIMESTAMP NULL;
+ALTER TABLE customer ADD COLUMN IF NOT EXISTS customer_rejection_reason TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE customer DROP CONSTRAINT IF EXISTS chk_customer_approval_status;
+ALTER TABLE customer ADD CONSTRAINT chk_customer_approval_status
+    CHECK (customer_approval_status IN ('none','pending','approved','rejected'));
+
+ALTER TABLE customer_history DROP CONSTRAINT IF EXISTS chk_customer_history_action;
+ALTER TABLE customer_history ADD CONSTRAINT chk_customer_history_action
+    CHECK (action IN ('create','transition','convert','approve','approve_override','reject'));
+
+-- One-time cleanup: remove now-unsupported per-status approver rows.
+-- CreateApprover (controllers/crm_admin.go) rejects new ones going forward.
+DELETE FROM crm_workflow_approver WHERE crm_status_id IS NOT NULL;
+
+-- Postgres does not treat two NULLs as equal for UNIQUE purposes, so the
+-- table's own uq_crm_workflow_approver (record_type_id, crm_status_id,
+-- approver_employee_id) never actually deduplicated wildcard rows -- harmless
+-- while wildcard was one approver shape among several, load-bearing now that
+-- it is the only shape crm_workflow_approver holds.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_workflow_approver_wildcard
+    ON crm_workflow_approver (record_type_id, approver_employee_id)
+    WHERE crm_status_id IS NULL;
+
+-- -- 000039_workflow_custom_fields_toggle ---------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 39: per-workflow Custom Fields toggle.
+--
+-- Custom fields (workflow_field_definitions) are now opt-in per record type
+-- rather than pre-seeded. Default FALSE: existing tenants keep whatever field
+-- definitions they already have (nothing is deleted), but the Custom Fields
+-- section stops rendering/validating as required until an admin explicitly
+-- switches it on for that workflow. New tenants start with zero seeded field
+-- definitions (see workflow/seed.go) and the section off, so it's genuinely
+-- empty until an admin opts in and adds fields.
+-- =====================================================================
+
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS custom_fields_enabled BOOLEAN NOT NULL DEFAULT FALSE;

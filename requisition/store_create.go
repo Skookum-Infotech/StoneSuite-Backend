@@ -222,5 +222,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRequisitionInput, 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create requisition: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

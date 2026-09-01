@@ -49,6 +49,30 @@ func TestSendNotification_PostsToCorrectPath(t *testing.T) {
 	assert.Equal(t, "INV-1.pdf", gotBody.Attachments[0].FileName)
 }
 
+func TestSendNotification_IncludesEmailBodyHTML(t *testing.T) {
+	var gotBody NotificationRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	err := SendNotification(context.Background(), NotificationRequest{
+		TenantID:      "tenant-1",
+		Recipients:    []RecipientTarget{{Email: "customer@example.com"}},
+		EventType:     "document.sent",
+		Resource:      "salesorder",
+		ResourceID:    "so-1",
+		Title:         "Sales Order SO-1 sent",
+		EmailBodyHTML: "<p>Branded body.</p>",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "<p>Branded body.</p>", gotBody.EmailBodyHTML)
+}
+
 func TestSendNotification_NotConfigured_ReturnsError(t *testing.T) {
 	config.AppConfig = config.Config{}
 	err := SendNotification(context.Background(), NotificationRequest{})

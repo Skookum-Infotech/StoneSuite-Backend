@@ -158,6 +158,33 @@ func (h *WorkflowOps) SetWorkflowEnabled(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Workflow updated."})
 }
 
+// SetCustomFieldsEnabled POST /api/tenant/workflows/{id}/custom-fields/enabled
+// body {"enabled":bool} — the master switch for a workflow's Custom Fields
+// section. Existing field definitions and any values already stored under
+// their keys are left untouched either way; see workflow.SetCustomFieldsEnabled.
+func (h *WorkflowOps) SetCustomFieldsEnabled(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionConfigure)
+	if !ok {
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if err := workflow.SetCustomFieldsEnabled(r.Context(), pool, r.PathValue("id"), req.Enabled); err != nil {
+		if errors.Is(err, workflow.ErrWorkflowNotFound) {
+			fail(w, http.StatusNotFound, "Workflow not found.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to update workflow.")
+		return
+	}
+	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Workflow updated."})
+}
+
 // ---- approver config ---------------------------------------------------------
 
 // GetWorkflowApprovers GET /api/tenant/workflows/{id}/approvers
@@ -496,7 +523,7 @@ func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
 		return
 	}
-	if err := workflow.ValidateCustomFields(def.Fields, req.CustomFields); err != nil {
+	if err := workflow.ValidateCustomFields(def.Fields, req.CustomFields, def.Workflow.CustomFieldsEnabled); err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}

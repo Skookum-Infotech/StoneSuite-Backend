@@ -79,7 +79,7 @@ func (h *TenantOps) finalizeOnboarding(ctx context.Context, tenant *tenancy.Tena
 	h.recordOwnerCustomer(ctx, formData)
 
 	link := setupLink(token)
-	if err := services.SendPasswordSetupEmail(email, fullName, link); err != nil {
+	if err := services.SendPasswordSetupEmail(ctx, tenant.ID, identity.ID, email, fullName, link); err != nil {
 		log.Printf("password-setup email to %s not sent (link still valid): %v", email, err)
 	}
 	return link, nil
@@ -186,6 +186,13 @@ func (h *TenantOps) FormSchema(w http.ResponseWriter, r *http.Request) {
 	def, _, _, err := h.ownerCustomerDef(r.Context())
 	if err != nil {
 		// Degrade gracefully: an empty schema lets the base form still render.
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": []any{}})
+		return
+	}
+	// Custom Fields is opt-in per workflow -- don't render fields for a
+	// section the tenant hasn't switched on (definitions may still exist
+	// from before it was disabled; see Workflow.CustomFieldsEnabled).
+	if !def.Workflow.CustomFieldsEnabled {
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": []any{}})
 		return
 	}

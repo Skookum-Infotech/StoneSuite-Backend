@@ -577,6 +577,7 @@ func main() {
 		mux.Handle("GET /api/tenant/workflows/enabled", tenantChain(wf.ListEnabledWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
+		mux.Handle("POST /api/tenant/workflows/{id}/custom-fields/enabled", tenantChain(wf.SetCustomFieldsEnabled))
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
 		mux.Handle("DELETE /api/tenant/workflows/{id}/fields/{fieldId}", tenantChain(wf.DeleteField))
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
@@ -613,6 +614,53 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/attachments", tenantChain(attachOps.ListAttachments))
 		mux.Handle("GET /api/tenant/records/{id}/attachments/{attachmentId}/download", tenantChain(attachOps.DownloadAttachment))
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
+
+		// In-app feedback tickets (bugs / feature requests / UX / performance),
+		// filed by tenant staff or customer-portal users, triaged by platform
+		// admins. Tickets live in the control-plane DB (see package feedback),
+		// so this reuses the same tenantChain/portalChain resolution every other
+		// tenant/portal route uses purely for tenancy.TenantFromContext — not
+		// for a tenant-DB pool. Reporter handlers are registered TWICE (staff +
+		// portal) since RequireAuth confines a portal token to /api/portal/*.
+		//
+		// Every pattern below is a literal string, not built from a loop
+		// variable — apidocs/routes.go's AST-based generator only recognises a
+		// plain string literal or the specific "prefix"+slug+"suffix" shape it
+		// expands against the portal-message loop's known slugs (see
+		// documentSlugs there); anything else is silently skipped or, worse,
+		// misidentified as one of those slugs. A loop here previously produced
+		// exactly that: phantom "invoices"/"payments"/etc. routes.
+		feedbackOps := controllers.NewFeedbackOps(cp, r2Client)
+		mux.Handle("POST /api/tenant/feedback", tenantChain(feedbackOps.Submit))
+		mux.Handle("GET /api/tenant/feedback", tenantChain(feedbackOps.ListMine))
+		mux.Handle("GET /api/tenant/feedback/unread-count", tenantChain(feedbackOps.UnreadCount))
+		mux.Handle("POST /api/tenant/feedback/mark-seen", tenantChain(feedbackOps.MarkSeen))
+		mux.Handle("GET /api/tenant/feedback/{id}", tenantChain(feedbackOps.Get))
+		mux.Handle("POST /api/tenant/feedback/{id}/comments", tenantChain(feedbackOps.AddComment))
+		mux.Handle("POST /api/tenant/feedback/{id}/attachments/presign", tenantChain(feedbackOps.PresignAttachments))
+		mux.Handle("POST /api/tenant/feedback/{id}/attachments", tenantChain(feedbackOps.ConfirmAttachments))
+		mux.Handle("GET /api/tenant/feedback/{id}/attachments/{attachmentId}/download", tenantChain(feedbackOps.DownloadAttachment))
+
+		mux.Handle("POST /api/portal/feedback", portalChain(feedbackOps.Submit))
+		mux.Handle("GET /api/portal/feedback", portalChain(feedbackOps.ListMine))
+		mux.Handle("GET /api/portal/feedback/unread-count", portalChain(feedbackOps.UnreadCount))
+		mux.Handle("POST /api/portal/feedback/mark-seen", portalChain(feedbackOps.MarkSeen))
+		mux.Handle("GET /api/portal/feedback/{id}", portalChain(feedbackOps.Get))
+		mux.Handle("POST /api/portal/feedback/{id}/comments", portalChain(feedbackOps.AddComment))
+		mux.Handle("POST /api/portal/feedback/{id}/attachments/presign", portalChain(feedbackOps.PresignAttachments))
+		mux.Handle("POST /api/portal/feedback/{id}/attachments", portalChain(feedbackOps.ConfirmAttachments))
+		mux.Handle("GET /api/portal/feedback/{id}/attachments/{attachmentId}/download", portalChain(feedbackOps.DownloadAttachment))
+
+		// Platform-admin side: cross-tenant "Support Tickets" list + detail +
+		// status/priority/assignment + replies. Auth required; admin checked
+		// inside each handler (matches tenantOps.requirePlatformAdmin's convention).
+		feedbackAdminOps := controllers.NewFeedbackAdminOps(cp, r2Client)
+		mux.Handle("GET /api/platform/feedback", middleware.RequireAuth(http.HandlerFunc(feedbackAdminOps.List)))
+		mux.Handle("GET /api/platform/feedback/stats", middleware.RequireAuth(http.HandlerFunc(feedbackAdminOps.Stats)))
+		mux.Handle("GET /api/platform/feedback/{id}", middleware.RequireAuth(http.HandlerFunc(feedbackAdminOps.Get)))
+		mux.Handle("PATCH /api/platform/feedback/{id}", middleware.RequireAuth(http.HandlerFunc(feedbackAdminOps.Patch)))
+		mux.Handle("POST /api/platform/feedback/{id}/comments", middleware.RequireAuth(http.HandlerFunc(feedbackAdminOps.AddComment)))
+		mux.Handle("GET /api/platform/feedback/{id}/attachments/{attachmentId}/download", middleware.RequireAuth(http.HandlerFunc(feedbackAdminOps.DownloadAttachment)))
 
 		// Documents: generic PDF render/send/history endpoints for the four
 		// document modules, dispatching by the record's resolved workflow key
@@ -684,8 +732,9 @@ func main() {
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/transition", tenantChain(crm.TransitionRecord))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
-		// Approval: sign off a Closed-Won customer (v2 design).
+		// Approval: sign off (or reject) a record pending approval (v2 design).
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/approve", tenantChain(crm.ApproveRecord))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/reject", tenantChain(crm.RejectRecord))
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/approvals/pending", tenantChain(crm.PendingApprovals))
 		// Per-record audit trail.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/audit", tenantChain(crm.RecordAudit))
@@ -1220,7 +1269,7 @@ func main() {
 		// NOTE: this is an allowlist. A route registered on the mux under a
 		// prefix that is missing here is unreachable — it 404s before the mux
 		// ever sees it. Add new top-level prefixes here as well as on the mux.
-		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") {
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

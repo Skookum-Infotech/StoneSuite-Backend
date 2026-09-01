@@ -44,6 +44,16 @@ func notifyTransition(ctx context.Context, pool *pgxpool.Pool, uuid string, inte
 	}
 }
 
+// notifyCreated best-effort-notifies the actor who created a new sales
+// order that the creation succeeded.
+func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	approvalchain.NotifyCreated(ctx, pool, approvalchain.EventContext{
+		Table: salesOrderTable, IDColumn: salesOrderIDColumn, NumberColumn: salesOrderNumberColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: salesOrderResource, DisplayName: salesOrderDisplayName, RecordUUID: uuid,
+	})
+}
+
 // notifyApproved best-effort-notifies an order's owner once it's approved
 // (quorum met or a super-admin override).
 func notifyApproved(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, approverEmployeeID int) {

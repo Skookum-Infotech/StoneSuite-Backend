@@ -136,6 +136,17 @@ func notifyTransition(ctx context.Context, pool *pgxpool.Pool, uuid string, inte
 	}
 }
 
+// notifyCreated best-effort-notifies the actor who created a new
+// fabrication job that the creation succeeded.
+func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	cfg := moduleConfig()
+	approvalchain.NotifyCreated(ctx, pool, approvalchain.EventContext{
+		Table: cfg.Record.Table, IDColumn: cfg.Record.IDColumn, NumberColumn: cfg.Record.NumberColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
+}
+
 // Hold places a live, non-terminal job on hold, recording the status it was in
 // so Resume can restore it. HOLD→HOLD is rejected (it would overwrite the
 // held-from status and strand the job — spec §1.2).

@@ -125,6 +125,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create payment: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, newID, actorEmployeeID)
 
 	for _, app := range in.Applications {
 		if _, err := Apply(ctx, pool, newUUID, app.InvoiceUUID, app.Amount, actorEmployeeID); err != nil {

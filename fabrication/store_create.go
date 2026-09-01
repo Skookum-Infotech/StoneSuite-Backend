@@ -123,6 +123,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmp
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create fabrication job: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, jobInternalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }
 

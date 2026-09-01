@@ -166,6 +166,16 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 		return nil, err
 	}
 
+	// Default the owner to the creating employee when unset, matching every
+	// sibling document module (see payment.Create) -- without this,
+	// credit_memo_owner_id stays NULL and an "own"-scoped caller can never see
+	// a memo they just created (creditmemo.Search's scope predicate is an
+	// equality match, which never matches NULL).
+	ownerEmp := in.OwnerEmployeeID
+	if ownerEmp == nil && actorEmployeeID != 0 {
+		ownerEmp = &actorEmployeeID
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin create credit memo: %w", err)
@@ -200,7 +210,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 		custID, srcInvoiceID, srcSalesOrderID,
 		in.ReferenceNumber, in.CreditMemoDate, in.Reason,
 		in.SalesTaxPercent, in.Memo, in.Notes, in.InternalNotes,
-		in.SalesRepID, in.OwnerEmployeeID,
+		in.SalesRepID, ownerEmp,
 		in.PriceLevelID, in.CurrencyID,
 		money.Subtotal, money.DiscountTotal, money.TaxTotal,
 		in.Adjustment, money.GrandTotal,

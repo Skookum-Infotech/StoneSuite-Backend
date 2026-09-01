@@ -7985,3 +7985,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_workflow_approver_wildcard
 -- =====================================================================
 
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS custom_fields_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- -- 000040_credit_memo_owner_backfill ---------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 40: backfill credit_memo_owner_id.
+--
+-- creditmemo.Create never defaulted the owner to the creating employee (every
+-- sibling document module does -- see payment.Create), so every existing
+-- credit memo has credit_memo_owner_id = NULL. creditmemo.Search's "own"
+-- scope predicate is an equality match (credit_memo_owner_id = $1), which
+-- never matches NULL, so an own-scoped caller could never see a credit memo
+-- they created, and the single-record IDOR guard 404s it too. The Go fix
+-- (creditmemo/store_create.go) defaults new memos going forward; this
+-- backfill repairs existing rows using credit_memo_created_by as the best
+-- available stand-in for "who owns this."
+--
+-- Idempotent: only touches rows still NULL, so it converges to a no-op after
+-- the first tenant boot following this change.
+-- =====================================================================
+
+UPDATE credit_memo
+SET credit_memo_owner_id = credit_memo_created_by
+WHERE credit_memo_owner_id IS NULL
+  AND credit_memo_created_by IS NOT NULL;

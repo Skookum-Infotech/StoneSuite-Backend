@@ -160,6 +160,73 @@ func TestCreate_StartsAsDraftWithNumberAndLines(t *testing.T) {
 	}
 }
 
+// A credit memo's owner must default to the creating employee when the
+// caller doesn't specify one, matching every sibling document module (see
+// payment.Create). Without this, credit_memo_owner_id stays NULL and an
+// "own"-scoped caller can never see a memo they just created --
+// creditmemo.Search's scope predicate is an equality match, which never
+// matches NULL.
+func TestCreate_DefaultsOwnerToActor(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID := seedCustomer(t, pool)
+
+	const actorEmployeeID = 1
+	cm, err := Create(ctx, pool, CreateCreditMemoInput{
+		CustomerUUID: custUUID,
+		Reason:       "Overbilled freight",
+		Lines: []CreditMemoLineInput{
+			{LineNumber: 1, Description: "Freight credit", Quantity: 1, UnitPrice: 25},
+		},
+	}, actorEmployeeID)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if cm.OwnerEmployeeID == nil || *cm.OwnerEmployeeID != actorEmployeeID {
+		t.Fatalf("OwnerEmployeeID = %v, want %d", cm.OwnerEmployeeID, actorEmployeeID)
+	}
+	if cm.OwnerUserID == "" {
+		t.Error("OwnerUserID is empty, want the actor's tenant user id (needed by the own-scope IDOR guard)")
+	}
+
+	// An explicit owner on the input must still win over the actor default.
+	explicitOwner := seedEmployee(t, pool)
+	cm2, err := Create(ctx, pool, CreateCreditMemoInput{
+		CustomerUUID:    custUUID,
+		Reason:          "Overbilled freight",
+		OwnerEmployeeID: &explicitOwner,
+		Lines: []CreditMemoLineInput{
+			{LineNumber: 1, Description: "Freight credit", Quantity: 1, UnitPrice: 25},
+		},
+	}, actorEmployeeID)
+	if err != nil {
+		t.Fatalf("create with explicit owner: %v", err)
+	}
+	if cm2.OwnerEmployeeID == nil || *cm2.OwnerEmployeeID != explicitOwner {
+		t.Fatalf("OwnerEmployeeID = %v, want %d (explicit input must not be overridden)", cm2.OwnerEmployeeID, explicitOwner)
+	}
+}
+
+// seedEmployee creates a standalone active employee row (no linked user) for
+// tests that need a real employee_id to satisfy an FK, e.g. an explicit
+// OwnerEmployeeID.
+func seedEmployee(t *testing.T, pool *pgxpool.Pool) int {
+	t.Helper()
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	var employeeID int
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO employee (employee_first_name, employee_last_name, employee_email, employee_created_by)
+		VALUES ('Test', 'Employee', $1, 1) RETURNING employee_id`,
+		"owner-"+suffix+"@test.local").Scan(&employeeID); err != nil {
+		t.Fatalf("seed employee: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM employee WHERE employee_id = $1`, employeeID)
+	})
+	return employeeID
+}
+
 func TestCreate_RequiresCustomerAndLines(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

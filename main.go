@@ -519,6 +519,12 @@ func main() {
 		mux.Handle("GET /api/tenant/dashboard/widgets/me", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.Me))))
 		mux.Handle("/api/tenant/dashboard/widgets/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.RoleAllocations))))
 
+		// Widget data endpoints -- one per widget (see dashboard_pipeline.go).
+		// No dashboard_widget permission gate: each widget enforces its own
+		// underlying resource's RBAC (here, lead/prospect/customer read scope)
+		// exactly as the CRM pages themselves do.
+		mux.Handle("GET /api/tenant/dashboard/widgets/pipeline-donut/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.PipelineMix))))
+
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))

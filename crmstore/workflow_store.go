@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -76,6 +77,20 @@ func (s *workflowStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, ke
 	}
 	callerUserID := s.scopeFilter(ctx, pool, scope, actorIdentityID)
 	return workflow.CountRecords(ctx, pool, wf.ID, scope, callerUserID)
+}
+
+// CountRecordsSince is CountRecords narrowed to records created at or after
+// since — see workflow.CountRecordsSince.
+func (s *workflowStore) CountRecordsSince(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, since time.Time) (int, error) {
+	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
+	if errors.Is(err, workflow.ErrWorkflowNotFound) {
+		return 0, ClientError{Msg: "Workflow not found."}
+	}
+	if err != nil {
+		return 0, err
+	}
+	callerUserID := s.scopeFilter(ctx, pool, scope, actorIdentityID)
+	return workflow.CountRecordsSince(ctx, pool, wf.ID, scope, callerUserID, since)
 }
 
 // SearchRecords delegates to the workflow engine's scope-safe filtered list.

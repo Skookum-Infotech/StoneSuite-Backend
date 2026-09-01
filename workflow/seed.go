@@ -20,19 +20,14 @@ type seedTransition struct {
 	requiredFields []string
 }
 
-type seedField struct {
-	key, label string
-	dataType   DataType
-	required   bool
-	options    []string
-}
-
+// Custom field definitions are no longer seeded (see custom_fields_enabled on
+// workflows) -- every workflow starts with zero field definitions and the
+// Custom Fields section switched off until an admin opts in.
 type seedWorkflow struct {
 	key, name, description string
 	pipelineOrder          int // 0=unordered; 1=Lead, 2=Prospect, 3=Customer
 	states                 []seedState
 	transitions            []seedTransition
-	fields                 []seedField
 }
 
 // defaultWorkflows are the Lead/Prospect/Customer CRM pipelines seeded for
@@ -59,14 +54,6 @@ var defaultWorkflows = []seedWorkflow{
 			{from: "lead_qualified", to: "lead_converted", name: "Convert"},
 			{from: "lead_qualified", to: "lead_dead", name: "Mark Dead"},
 		},
-		fields: []seedField{
-			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
-			{key: "email", label: "Email", dataType: TypeEmail, required: true},
-			{key: "phone", label: "Phone", dataType: TypeString},
-			{key: "source", label: "Source", dataType: TypeEnum,
-				options: []string{"web", "referral", "event", "cold_call", "partner"}},
-			{key: "estimated_value", label: "Estimated Value", dataType: TypeNumber},
-		},
 	},
 	{
 		key: "prospect", name: "Prospect", description: "Active sales opportunities.",
@@ -92,13 +79,6 @@ var defaultWorkflows = []seedWorkflow{
 			{from: "prospect_in_negotiation", to: "prospect_purchasing", name: "Move to Purchase"},
 			{from: "prospect_in_negotiation", to: "prospect_closed_lost", name: "Close Lost"},
 		},
-		fields: []seedField{
-			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
-			{key: "email", label: "Email", dataType: TypeEmail, required: true},
-			{key: "phone", label: "Phone", dataType: TypeString},
-			{key: "deal_size", label: "Deal Size", dataType: TypeNumber},
-			{key: "close_date", label: "Expected Close Date", dataType: TypeDate},
-		},
 	},
 	{
 		key: "customer", name: "Customer", description: "Customer lifecycle.",
@@ -113,22 +93,6 @@ var defaultWorkflows = []seedWorkflow{
 			{from: "customer_closed_won", to: "customer_closed_lost", name: "Mark Lost"},
 			{from: "customer_renewal", to: "customer_closed_won", name: "Renew"},
 			{from: "customer_renewal", to: "customer_closed_lost", name: "Mark Lost"},
-		},
-		// Core customer fields (mirror onboarding form).
-		fields: []seedField{
-			{key: "company_name", label: "Company Name", dataType: TypeString, required: true},
-			{key: "legal_name", label: "Legal Name", dataType: TypeString},
-			{key: "industry", label: "Industry", dataType: TypeString},
-			{key: "website", label: "Website", dataType: TypeString},
-			{key: "country", label: "Country", dataType: TypeString},
-			{key: "currency", label: "Currency", dataType: TypeString},
-			{key: "timezone", label: "Timezone", dataType: TypeString},
-			{key: "tax_id", label: "Tax / VAT ID", dataType: TypeString},
-			{key: "billing_address", label: "Billing Address", dataType: TypeString},
-			{key: "shipping_address", label: "Shipping Address", dataType: TypeString},
-			{key: "super_admin_name", label: "Super Admin Name", dataType: TypeString},
-			{key: "super_admin_email", label: "Super Admin Email", dataType: TypeEmail, required: true},
-			{key: "super_admin_phone", label: "Super Admin Phone", dataType: TypeString},
 		},
 	},
 }
@@ -185,15 +149,5 @@ func seedOne(ctx context.Context, q Querier, sw seedWorkflow) error {
 		}
 	}
 
-	for i, f := range sw.fields {
-		opts, _ := json.Marshal(f.options)
-		if _, err := q.Exec(ctx, `
-			INSERT INTO workflow_field_definitions
-				(workflow_id, key, label, data_type, required, options, validation, sort_order)
-			VALUES ($1,$2,$3,$4,$5,$6::jsonb,'{}'::jsonb,$7)`,
-			workflowID, f.key, f.label, f.dataType, f.required, opts, i); err != nil {
-			return fmt.Errorf("insert field %q: %w", f.key, err)
-		}
-	}
 	return nil
 }

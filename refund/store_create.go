@@ -202,5 +202,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create refund: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, newID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

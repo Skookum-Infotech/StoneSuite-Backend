@@ -45,13 +45,14 @@ func TestNotifyOwnerOfSend_CallsWithOwnerID(t *testing.T) {
 		return nil
 	}
 
-	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1",
+	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1", "actor-1",
 		docpdf.PrintableDoc{Kind: "INVOICE", Seller: docpdf.Seller{Name: "Acme"}},
 		"INV-1", "invoice", "rec-1", []string{"bob@buyer.example"},
 		[]byte("%PDF-1.4"), "INV-1.pdf")
 
 	assert.True(t, called)
 	assert.Equal(t, "tenant-1", gotReq.TenantID)
+	assert.Equal(t, "actor-1", gotReq.ActorUserID)
 	require.Len(t, gotReq.Recipients, 1)
 	assert.Equal(t, "owner-1", gotReq.Recipients[0].UserID)
 	assert.Equal(t, "owner@example.com", gotReq.Recipients[0].Email)
@@ -70,7 +71,7 @@ func TestNotifyOwnerOfSend_NoOwnerID_DoesNotCall(t *testing.T) {
 		return nil
 	}
 
-	notifyOwnerOfSend(context.Background(), notify, "", "tenant-1", "",
+	notifyOwnerOfSend(context.Background(), notify, "", "tenant-1", "", "actor-1",
 		docpdf.PrintableDoc{Kind: "INVOICE"}, "INV-1", "invoice", "rec-1",
 		[]string{"bob@buyer.example"}, []byte("%PDF-1.4"), "INV-1.pdf")
 
@@ -78,7 +79,7 @@ func TestNotifyOwnerOfSend_NoOwnerID_DoesNotCall(t *testing.T) {
 }
 
 func TestCustomerSendRequest_OneRecipientPerToAndCCAddress(t *testing.T) {
-	req := customerSendRequest("tenant-1", DocMeta{WorkflowKey: "salesorder"}, "rec-1", "Sales Order SO-1",
+	req := customerSendRequest("tenant-1", "actor-1", DocMeta{WorkflowKey: "salesorder"}, "rec-1", "Sales Order SO-1",
 		docpdf.PrintableDoc{Kind: "SALES ORDER", Number: "SO-1", Seller: docpdf.Seller{Name: "Acme"}},
 		"Please review.", []string{"buyer@example.com"}, []string{"ap@example.com"},
 		"SO-1.pdf", []byte("%PDF-1.4"))
@@ -88,6 +89,7 @@ func TestCustomerSendRequest_OneRecipientPerToAndCCAddress(t *testing.T) {
 	assert.Empty(t, req.Recipients[0].UserID)
 	assert.Equal(t, "ap@example.com", req.Recipients[1].Email)
 	assert.Equal(t, "tenant-1", req.TenantID)
+	assert.Equal(t, "actor-1", req.ActorUserID)
 	assert.Equal(t, "document.sent", req.EventType)
 	assert.Equal(t, "salesorder", req.Resource)
 	assert.Equal(t, "rec-1", req.ResourceID)
@@ -101,7 +103,7 @@ func TestCustomerSendRequest_OneRecipientPerToAndCCAddress(t *testing.T) {
 }
 
 func TestCustomerSendRequest_NoCC_OneRecipient(t *testing.T) {
-	req := customerSendRequest("tenant-1", DocMeta{WorkflowKey: "invoice"}, "rec-1", "Invoice INV-1",
+	req := customerSendRequest("tenant-1", "actor-1", DocMeta{WorkflowKey: "invoice"}, "rec-1", "Invoice INV-1",
 		docpdf.PrintableDoc{Kind: "INVOICE", Number: "INV-1", Seller: docpdf.Seller{Name: "Acme"}},
 		"", []string{"buyer@example.com"}, nil, "INV-1.pdf", []byte("%PDF-1.4"))
 
@@ -158,7 +160,7 @@ func TestNotifyOwnerOfSend_NotifyErrors_DoesNotPanicOrReturnError(t *testing.T) 
 	}
 	// Must not panic; notifyOwnerOfSend has no return value to check —
 	// reaching this line without panicking is the assertion.
-	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1",
+	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1", "actor-1",
 		docpdf.PrintableDoc{Kind: "INVOICE"}, "INV-1", "invoice", "rec-1",
 		[]string{"bob@buyer.example"}, []byte("%PDF-1.4"), "INV-1.pdf")
 }

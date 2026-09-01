@@ -245,5 +245,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePurchaseOrderInput
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create purchase order: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

@@ -92,6 +92,69 @@ func seedCreditMemoWithOwner(t *testing.T, pool *pgxpool.Pool) (internalID int, 
 	return internalID, recordTypeID, draftStatusID, uuid, number, ownerUserIDVal, ownerEmail
 }
 
+// seedActorEmployee inserts a real user-linked employee, standing in for
+// whoever's actorEmployeeID gets passed into a module's Create() -- the
+// recipient NotifyCreated/actorContact resolves.
+func seedActorEmployee(t *testing.T, pool *pgxpool.Pool) (employeeID int, userID, email string) {
+	t.Helper()
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	email = "notify-actor-" + suffix + "@example.test"
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO users (identity_id, email, full_name, status)
+		VALUES (gen_random_uuid(), $1, 'Notify Test Actor', 'active') RETURNING id`,
+		email).Scan(&userID); err != nil {
+		t.Fatalf("seed actor user: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email, employee_created_by)
+		VALUES ($1, 'Notify', 'Actor', $2, 1) RETURNING employee_id`,
+		userID, email).Scan(&employeeID); err != nil {
+		t.Fatalf("seed actor employee: %v", err)
+	}
+	return employeeID, userID, email
+}
+
+func TestActorContact_ResolvesRealActor(t *testing.T) {
+	pool := notifyTestPool(t)
+	employeeID, userID, email := seedActorEmployee(t, pool)
+
+	c, ok, err := actorContact(context.Background(), pool, employeeID)
+	if err != nil {
+		t.Fatalf("actorContact: %v", err)
+	}
+	if !ok {
+		t.Fatal("actorContact ok = false, want true")
+	}
+	if c.UserID != userID || c.Email != email {
+		t.Errorf("actorContact = %+v, want {UserID:%s Email:%s}", c, userID, email)
+	}
+}
+
+func TestActorContact_ZeroEmployeeID(t *testing.T) {
+	pool := notifyTestPool(t)
+
+	_, ok, err := actorContact(context.Background(), pool, 0)
+	if err != nil {
+		t.Fatalf("actorContact: %v", err)
+	}
+	if ok {
+		t.Error("actorContact ok = true for employee id 0, want false")
+	}
+}
+
+func TestActorContact_UnresolvableEmployeeID(t *testing.T) {
+	pool := notifyTestPool(t)
+
+	_, ok, err := actorContact(context.Background(), pool, -1)
+	if err != nil {
+		t.Fatalf("actorContact: %v", err)
+	}
+	if ok {
+		t.Error("actorContact ok = true for a nonexistent employee id, want false")
+	}
+}
+
 func TestFetchNumber(t *testing.T) {
 	pool := notifyTestPool(t)
 	internalID, _, _, _, number, _, _ := seedCreditMemoWithOwner(t, pool)

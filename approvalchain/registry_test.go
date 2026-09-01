@@ -95,15 +95,18 @@ func TestRegistry_RecordSpecComplete(t *testing.T) {
 // TestRegistry_ApprovalNotificationScope guards the deliberate scope line
 // notify.go's Notify* helpers rely on: DisplayName == "" is what makes them
 // a no-op, so engine.Approve stays behavior-identical for every module not
-// yet wired for approval notifications. Only the four engine-based in-scope
-// modules (invoice, payment, credit_memo, refund) may set DisplayName (and,
-// alongside it, Resource/OwnerColumn/NumberColumn) -- every other entry must
-// stay at the zero value. If this test ever needs updating because a new
-// module was deliberately wired for approval notifications, that's fine;
-// it's here so that doesn't happen by accident.
+// yet wired for approval notifications. Only the eleven engine-based
+// in-scope modules below may set DisplayName (and, alongside it,
+// Resource/OwnerColumn/NumberColumn) -- every other entry must stay at the
+// zero value. If this test ever needs updating because a new module was
+// deliberately wired for approval notifications, that's fine; it's here so
+// that doesn't happen by accident.
 func TestRegistry_ApprovalNotificationScope(t *testing.T) {
 	inScope := map[string]bool{
 		"invoice": true, "payment": true, "credit_memo": true, "refund": true,
+		"purchase_order": true, "requisition": true, "vendor_bill": true,
+		"vendor_payment": true, "expense": true, "installation": true,
+		"vendor_credit": true,
 	}
 	for key, cfg := range registry {
 		t.Run(key, func(t *testing.T) {

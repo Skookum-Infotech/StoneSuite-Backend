@@ -56,8 +56,9 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	// pending bill for rework without an approver's sign-off (on top of
 	// the engine's own always-allowed exits like Void/Cancel/Reject).
 	approverTable := moduleConfig().ApproverTable
+	var requiredHere int
 	if toStatusCode != draftStatusCode {
-		requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, curStatusID)
+		requiredHere, err = approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, curStatusID)
 		if err != nil {
 			return nil, err
 		}
@@ -88,5 +89,30 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)
 	}
+	notifyTransition(ctx, pool, uuid, internalID, recordTypeID, toStatusID, toStatusCode, requiredHere, approvalStatus, targetApprovers, actorEmployeeID)
 	return Get(ctx, pool, uuid)
+}
+
+// notifyTransition best-effort-notifies approvers/owner around a manual
+// status move (AD-6): approvers when the vendor bill just entered a gated
+// status, or the owner when a gated-unapproved bill escaped via an
+// always-allowed exit (void/cancel/reject) instead of clearing approval.
+func notifyTransition(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, recordTypeID, toStatusID int, toStatusCode string, requiredHere int, approvalStatus string, targetApprovers int, actorEmployeeID int) {
+	cfg := moduleConfig()
+	rec := cfg.Record
+	if targetApprovers > 0 {
+		approvalchain.NotifyApprovalRequested(ctx, pool, approvalchain.EventContext{
+			Table: rec.Table, IDColumn: rec.IDColumn, NumberColumn: rec.NumberColumn,
+			ApproverTable: cfg.ApproverTable, RecordTypeID: recordTypeID, StatusID: toStatusID,
+			InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+			Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+		})
+	}
+	if requiredHere > 0 && approvalStatus != approvalchain.StatusApproved && approvalchain.AlwaysAllowedExitCodes[toStatusCode] {
+		approvalchain.NotifyApprovalRejected(ctx, pool, approvalchain.EventContext{
+			Table: rec.Table, IDColumn: rec.IDColumn, NumberColumn: rec.NumberColumn, OwnerColumn: rec.OwnerColumn,
+			InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+			Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+		})
+	}
 }

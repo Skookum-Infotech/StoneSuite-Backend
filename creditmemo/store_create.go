@@ -249,5 +249,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create credit memo: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, newID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

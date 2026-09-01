@@ -18478,6 +18478,47 @@
         ]
       }
     },
+    "/api/tenant/workflows/{id}/custom-fields/enabled": {
+      "post": {
+        "operationId": "post_tenant_workflows_id_custom_fields_enabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "wf.SetCustomFieldsEnabled",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/workflows/{id}/enabled": {
       "post": {
         "operationId": "post_tenant_workflows_id_enabled",

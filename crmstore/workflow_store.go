@@ -140,7 +140,7 @@ func (s *workflowStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, id
 	for k, v := range custom {
 		merged[k] = v
 	}
-	if err := workflow.ValidateCustomFields(def.Fields, merged); err != nil {
+	if err := workflow.ValidateCustomFields(def.Fields, merged, def.Workflow.CustomFieldsEnabled); err != nil {
 		return ClientError{Msg: err.Error()}
 	}
 	mergedCore := rec.CoreFields

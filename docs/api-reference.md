@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-487 endpoints across 7 surfaces, read from `main.go`.
+488 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 406 |
+| staff token + tenant | 407 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 17 |
@@ -311,7 +311,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 405 endpoints
+## `tenant` — 406 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -891,6 +891,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PUT` | `/api/tenant/workflows/{id}/approval-chain` | staff token + tenant | `wf.SetApprovalChain` |
 | `GET` | `/api/tenant/workflows/{id}/approvers` | staff token + tenant | `wf.GetWorkflowApprovers` |
 | `PATCH` | `/api/tenant/workflows/{id}/approvers` | staff token + tenant | `wf.SetWorkflowApprovers` |
+| `POST` | `/api/tenant/workflows/{id}/custom-fields/enabled` | staff token + tenant | `wf.SetCustomFieldsEnabled` |
 | `POST` | `/api/tenant/workflows/{id}/enabled` | staff token + tenant | `wf.SetWorkflowEnabled` |
 | `POST` | `/api/tenant/workflows/{id}/fields` | staff token + tenant | `wf.CreateField` |
 | `DELETE` | `/api/tenant/workflows/{id}/fields/{fieldId}` | staff token + tenant | `wf.DeleteField` |

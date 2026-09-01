@@ -128,7 +128,7 @@ func TestListUsersForTenant_ExcludesDeletedCustomers(t *testing.T) {
 	deletedID, deletedUUID := seedCustomer(t, pool)
 	seedPortalUser(t, pool, deletedID, StatusRevoked)
 	_, err := pool.Exec(ctx,
-		`UPDATE customer SET customer_deleted_at = NOW() WHERE customer_id = $1`, deletedID)
+		`UPDATE customer SET customer_deleted_at = NOW(), customer_deleted_by = 1 WHERE customer_id = $1`, deletedID)
 	require.NoError(t, err)
 
 	users, err := ListUsersForTenant(ctx, pool)

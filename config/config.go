@@ -102,12 +102,19 @@ type Config struct {
 	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
 	// the same Ollama box — no third-party LLM account, API key, or quota.
 	// All optional; the assistant no-ops when unconfigured.
-	AIEmbedProvider string // "ollama" (default) — nomic-embed-text, self-hosted
+	AIEmbedProvider string // "ollama" (the only implementation today)
 	OllamaBaseURL   string // e.g. http://embedder:11434
 	AIChatModel     string // Ollama model tag, e.g. llama3.2:3b
-	AIEmbedModel    string
-	// AIEmbedDim MUST match the vector(N) column in schema.sql. Pinned at 768
-	// (nomic-embed-text). Changing it requires re-embedding all vectors.
+	// AIEmbedModel must name a model the Ollama box actually pulled (see
+	// ollama/entrypoint.sh) AND have an entry in ai.modelPrefixes — an
+	// unregistered model silently loses its task prefixes and degrades recall.
+	// Changing it invalidates every stored vector: different models produce
+	// incompatible vector spaces even at identical dimensions, so a swap
+	// requires a full reindex.
+	AIEmbedModel string
+	// AIEmbedDim MUST match the vector(N) column in schema.sql. Pinned at 768.
+	// Enforced at embed time by OllamaEmbedder so a mismatch surfaces with the
+	// model name rather than as an opaque pgvector insert failure.
 	AIEmbedDim int
 	// Ollama lifecycle control: the embedder box has no reliable autostart of
 	// its own (Fly Proxy's flycast autostart was verified unreliable for this
@@ -184,7 +191,9 @@ func Load() {
 		AIEmbedProvider: getEnv("AI_EMBED_PROVIDER", "ollama"),
 		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		AIChatModel:     getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
-		AIEmbedModel:    getEnv("AI_EMBED_MODEL", "nomic-embed-text"),
+		// Must match ollama/entrypoint.sh's default pull and ollama/fly.toml —
+		// a default that names a model the box never pulled fails every embed.
+		AIEmbedModel: getEnv("AI_EMBED_MODEL", "snowflake-arctic-embed:m"),
 		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)
 		FlyOllamaAPIToken: getEnv("FLY_OLLAMA_API_TOKEN", ""),

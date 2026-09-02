@@ -215,7 +215,7 @@ func main() {
 					// lazily on first inference. Best-effort: a failed
 					// warmup just means the first real request pays that
 					// latency itself, same as before this existed.
-					warmupEmb := ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel)
+					warmupEmb := ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
 					warmupLLM := ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
 					if err := ai.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
 						log.Printf("ollama-lifecycle: warmup failed: %v", err)
@@ -1223,10 +1223,10 @@ func main() {
 		// (ADR-001) — no third-party LLM account, API key, or quota.
 		aiOps := controllers.NewAIOps(
 			cpPool,
-			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 			ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
 			cp,
-			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
@@ -1424,7 +1424,7 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 		w := index.NewWorker(
 			q,
 			crmstore.NewRAGRecordLoader(store, pool),
-			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 			ai.NewRagStore(pool),
 		)
 		go runTenantIndexWorker(ctx, t.Slug, w, q)

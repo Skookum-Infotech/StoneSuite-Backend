@@ -77,9 +77,26 @@ func humanizeKey(k string) string {
 	return strings.Join(words, " ")
 }
 
-// ContentHash returns the hex SHA-256 of s, used to skip re-embedding unchanged
-// record text and protect the free-tier embedding quota.
+// ContentHash returns the hex SHA-256 of s. Prefer VectorHash for anything
+// deciding whether a stored embedding is still valid — see the note there.
 func ContentHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// VectorHash identifies what a stored embedding was actually derived from: the
+// rendered text AND the embedder that produced it.
+//
+// Hashing the content alone is not enough, and the failure is silent. Swapping
+// the embedding model — or merely correcting its task prefix — changes the
+// vector space while leaving the record's text byte-identical. A content-only
+// hash would therefore report "unchanged" for every record after such a swap,
+// so the reindex meant to rebuild the index would skip all of it and leave
+// vectors in place that incoming queries can no longer be compared against.
+// Folding the embedder's fingerprint in makes a model change invalidate every
+// hash automatically, so the reindex does what its name says.
+func VectorHash(embedderFingerprint, content string) string {
+	// NUL-separated so a fingerprint/content pair can't collide with a
+	// different split of the same concatenated bytes.
+	return ContentHash(embedderFingerprint + "\x00" + content)
 }

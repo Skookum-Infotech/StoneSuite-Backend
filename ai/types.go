@@ -40,6 +40,18 @@ type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+// Fingerprinter is an optional companion to Embedder: it names the vector space
+// an implementation produces, so callers can tell whether an already-stored
+// vector is still comparable to a freshly-embedded query.
+//
+// Optional rather than part of Embedder so test doubles and simple
+// implementations stay trivial; callers fall back to an empty fingerprint,
+// which is safe (it just means "cannot distinguish vector spaces") as long as
+// nothing depends on distinguishing them. See VectorHash.
+type Fingerprinter interface {
+	Fingerprint() string
+}
+
 // LLMClient produces a completion given a system prompt and a message history.
 type LLMClient interface {
 	Chat(ctx context.Context, system string, messages []Message) (string, error)

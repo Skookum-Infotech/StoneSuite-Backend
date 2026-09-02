@@ -103,8 +103,12 @@ func TestLoadAIConfigDefaults(t *testing.T) {
 	if AppConfig.AIChatModel != "llama3.2:3b" {
 		t.Fatalf("default AIChatModel = %q, want llama3.2:3b", AppConfig.AIChatModel)
 	}
-	if AppConfig.AIEmbedModel != "nomic-embed-text" {
-		t.Fatalf("default AIEmbedModel = %q, want nomic-embed-text", AppConfig.AIEmbedModel)
+	// Must name the model ollama/entrypoint.sh actually pulls. This previously
+	// defaulted to nomic-embed-text while the box served
+	// snowflake-arctic-embed:m, so a deploy that forgot AI_EMBED_MODEL asked
+	// for a model that was never pulled.
+	if AppConfig.AIEmbedModel != "snowflake-arctic-embed:m" {
+		t.Fatalf("default AIEmbedModel = %q, want snowflake-arctic-embed:m", AppConfig.AIEmbedModel)
 	}
 	if AppConfig.AIEmbedDim != 768 {
 		t.Fatalf("default AIEmbedDim = %d, want 768", AppConfig.AIEmbedDim)

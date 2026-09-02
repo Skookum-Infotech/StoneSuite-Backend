@@ -51,7 +51,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	embedder := ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel)
+	embedder := ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
 	store := ai.NewCPHelpStore(pool)
 
 	res, err := helpdocs.IngestFS(ctx, embedder, store, docsFS)

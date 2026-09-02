@@ -6,76 +6,150 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// nomic-embed-text task prefixes. These MUST be applied consistently or query
-// and document vectors stop being comparable (see ADR-001).
-const (
-	nomicDocPrefix   = "search_document: "
-	nomicQueryPrefix = "search_query: "
-)
+// embedPrefixes are one model's task prefixes. Retrieval models are trained to
+// see a short instruction before the text, and which instruction differs per
+// model family. The pair MUST be applied consistently or query and document
+// vectors stop being comparable (see ADR-001) — which is why they are looked up
+// together, keyed by the same model name, rather than configured separately.
+type embedPrefixes struct{ doc, query string }
+
+// modelPrefixes maps an Ollama model name (tag stripped) to its task prefixes.
+//
+// Getting this wrong is silent: a wrong-but-consistent prefix still returns
+// plausible vectors, it just degrades recall, so there is no error to notice.
+// Add an entry here when introducing a model rather than leaving it to the
+// unknown-model fallback.
+var modelPrefixes = map[string]embedPrefixes{
+	// nomic asks for symmetric "search_document:"/"search_query:" markers.
+	"nomic-embed-text": {doc: "search_document: ", query: "search_query: "},
+	// arctic-embed embeds documents bare and instructs only the query side.
+	"snowflake-arctic-embed":  {doc: "", query: "Represent this sentence for searching relevant passages: "},
+	"snowflake-arctic-embed2": {doc: "", query: "query: "},
+	// bge-m3 and mxbai are trained without task prefixes.
+	"bge-m3":            {},
+	"mxbai-embed-large": {},
+}
+
+// prefixesFor resolves a model tag (e.g. "snowflake-arctic-embed:m") to its
+// prefixes. An unrecognised model falls back to no prefixes rather than an
+// error: empty is *safe* (doc and query stay mutually consistent, losing only
+// the model's task-tuning), whereas guessing another family's prefix actively
+// corrupts recall, and failing hard would block boot on a perfectly valid model
+// that simply is not listed yet.
+func prefixesFor(model string) embedPrefixes {
+	base, _, _ := strings.Cut(model, ":")
+	if p, ok := modelPrefixes[base]; ok {
+		return p
+	}
+	slog.Warn("no task prefixes registered for embedding model; using none",
+		"model", model, "known", len(modelPrefixes))
+	return embedPrefixes{}
+}
+
+// maxEmbedBatch caps how many texts go in one /api/embed call. The embedder box
+// is CPU-bound with modest RAM, so an unbounded batch trades one slow request
+// for a memory spike; 32 keeps the round-trip win without that risk.
+const maxEmbedBatch = 32
 
 // OllamaEmbedder embeds text via a self-hosted Ollama instance (POST
-// /api/embeddings). It satisfies Embedder. The task prefix is fixed at
-// construction so call sites never have to remember it.
+// /api/embed). It satisfies Embedder. The task prefix is fixed at construction
+// so call sites never have to remember it.
 type OllamaEmbedder struct {
 	baseURL    string
 	model      string
 	prefix     string
+	dim        int // expected vector width; 0 disables the check
 	httpClient *http.Client
 	retryDelay time.Duration // overridable by tests; see transportRetries
 }
 
-// NewOllamaDocEmbedder builds an embedder for STORED text (search_document:).
-// Use it in the ingestion worker.
-func NewOllamaDocEmbedder(baseURL, model string) *OllamaEmbedder {
-	return newOllamaEmbedder(baseURL, model, nomicDocPrefix)
+// NewOllamaDocEmbedder builds an embedder for STORED text. Use it in the
+// ingestion worker. dim is the expected vector width (config.AIEmbedDim); pass
+// 0 to skip validation.
+func NewOllamaDocEmbedder(baseURL, model string, dim int) *OllamaEmbedder {
+	return newOllamaEmbedder(baseURL, model, prefixesFor(model).doc, dim)
 }
 
-// NewOllamaQueryEmbedder builds an embedder for QUESTIONS (search_query:).
-// Use it in the retriever.
-func NewOllamaQueryEmbedder(baseURL, model string) *OllamaEmbedder {
-	return newOllamaEmbedder(baseURL, model, nomicQueryPrefix)
+// NewOllamaQueryEmbedder builds an embedder for QUESTIONS. Use it in the
+// retriever. dim is the expected vector width; pass 0 to skip validation.
+func NewOllamaQueryEmbedder(baseURL, model string, dim int) *OllamaEmbedder {
+	return newOllamaEmbedder(baseURL, model, prefixesFor(model).query, dim)
 }
 
-func newOllamaEmbedder(baseURL, model, prefix string) *OllamaEmbedder {
+func newOllamaEmbedder(baseURL, model, prefix string, dim int) *OllamaEmbedder {
 	return &OllamaEmbedder{
 		baseURL:    baseURL,
 		model:      model,
 		prefix:     prefix,
+		dim:        dim,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 		retryDelay: 2 * time.Second,
 	}
 }
 
+// Fingerprint names the vector space this embedder produces. Both the model
+// and the task prefix belong in it: the same model with a different prefix
+// yields vectors that are not comparable with previously stored ones, which is
+// exactly the change that must invalidate stored hashes and force a re-embed.
+func (e *OllamaEmbedder) Fingerprint() string { return e.model + "\x00" + e.prefix }
+
 type ollamaEmbedReq struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
+	Model string   `json:"model"`
+	Input []string `json:"input"`
 }
 type ollamaEmbedResp struct {
-	Embedding []float32 `json:"embedding"`
+	Embeddings [][]float32 `json:"embeddings"`
 }
 
 // Embed returns one vector per input text, in order, each prefixed with this
-// embedder's task prefix. Ollama's endpoint embeds one prompt per call, so this
-// loops (batching is a future optimization).
+// embedder's task prefix. Texts are sent in batches of maxEmbedBatch — one
+// round-trip per batch rather than per text, which is what makes a full reindex
+// tolerable on a CPU-bound box.
 func (e *OllamaEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	url := e.baseURL + "/api/embeddings"
-	out := make([][]float32, len(texts))
-	for i, t := range texts {
-		var resp ollamaEmbedResp
-		req := ollamaEmbedReq{Model: e.model, Prompt: e.prefix + t}
-		if err := e.postJSON(ctx, url, req, &resp); err != nil {
-			return nil, fmt.Errorf("ollama embed[%d]: %w", i, err)
+	out := make([][]float32, 0, len(texts))
+	for start := 0; start < len(texts); start += maxEmbedBatch {
+		end := min(start+maxEmbedBatch, len(texts))
+		vecs, err := e.embedBatch(ctx, texts[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("ollama embed[%d:%d]: %w", start, end, err)
 		}
-		if len(resp.Embedding) == 0 {
-			return nil, fmt.Errorf("ollama embed[%d]: empty embedding", i)
-		}
-		out[i] = resp.Embedding
+		out = append(out, vecs...)
 	}
 	return out, nil
+}
+
+// embedBatch sends one /api/embed call and validates the response shape. A
+// short response or a wrong-width vector is an error here rather than at the
+// database write, so a model/schema mismatch surfaces with the model name
+// attached instead of as an opaque pgvector insert failure.
+func (e *OllamaEmbedder) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	input := make([]string, len(texts))
+	for i, t := range texts {
+		input[i] = e.prefix + t
+	}
+
+	var resp ollamaEmbedResp
+	if err := e.postJSON(ctx, e.baseURL+"/api/embed", ollamaEmbedReq{Model: e.model, Input: input}, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Embeddings) != len(texts) {
+		return nil, fmt.Errorf("model %s returned %d embeddings for %d inputs", e.model, len(resp.Embeddings), len(texts))
+	}
+	for i, v := range resp.Embeddings {
+		if len(v) == 0 {
+			return nil, fmt.Errorf("model %s returned an empty embedding at %d", e.model, i)
+		}
+		if e.dim > 0 && len(v) != e.dim {
+			return nil, fmt.Errorf("model %s returned %d dimensions, expected %d (AI_EMBED_DIM must match the vector(N) column)", e.model, len(v), e.dim)
+		}
+	}
+	return resp.Embeddings, nil
 }
 
 // transportRetries bounds retries for connection-level failures only (refused/

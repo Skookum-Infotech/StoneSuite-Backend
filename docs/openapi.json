@@ -5433,6 +5433,37 @@
         ]
       }
     },
+    "/api/tenant/dashboard/widgets/top-customers/data": {
+      "get": {
+        "operationId": "get_tenant_dashboard_widgets_top_customers_data",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "dashboardUI.TopCustomers",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/estimates": {
       "get": {
         "operationId": "get_tenant_estimates",

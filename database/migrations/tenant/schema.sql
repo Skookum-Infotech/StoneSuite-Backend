@@ -8008,3 +8008,32 @@ UPDATE credit_memo
 SET credit_memo_owner_id = credit_memo_created_by
 WHERE credit_memo_owner_id IS NULL
   AND credit_memo_created_by IS NOT NULL;
+
+-- -- 000041_approval_status_pending_indexes -------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 41: partial indexes on every
+-- approval-chain module's approval_status column.
+--
+-- The KPI strip dashboard widget's "Needs Approval" metric runs
+-- COUNT(*)/MIN(created_at) WHERE <module>_approval_status = 'pending' AND
+-- <module>_deleted_at IS NULL across all 14 approvalchain.Keys() modules on
+-- every widget load (controllers/dashboard_kpi.go). None of these columns
+-- was indexed before now, so each count was a sequential scan. A partial
+-- index scoped to the 'pending' value keeps it small (most records aren't
+-- pending) and keeps every other query plan on these tables unaffected.
+-- =====================================================================
+
+CREATE INDEX IF NOT EXISTS idx_est_pending  ON estimate       (estimate_created_at)       WHERE estimate_approval_status = 'pending' AND estimate_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_quo_pending  ON quote          (quote_created_at)          WHERE quote_approval_status = 'pending' AND quote_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_so_pending   ON sales_order    (sales_order_created_at)    WHERE sales_order_approval_status = 'pending' AND sales_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_po_pending   ON purchase_order (purchase_order_created_at) WHERE purchase_order_approval_status = 'pending' AND purchase_order_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reqn_pending ON requisition    (requisition_created_at)    WHERE requisition_approval_status = 'pending' AND requisition_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vbil_pending ON vendor_bill    (vendor_bill_created_at)    WHERE vendor_bill_approval_status = 'pending' AND vendor_bill_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vpay_pending ON vendor_payment (vendor_payment_created_at) WHERE vendor_payment_approval_status = 'pending' AND vendor_payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_exp_pending  ON expense        (expense_created_at)        WHERE expense_approval_status = 'pending' AND expense_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_fj_pending   ON fabrication_job(fabrication_job_created_at) WHERE job_approval_status = 'pending' AND fabrication_job_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inv_pending  ON invoice        (invoice_created_at)        WHERE invoice_approval_status = 'pending' AND invoice_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pym_pending  ON payment        (payment_created_at)        WHERE payment_approval_status = 'pending' AND payment_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cm_pending   ON credit_memo    (credit_memo_created_at)    WHERE credit_memo_approval_status = 'pending' AND credit_memo_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_rfnd_pending ON refund         (refund_created_at)         WHERE refund_approval_status = 'pending' AND refund_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_vcrd_pending ON vendor_credit  (vendor_credit_created_at)  WHERE vendor_credit_approval_status = 'pending' AND vendor_credit_deleted_at IS NULL;

@@ -5218,6 +5218,37 @@
         ]
       }
     },
+    "/api/tenant/dashboard/widgets/kpi-strip/data": {
+      "get": {
+        "operationId": "get_tenant_dashboard_widgets_kpi_strip_data",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "dashboardUI.KpiStrip",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/dashboard/widgets/me": {
       "get": {
         "operationId": "get_tenant_dashboard_widgets_me",

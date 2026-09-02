@@ -473,6 +473,15 @@ func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserI
 // since (a zero time.Time means unbounded, identical to CountRecords). Used
 // by the Pipeline mix dashboard widget's date-range filter.
 func CountRecordsSince(ctx context.Context, q Querier, workflowID, scope, callerUserID string, since time.Time) (int, error) {
+	return CountRecordsBetween(ctx, q, workflowID, scope, callerUserID, since, time.Time{})
+}
+
+// CountRecordsBetween is CountRecords narrowed to records created in
+// [since, until) -- a zero since/until means unbounded on that side (a zero
+// since alone is identical to CountRecordsSince; both zero is identical to
+// CountRecords). Used by the KPI strip dashboard widget's delta-window and
+// sparkline-bucket computations.
+func CountRecordsBetween(ctx context.Context, q Querier, workflowID, scope, callerUserID string, since, until time.Time) (int, error) {
 	var (
 		n    int
 		err  error
@@ -482,6 +491,10 @@ func CountRecordsSince(ctx context.Context, q Querier, workflowID, scope, caller
 	if !since.IsZero() {
 		args = append(args, since)
 		base += fmt.Sprintf(" AND created_at >= $%d", len(args))
+	}
+	if !until.IsZero() {
+		args = append(args, until)
+		base += fmt.Sprintf(" AND created_at < $%d", len(args))
 	}
 	switch scope {
 	case "all":

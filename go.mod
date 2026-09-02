@@ -16,6 +16,7 @@ require (
 	github.com/russellhaering/goxmldsig v1.6.1
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/sync v0.22.0
 )
 
 require (
@@ -33,7 +34,6 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

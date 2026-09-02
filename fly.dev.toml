@@ -5,8 +5,7 @@ primary_region = "iad"
   # APP_ENV must be "production" here even though this is the dev instance —
   # it gates the Secure flag on auth cookies (config.AppConfig.IsProduction()),
   # and this app is only ever served over HTTPS on Fly. Without it, cookies
-  # are set without Secure, which browsers silently reject once
-  # COOKIE_SAME_SITE_MODE=none below requires Secure to be present.
+  # are set without Secure, which browsers silently reject.
   APP_ENV             = "production"
   PORT                = "8080"
   # IMPORTANT: CORS_ORIGIN and FRONTEND_URL must match the exact origin of the deployed
@@ -14,12 +13,13 @@ primary_region = "iad"
   # before deploying. A mismatch will block all browser API calls with CORS 403 errors.
   CORS_ORIGIN         = "https://dev.stonesuite.app,https://dev-stonesuite-webui.pages.dev"
   FRONTEND_URL        = "https://dev.stonesuite.app"
-  # This is the dev instance's opt-in to cross-origin cookies: the WebUI dev
-  # deployment (Azure DevOps) calls this backend directly rather than through
-  # a same-origin proxy, so auth cookies must be SameSite=None to survive the
-  # round trip. See middleware/csrf.go for the CSRF check this requires and
-  # activates automatically.
-  COOKIE_SAME_SITE_MODE = "none"
+  # COOKIE_SAME_SITE_MODE intentionally omitted (defaults to "lax", same as
+  # UAT/PROD): the WebUI dev deployment now calls this backend through
+  # Cloudflare Pages' same-origin proxy Function (functions/api/[[path]].ts
+  # in StoneSuite-WebUI), not directly cross-origin. "none" was a leftover
+  # from before that proxy existed and made the double-submit CSRF check in
+  # middleware/csrf.go active but unreliable across this app's scale-to-zero
+  # restarts — removed 2026-09-02.
   SMTP_PORT           = "587"
   INVITE_EXPIRY_HOURS = "24"
 

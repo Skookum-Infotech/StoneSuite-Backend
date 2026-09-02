@@ -152,5 +152,41 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)
 	}
+	notifyTransition(ctx, pool, id, internalID, typeID, toStatusID, toStatusCode, requiredHere, approvalStatus, targetApprovers, actorEmployeeID)
 	return Get(ctx, pool, id)
+}
+
+// notifyTransition best-effort-notifies approvers/owner around a manual
+// status move (AD-6): approvers when the vendor payment just entered a
+// gated status, or the owner when a gated-unapproved payment escaped via
+// an always-allowed exit (void/cancel/reject) instead of clearing approval.
+func notifyTransition(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, recordTypeID, toStatusID int, toStatusCode string, requiredHere int, approvalStatus string, targetApprovers int, actorEmployeeID int) {
+	cfg := moduleConfig()
+	rec := cfg.Record
+	if targetApprovers > 0 {
+		approvalchain.NotifyApprovalRequested(ctx, pool, approvalchain.EventContext{
+			Table: rec.Table, IDColumn: rec.IDColumn, NumberColumn: rec.NumberColumn,
+			ApproverTable: cfg.ApproverTable, RecordTypeID: recordTypeID, StatusID: toStatusID,
+			InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+			Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+		})
+	}
+	if requiredHere > 0 && approvalStatus != approvalchain.StatusApproved && approvalchain.AlwaysAllowedExitCodes[toStatusCode] {
+		approvalchain.NotifyApprovalRejected(ctx, pool, approvalchain.EventContext{
+			Table: rec.Table, IDColumn: rec.IDColumn, NumberColumn: rec.NumberColumn, OwnerColumn: rec.OwnerColumn,
+			InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+			Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+		})
+	}
+}
+
+// notifyCreated best-effort-notifies the actor who created a new vendor
+// payment that the creation succeeded.
+func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	cfg := moduleConfig()
+	approvalchain.NotifyCreated(ctx, pool, approvalchain.EventContext{
+		Table: cfg.Record.Table, IDColumn: cfg.Record.IDColumn, NumberColumn: cfg.Record.NumberColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
 }

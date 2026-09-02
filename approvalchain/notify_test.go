@@ -30,6 +30,7 @@ func TestNotifyHooks_NoOpWithoutDisplayName(t *testing.T) {
 	NotifyRemainingApprovers(ctx, nil, ec)
 	NotifyApproved(ctx, nil, ec)
 	NotifyApprovalRejected(ctx, nil, ec)
+	NotifyCreated(ctx, nil, ec)
 }
 
 func TestContactsToRecipients(t *testing.T) {

@@ -119,8 +119,11 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "purchase_order_approval_status", ApprovedByColumn: "purchase_order_approved_by",
 			UpdatedAtColumn: "purchase_order_updated_at", UpdatedByColumn: "purchase_order_updated_by",
 			RecordVersionColumn: "purchase_order_record_version", DeletedAtColumn: "purchase_order_deleted_at",
+			OwnerColumn: "purchase_order_owner_id", NumberColumn: "purchase_order_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		DisplayName: "Purchase Order",
+		Resource:    "purchase_order",
 	},
 	"requisition": {
 		RecordTypeCode: "REQN", ApproverTable: "requisition_approver", ApprovalTable: "requisition_approval",
@@ -130,8 +133,14 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "requisition_approval_status", ApprovedByColumn: "requisition_approved_by",
 			UpdatedAtColumn: "requisition_updated_at", UpdatedByColumn: "requisition_updated_by",
 			RecordVersionColumn: "requisition_record_version", DeletedAtColumn: "requisition_deleted_at",
+			// requisition has no separate owner_id column -- the requester is
+			// also the IDOR scope owner (schema.sql's own comment on
+			// requisition_requested_by_id), so it doubles as the notify owner.
+			OwnerColumn: "requisition_requested_by_id", NumberColumn: "requisition_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		DisplayName: "Requisition",
+		Resource:    "requisition",
 	},
 	"vendor_bill": {
 		RecordTypeCode: "VBIL", ApproverTable: "vendor_bill_approver", ApprovalTable: "vendor_bill_approval",
@@ -141,8 +150,11 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "vendor_bill_approval_status", ApprovedByColumn: "vendor_bill_approved_by",
 			UpdatedAtColumn: "vendor_bill_updated_at", UpdatedByColumn: "vendor_bill_updated_by",
 			RecordVersionColumn: "vendor_bill_record_version", DeletedAtColumn: "vendor_bill_deleted_at",
+			OwnerColumn: "vendor_bill_owner_id", NumberColumn: "vendor_bill_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		DisplayName: "Vendor Bill",
+		Resource:    "vendor_bill",
 	},
 	"vendor_payment": {
 		RecordTypeCode: "VPAY", ApproverTable: "vendor_payment_approver", ApprovalTable: "vendor_payment_approval",
@@ -152,8 +164,11 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "vendor_payment_approval_status", ApprovedByColumn: "vendor_payment_approved_by",
 			UpdatedAtColumn: "vendor_payment_updated_at", UpdatedByColumn: "vendor_payment_updated_by",
 			RecordVersionColumn: "vendor_payment_record_version", DeletedAtColumn: "vendor_payment_deleted_at",
+			OwnerColumn: "vendor_payment_owner_id", NumberColumn: "vendor_payment_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		DisplayName: "Vendor Payment",
+		Resource:    "vendor_payment",
 	},
 	"expense": {
 		RecordTypeCode: "EXPN", ApproverTable: "expense_approver", ApprovalTable: "expense_approval",
@@ -163,8 +178,14 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "expense_approval_status", ApprovedByColumn: "expense_approved_by",
 			UpdatedAtColumn: "expense_updated_at", UpdatedByColumn: "expense_updated_by",
 			RecordVersionColumn: "expense_record_version", DeletedAtColumn: "expense_deleted_at",
+			// expense has no separate owner_id column -- the claimant is also
+			// the IDOR scope owner (schema.sql's own comment on
+			// expense_claimant_id), so it doubles as the notify owner.
+			OwnerColumn: "expense_claimant_id", NumberColumn: "expense_number",
 		},
-		Gates: []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV"}},
+		DisplayName: "Expense Claim",
+		Resource:    "expense",
 	},
 	"installation": {
 		RecordTypeCode: "FJOB", ApproverTable: "fabrication_job_approver", ApprovalTable: "fabrication_job_approval",
@@ -174,11 +195,14 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "job_approval_status", ApprovedByColumn: "job_approved_by",
 			UpdatedAtColumn: "fabrication_job_updated_at", UpdatedByColumn: "fabrication_job_updated_by",
 			RecordVersionColumn: "fabrication_job_record_version", DeletedAtColumn: "fabrication_job_deleted_at",
+			OwnerColumn: "job_owner_id", NumberColumn: "fabrication_job_number",
 		},
 		Gates: []Gate{
 			{StatusCode: "TMPL", TargetStatusCode: "TAPV"},
 			{StatusCode: "QCPD", TargetStatusCode: "QCPS"},
 		},
+		DisplayName: "Fabrication Job",
+		Resource:    "installation",
 	},
 	"invoice": {
 		RecordTypeCode: "INVC", ApproverTable: "invoice_approver", ApprovalTable: "invoice_approval",
@@ -247,12 +271,15 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "vendor_credit_approval_status", ApprovedByColumn: "vendor_credit_approved_by",
 			UpdatedAtColumn: "vendor_credit_updated_at", UpdatedByColumn: "vendor_credit_updated_by",
 			RecordVersionColumn: "vendor_credit_record_version", DeletedAtColumn: "vendor_credit_deleted_at",
+			OwnerColumn: "vendor_credit_owner_id", NumberColumn: "vendor_credit_number",
 		},
 		// Vendor Credit has no separate Pending status -- the gate sits on
 		// Draft itself, mirroring credit_memo. Void always escapes
 		// (AlwaysAllowedExitCodes), so a draft vendor credit can still be
 		// voided without approval.
-		Gates: []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+		DisplayName: "Vendor Credit",
+		Resource:    "vendor_credit",
 	},
 }
 

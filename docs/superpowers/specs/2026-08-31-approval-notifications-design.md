@@ -140,3 +140,35 @@ Every call is a `services.SendNotification` — same wire shape and pattern as t
   `document_send_dbtest_test.go`'s existing coverage of `notifyOwnerOfSend`.
 - After implementation: `module-drift-checker` per touched module, `tenancy-security-reviewer`
   once across the branch.
+
+## 7. Addendum (2026-09-01): Record Created event
+
+A 5th event was added, extending §3's table:
+
+| Event | Hook point | Recipients |
+|---|---|---|
+| Created | Each module's own `Create()`, after a successful `tx.Commit()` | The actor who performed the create (not necessarily the record's owner — they can diverge via an explicit owner override on create) |
+
+Unlike the four events above, Created fires for **all 14** relational document modules
+(estimate, quote, salesorder, invoice, payment, creditmemo, refund, purchaseorder,
+requisition, vendorbill, vendorpayment, vendorcredit, expense, fabrication) — every module has
+a `Create()`, so there's no equivalent to the "7 in scope, others excluded" split the original
+four events used.
+
+`approvalchain/notify.go` gained `NotifyCreated(ctx, pool, EventContext)`, using the same
+`EventContext` struct and the same `DisplayName == ""` no-op guard as every other `Notify*`
+function — no new fields needed. It also gained `actorContact`, a sibling to the existing
+`ownerContact`/`resolveActorUserID`: it resolves `ActorEmployeeID` to a full `{UserID, Email}`
+contact (not just a bare user id) since the actor is the *recipient* here, not just
+notification metadata. `ec.OwnerColumn` is left unset at every `notifyCreated` call site — it's
+simply unused by this event.
+
+Wiring mirrors `notifyTransition`'s existing hand-port pattern exactly: a one-line
+`notifyCreated(...)` call right after each module's `tx.Commit()` succeeds, before its final
+`return Get(...)`. The three pre-engine modules (estimate/quote/salesorder) get a `notifyCreated`
+function in their own local `notify.go`; the other 11 get one in `store_transition.go` (where
+their existing `notifyTransition` already lives), reading `cfg := moduleConfig()` the same way.
+`payment` and `vendorpayment` are the only two modules where the hook runs before their inline
+post-commit `Applications` loop rather than immediately before `return Get(...)` — the record is
+already committed and real at that point, so "created" firing regardless of that loop's outcome
+is correct, not a shortcut.

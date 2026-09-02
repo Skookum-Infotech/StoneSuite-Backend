@@ -46,6 +46,12 @@ type Workflow struct {
 	Enabled       bool   `json:"enabled"`
 	IsDefault     bool   `json:"isDefault"`
 	PipelineOrder int    `json:"pipelineOrder"` // 0 = unordered; 1=Lead,2=Prospect,3=Customer
+	// CustomFieldsEnabled is the master switch for this workflow's Custom
+	// Fields section (workflow_field_definitions). Defaults false: field
+	// definitions and any values already stored under their keys are kept,
+	// but the section is not rendered and its fields are not required until
+	// an admin opts in. See ValidateCustomFields/ValidateCustomFieldsPartial.
+	CustomFieldsEnabled bool `json:"customFieldsEnabled"`
 	// ApproverUserIds is populated by the controller layer (not this package —
 	// approver config lives in crmstore) for CRM workflows only. Left nil for
 	// non-CRM workflows and by callers that don't need it (e.g. ListWorkflows).

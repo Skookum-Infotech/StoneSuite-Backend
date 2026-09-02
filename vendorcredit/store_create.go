@@ -108,5 +108,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorCreditInput,
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor credit: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

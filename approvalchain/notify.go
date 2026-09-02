@@ -124,6 +124,37 @@ func NotifyApprovalRejected(ctx context.Context, pool *pgxpool.Pool, ec EventCon
 	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", "%s %s was sent back", "Sent back for changes.")
 }
 
+// NotifyCreated best-effort-notifies the actor who created a new record
+// (not necessarily its owner -- owner and actor can diverge via an
+// explicit OwnerEmployeeID override on create) that the creation
+// succeeded. Same no-op/failure semantics as NotifyApprovalRequested.
+func NotifyCreated(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
+	if ec.DisplayName == "" {
+		return
+	}
+	tenant, err := tenancy.TenantFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "approvalchain: no tenant in context, skipping created notification", "resource", ec.Resource, "recordId", ec.RecordUUID)
+		return
+	}
+	actor, ok, err := actorContact(ctx, pool, ec.ActorEmployeeID)
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: resolve actor for created notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	number, err := fetchNumber(ctx, pool, ec.Table, ec.IDColumn, ec.NumberColumn, ec.InternalID)
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: resolve record number for created notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
+		return
+	}
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource, ec.Resource+".created",
+		fmt.Sprintf("%s %s was created", ec.DisplayName, number), "Created.",
+		ec.RecordUUID, actor.UserID, []contact{actor})
+}
+
 func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, eventType, titleFormat, body string) {
 	if ec.DisplayName == "" {
 		return
@@ -238,6 +269,30 @@ func ownerContact(ctx context.Context, q workflow.Querier, table, idColumn, owne
 	}
 	if err != nil {
 		return contact{}, false, fmt.Errorf("resolve owner contact on %s: %w", table, err)
+	}
+	return c, true, nil
+}
+
+// actorContact resolves actorEmployeeID's linked user into a notifiable
+// contact. ok is false when actorEmployeeID is 0 or unresolvable (e.g. no
+// linked user) -- mirrors ownerContact's shape, but unlike
+// resolveActorUserID (which only returns a bare UserID for ActorUserID
+// metadata) this also returns email, since the actor is a Recipient here.
+func actorContact(ctx context.Context, q workflow.Querier, actorEmployeeID int) (contact, bool, error) {
+	if actorEmployeeID == 0 {
+		return contact{}, false, nil
+	}
+	var c contact
+	err := q.QueryRow(ctx, `
+		SELECT u.id, u.email
+		FROM employee e
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE e.employee_id = $1`, actorEmployeeID).Scan(&c.UserID, &c.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return contact{}, false, nil
+	}
+	if err != nil {
+		return contact{}, false, fmt.Errorf("resolve actor contact: %w", err)
 	}
 	return c, true, nil
 }

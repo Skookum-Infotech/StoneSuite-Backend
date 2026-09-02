@@ -95,7 +95,7 @@ func (e *Engine) createRecord(ctx context.Context, pool Beginner, def *Definitio
 	if skipRequired {
 		validateErr = ValidateCustomFieldsPartial(def.Fields, custom)
 	} else {
-		validateErr = ValidateCustomFields(def.Fields, custom)
+		validateErr = ValidateCustomFields(def.Fields, custom, def.Workflow.CustomFieldsEnabled)
 	}
 	if validateErr != nil {
 		return nil, validateErr

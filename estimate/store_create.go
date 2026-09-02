@@ -255,5 +255,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateEstimateInput, act
 		return nil, fmt.Errorf("commit create estimate: %w", err)
 	}
 	_ = custName
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

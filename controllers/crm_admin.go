@@ -19,8 +19,9 @@ import (
 )
 
 // CRMAdminOps handles workspace-admin CRM configuration: switching the tenant's
-// database design (design_version) and managing the configurable approvers used
-// by the customer Closed-Won approval flow. All endpoints require the
+// database design (design_version) and managing the configurable approvers for
+// the Lead/Prospect/Customer approval flow (stage-level only -- see
+// crmstore/relational_approval.go's package doc). All endpoints require the
 // workflow_config:configure permission (super admin by default).
 type CRMAdminOps struct {
 	cp *tenancy.ControlPlane
@@ -167,6 +168,14 @@ func (h *CRMAdminOps) CreateApprover(w http.ResponseWriter, r *http.Request) {
 	if req.RecordTypeCode == "" {
 		req.RecordTypeCode = "CUST"
 	}
+	// CRM approval is stage-level only (wildcard, crm_status_id IS NULL) --
+	// see relational_approval.go's package doc. A status-scoped approver is
+	// no longer a supported configuration; reject rather than silently
+	// accepting a row nothing will ever read.
+	if req.CrmStatusCode != "" {
+		fail(w, http.StatusBadRequest, "Per-status approvers are no longer supported; configure approvers for the whole workflow instead.")
+		return
+	}
 	pool, _ := tenancy.PoolFromContext(r.Context())
 
 	// Resolve the creating employee (best-effort; may be NULL).
@@ -178,12 +187,9 @@ func (h *CRMAdminOps) CreateApprover(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO crm_workflow_approver (record_type_id, crm_status_id, approver_employee_id, created_by)
 		VALUES (
 			(SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1),
-			(SELECT crm_status_id FROM lkp_crm_status cs
-			   JOIN lkp_record_type rt ON rt.record_type_id = cs.crm_status_record_type
-			   WHERE cs.crm_status_code = NULLIF($2,'') AND rt.record_type_code = $1),
-			$3, $4)
-		ON CONFLICT (record_type_id, crm_status_id, approver_employee_id) DO NOTHING`,
-		req.RecordTypeCode, req.CrmStatusCode, req.ApproverEmployeeID, createdBy)
+			NULL, $2, $3)
+		ON CONFLICT (record_type_id, approver_employee_id) WHERE crm_status_id IS NULL DO NOTHING`,
+		req.RecordTypeCode, req.ApproverEmployeeID, createdBy)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to add approver.")
 		return

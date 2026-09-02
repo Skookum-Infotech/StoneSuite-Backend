@@ -141,6 +141,31 @@ The relational document modules — `quote`, `estimate`, `salesorder`, `invoice`
 2. **After editing any module, run the `module-drift-checker` agent** to catch copy-paste leftovers and missing auth/scope/logging.
 3. A module's `store.go` should be split by verb (`store_create.go`/`store_update.go`/`store_transition.go`/`store_search.go` or `search.go`, naming varies by module vintage) once it grows large; `invoice/store_line_resolve.go` is the reference pattern for pulling out shared line-resolution helpers. Some existing "clean" siblings (`quote`, `estimate`) still exceed the 300-line file cap — known pre-existing drift, not a new problem to fix reflexively.
 
+### Notifications (`approvalchain/` + `services/notify.go` + `stonesuite-notify`)
+Approval/transition notifications route through the shared `approvalchain` engine to a
+separate deployed service, `stonesuite-notify` (its own repo, shares this app's
+`JWT_SECRET` so a StoneSuite JWT authenticates against both).
+1. **A module is notification-dead until it's registered in `approvalchain/registry.go`.**
+   Every `Notify*` helper in `approvalchain/notify.go` (`NotifyApprovalRequested`,
+   `NotifyApprovalRejected`) and the shared `engine.Approve()` no-op immediately when
+   `ModuleConfig.DisplayName == ""` (`approvalchain/notify.go:55,86,128`) — this is the
+   guard `registry_test.go` checks against. Scaffolding a module without filling in
+   `DisplayName`/`Resource`/`OwnerColumn`/`NumberColumn` on its `Record`/`ModuleConfig`
+   silently ships approvals with zero notifications; same clone-discipline trap as the
+   module system itself, and just as easy to miss in review.
+2. **Every transition handler must call a `notifyTransition` hook after a successful
+   status change** — see `invoice/store_transition.go` for the reference pattern (compute
+   `requiredHere`/`targetApprovers` via `approvalchain.ActiveApproverCount`, then call
+   `approvalchain.NotifyApprovalRequested`/`NotifyApprovalRejected` with an `EventContext`).
+   Approve/reject already fire from the shared engine; transition does not, so hand-port
+   this call to every new module the same way as auth/scope/logging.
+3. **Set `ActorUserID` on every `services.NotificationRequest`** you build outside the
+   engine (e.g. document-send in `controllers/documents.go`) — omitting it means Notify
+   can't tell who performed the action, which breaks any "you just did this" notification
+   addressed back to the actor.
+4. **Don't inline notify HTTP calls into `controllers/`** — go through `services/notify.go`'s
+   existing client.
+
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.
 1. **Filter ⨯ scope is ANDed, never OR.** The RBAC scope clause and the user filter compose with `AND` — a filter can only narrow the caller's permitted set, never widen it. Keep `workflow/filter_test.go` green.

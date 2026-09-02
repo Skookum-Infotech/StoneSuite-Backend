@@ -195,7 +195,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	// queue/retry/audit reliability layer the owner ping below already
 	// uses, instead of a direct, unretried Resend/SMTP call.
 	if err := services.SendNotification(r.Context(),
-		customerSendRequest(tenant.ID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
+		customerSendRequest(tenant.ID, actorUserID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
 	); err != nil {
 		fail(w, http.StatusBadGateway, "Failed to send email.")
 		return
@@ -215,7 +215,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
 
 	notifyOwnerOfSend(r.Context(), services.SendNotification, ownerEmail(r.Context(), pool, ownerUserID),
-		tenant.ID, ownerUserID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
+		tenant.ID, ownerUserID, actorUserID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "sendId": sendID, "sentTo": to,
@@ -228,7 +228,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 // audit entry, individually addressed rather than sharing a To/Cc header),
 // sharing the same branded HTML body and PDF attachment.
 func customerSendRequest(
-	tenantID string, meta DocMeta, recordID, subject string,
+	tenantID, actorUserID string, meta DocMeta, recordID, subject string,
 	doc docpdf.PrintableDoc, message string, to, cc []string, fileName string, pdf []byte,
 ) services.NotificationRequest {
 	recipients := make([]services.RecipientTarget, 0, len(to)+len(cc))
@@ -238,6 +238,7 @@ func customerSendRequest(
 	return services.NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    recipients,
+		ActorUserID:   actorUserID,
 		EventType:     "document.sent",
 		Resource:      meta.WorkflowKey,
 		ResourceID:    recordID,
@@ -344,7 +345,7 @@ func ownerEmail(ctx context.Context, pool *pgxpool.Pool, ownerUserID string) str
 func notifyOwnerOfSend(
 	ctx context.Context,
 	notify func(context.Context, services.NotificationRequest) error,
-	ownerUserEmail, tenantID, ownerUserID string,
+	ownerUserEmail, tenantID, ownerUserID, actorUserID string,
 	doc docpdf.PrintableDoc, number, workflowKey, recordID string,
 	sentTo []string, pdf []byte, fileName string,
 ) {
@@ -352,14 +353,15 @@ func notifyOwnerOfSend(
 		return
 	}
 	err := notify(ctx, services.NotificationRequest{
-		TenantID:   tenantID,
-		Recipients: []services.RecipientTarget{{UserID: ownerUserID, Email: ownerUserEmail}},
-		EventType:  "document.sent",
-		Resource:   workflowKey,
-		ResourceID: recordID,
-		Title:      doc.Kind + " " + number + " sent",
-		Body:       "Sent to " + strings.Join(sentTo, ", "),
-		Channels:   []string{"email"},
+		TenantID:    tenantID,
+		Recipients:  []services.RecipientTarget{{UserID: ownerUserID, Email: ownerUserEmail}},
+		ActorUserID: actorUserID,
+		EventType:   "document.sent",
+		Resource:    workflowKey,
+		ResourceID:  recordID,
+		Title:       doc.Kind + " " + number + " sent",
+		Body:        "Sent to " + strings.Join(sentTo, ", "),
+		Channels:    []string{"email"},
 		Attachments: []services.NotifyAttachment{
 			{FileName: fileName, ContentType: "application/pdf", Content: pdf},
 		},

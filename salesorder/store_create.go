@@ -146,6 +146,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 		return nil, fmt.Errorf("commit create sales order: %w", err)
 	}
 	_ = custName // used only to build the snapshot above
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }
 

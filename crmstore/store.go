@@ -101,14 +101,22 @@ type Store interface {
 	// ConvertRecord creates a new record in targetKey's stage linked to the
 	// source via parent lineage (lead -> prospect -> customer).
 	ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (newRec *workflow.Record, sourceID string, err error)
-	// Approve approves a Closed-Won customer if the caller is a configured
-	// approver. DesignV1 returns ErrNotSupported.
-	Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string) (*workflow.Record, error)
-	// IsApprover reports whether identityID is a configured approver for record
-	// id who has not yet approved it. Read-only — used to expose a canApprove
-	// flag on record reads without mutating anything. DesignV1 always returns
-	// false, nil (unsupported).
-	IsApprover(ctx context.Context, pool *pgxpool.Pool, id, identityID string) (bool, error)
+	// Approve records callerIdentityID's sign-off on a record pending
+	// approval. callerIsSuperAdmin lets a super admin approve a stage they
+	// aren't personally configured on, skipping quorum entirely (logged
+	// distinctly as an override). DesignV1 returns ErrNotSupported.
+	Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string, callerIsSuperAdmin bool) (*workflow.Record, error)
+	// Reject records callerIdentityID's rejection of a record pending
+	// approval, with a reason — a veto, not a vote: any single configured
+	// approver (or a super admin) may reject without quorum. DesignV1 returns
+	// ErrNotSupported.
+	Reject(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID, reason string, callerIsSuperAdmin bool) (*workflow.Record, error)
+	// GetApprovalInfo resolves the read-only approval overlay for a record
+	// from callerIdentityID's perspective — whether it's gated, who's
+	// configured, who's signed off, and whether the caller may approve or
+	// reject. Returned embedded on GetRecord. DesignV1 always returns a
+	// not-gated ApprovalInfo{} (unsupported).
+	GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, id, callerIdentityID string, callerIsSuperAdmin bool) (ApprovalInfo, error)
 	// PendingApprovals lists pending customer records where actorIdentityID is
 	// a configured active approver who has not yet approved — the caller's
 	// approval queue. DesignV1 always returns an empty slice (unsupported).

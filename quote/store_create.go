@@ -263,5 +263,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 		return nil, fmt.Errorf("commit create quote: %w", err)
 	}
 	_ = custName
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

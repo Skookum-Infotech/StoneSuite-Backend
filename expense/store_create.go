@@ -178,5 +178,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create expense: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

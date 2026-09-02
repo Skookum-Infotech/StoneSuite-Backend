@@ -43,7 +43,41 @@ func TestValidateCustomFields(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateCustomFields(defs, tc.values)
+			err := ValidateCustomFields(defs, tc.values, true)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateCustomFieldsSectionDisabled covers the Custom Fields section
+// switch (Workflow.CustomFieldsEnabled): required is not enforced while the
+// section is off, but defined keys stay known -- an already-stored value
+// still round-trips and is still type-checked, and an unrecognized key is
+// still rejected either way.
+func TestValidateCustomFieldsSectionDisabled(t *testing.T) {
+	defs := []FieldDefinition{
+		f("email", TypeEmail, true),
+		f("count", TypeNumber, false),
+	}
+
+	tests := []struct {
+		name    string
+		values  map[string]any
+		wantErr bool
+	}{
+		{"missing required email allowed when disabled", map[string]any{}, false},
+		{"stored value still type-checked when disabled", map[string]any{"email": "a@b.com", "count": 3.0}, false},
+		{"bad type still rejected when disabled", map[string]any{"count": "three"}, true},
+		{"unknown key still rejected when disabled", map[string]any{"ghost": "x"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCustomFields(defs, tc.values, false)
 			if tc.wantErr && err == nil {
 				t.Fatalf("expected error, got nil")
 			}
@@ -82,7 +116,7 @@ func TestValidateFieldDefinition(t *testing.T) {
 }
 
 func TestValidationErrorsAsType(t *testing.T) {
-	err := ValidateCustomFields([]FieldDefinition{f("email", TypeEmail, true)}, map[string]any{})
+	err := ValidateCustomFields([]FieldDefinition{f("email", TypeEmail, true)}, map[string]any{}, true)
 	var ve ValidationErrors
 	if !errors.As(err, &ve) {
 		t.Fatalf("expected ValidationErrors, got %T", err)

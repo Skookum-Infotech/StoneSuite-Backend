@@ -187,6 +187,32 @@ func CustomerIDByUUID(ctx context.Context, q Querier, customerUUID string) (int,
 	return id, name, nil
 }
 
+// HasLivePortalUsers reports whether a customer has any portal login that can
+// still get in — active or suspended (a suspension is reversible, so it still
+// counts as access that must be deliberately withdrawn). Revoked logins are
+// ignored: they are the permanent, already-withdrawn state.
+//
+// Used to block deleting a customer record out from under a live portal login:
+// the caller must revoke portal access first (PortalAccessOps.RevokePortalUser),
+// which also tears down the control-plane link, invites and refresh tokens that
+// a bare customer-record soft-delete would otherwise leave orphaned.
+func HasLivePortalUsers(ctx context.Context, q Querier, customerUUID string) (bool, error) {
+	var exists bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM customer_portal_user cpu
+			JOIN customer c ON c.customer_id = cpu.customer_id
+			WHERE c.customer_uuid = $1
+			  AND cpu.status IN ('active', 'suspended')
+		)`, customerUUID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check live portal users: %w", err)
+	}
+	return exists, nil
+}
+
 // CreateUser inserts a portal login for a customer.
 func CreateUser(ctx context.Context, q Querier, identityID string, customerID int,
 	email, fullName string, createdByEmployeeID *int) (*User, error) {
@@ -324,6 +350,12 @@ type TenantUser struct {
 
 // ListUsersForTenant returns every portal login in the tenant, newest first,
 // including revoked ones so the list doubles as an access history.
+//
+// Logins whose owning customer has been soft-deleted are excluded: the roster
+// answers "who from outside can get in", and a deleted customer's login can't
+// (ResolveSession fails closed on customer_deleted_at). It also keeps the row's
+// "Manage on customer record" link from pointing at a record that 404s. Same
+// customer_deleted_at IS NULL predicate every other portal query applies.
 func ListUsersForTenant(ctx context.Context, q Querier) ([]TenantUser, error) {
 	rows, err := q.Query(ctx, `
 		SELECT cpu.id, cpu.identity_id, cpu.customer_id, c.customer_uuid, c.customer_name,
@@ -333,6 +365,7 @@ func ListUsersForTenant(ctx context.Context, q Querier) ([]TenantUser, error) {
 		FROM customer_portal_user cpu
 		JOIN customer c ON c.customer_id = cpu.customer_id
 		LEFT JOIN employee e ON e.employee_id = cpu.created_by
+		WHERE c.customer_deleted_at IS NULL
 		ORDER BY cpu.created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list tenant portal users: %w", err)

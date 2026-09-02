@@ -577,6 +577,7 @@ func main() {
 		mux.Handle("GET /api/tenant/workflows/enabled", tenantChain(wf.ListEnabledWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
 		mux.Handle("POST /api/tenant/workflows/{id}/enabled", tenantChain(wf.SetWorkflowEnabled))
+		mux.Handle("POST /api/tenant/workflows/{id}/custom-fields/enabled", tenantChain(wf.SetCustomFieldsEnabled))
 		mux.Handle("POST /api/tenant/workflows/{id}/fields", tenantChain(wf.CreateField))
 		mux.Handle("DELETE /api/tenant/workflows/{id}/fields/{fieldId}", tenantChain(wf.DeleteField))
 		mux.Handle("GET /api/tenant/workflows/{id}/numbering", tenantChain(wf.GetNumberingConfig))
@@ -731,8 +732,9 @@ func main() {
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/transitions", tenantChain(crm.AvailableTransitions))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/transition", tenantChain(crm.TransitionRecord))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/convert", tenantChain(crm.ConvertRecord))
-		// Approval: sign off a Closed-Won customer (v2 design).
+		// Approval: sign off (or reject) a record pending approval (v2 design).
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/approve", tenantChain(crm.ApproveRecord))
+		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/{id}/reject", tenantChain(crm.RejectRecord))
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/approvals/pending", tenantChain(crm.PendingApprovals))
 		// Per-record audit trail.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records/{id}/audit", tenantChain(crm.RecordAudit))

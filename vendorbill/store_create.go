@@ -117,5 +117,6 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor bill: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

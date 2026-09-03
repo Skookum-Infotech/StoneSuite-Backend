@@ -72,6 +72,11 @@ type Config struct {
 	PlatformAdminEmail   string
 	PlatformAdminSlug    string
 	PlatformAdminCompany string
+	// PlatformAdminEmailDomain restricts who may hold platform-admin, and who
+	// may hold super_admin within the platform-owner tenant specifically, to
+	// identities whose email ends in "@" + this domain. Every other tenant's
+	// super_admin is unaffected. Empty denies everyone (fail-closed).
+	PlatformAdminEmailDomain string
 
 	// Cloudflare R2 object storage (for record attachments).
 	// Every tenant has its own isolated R2 bucket (ss-{slug}) provisioned at
@@ -167,9 +172,10 @@ func Load() {
 		NotifyURL:    getEnv("NOTIFY_URL", "http://localhost:8081"),
 		NotifyAPIKey: getEnv("NOTIFY_API_KEY", ""),
 		// Platform owner seeding
-		PlatformAdminEmail:   getEnv("PLATFORM_ADMIN_EMAIL", ""),
-		PlatformAdminSlug:    getEnv("PLATFORM_ADMIN_SLUG", ""),
-		PlatformAdminCompany: getEnv("PLATFORM_ADMIN_COMPANY", ""),
+		PlatformAdminEmail:       getEnv("PLATFORM_ADMIN_EMAIL", ""),
+		PlatformAdminSlug:        getEnv("PLATFORM_ADMIN_SLUG", ""),
+		PlatformAdminCompany:     getEnv("PLATFORM_ADMIN_COMPANY", ""),
+		PlatformAdminEmailDomain: getEnv("PLATFORM_ADMIN_EMAIL_DOMAIN", "skookuminfotech.com"),
 		// Cloudflare R2 — single account ID for both S3 API and management API
 		CloudflareAccountID: getEnv("CLOUDFLARE_ACCOUNT_ID", ""),
 		CloudflareAPIToken:  getEnv("CLOUDFLARE_API_TOKEN", ""),
@@ -195,6 +201,21 @@ func Load() {
 // IsProduction reports whether the app is running in production mode (APP_ENV=production).
 func (c Config) IsProduction() bool {
 	return strings.EqualFold(c.Environment, "production")
+}
+
+// EmailMatchesAdminDomain reports whether email belongs to the configured
+// platform-admin domain (PlatformAdminEmailDomain / PLATFORM_ADMIN_EMAIL_DOMAIN).
+// Used to gate who may hold platform-admin or the platform-owner tenant's
+// super_admin role. An empty PlatformAdminEmailDomain matches nothing --
+// fail-closed, so blanking the env var locks the gate down rather than
+// opening it.
+func (c Config) EmailMatchesAdminDomain(email string) bool {
+	domain := strings.ToLower(strings.TrimSpace(c.PlatformAdminEmailDomain))
+	if domain == "" {
+		return false
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	return strings.HasSuffix(email, "@"+domain)
 }
 
 // Validate checks security-critical configuration and returns an error describing

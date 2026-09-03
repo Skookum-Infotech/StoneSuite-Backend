@@ -49,6 +49,18 @@ func (h *RBACOps) authorize(w http.ResponseWriter, r *http.Request, resource aut
 	return true
 }
 
+// superAdminAssignmentAllowed reports whether targetEmail may hold
+// super_admin in the given tenant. Only the platform-owner tenant restricts
+// super_admin to config.AppConfig.PlatformAdminEmailDomain -- every other
+// tenant's super_admin (auto-assigned to its first user on provisioning) is
+// unrestricted, exactly as before this gate existed.
+func superAdminAssignmentAllowed(tenant *tenancy.Tenant, targetEmail string) bool {
+	if !tenant.IsPlatformOwner {
+		return true
+	}
+	return config.AppConfig.EmailMatchesAdminDomain(targetEmail)
+}
+
 // Catalog returns the full permission catalog. GET /api/tenant/permissions/catalog
 func (h *RBACOps) Catalog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -232,6 +244,28 @@ func (h *RBACOps) UserRoles(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RoleID == "" {
 			fail(w, http.StatusBadRequest, "roleId is required.")
 			return
+		}
+		role, err := authz.GetRole(r.Context(), pool, req.RoleID)
+		if err != nil && !errors.Is(err, authz.ErrRoleNotFound) {
+			fail(w, http.StatusInternalServerError, "Failed to load role.")
+			return
+		}
+		if err == nil && role.Key == authz.RoleSuperAdmin {
+			tenant, tErr := tenancy.TenantFromContext(r.Context())
+			if tErr != nil {
+				fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+				return
+			}
+			targetUser, uErr := userstore.GetUserByID(r.Context(), pool, userID)
+			if uErr != nil {
+				fail(w, http.StatusBadRequest, "Target user not found.")
+				return
+			}
+			if !superAdminAssignmentAllowed(tenant, targetUser.Email) {
+				logSecurityEvent(r, "super_admin_assignment_denied", "tenant_id", tenant.ID, "target_user_id", userID)
+				fail(w, http.StatusBadRequest, "super_admin in this workspace is restricted to "+config.AppConfig.PlatformAdminEmailDomain+" emails.")
+				return
+			}
 		}
 		if err := authz.AssignRole(r.Context(), pool, userID, req.RoleID); err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to assign role.")

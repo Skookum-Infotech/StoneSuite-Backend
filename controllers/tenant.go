@@ -1535,6 +1535,10 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 
 	// Grant platform-admin role.
 	if err := h.CP.AddPlatformAdmin(r.Context(), identity.ID); err != nil {
+		if errors.Is(err, tenancy.ErrAdminDomainNotAllowed) {
+			fail(w, http.StatusForbidden, "This email is not permitted to hold platform admin.")
+			return
+		}
 		fail(w, http.StatusInternalServerError, "Failed to grant admin role.")
 		return
 	}

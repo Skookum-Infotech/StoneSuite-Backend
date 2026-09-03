@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-488 endpoints across 7 surfaces, read from `main.go`.
+497 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 407 |
+| staff token + tenant | 416 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 17 |
@@ -311,7 +311,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 406 endpoints
+## `tenant` — 415 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -410,8 +410,16 @@ The staff application. Every route requires a JWT and resolves a tenant database
 
 | Method | Path | Requires | Handler |
 |---|---|---|---|
+| `GET` | `/api/tenant/dashboard/widgets/inventory-alerts/data` | staff token + tenant | `dashboardUI.InventoryAlerts` |
+| `GET` | `/api/tenant/dashboard/widgets/kpi-strip/data` | staff token + tenant | `dashboardUI.KpiStrip` |
+| `GET` | `/api/tenant/dashboard/widgets/material-consumption/data` | staff token + tenant | `dashboardUI.MaterialConsumption` |
 | `GET` | `/api/tenant/dashboard/widgets/me` | staff token + tenant | `dashboardUI.Me` |
+| `GET` | `/api/tenant/dashboard/widgets/pipeline-donut/data` | staff token + tenant | `dashboardUI.PipelineMix` |
+| `GET` | `/api/tenant/dashboard/widgets/purchases-status/data` | staff token + tenant | `dashboardUI.PurchasesStatus` |
+| `GET` | `/api/tenant/dashboard/widgets/recent-records/data` | staff token + tenant | `dashboardUI.RecentRecords` |
 | `ANY` | `/api/tenant/dashboard/widgets/roles` | staff token + tenant | `dashboardUI.RoleAllocations` |
+| `GET` | `/api/tenant/dashboard/widgets/sales-orders-snapshot/data` | staff token + tenant | `dashboardUI.SalesOrdersSnapshot` |
+| `GET` | `/api/tenant/dashboard/widgets/top-customers/data` | staff token + tenant | `dashboardUI.TopCustomers` |
 
 ### estimates
 
@@ -791,6 +799,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/sales-orders/{uuid}/inventory` | staff token + tenant | `so.Inventory` |
 | `ANY` | `/api/tenant/sales-orders/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/transition` | staff token + tenant | `so.Transition` |
+
+### search
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/search` | staff token + tenant | `gsOps.Search` |
 
 ### sso-configs
 

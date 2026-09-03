@@ -466,16 +466,43 @@ func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID
 // caller's scope — same RBAC narrowing as ListRecords (see its doc comment),
 // without fetching rows.
 func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string) (int, error) {
+	return CountRecordsSince(ctx, q, workflowID, scope, callerUserID, time.Time{})
+}
+
+// CountRecordsSince is CountRecords narrowed to records created at or after
+// since (a zero time.Time means unbounded, identical to CountRecords). Used
+// by the Pipeline mix dashboard widget's date-range filter.
+func CountRecordsSince(ctx context.Context, q Querier, workflowID, scope, callerUserID string, since time.Time) (int, error) {
+	return CountRecordsBetween(ctx, q, workflowID, scope, callerUserID, since, time.Time{})
+}
+
+// CountRecordsBetween is CountRecords narrowed to records created in
+// [since, until) -- a zero since/until means unbounded on that side (a zero
+// since alone is identical to CountRecordsSince; both zero is identical to
+// CountRecords). Used by the KPI strip dashboard widget's delta-window and
+// sparkline-bucket computations.
+func CountRecordsBetween(ctx context.Context, q Querier, workflowID, scope, callerUserID string, since, until time.Time) (int, error) {
 	var (
 		n    int
 		err  error
 		base = `SELECT COUNT(*) FROM workflow_records WHERE workflow_id = $1`
+		args = []any{workflowID}
 	)
+	if !since.IsZero() {
+		args = append(args, since)
+		base += fmt.Sprintf(" AND created_at >= $%d", len(args))
+	}
+	if !until.IsZero() {
+		args = append(args, until)
+		base += fmt.Sprintf(" AND created_at < $%d", len(args))
+	}
 	switch scope {
 	case "all":
-		err = q.QueryRow(ctx, base, workflowID).Scan(&n)
+		err = q.QueryRow(ctx, base, args...).Scan(&n)
 	default: // own (most restrictive)
-		err = q.QueryRow(ctx, base+` AND owner_user_id = $2`, workflowID, nullIfEmpty(callerUserID)).Scan(&n)
+		args = append(args, nullIfEmpty(callerUserID))
+		base += fmt.Sprintf(" AND owner_user_id = $%d", len(args))
+		err = q.QueryRow(ctx, base, args...).Scan(&n)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("count records: %w", err)

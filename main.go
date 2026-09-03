@@ -519,6 +519,19 @@ func main() {
 		mux.Handle("GET /api/tenant/dashboard/widgets/me", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.Me))))
 		mux.Handle("/api/tenant/dashboard/widgets/roles", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.RoleAllocations))))
 
+		// Widget data endpoints -- one per widget (see dashboard_pipeline.go).
+		// No dashboard_widget permission gate: each widget enforces its own
+		// underlying resource's RBAC (here, lead/prospect/customer read scope)
+		// exactly as the CRM pages themselves do.
+		mux.Handle("GET /api/tenant/dashboard/widgets/pipeline-donut/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.PipelineMix))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/kpi-strip/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.KpiStrip))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/recent-records/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.RecentRecords))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/sales-orders-snapshot/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.SalesOrdersSnapshot))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/top-customers/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.TopCustomers))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/inventory-alerts/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.InventoryAlerts))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/purchases-status/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.PurchasesStatus))))
+		mux.Handle("GET /api/tenant/dashboard/widgets/material-consumption/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.MaterialConsumption))))
+
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
@@ -707,6 +720,13 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
+
+		// Global search: fans a term out to every module the caller can read
+		// (customer/lead/prospect + every business module's own search) and
+		// returns results grouped by entity type. See globalsearch/ for the
+		// registry of participating modules.
+		gsOps := controllers.NewGlobalSearchOps()
+		mux.Handle("GET /api/tenant/search", tenantChain(gsOps.Search))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
 		// Portal access is granted separately and explicitly by staff (Portal

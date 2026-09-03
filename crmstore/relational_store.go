@@ -440,6 +440,21 @@ func (s *relationalStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, k
 // (including v2's pre-existing "team" == "own" behavior) so counts stay
 // consistent with what ListRecords would return for the same scope.
 func (s *relationalStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error) {
+	return s.CountRecordsBetween(ctx, pool, key, scope, actorIdentityID, time.Time{}, time.Time{})
+}
+
+// CountRecordsSince is CountRecords narrowed to records created at or after
+// since (a zero time.Time means unbounded, identical to CountRecords). Used
+// by the Pipeline mix dashboard widget's date-range filter.
+func (s *relationalStore) CountRecordsSince(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, since time.Time) (int, error) {
+	return s.CountRecordsBetween(ctx, pool, key, scope, actorIdentityID, since, time.Time{})
+}
+
+// CountRecordsBetween is CountRecords narrowed to records created in
+// [since, until) (a zero since/until is unbounded on that side). Used by the
+// KPI strip dashboard widget's delta-window and sparkline-bucket
+// computations.
+func (s *relationalStore) CountRecordsBetween(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, since, until time.Time) (int, error) {
 	code, ok := crmKeyToCode[key]
 	if !ok {
 		return 0, ClientError{Msg: "Unknown CRM workflow: " + key}
@@ -449,14 +464,22 @@ func (s *relationalStore) CountRecords(ctx context.Context, pool *pgxpool.Pool, 
 		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
 		WHERE rt.record_type_code = $1 AND c.customer_deleted_at IS NULL`
 	args := []any{code}
+	if !since.IsZero() {
+		args = append(args, since)
+		q += fmt.Sprintf(" AND c.customer_created_at >= $%d", len(args))
+	}
+	if !until.IsZero() {
+		args = append(args, until)
+		q += fmt.Sprintf(" AND c.customer_created_at < $%d", len(args))
+	}
 	// Fail-closed: see ListRecords.
 	if scope != string(authz.ScopeAll) {
 		empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
 		if !found {
 			return 0, nil
 		}
-		q += ` AND c.customer_crm_owner_user_id = $2`
 		args = append(args, empID)
+		q += fmt.Sprintf(" AND c.customer_crm_owner_user_id = $%d", len(args))
 	}
 	var n int
 	if err := pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {

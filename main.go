@@ -708,6 +708,13 @@ func main() {
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
 
+		// Global search: fans a term out to every module the caller can read
+		// (customer/lead/prospect + every business module's own search) and
+		// returns results grouped by entity type. See globalsearch/ for the
+		// registry of participating modules.
+		gsOps := controllers.NewGlobalSearchOps()
+		mux.Handle("GET /api/tenant/search", tenantChain(gsOps.Search))
+
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
 		// Portal access is granted separately and explicitly by staff (Portal
 		// Access tab / portalAccessOps below) — approving a CRM record no

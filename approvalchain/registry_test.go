@@ -82,6 +82,7 @@ func TestRegistry_RecordSpecComplete(t *testing.T) {
 				"ApprovalStatusColumn": r.ApprovalStatusColumn, "ApprovedByColumn": r.ApprovedByColumn,
 				"UpdatedAtColumn": r.UpdatedAtColumn, "UpdatedByColumn": r.UpdatedByColumn,
 				"RecordVersionColumn": r.RecordVersionColumn, "DeletedAtColumn": r.DeletedAtColumn,
+				"CreatedAtColumn": r.CreatedAtColumn,
 			}
 			for name, val := range fields {
 				if val == "" {
@@ -138,6 +139,27 @@ func TestRegistry_ApprovalNotificationScope(t *testing.T) {
 				t.Errorf("%q is not approval-notification in-scope but Record.NumberColumn = %q, want empty", key, cfg.Record.NumberColumn)
 			}
 		})
+	}
+}
+
+// TestKeys verifies Keys() enumerates every registered module -- the KPI
+// strip dashboard widget's "Needs Approval" aggregate (controllers) relies
+// on this to iterate the registry from outside the package, since `registry`
+// itself is unexported.
+func TestKeys(t *testing.T) {
+	keys := Keys()
+	if len(keys) != len(registry) {
+		t.Fatalf("len(Keys()) = %d, want %d (len(registry))", len(keys), len(registry))
+	}
+	seen := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if _, ok := registry[k]; !ok {
+			t.Errorf("Keys() returned %q, which is not a registry key", k)
+		}
+		if seen[k] {
+			t.Errorf("Keys() returned %q more than once", k)
+		}
+		seen[k] = true
 	}
 }
 

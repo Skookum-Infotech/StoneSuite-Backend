@@ -56,4 +56,10 @@ func TestTenantOps_Activate_RejectsNonMatchingAdminDomain_DB(t *testing.T) {
 	isAdmin, err := cp.IsPlatformAdmin(ctx, identity.ID)
 	require.NoError(t, err)
 	assert.False(t, isAdmin, "identity must not have been granted platform admin")
+
+	// The domain gate now runs before the one-shot setup token is consumed,
+	// so a denied activation must leave the token intact and still resolvable.
+	stillValid, err := cp.IdentityBySetupTokenHash(ctx, tokenHash)
+	require.NoError(t, err, "setup token must survive a domain-gate denial")
+	assert.Equal(t, identity.ID, stillValid.ID)
 }

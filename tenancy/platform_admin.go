@@ -44,6 +44,9 @@ func (c *ControlPlane) AddPlatformAdmin(ctx context.Context, identityID string) 
 		return fmt.Errorf("add platform admin: resolve identity: %w", err)
 	}
 	if !config.AppConfig.EmailMatchesAdminDomain(identity.Email) {
+		slog.Warn("security event",
+			slog.String("security_event", "platform_admin_grant_denied"),
+			slog.String("identity_id", identityID))
 		return ErrAdminDomainNotAllowed
 	}
 	if _, err := c.pool.Exec(ctx,

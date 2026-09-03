@@ -33,6 +33,15 @@ func TestTenantOps_Activate_RejectsNonMatchingAdminDomain_DB(t *testing.T) {
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	tenant, err := cp.CreateTenant(ctx, "activate-test-"+suffix, "Activate Test", true)
 	require.NoError(t, err)
+	// tenants.is_platform_owner is a database-enforced singleton (partial
+	// unique index idx_tenants_platform_owner): only one row may hold it at
+	// a time across the whole shared control-plane test DB. Delete this row
+	// once the test finishes so it doesn't collide with a platform-owner
+	// tenant created by another test in this binary.
+	t.Cleanup(func() {
+		_, err := cp.Pool().Exec(context.Background(), `DELETE FROM tenants WHERE id = $1`, tenant.ID)
+		require.NoError(t, err)
+	})
 	identity, err := cp.CreateIdentity(ctx, tenant.ID, "outsider-"+suffix+"@example.com", "", "Outsider", false)
 	require.NoError(t, err)
 

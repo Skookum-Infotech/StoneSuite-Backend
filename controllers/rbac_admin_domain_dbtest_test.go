@@ -30,6 +30,15 @@ func seedServablePlatformOwnerTestTenant(t *testing.T, cp *tenancy.ControlPlane,
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	tenant, err := cp.CreateTenant(ctx, "owner-rbac-test-"+suffix, "Owner RBAC Test Tenant", true)
 	require.NoError(t, err)
+	// tenants.is_platform_owner is a database-enforced singleton (partial
+	// unique index idx_tenants_platform_owner): only one row may hold it at
+	// a time across the whole shared control-plane test DB. Delete this row
+	// as soon as the (sub)test using it finishes so the next platform-owner
+	// tenant created anywhere in this test binary doesn't collide with it.
+	t.Cleanup(func() {
+		_, err := cp.Pool().Exec(context.Background(), `DELETE FROM tenants WHERE id = $1`, tenant.ID)
+		require.NoError(t, err)
+	})
 	require.NoError(t, cp.SetTenantProvisioned(ctx, tenant.ID, "owner_rbac_test_db", dsn, 1))
 	got, err := cp.TenantByID(ctx, tenant.ID)
 	require.NoError(t, err)

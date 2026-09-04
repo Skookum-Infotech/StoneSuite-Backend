@@ -110,3 +110,47 @@ func TestLoadAIConfigDefaults(t *testing.T) {
 		t.Fatalf("default AIEmbedDim = %d, want 768", AppConfig.AIEmbedDim)
 	}
 }
+
+func TestEmailMatchesAdminDomain(t *testing.T) {
+	tests := []struct {
+		name   string
+		domain string
+		email  string
+		want   bool
+	}{
+		{"matching domain", "skookuminfotech.com", "staff@skookuminfotech.com", true},
+		{"matching domain, mixed case", "skookuminfotech.com", "Staff@Skookuminfotech.COM", true},
+		{"non-matching domain", "skookuminfotech.com", "outsider@example.com", false},
+		{"look-alike domain is not a match", "skookuminfotech.com", "attacker@evil-skookuminfotech.com", false},
+		{"subdomain is not a match", "skookuminfotech.com", "staff@sub.skookuminfotech.com", false},
+		{"empty configured domain denies everything", "", "staff@skookuminfotech.com", false},
+		{"empty email is denied", "skookuminfotech.com", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{PlatformAdminEmailDomain: tt.domain}
+			got := cfg.EmailMatchesAdminDomain(tt.email)
+			if got != tt.want {
+				t.Errorf("EmailMatchesAdminDomain(%q) with domain %q = %v, want %v", tt.email, tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadPlatformAdminEmailDomain(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		Load()
+		if AppConfig.PlatformAdminEmailDomain != "skookuminfotech.com" {
+			t.Fatalf("default PlatformAdminEmailDomain = %q, want skookuminfotech.com", AppConfig.PlatformAdminEmailDomain)
+		}
+	})
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		t.Setenv("PLATFORM_ADMIN_EMAIL_DOMAIN", "example.org")
+		Load()
+		if AppConfig.PlatformAdminEmailDomain != "example.org" {
+			t.Fatalf("PlatformAdminEmailDomain = %q, want example.org", AppConfig.PlatformAdminEmailDomain)
+		}
+	})
+}

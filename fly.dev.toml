@@ -30,6 +30,8 @@ primary_region = "iad"
   # sitting on top of a stale merge.
   SMTP_PORT           = "587"
   INVITE_EXPIRY_HOURS = "24"
+  # Gates who may hold platform-admin / tenant super_admin in the platform-owner tenant.
+  PLATFORM_ADMIN_EMAIL_DOMAIN = "skookuminfotech.com"
 
   # Cloudflare R2 — non-secret config (account ID and bucket name are not sensitive).
   # Secrets (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) must be set via:

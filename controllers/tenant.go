@@ -1522,6 +1522,15 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject before consuming the one-shot setup token: a misconfigured
+	// PLATFORM_ADMIN_EMAIL_DOMAIN must not leave the token burned and the
+	// tenant stuck inactive while denying activation.
+	if !config.AppConfig.EmailMatchesAdminDomain(identity.Email) {
+		logSecurityEvent(r, "platform_admin_grant_denied", "identity_id", identity.ID)
+		fail(w, http.StatusForbidden, "This email is not permitted to hold platform admin.")
+		return
+	}
+
 	// Set password (also clears the token column — one-shot consumed).
 	pwHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -1533,8 +1542,14 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Grant platform-admin role.
+	// Grant platform-admin role. (Domain already checked above; this call's
+	// own gate is defense-in-depth, kept in case that check is ever bypassed.)
 	if err := h.CP.AddPlatformAdmin(r.Context(), identity.ID); err != nil {
+		if errors.Is(err, tenancy.ErrAdminDomainNotAllowed) {
+			logSecurityEvent(r, "platform_admin_grant_denied", "identity_id", identity.ID)
+			fail(w, http.StatusForbidden, "This email is not permitted to hold platform admin.")
+			return
+		}
 		fail(w, http.StatusInternalServerError, "Failed to grant admin role.")
 		return
 	}

@@ -5218,6 +5218,68 @@
         ]
       }
     },
+    "/api/tenant/dashboard/widgets/accounting-snapshot/data": {
+      "get": {
+        "operationId": "get_tenant_dashboard_widgets_accounting_snapshot_data",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "dashboardUI.AccountingSnapshot",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/dashboard/widgets/ar-outstanding/data": {
+      "get": {
+        "operationId": "get_tenant_dashboard_widgets_ar_outstanding_data",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "dashboardUI.ArOutstanding",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/dashboard/widgets/inventory-alerts/data": {
       "get": {
         "operationId": "get_tenant_dashboard_widgets_inventory_alerts_data",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,32 @@ var (
 	ErrFieldCap          = fmt.Errorf("a workflow may have at most %d custom fields", MaxCustomFields)
 	ErrDisableDependency = errors.New("workflow has upstream dependency")
 )
+
+// disableDependencyError carries the user-facing message for a blocked
+// disable so callers get a clean, human-readable sentence — Error() does not
+// repeat ErrDisableDependency's own text or fall back to Go's %v slice
+// syntax (e.g. "[Lead]") the way a plain fmt.Errorf("%w: ...", ...) would.
+// Unwrap keeps errors.Is(err, ErrDisableDependency) working for callers.
+type disableDependencyError struct {
+	workflowName string
+	upstreams    []string
+}
+
+func (e *disableDependencyError) Error() string {
+	return fmt.Sprintf("Cannot disable %q while %s still enabled — disable the upstream workflow(s) first.",
+		e.workflowName, joinUpstreamNames(e.upstreams))
+}
+
+func (e *disableDependencyError) Unwrap() error { return ErrDisableDependency }
+
+func joinUpstreamNames(names []string) string {
+	switch len(names) {
+	case 1:
+		return fmt.Sprintf("%q is", names[0])
+	default:
+		return fmt.Sprintf("%s are", strings.Join(names, ", "))
+	}
+}
 
 // ----- workflows -------------------------------------------------------------
 
@@ -153,8 +180,7 @@ func checkDisableDependency(ctx context.Context, q Querier, id string) error {
 		return err
 	}
 	if len(upstreams) > 0 {
-		return fmt.Errorf("%w: cannot disable %q while %v is still enabled — disable the upstream workflow(s) first",
-			ErrDisableDependency, thisName, upstreams)
+		return &disableDependencyError{workflowName: thisName, upstreams: upstreams}
 	}
 	return nil
 }

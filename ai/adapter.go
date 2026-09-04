@@ -116,11 +116,13 @@ type AskRequest struct {
 // them, so assembly is cheap; what it buys is that a caller's scope is fixed at
 // construction and cannot drift between retrieval arms.
 type Assistant struct {
-	tenantPool *pgxpool.Pool
-	cpPool     *pgxpool.Pool
-	queryEmbed rag.Embedder
-	llm        rag.LLMClient
-	metrics    rag.Metrics
+	tenantPool       *pgxpool.Pool
+	cpPool           *pgxpool.Pool
+	queryEmbed       rag.Embedder
+	llm              rag.LLMClient
+	metrics          rag.Metrics
+	reranker         rag.Reranker
+	rerankCandidates int
 }
 
 // NewAssistant wires the shared dependencies. queryEmbed MUST be a query
@@ -137,16 +139,33 @@ func (a *Assistant) WithMetrics(m rag.Metrics) *Assistant {
 	return a
 }
 
+// WithReranker wires an optional cross-encoder reranker (e.g.
+// provider/tei.NewReranker) onto every orchestrator this Assistant builds.
+// candidateK is how wide each corpus retrieves before the reranker narrows
+// back down to its normal K (see rag.CorpusConfig.RerankK) — a candidateK at
+// or below that corpus's K is a no-op widen, not an error.
+//
+// Optional: an Assistant without one behaves exactly as before Phase 2 —
+// RerankK is inert with no configured Reranker (see rag.Orchestrator).
+func (a *Assistant) WithReranker(r rag.Reranker, candidateK int) *Assistant {
+	a.reranker = r
+	a.rerankCandidates = candidateK
+	return a
+}
+
 // ForCaller assembles the orchestrator for one caller: their scoped records
 // plus shared help, in that order, so citation [1] is the first record hit.
 func (a *Assistant) ForCaller(scope, callerUserID string) *rag.Orchestrator {
 	corpora := []rag.CorpusConfig{
-		{Corpus: RecordsCorpus(a.tenantPool, scope, callerUserID), K: recordsK, FloorDistance: floorDist},
-		{Corpus: HelpCorpus(a.cpPool), K: helpK, FloorDistance: floorDist},
+		{Corpus: RecordsCorpus(a.tenantPool, scope, callerUserID), K: recordsK, FloorDistance: floorDist, RerankK: a.rerankCandidates},
+		{Corpus: HelpCorpus(a.cpPool), K: helpK, FloorDistance: floorDist, RerankK: a.rerankCandidates},
 	}
 	o := rag.NewOrchestrator(a.queryEmbed, a.llm, corpora).WithPrompt(systemPrompt, refusalPhrase)
 	if a.metrics != nil {
 		o = o.WithMetrics(a.metrics)
+	}
+	if a.reranker != nil {
+		o = o.WithReranker(a.reranker)
 	}
 	return o
 }

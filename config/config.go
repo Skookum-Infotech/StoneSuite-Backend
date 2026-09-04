@@ -123,6 +123,17 @@ type Config struct {
 	// FlyOllamaAPIToken is unset (e.g. local dev, or an always-on embedder box).
 	FlyOllamaAPIToken string
 	FlyOllamaAppName  string
+
+	// AIRerankBaseURL points at a self-hosted TEI reranking deployment (see
+	// go-rag's provider/tei). Empty (default) disables reranking entirely:
+	// retrieval stays exactly RRF-fused order, byte-for-byte the pre-Phase-2
+	// behavior. Only set this once a TEI deployment actually exists and its
+	// cost is a deliberate choice, never as a speculative default.
+	AIRerankBaseURL string
+	// AIRerankCandidates is how many candidates to retrieve and fuse per
+	// corpus before reranking narrows back down to that corpus's normal K.
+	// Only takes effect when AIRerankBaseURL is set.
+	AIRerankCandidates int
 }
 
 var AppConfig Config
@@ -194,10 +205,13 @@ func Load() {
 		// Must match ollama/entrypoint.sh's default pull and ollama/fly.toml —
 		// a default that names a model the box never pulled fails every embed.
 		AIEmbedModel: getEnv("AI_EMBED_MODEL", "snowflake-arctic-embed:m"),
-		AIEmbedDim:      getEnvInt("AI_EMBED_DIM", 768),
+		AIEmbedDim:   getEnvInt("AI_EMBED_DIM", 768),
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)
 		FlyOllamaAPIToken: getEnv("FLY_OLLAMA_API_TOKEN", ""),
 		FlyOllamaAppName:  getEnv("FLY_OLLAMA_APP_NAME", "stonesuite-ollama"),
+		// Reranking (see Config.AIRerankBaseURL doc) — off by default.
+		AIRerankBaseURL:    getEnv("AI_RERANK_BASE_URL", ""),
+		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),
 	}
 }
 

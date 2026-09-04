@@ -55,7 +55,7 @@ func main() {
 	embedder := ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
 	store := ai.NewCPHelpStore(pool)
 
-	res, err := ingest.IngestFS(ctx, embedder, store, docsFS)
+	res, err := ingest.IngestFS(ctx, embedder, store, docsFS, ingest.DefaultChunkOpts)
 	if err != nil {
 		log.Fatalf("ingest: %v", err)
 	}

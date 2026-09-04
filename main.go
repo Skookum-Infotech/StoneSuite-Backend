@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Skookum-Infotech/go-rag/provider/ollama"
+	"github.com/Skookum-Infotech/go-rag/provider/tei"
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/ai"
@@ -1233,6 +1234,11 @@ func main() {
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
+		// Reranking is off unless a TEI deployment is actually configured —
+		// see config.AppConfig.AIRerankBaseURL.
+		if config.AppConfig.AIRerankBaseURL != "" {
+			aiOps = aiOps.WithReranker(tei.NewReranker(config.AppConfig.AIRerankBaseURL), config.AppConfig.AIRerankCandidates)
+		}
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))

@@ -64,11 +64,13 @@ type platformAdminChecker interface {
 // docs). queryEmbed, docEmbed, and llm are injected so tests can substitute
 // ai.FakeEmbedder / ai.FakeLLM — no network calls in tests.
 type AIOps struct {
-	cpPool     *pgxpool.Pool
-	queryEmbed ragcore.Embedder
-	docEmbed   ragcore.Embedder
-	llm        ragcore.LLMClient
-	cp         platformAdminChecker
+	cpPool           *pgxpool.Pool
+	queryEmbed       ragcore.Embedder
+	docEmbed         ragcore.Embedder
+	llm              ragcore.LLMClient
+	cp               platformAdminChecker
+	reranker         ragcore.Reranker
+	rerankCandidates int
 }
 
 // NewAIOps constructs the handler group. queryEmbed MUST be a query embedder
@@ -77,6 +79,16 @@ type AIOps struct {
 // them produces vectors that are not comparable with the stored ones.
 func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ragcore.Embedder, llm ragcore.LLMClient, cp platformAdminChecker, docEmbed ragcore.Embedder) *AIOps {
 	return &AIOps{cpPool: cpPool, queryEmbed: queryEmbed, llm: llm, cp: cp, docEmbed: docEmbed}
+}
+
+// WithReranker wires an optional cross-encoder reranker (e.g.
+// provider/tei.NewReranker) onto every ask this AIOps serves and returns the
+// receiver for chaining at construction in main.go. Unset by default —
+// reranking is off unless AI_RERANK_BASE_URL is configured.
+func (h *AIOps) WithReranker(r ragcore.Reranker, candidateK int) *AIOps {
+	h.reranker = r
+	h.rerankCandidates = candidateK
+	return h
 }
 
 type askRequestBody struct {
@@ -154,6 +166,9 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 
 	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
 	assistant := ai.NewAssistant(pool, h.cpPool, h.queryEmbed, h.llm).WithMetrics(metrics.AI{})
+	if h.reranker != nil {
+		assistant = assistant.WithReranker(h.reranker, h.rerankCandidates)
+	}
 	res, err := assistant.Ask(r.Context(), ai.AskRequest{
 		Question:     body.Question,
 		Scope:        string(scope),
@@ -244,7 +259,7 @@ func (h *AIOps) ReindexHelp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store := ai.NewCPHelpStore(h.cpPool)
-	res, err := ingest.IngestFS(r.Context(), h.docEmbed, store, docs.FS)
+	res, err := ingest.IngestFS(r.Context(), h.docEmbed, store, docs.FS, ingest.DefaultChunkOpts)
 	if err != nil {
 		slog.Error("reindex help failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to reindex app-help docs.")

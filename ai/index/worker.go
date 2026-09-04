@@ -4,8 +4,20 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/Skookum-Infotech/go-rag/chunk"
 	"github.com/Skookum-Infotech/go-rag/rag"
 )
+
+// recordTokenBudget mirrors the ~512-token embedder context window
+// (docs/ai-assistant.md) with headroom for the doc-embedding task prefix.
+// rag_chunks stores one row per source_id (no multi-chunk-per-record split,
+// unlike help docs — see ingest.DefaultChunkOpts), so text past this budget
+// is silently truncated by the embedder rather than split. Custom fields are
+// capped at 15 per workflow (workflow.MaxCustomFields), which keeps a
+// typical record's rendered text well under this in practice; this constant
+// exists to make an exception to that visible in logs rather than a schema
+// change made speculatively before real records are observed exceeding it.
+const recordTokenBudget = 400
 
 // RecordLoader loads a record's embeddable form + scope columns by id.
 // Implemented over crmstore.Store.GetRecord (adapter in the wiring layer).
@@ -75,6 +87,10 @@ func (w *Worker) process(ctx context.Context, j Job) error {
 		return err
 	}
 	content := rag.RenderRecord(doc)
+	if est := chunk.EstimateTokens(content); est > recordTokenBudget {
+		slog.Warn("rag record exceeds embed token budget; embedder will truncate it silently",
+			"source_id", j.SourceID, "estimated_tokens", est, "budget", recordTokenBudget)
+	}
 	next := rag.Chunk{
 		SourceID: j.SourceID, WorkflowID: wfID, OwnerUserID: owner, TeamID: team,
 		Content: content, ContentHash: rag.VectorHash(w.fingerprint(), content),

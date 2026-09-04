@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/Skookum-Infotech/go-rag/rag"
@@ -137,6 +138,32 @@ func TestWorkerDrainsAndEmbeds(t *testing.T) {
 	}
 	if !q.done["1"] {
 		t.Fatal("successful job must be marked done")
+	}
+}
+
+// TestWorkerStillEmbedsRecordsPastTheTokenBudget proves the token-budget
+// check (worker.go's recordTokenBudget) is observational only — it logs, it
+// never withholds the record. Records aren't split into multiple chunks
+// (rag_chunks is one row per source_id), so a record that's too big to log
+// about must still be indexed as-is; the alternative (dropping it) would be
+// worse than the truncation the log line exists to surface.
+func TestWorkerStillEmbedsRecordsPastTheTokenBudget(t *testing.T) {
+	big := map[string]any{}
+	for i := 0; i < 15; i++ {
+		big[fmt.Sprintf("field%d", i)] = "this custom field value is deliberately long and repeated many times over to blow well past the four hundred token budget for a single embedded record chunk"
+	}
+	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "upsert"}}}
+	loader := &fakeLoader{doc: rag.RecordDoc{WorkflowKey: "lead", StateName: "New", Custom: big}}
+	emb := &rag.FakeEmbedder{Dim: 768}
+	sink := &fakeChunkSink{}
+
+	w := NewWorker(q, loader, emb, sink)
+	n, err := w.DrainOnce(ctxW(t))
+	if err != nil || n != 1 {
+		t.Fatalf("DrainOnce = %d,%v want 1,nil", n, err)
+	}
+	if len(sink.upserts) != 1 {
+		t.Fatalf("want the oversized record still upserted whole, got %+v", sink.upserts)
 	}
 }
 

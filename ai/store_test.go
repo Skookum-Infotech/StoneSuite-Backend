@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Skookum-Infotech/go-rag/rag"
 )
 
 func newTestPool(t *testing.T) *pgxpool.Pool {
@@ -32,7 +34,7 @@ func ctxS(t *testing.T) context.Context { t.Helper(); return context.Background(
 // nonZeroVec returns a non-degenerate 768-dim vector. Cosine distance against
 // an all-zero vector is undefined (NaN), and pgvector's HNSW index silently
 // excludes NaN-distance rows from ORDER BY ... <=> ... LIMIT results — so an
-// all-zero test fixture would make every SearchScoped/Search assertion below
+// all-zero test fixture would make every retrieval assertion in this package
 // falsely see zero rows once run against the real HNSW-indexed schema.
 func nonZeroVec() []float32 {
 	v := make([]float32, 768)
@@ -42,13 +44,18 @@ func nonZeroVec() []float32 {
 	return v
 }
 
+// Retrieval (ownership enforcement under real Postgres + pgvector + HNSW) now
+// runs through ai.RecordsCorpus — see adapter_dbtest_test.go. RagStore is the
+// ingestion write path only: what the index worker calls after rendering and
+// embedding a record.
+
 func TestRagStoreUpsertInsertsThenUpdates(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewRagStore(pool)
 
 	const recID = "44444444-4444-4444-4444-444444444444"
 	const wfID = "55555555-5555-5555-5555-555555555555"
-	c := Chunk{
+	c := rag.Chunk{
 		SourceID: recID, WorkflowID: wfID,
 		Content: "Workflow: lead\nState: New\n", ContentHash: "hash1",
 		Embedding: make([]float32, 768),
@@ -94,7 +101,7 @@ func TestRagStoreUpsertAllowsEmptyWorkflowID(t *testing.T) {
 	s := NewRagStore(pool)
 
 	const recID = "66666666-6666-6666-6666-666666666666"
-	c := Chunk{
+	c := rag.Chunk{
 		SourceID: recID, WorkflowID: "",
 		Content: "Workflow: lead\nState: New\n", ContentHash: "hash1",
 		Embedding: make([]float32, 768),
@@ -116,7 +123,7 @@ func TestRagStoreDeleteRemovesRow(t *testing.T) {
 	s := NewRagStore(pool)
 
 	const recID = "66666666-6666-6666-6666-666666666666"
-	c := Chunk{SourceID: recID, WorkflowID: recID, Content: "x", ContentHash: "h", Embedding: make([]float32, 768)}
+	c := rag.Chunk{SourceID: recID, WorkflowID: recID, Content: "x", ContentHash: "h", Embedding: make([]float32, 768)}
 	if err := s.Upsert(ctxS(t), c); err != nil {
 		t.Fatal(err)
 	}
@@ -140,134 +147,88 @@ func TestRagStoreDeleteNonexistentIsNoop(t *testing.T) {
 	}
 }
 
-// TestRagStoreSearchScopedEnforcesOwnership is the DB-backed proof behind the
-// inviolable buildScopedSearch tests: a real caller with scope=own must never
-// retrieve another user's chunk, even though it's in the same tenant DB.
-func TestRagStoreSearchScopedEnforcesOwnership(t *testing.T) {
+// TestRagStoreMetaRoundTripsScopeAndHash proves Meta reads back exactly what
+// Upsert wrote — the index worker's re-embed-skip decision (ai/index/worker.go
+// reuseExisting) is only as trustworthy as this round trip.
+func TestRagStoreMetaRoundTripsScopeAndHash(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewRagStore(pool)
 	ctx := ctxS(t)
 
-	const userA = "aaaaaaaa-0000-0000-0000-000000000001"
-	const userB = "aaaaaaaa-0000-0000-0000-000000000002"
-	const teamX = "bbbbbbbb-0000-0000-0000-000000000001"
+	const recID = "88888888-8888-8888-8888-888888888888"
+	const wfID = "99999999-9999-9999-9999-999999999999"
+	const owner = "aaaaaaaa-0000-0000-0000-000000000001"
+	const team = "bbbbbbbb-0000-0000-0000-000000000001"
 
-	mustUpsert := func(sourceID, owner, team, content string) {
-		t.Helper()
-		if err := s.Upsert(ctx, Chunk{
-			SourceID: sourceID, WorkflowID: sourceID, OwnerUserID: owner, TeamID: team,
-			Content: content, ContentHash: content, Embedding: nonZeroVec(),
-		}); err != nil {
-			t.Fatalf("upsert %s: %v", sourceID, err)
-		}
+	if err := s.Upsert(ctx, rag.Chunk{
+		SourceID: recID, WorkflowID: wfID, OwnerUserID: owner, TeamID: team,
+		Content: "x", ContentHash: "hash-abc", Embedding: nonZeroVec(),
+	}); err != nil {
+		t.Fatal(err)
 	}
-	mustUpsert("10000000-0000-0000-0000-000000000001", userA, teamX, "owned by A, in team X")
-	mustUpsert("10000000-0000-0000-0000-000000000002", userB, teamX, "owned by B, in team X")
-	mustUpsert("10000000-0000-0000-0000-000000000003", userB, "", "owned by B, no team")
 
-	qv := nonZeroVec()
-
-	// own: A sees only A's chunk.
-	got, err := s.SearchScoped(ctx, qv, "own", userA, 10)
+	meta, found, err := s.Meta(ctx, recID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].SourceID != "10000000-0000-0000-0000-000000000001" {
-		t.Fatalf("own scope for A = %+v, want exactly A's chunk", got)
+	if !found {
+		t.Fatal("Meta must report found=true for a row that was just upserted")
 	}
-
-	// team: retired scope must fail closed, zero results (never narrows to own,
-	// never widens to all).
-	got, err = s.SearchScoped(ctx, qv, "team", userA, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("retired team scope = %+v, want 0 (fail closed)", got)
-	}
-
-	// all: sees everything regardless of owner/team.
-	got, err = s.SearchScoped(ctx, qv, "all", userA, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("all scope = %d results, want 3", len(got))
-	}
-
-	// unknown/unset scope: fail closed, zero results (never falls through to all).
-	got, err = s.SearchScoped(ctx, qv, "", userA, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("unknown scope = %+v, want 0 (fail closed)", got)
+	if meta.ContentHash != "hash-abc" || meta.OwnerUserID != owner || meta.TeamID != team || meta.WorkflowID != wfID {
+		t.Fatalf("Meta = %+v, want hash/owner/team/workflow to round-trip exactly", meta)
 	}
 }
 
-// TestRagStoreSearchScopedLexicalEnforcesOwnership is the lexical-arm twin of
-// TestRagStoreSearchScopedEnforcesOwnership: a real caller with scope=own
-// must never retrieve another user's chunk via full-text search either, even
-// though it's in the same tenant DB. Both arms MUST share the identical scope
-// clause (scopeClause) so this security invariant holds for hybrid retrieval.
-func TestRagStoreSearchScopedLexicalEnforcesOwnership(t *testing.T) {
+func TestRagStoreMetaNotFoundForUnindexedRecord(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewRagStore(pool)
+
+	_, found, err := s.Meta(ctxS(t), "cccccccc-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("Meta must report found=false for a source_id that was never indexed")
+	}
+}
+
+// TestRagStoreUpdateScopeLeavesContentUntouched is the DB-backed proof behind
+// the reassignment path in ai/index/worker.go: correcting ownership must not
+// perturb the stored content, hash, or embedding — only the scope columns.
+func TestRagStoreUpdateScopeLeavesContentUntouched(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewRagStore(pool)
 	ctx := ctxS(t)
 
-	const userA = "aaaaaaaa-0000-0000-0000-000000000001"
-	const userB = "aaaaaaaa-0000-0000-0000-000000000002"
-	const teamX = "bbbbbbbb-0000-0000-0000-000000000001"
-
-	mustUpsert := func(sourceID, owner, team, content string) {
-		t.Helper()
-		if err := s.Upsert(ctx, Chunk{
-			SourceID: sourceID, WorkflowID: sourceID, OwnerUserID: owner, TeamID: team,
-			Content: content, ContentHash: content, Embedding: nonZeroVec(),
-		}); err != nil {
-			t.Fatalf("upsert %s: %v", sourceID, err)
-		}
+	const recID = "dddddddd-0000-0000-0000-000000000001"
+	const oldOwner = "eeeeeeee-0000-0000-0000-000000000001"
+	const newOwner = "eeeeeeee-0000-0000-0000-000000000002"
+	if err := s.Upsert(ctx, rag.Chunk{
+		SourceID: recID, WorkflowID: recID, OwnerUserID: oldOwner,
+		Content: "original content", ContentHash: "original-hash", Embedding: nonZeroVec(),
+	}); err != nil {
+		t.Fatal(err)
 	}
-	mustUpsert("20000000-0000-0000-0000-000000000001", userA, teamX, "widget order owned by A, in team X")
-	mustUpsert("20000000-0000-0000-0000-000000000002", userB, teamX, "widget order owned by B, in team X")
-	mustUpsert("20000000-0000-0000-0000-000000000003", userB, "", "widget order owned by B, no team")
 
-	const term = "widget"
+	if err := s.UpdateScope(ctx, rag.Chunk{SourceID: recID, OwnerUserID: newOwner}); err != nil {
+		t.Fatal(err)
+	}
 
-	// own: A sees only A's chunk.
-	got, err := s.SearchScopedLexical(ctx, term, "own", userA, 10)
+	meta, _, err := s.Meta(ctx, recID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].SourceID != "20000000-0000-0000-0000-000000000001" {
-		t.Fatalf("own scope for A = %+v, want exactly A's chunk", got)
+	if meta.OwnerUserID != newOwner {
+		t.Fatalf("owner_user_id = %q, want %q", meta.OwnerUserID, newOwner)
 	}
-
-	// team: retired scope must fail closed, zero results (never narrows to own,
-	// never widens to all).
-	got, err = s.SearchScopedLexical(ctx, term, "team", userA, 10)
-	if err != nil {
+	if meta.ContentHash != "original-hash" {
+		t.Fatalf("content_hash = %q, want it untouched by UpdateScope", meta.ContentHash)
+	}
+	var content string
+	if err := pool.QueryRow(ctx, `SELECT content FROM rag_chunks WHERE source_id=$1`, recID).Scan(&content); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("retired team scope = %+v, want 0 (fail closed)", got)
-	}
-
-	// all: sees everything matching the term regardless of owner/team.
-	got, err = s.SearchScopedLexical(ctx, term, "all", userA, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("all scope = %d results, want 3", len(got))
-	}
-
-	// unknown/unset scope: fail closed, zero results (never falls through to all).
-	got, err = s.SearchScopedLexical(ctx, term, "", userA, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("unknown scope = %+v, want 0 (fail closed)", got)
+	if content != "original content" {
+		t.Fatalf("content = %q, want it untouched by UpdateScope", content)
 	}
 }

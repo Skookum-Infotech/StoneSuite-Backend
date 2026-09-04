@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stonesuite-backend/ai"
+	"github.com/Skookum-Infotech/go-rag/rag"
 	"stonesuite-backend/workflow"
 )
 
@@ -26,18 +26,18 @@ func NewRAGRecordLoader(store Store, pool *pgxpool.Pool) *RAGRecordLoader {
 }
 
 // Load resolves the record's workflow key + current state label into an
-// ai.RecordDoc, alongside the scope columns (workflow id, owner, team) RAG
+// rag.RecordDoc, alongside the scope columns (workflow id, owner, team) RAG
 // retrieval will later AND the RBAC scope onto.
-func (l *RAGRecordLoader) Load(ctx context.Context, sourceID string) (ai.RecordDoc, string, string, string, error) {
+func (l *RAGRecordLoader) Load(ctx context.Context, sourceID string) (rag.RecordDoc, string, string, string, error) {
 	rec, err := l.store.GetRecord(ctx, l.pool, sourceID)
 	if err != nil {
-		return ai.RecordDoc{}, "", "", "", fmt.Errorf("load record %s: %w", sourceID, err)
+		return rag.RecordDoc{}, "", "", "", fmt.Errorf("load record %s: %w", sourceID, err)
 	}
 	key, err := l.store.KeyForRecord(ctx, l.pool, sourceID)
 	if err != nil {
-		return ai.RecordDoc{}, "", "", "", fmt.Errorf("resolve workflow key for %s: %w", sourceID, err)
+		return rag.RecordDoc{}, "", "", "", fmt.Errorf("resolve workflow key for %s: %w", sourceID, err)
 	}
-	doc := ai.RecordDoc{
+	doc := rag.RecordDoc{
 		WorkflowKey: key,
 		StateName:   l.stateName(ctx, rec.CurrentStateID),
 		Core:        rec.CoreFields,

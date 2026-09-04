@@ -27,8 +27,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Skookum-Infotech/go-rag/ingest"
+	"github.com/Skookum-Infotech/go-rag/provider/ollama"
 	"stonesuite-backend/ai"
-	"stonesuite-backend/ai/helpdocs"
 	"stonesuite-backend/config"
 	"stonesuite-backend/docs"
 )
@@ -51,10 +52,10 @@ func main() {
 	}
 	defer pool.Close()
 
-	embedder := ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
+	embedder := ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
 	store := ai.NewCPHelpStore(pool)
 
-	res, err := helpdocs.IngestFS(ctx, embedder, store, docsFS)
+	res, err := ingest.IngestFS(ctx, embedder, store, docsFS)
 	if err != nil {
 		log.Fatalf("ingest: %v", err)
 	}

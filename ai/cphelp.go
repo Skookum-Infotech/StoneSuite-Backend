@@ -6,75 +6,29 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
+
+	"github.com/Skookum-Infotech/go-rag/ingest"
 )
 
-// HelpChunk is one embeddable section of an app-help document, ready to
-// upsert into cp_rag_chunks.
-type HelpChunk struct {
-	Section   string
-	Content   string
-	Embedding []float32
-}
-
-// CPHelpStore retrieves app-help/documentation chunks from the control-plane
-// pool's cp_rag_chunks table. Deliberately has NO scope clause: this content
-// is identical for every tenant and not anyone's private data.
+// CPHelpStore is the INGESTION path for app-help chunks in the control-plane
+// pool's cp_rag_chunks table. Retrieval goes through HelpCorpus instead.
+//
+// The content is identical for every tenant and is nobody's private data,
+// which is why it lives in the control plane rather than being duplicated per
+// tenant, and why its corpus carries no scope filter.
 type CPHelpStore struct{ pool *pgxpool.Pool }
 
 // NewCPHelpStore builds a store over the control-plane pool.
 func NewCPHelpStore(pool *pgxpool.Pool) *CPHelpStore { return &CPHelpStore{pool: pool} }
 
-// Search returns up to k app-help chunks most similar to queryVec.
-func (s *CPHelpStore) Search(ctx context.Context, queryVec []float32, k int) ([]Citation, error) {
-	sql := fmt.Sprintf(`SELECT section, content, embedding <=> $1 AS distance FROM cp_rag_chunks ORDER BY distance LIMIT %d`, k)
-	rows, err := s.pool.Query(ctx, sql, pgvector.NewVector(queryVec))
-	if err != nil {
-		return nil, fmt.Errorf("help search: %w", err)
-	}
-	defer rows.Close()
-	var out []Citation
-	for rows.Next() {
-		var section, content string
-		var distance float64
-		if err := rows.Scan(&section, &content, &distance); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		out = append(out, Citation{
-			SourceType: "help", SourceID: section, Snippet: snippet(content), Content: groundingContent(content),
-			Distance: distance, DistanceValid: true,
-		})
-	}
-	return out, rows.Err()
-}
+// Compile-time proof CPHelpStore is a sink ingest.IngestFS can write to.
+var _ ingest.HelpStore = (*CPHelpStore)(nil)
 
-// SearchLexical returns up to k app-help chunks whose content full-text-matches
-// queryText — the keyword arm of hybrid retrieval, fused with Search's vector
-// arm via RRF (see ai/fuse.go). Unscoped, like Search: help content is
-// identical for every tenant.
-func (s *CPHelpStore) SearchLexical(ctx context.Context, queryText string, k int) ([]Citation, error) {
-	sql := fmt.Sprintf(
-		`SELECT section, content FROM cp_rag_chunks WHERE content_tsv @@ websearch_to_tsquery('simple', $1) ORDER BY ts_rank_cd(content_tsv, websearch_to_tsquery('simple', $1)) DESC LIMIT %d`,
-		k)
-	rows, err := s.pool.Query(ctx, sql, queryText)
-	if err != nil {
-		return nil, fmt.Errorf("help lexical search: %w", err)
-	}
-	defer rows.Close()
-	var out []Citation
-	for rows.Next() {
-		var section, content string
-		if err := rows.Scan(&section, &content); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-		out = append(out, Citation{SourceType: "help", SourceID: section, Snippet: snippet(content), Content: groundingContent(content)})
-	}
-	return out, rows.Err()
-}
-
-// ReplaceDoc atomically replaces every chunk for docKey with chunks (delete
-// then insert in one transaction) — the idempotent ingestion pattern the
-// rag-ingest-help CLI uses so re-running it never accumulates stale sections.
-func (s *CPHelpStore) ReplaceDoc(ctx context.Context, docKey string, chunks []HelpChunk) error {
+// ReplaceDoc atomically replaces every chunk for docKey — delete then insert in
+// one transaction. This is what makes re-ingestion idempotent: a document whose
+// sections were renamed or removed does not leave orphaned chunks behind to be
+// retrieved forever, which a plain upsert keyed on section would.
+func (s *CPHelpStore) ReplaceDoc(ctx context.Context, docKey string, chunks []ingest.DocChunk) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)

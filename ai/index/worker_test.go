@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"stonesuite-backend/ai"
+	"github.com/Skookum-Infotech/go-rag/rag"
 )
 
 var errBoom = errors.New("boom")
@@ -49,14 +49,14 @@ func (q *fakeQueue) Fail(_ context.Context, id string) error {
 }
 
 type fakeLoader struct {
-	doc                     ai.RecordDoc
+	doc                     rag.RecordDoc
 	workflowID, owner, team string
 	loadErr                 error
 }
 
-func (l *fakeLoader) Load(_ context.Context, _ string) (ai.RecordDoc, string, string, string, error) {
+func (l *fakeLoader) Load(_ context.Context, _ string) (rag.RecordDoc, string, string, string, error) {
 	if l.loadErr != nil {
-		return ai.RecordDoc{}, "", "", "", l.loadErr
+		return rag.RecordDoc{}, "", "", "", l.loadErr
 	}
 	return l.doc, l.workflowID, l.owner, l.team, nil
 }
@@ -64,22 +64,22 @@ func (l *fakeLoader) Load(_ context.Context, _ string) (ai.RecordDoc, string, st
 // fakeChunkSink records writes and can pretend a record is already indexed
 // (stored/storedFound) so the skip logic has something to compare against.
 type fakeChunkSink struct {
-	stored      ai.ChunkMeta
+	stored      rag.ChunkMeta
 	storedFound bool
 
-	upserts      []ai.Chunk
-	scopeUpdates []ai.Chunk
+	upserts      []rag.Chunk
+	scopeUpdates []rag.Chunk
 	deletes      []string
 }
 
-func (s *fakeChunkSink) Meta(_ context.Context, _ string) (ai.ChunkMeta, bool, error) {
+func (s *fakeChunkSink) Meta(_ context.Context, _ string) (rag.ChunkMeta, bool, error) {
 	return s.stored, s.storedFound, nil
 }
-func (s *fakeChunkSink) Upsert(_ context.Context, c ai.Chunk) error {
+func (s *fakeChunkSink) Upsert(_ context.Context, c rag.Chunk) error {
 	s.upserts = append(s.upserts, c)
 	return nil
 }
-func (s *fakeChunkSink) UpdateScope(_ context.Context, c ai.Chunk) error {
+func (s *fakeChunkSink) UpdateScope(_ context.Context, c rag.Chunk) error {
 	s.scopeUpdates = append(s.scopeUpdates, c)
 	return nil
 }
@@ -110,7 +110,7 @@ func (s *fakeChunkSink) scopeAfter() (owner, team, workflow string, wrote bool) 
 // test stand in for a different embedding model; empty means "indistinguishable
 // vector space", which is what the plain fakes use.
 type countingEmbedder struct {
-	ai.FakeEmbedder
+	rag.FakeEmbedder
 	calls int
 	fp    string
 }
@@ -123,8 +123,8 @@ func (e *countingEmbedder) Fingerprint() string { return e.fp }
 
 func TestWorkerDrainsAndEmbeds(t *testing.T) {
 	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "upsert"}}}
-	loader := &fakeLoader{doc: ai.RecordDoc{WorkflowKey: "lead", StateName: "New"}}
-	emb := &ai.FakeEmbedder{Dim: 768}
+	loader := &fakeLoader{doc: rag.RecordDoc{WorkflowKey: "lead", StateName: "New"}}
+	emb := &rag.FakeEmbedder{Dim: 768}
 	sink := &fakeChunkSink{}
 
 	w := NewWorker(q, loader, emb, sink)
@@ -142,14 +142,14 @@ func TestWorkerDrainsAndEmbeds(t *testing.T) {
 
 // indexedWorker wires a worker whose store already holds a chunk for rec-1 with
 // the given hash and scope, so the skip logic has a prior state to compare to.
-func indexedWorker(t *testing.T, doc ai.RecordDoc, storedHash, storedOwner string, nowOwner string) (*Worker, *fakeChunkSink, *countingEmbedder) {
+func indexedWorker(t *testing.T, doc rag.RecordDoc, storedHash, storedOwner string, nowOwner string) (*Worker, *fakeChunkSink, *countingEmbedder) {
 	t.Helper()
 	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "upsert"}}}
 	loader := &fakeLoader{doc: doc, owner: nowOwner}
-	emb := &countingEmbedder{FakeEmbedder: ai.FakeEmbedder{Dim: 768}}
+	emb := &countingEmbedder{FakeEmbedder: rag.FakeEmbedder{Dim: 768}}
 	sink := &fakeChunkSink{
 		storedFound: true,
-		stored:      ai.ChunkMeta{ContentHash: storedHash, OwnerUserID: storedOwner},
+		stored:      rag.ChunkMeta{ContentHash: storedHash, OwnerUserID: storedOwner},
 	}
 	return NewWorker(q, loader, emb, sink), sink, emb
 }
@@ -158,8 +158,8 @@ func indexedWorker(t *testing.T, doc ai.RecordDoc, storedHash, storedOwner strin
 // content hash. The reconciliation sweep re-enqueues records on a timer, so
 // without this every sweep pays to re-embed text that is byte-identical.
 func TestWorkerSkipsEmbedWhenNothingChanged(t *testing.T) {
-	doc := ai.RecordDoc{WorkflowKey: "lead", StateName: "New"}
-	hash := ai.VectorHash("", ai.RenderRecord(doc))
+	doc := rag.RecordDoc{WorkflowKey: "lead", StateName: "New"}
+	hash := rag.VectorHash("", rag.RenderRecord(doc))
 
 	w, sink, emb := indexedWorker(t, doc, hash, "user-1", "user-1")
 	if _, err := w.DrainOnce(ctxW(t)); err != nil {
@@ -184,8 +184,8 @@ func TestWorkerSkipsEmbedWhenNothingChanged(t *testing.T) {
 // This asserts the outcome, not the route: correcting it with a full Upsert or
 // with a cheap UpdateScope both pass. Leaving it stale does not.
 func TestWorkerRefreshesScopeWhenOwnerChanges(t *testing.T) {
-	doc := ai.RecordDoc{WorkflowKey: "lead", StateName: "New"}
-	hash := ai.VectorHash("", ai.RenderRecord(doc))
+	doc := rag.RecordDoc{WorkflowKey: "lead", StateName: "New"}
+	hash := rag.VectorHash("", rag.RenderRecord(doc))
 
 	w, sink, _ := indexedWorker(t, doc, hash, "old-owner", "new-owner")
 	if _, err := w.DrainOnce(ctxW(t)); err != nil {
@@ -204,9 +204,9 @@ func TestWorkerRefreshesScopeWhenOwnerChanges(t *testing.T) {
 // TestWorkerReEmbedsWhenContentChanges guards the other direction: the skip
 // must not be so eager that genuinely edited records keep a stale vector.
 func TestWorkerReEmbedsWhenContentChanges(t *testing.T) {
-	doc := ai.RecordDoc{WorkflowKey: "lead", StateName: "Qualified"}
+	doc := rag.RecordDoc{WorkflowKey: "lead", StateName: "Qualified"}
 
-	w, sink, emb := indexedWorker(t, doc, ai.VectorHash("", "something entirely different"), "user-1", "user-1")
+	w, sink, emb := indexedWorker(t, doc, rag.VectorHash("", "something entirely different"), "user-1", "user-1")
 	if _, err := w.DrainOnce(ctxW(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestWorkerReEmbedsWhenContentChanges(t *testing.T) {
 	if len(sink.upserts) != 1 {
 		t.Fatalf("changed record must be upserted, got %d upsert(s)", len(sink.upserts))
 	}
-	if got := sink.upserts[0].ContentHash; got != ai.VectorHash("", ai.RenderRecord(doc)) {
+	if got := sink.upserts[0].ContentHash; got != rag.VectorHash("", rag.RenderRecord(doc)) {
 		t.Errorf("upsert stored hash %q, want the freshly-rendered content's hash", got)
 	}
 }
@@ -232,17 +232,17 @@ func TestWorkerReEmbedsWhenContentChanges(t *testing.T) {
 // fix meant to repair retrieval would be neutralised by the optimisation meant
 // to save money, with no error anywhere.
 func TestWorkerReEmbedsWhenEmbedderChanges(t *testing.T) {
-	doc := ai.RecordDoc{WorkflowKey: "lead", StateName: "New"}
+	doc := rag.RecordDoc{WorkflowKey: "lead", StateName: "New"}
 
 	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "upsert"}}}
 	loader := &fakeLoader{doc: doc, owner: "user-1"}
 	// The stored row was embedded by the previous model; the worker now runs a
 	// different one. Text and scope are otherwise identical.
-	emb := &countingEmbedder{FakeEmbedder: ai.FakeEmbedder{Dim: 768}, fp: "arctic-embed\x00"}
+	emb := &countingEmbedder{FakeEmbedder: rag.FakeEmbedder{Dim: 768}, fp: "arctic-embed\x00"}
 	sink := &fakeChunkSink{
 		storedFound: true,
-		stored: ai.ChunkMeta{
-			ContentHash: ai.VectorHash("nomic-embed-text\x00search_document: ", ai.RenderRecord(doc)),
+		stored: rag.ChunkMeta{
+			ContentHash: rag.VectorHash("nomic-embed-text\x00search_document: ", rag.RenderRecord(doc)),
 			OwnerUserID: "user-1",
 		},
 	}
@@ -257,7 +257,7 @@ func TestWorkerReEmbedsWhenEmbedderChanges(t *testing.T) {
 	if len(sink.upserts) != 1 {
 		t.Fatalf("expected the record to be rewritten with a vector from the new model, got %d upsert(s)", len(sink.upserts))
 	}
-	if got := sink.upserts[0].ContentHash; got != ai.VectorHash(emb.fp, ai.RenderRecord(doc)) {
+	if got := sink.upserts[0].ContentHash; got != rag.VectorHash(emb.fp, rag.RenderRecord(doc)) {
 		t.Errorf("stored hash %q does not identify the new embedder; the next sweep would re-embed again", got)
 	}
 }
@@ -266,10 +266,10 @@ func TestWorkerReEmbedsWhenEmbedderChanges(t *testing.T) {
 // prior hash to compare, so it must embed.
 func TestWorkerEmbedsFirstTimeRecord(t *testing.T) {
 	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "upsert"}}}
-	emb := &countingEmbedder{FakeEmbedder: ai.FakeEmbedder{Dim: 768}}
+	emb := &countingEmbedder{FakeEmbedder: rag.FakeEmbedder{Dim: 768}}
 	sink := &fakeChunkSink{storedFound: false}
 
-	w := NewWorker(q, &fakeLoader{doc: ai.RecordDoc{WorkflowKey: "lead"}}, emb, sink)
+	w := NewWorker(q, &fakeLoader{doc: rag.RecordDoc{WorkflowKey: "lead"}}, emb, sink)
 	if _, err := w.DrainOnce(ctxW(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestWorkerEmbedsFirstTimeRecord(t *testing.T) {
 
 func TestWorkerReEnqueuesOnEmbedError(t *testing.T) {
 	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "upsert"}}}
-	emb := &ai.FakeEmbedder{Err: errBoom}
+	emb := &rag.FakeEmbedder{Err: errBoom}
 	w := NewWorker(q, &fakeLoader{}, emb, &fakeChunkSink{})
 	if _, err := w.DrainOnce(ctxW(t)); err != nil {
 		t.Fatal(err) // DrainOnce swallows per-job errors, returns count
@@ -292,7 +292,7 @@ func TestWorkerReEnqueuesOnEmbedError(t *testing.T) {
 
 func TestWorkerHandlesDeleteWithoutEmbedding(t *testing.T) {
 	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", Op: "delete"}}}
-	emb := &ai.FakeEmbedder{Err: errBoom} // must not be called for deletes
+	emb := &rag.FakeEmbedder{Err: errBoom} // must not be called for deletes
 	sink := &fakeChunkSink{}
 	w := NewWorker(q, &fakeLoader{}, emb, sink)
 

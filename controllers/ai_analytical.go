@@ -3,13 +3,13 @@ package controllers
 import (
 	"context"
 	"fmt"
+	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stonesuite-backend/ai"
 	"stonesuite-backend/crmstore"
 )
 
@@ -93,19 +93,19 @@ func classifyCountQuestion(question string) (keys []string, ok bool) {
 // building a deterministic answer with zero LLM calls — a plain count needs
 // no generation, and skipping the chat model avoids both its latency and any
 // chance of it mis-stating the number. Citations are always an empty (never
-// nil) slice, matching ai.AskResult's existing JSON convention.
-func countCRMRecords(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, scope, actorIdentityID string, keys []string) (ai.AskResult, error) {
+// nil) slice, matching ragcore.AskResult's existing JSON convention.
+func countCRMRecords(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, scope, actorIdentityID string, keys []string) (ragcore.AskResult, error) {
 	counts := make(map[string]int, len(keys))
 	total := 0
 	for _, key := range keys {
 		n, err := store.CountRecords(ctx, pool, key, scope, actorIdentityID)
 		if err != nil {
-			return ai.AskResult{}, fmt.Errorf("count %s records: %w", key, err)
+			return ragcore.AskResult{}, fmt.Errorf("count %s records: %w", key, err)
 		}
 		counts[key] = n
 		total += n
 	}
-	return ai.AskResult{Answer: formatCountAnswer(keys, counts, total), Citations: []ai.Citation{}}, nil
+	return ragcore.AskResult{Answer: formatCountAnswer(keys, counts, total), Citations: []ragcore.Citation{}}, nil
 }
 
 // formatCountAnswer renders counts as a plain sentence. A single key renders

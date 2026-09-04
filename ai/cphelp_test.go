@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgvector/pgvector-go"
+
+	"github.com/Skookum-Infotech/go-rag/ingest"
 )
 
 func newCPTestPool(t *testing.T) *pgxpool.Pool {
@@ -28,39 +29,18 @@ func newCPTestPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func TestCPHelpStoreSearchLabelsResultsAsHelp(t *testing.T) {
-	pool := newCPTestPool(t)
-	s := NewCPHelpStore(pool)
-	ctx := context.Background()
-
-	_, err := pool.Exec(ctx,
-		`INSERT INTO cp_rag_chunks (doc_key, section, content, embedding) VALUES ($1, $2, $3, $4)`,
-		"onboarding", "Getting Started", "To create a lead, go to CRM > Leads > New.", pgvector.NewVector(nonZeroVec()))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := s.Search(ctx, nonZeroVec(), 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("got %d results, want 1", len(got))
-	}
-	if got[0].SourceType != "help" {
-		t.Fatalf("SourceType = %q, want help", got[0].SourceType)
-	}
-	if got[0].SourceID != "Getting Started" {
-		t.Fatalf("SourceID = %q, want the section label", got[0].SourceID)
-	}
-}
+// Retrieval (Search/SearchLexical) is now go-rag's pgvector.Corpus and is
+// covered there — both as SQL-shape unit tests and its own dbtest. CPHelpStore
+// is the ingestion write path only: ReplaceDoc is what stays StoneSuite-side
+// because HelpCorpus (the read side) is unscoped and generic, but choosing
+// *when* to replace app-help content is this app's decision, not a library's.
 
 func TestCPHelpStoreReplaceDocIsIdempotent(t *testing.T) {
 	pool := newCPTestPool(t)
 	s := NewCPHelpStore(pool)
 	ctx := context.Background()
 
-	err := s.ReplaceDoc(ctx, "onboarding", []HelpChunk{
+	err := s.ReplaceDoc(ctx, "onboarding", []ingest.DocChunk{
 		{Section: "Intro", Content: "Welcome to StoneSuite.", Embedding: nonZeroVec()},
 		{Section: "Step 1", Content: "Create a tenant.", Embedding: nonZeroVec()},
 	})
@@ -76,7 +56,7 @@ func TestCPHelpStoreReplaceDocIsIdempotent(t *testing.T) {
 	}
 
 	// Re-running with a smaller/changed section set must replace, not append.
-	err = s.ReplaceDoc(ctx, "onboarding", []HelpChunk{
+	err = s.ReplaceDoc(ctx, "onboarding", []ingest.DocChunk{
 		{Section: "Intro v2", Content: "Welcome to StoneSuite (updated).", Embedding: nonZeroVec()},
 	})
 	if err != nil {
@@ -102,10 +82,10 @@ func TestCPHelpStoreReplaceDocDoesNotTouchOtherDocs(t *testing.T) {
 	s := NewCPHelpStore(pool)
 	ctx := context.Background()
 
-	if err := s.ReplaceDoc(ctx, "doc-a", []HelpChunk{{Section: "A", Content: "a", Embedding: nonZeroVec()}}); err != nil {
+	if err := s.ReplaceDoc(ctx, "doc-a", []ingest.DocChunk{{Section: "A", Content: "a", Embedding: nonZeroVec()}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceDoc(ctx, "doc-b", []HelpChunk{{Section: "B", Content: "b", Embedding: nonZeroVec()}}); err != nil {
+	if err := s.ReplaceDoc(ctx, "doc-b", []ingest.DocChunk{{Section: "B", Content: "b", Embedding: nonZeroVec()}}); err != nil {
 		t.Fatal(err)
 	}
 	var count int

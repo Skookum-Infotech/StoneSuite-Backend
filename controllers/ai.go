@@ -9,8 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Skookum-Infotech/go-rag/ingest"
+	ragcore "github.com/Skookum-Infotech/go-rag/rag"
+
 	"stonesuite-backend/ai"
-	"stonesuite-backend/ai/helpdocs"
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
@@ -63,16 +65,17 @@ type platformAdminChecker interface {
 // ai.FakeEmbedder / ai.FakeLLM — no network calls in tests.
 type AIOps struct {
 	cpPool     *pgxpool.Pool
-	queryEmbed ai.Embedder
-	docEmbed   ai.Embedder
-	llm        ai.LLMClient
+	queryEmbed ragcore.Embedder
+	docEmbed   ragcore.Embedder
+	llm        ragcore.LLMClient
 	cp         platformAdminChecker
 }
 
-// NewAIOps constructs the handler group. queryEmbed MUST apply the
-// search_query: prefix (see ai.NewOllamaQueryEmbedder); docEmbed MUST apply
-// the search_document: prefix (see ai.NewOllamaDocEmbedder).
-func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ai.Embedder, llm ai.LLMClient, cp platformAdminChecker, docEmbed ai.Embedder) *AIOps {
+// NewAIOps constructs the handler group. queryEmbed MUST be a query embedder
+// and docEmbed a document embedder (ollama.NewQueryEmbedder /
+// ollama.NewDocEmbedder) — the two apply different task prefixes, and mixing
+// them produces vectors that are not comparable with the stored ones.
+func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ragcore.Embedder, llm ragcore.LLMClient, cp platformAdminChecker, docEmbed ragcore.Embedder) *AIOps {
 	return &AIOps{cpPool: cpPool, queryEmbed: queryEmbed, llm: llm, cp: cp, docEmbed: docEmbed}
 }
 
@@ -150,11 +153,8 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
-	orch := ai.NewOrchestrator(h.queryEmbed, ai.CombinedRetriever{
-		Tenant: ai.NewRagStore(pool),
-		Help:   ai.NewCPHelpStore(h.cpPool),
-	}, h.llm).WithMetrics(metrics.AI{})
-	res, err := orch.Ask(r.Context(), ai.AskRequest{
+	assistant := ai.NewAssistant(pool, h.cpPool, h.queryEmbed, h.llm).WithMetrics(metrics.AI{})
+	res, err := assistant.Ask(r.Context(), ai.AskRequest{
 		Question:     body.Question,
 		Scope:        string(scope),
 		CallerUserID: callerUserID,
@@ -244,7 +244,7 @@ func (h *AIOps) ReindexHelp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	store := ai.NewCPHelpStore(h.cpPool)
-	res, err := helpdocs.IngestFS(r.Context(), h.docEmbed, store, docs.FS)
+	res, err := ingest.IngestFS(r.Context(), h.docEmbed, store, docs.FS)
 	if err != nil {
 		slog.Error("reindex help failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to reindex app-help docs.")

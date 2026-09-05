@@ -151,17 +151,33 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	store := crmstore.For(tenant.DesignVersion)
+
 	if keys, matched := classifyCountQuestion(body.Question); matched {
-		store := crmstore.For(tenant.DesignVersion)
 		res, err := countCRMRecords(r.Context(), store, pool, string(scope), payload.ID, keys)
 		if err != nil {
 			slog.Error("ai count query failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
 			fail(w, http.StatusBadGateway, "The assistant is temporarily unavailable.")
 			return
 		}
+		metrics.ObserveAIQueryRoute("count_direct")
 		logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
 		return
+	}
+
+	// The three-way dispatch's middle case: a count question the regex path
+	// above refuses because it names a filter concept (date/status/etc) it
+	// cannot safely honor. One constrained LLM call resolves the filter; a
+	// failure or unparseable/adversarial model output falls through to plain
+	// RAG below rather than erroring — see resolveRoutedFilteredCount.
+	if hasFilterHintCountIntent(body.Question) {
+		if res, ok := resolveRoutedFilteredCount(r.Context(), h.llm, store, pool, string(scope), payload.ID, body.Question); ok {
+			metrics.ObserveAIQueryRoute("count_routed")
+			logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
+			writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
+			return
+		}
 	}
 
 	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
@@ -180,6 +196,7 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metrics.ObserveAIQueryRoute("rag")
 	logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
 }

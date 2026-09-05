@@ -131,6 +131,53 @@ func ListRecordsFiltered(ctx context.Context, q Querier, workflowID, scope, call
 	return page, nil
 }
 
+// CountRecordsFiltered returns how many records of a workflow match filters,
+// under the caller's scope — the filtered counterpart to CountRecords, for
+// callers (the AI assistant's routed count path) that need a scope-composed
+// count without fetching or sorting rows. The RBAC scope clause is ANDed onto
+// filters exactly as ListRecordsFiltered does: a filter can only narrow the
+// caller's permitted set, never widen it.
+func CountRecordsFiltered(ctx context.Context, q Querier, workflowID, scope, callerUserID string, defs []FieldDefinition, filters []query.Clause) (int, error) {
+	sql, args, err := buildRecordCountQuery(workflowID, scope, callerUserID, defs, filters)
+	if err != nil {
+		return 0, err // *query.InvalidFilterError -> caller falls back, never a 500
+	}
+	var n int
+	if err := q.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count records filtered: %w", err)
+	}
+	return n, nil
+}
+
+// buildRecordCountQuery mirrors buildRecordQuery's scope composition but
+// wraps query.BuildFilters (no sort/keyset) in a COUNT(*) rather than a
+// SELECT + ORDER BY + LIMIT — pure and unit-testable for the same reason.
+func buildRecordCountQuery(workflowID, scope, callerUserID string, defs []FieldDefinition, filters []query.Clause) (string, []any, error) {
+	where := []string{"workflow_id = $1"}
+	args := []any{workflowID}
+	nextIdx := 2
+	switch scope {
+	case "all":
+		// no narrowing
+	default: // own
+		where = append(where, "owner_user_id = $2")
+		args = append(args, nullIfEmpty(callerUserID))
+		nextIdx = 3
+	}
+
+	filterSQL, filterArgs, err := query.BuildFilters(filters, newRecordResolver(defs), nextIdx)
+	if err != nil {
+		return "", nil, err
+	}
+	if filterSQL != "" {
+		where = append(where, filterSQL)
+	}
+	args = append(args, filterArgs...)
+
+	sql := fmt.Sprintf("SELECT COUNT(*) FROM workflow_records WHERE %s", strings.Join(where, " AND "))
+	return sql, args, nil
+}
+
 // buildRecordQuery assembles the scope-composed, parameterized SQL for a
 // filtered record list. It is pure (no DB) so the scope-AND-never-widen
 // invariant and parameter ordering are unit-testable. $1 = workflow_id, then

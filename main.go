@@ -381,6 +381,13 @@ func main() {
 		// spend rather than relying on the CRUD-sized limit above.
 		aiRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.5, 5)
 
+		// Per-user AI rate limit, beneath the per-tenant one above: without
+		// this, one user could consume their whole tenant's 0.5 req/sec AI
+		// budget alone, starving every other user in the same tenant. Tighter
+		// than the tenant bucket since it bounds a single person rather than
+		// everyone sharing it.
+		aiUserRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 3)
+
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
 
 		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
@@ -477,10 +484,13 @@ func main() {
 		// document's own resource (invoice:read to read the thread,
 		// invoice:update to reply), so message access follows document access.
 
-		// aiChain layers the AI-specific rate limit on top of tenantChain's
-		// generic one, for routes that make a synchronous embedding/LLM call.
+		// aiChain layers the AI-specific rate limits on top of tenantChain's
+		// generic one, for routes that make a synchronous embedding/LLM call:
+		// per-user (tightest, innermost) inside per-tenant inside the generic
+		// tenant limit. Each layer enforces its own bucket independently, so
+		// any one of them can reject a request the others would allow.
 		aiChain := func(h http.HandlerFunc) http.Handler {
-			return middleware.RequireAuth(aiRateLimiter.PerTenant(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
+			return middleware.RequireAuth(aiRateLimiter.PerTenant(aiUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h)))))
 		}
 
 		// Public: customer-portal auth. A separate rate limiter from

@@ -79,6 +79,12 @@ type Store interface {
 	// scope — same RBAC narrowing as ListRecords, without fetching rows. Used
 	// by the AI assistant's analytical (count) question path.
 	CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error)
+	// CountRecordsFiltered returns how many records of key match filters,
+	// under the caller's RBAC scope — the filtered counterpart to
+	// CountRecords, without fetching rows. filters is ANDed onto scope (can
+	// only narrow, never widen). Used by the AI assistant's LLM-routed
+	// filtered-count path (e.g. "how many leads closed last quarter").
+	CountRecordsFiltered(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, filters []query.Clause) (int, error)
 	// SearchRecords lists records for key with server-side filtering, sorting,
 	// and keyset pagination, all composed onto the caller's RBAC scope (a filter
 	// can only narrow the scoped set, never widen it). Returns one page + cursor.

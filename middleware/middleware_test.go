@@ -160,6 +160,69 @@ func TestPerTenant_NoTenantIDPassesThrough(t *testing.T) {
 	}
 }
 
+// TestPerUser_ThrottlesAfterBurst covers the per-user bucket that sits
+// beneath PerTenant on AI-cost-sensitive routes (see main.go): it exists so
+// one user cannot consume their whole tenant's shared AI budget alone.
+func TestPerUser_ThrottlesAfterBurst(t *testing.T) {
+	rl := NewRateLimiter(context.Background(), 0, 2)
+	handler := rl.PerUser(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	call := func(userID string) int {
+		r := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask", nil)
+		ctx := context.WithValue(r.Context(), UserContextKey, UserContextPayload{ID: userID})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r.WithContext(ctx))
+		return rec.Code
+	}
+
+	assert.Equal(t, http.StatusOK, call("user-a"))
+	assert.Equal(t, http.StatusOK, call("user-a"))
+	assert.Equal(t, http.StatusTooManyRequests, call("user-a"), "3rd request from same user should be throttled")
+	// A different user in the same tenant has their own bucket.
+	assert.Equal(t, http.StatusOK, call("user-b"))
+}
+
+// TestPerUser_NoUserIDPassesThrough mirrors TestPerTenant_NoTenantIDPassesThrough:
+// a request with no authenticated user id must reach the handler unthrottled.
+func TestPerUser_NoUserIDPassesThrough(t *testing.T) {
+	rl := NewRateLimiter(context.Background(), 0, 1)
+	handler := rl.PerUser(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < 3; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		assert.Equal(t, http.StatusOK, rec.Code, "request %d with no user id must pass through unthrottled", i+1)
+	}
+}
+
+// TestPerUser_ComposesWithPerTenant proves the two layers are independent:
+// wrapping PerUser inside PerTenant means either bucket can reject a request
+// the other would allow — a user hitting their own per-user cap is throttled
+// even while their tenant's shared bucket still has room.
+func TestPerUser_ComposesWithPerTenant(t *testing.T) {
+	tenantRL := NewRateLimiter(context.Background(), 0, 10) // generous tenant budget
+	userRL := NewRateLimiter(context.Background(), 0, 1)    // tight per-user budget
+	handler := tenantRL.PerTenant(userRL.PerUser(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	call := func() int {
+		r := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask", nil)
+		ctx := context.WithValue(r.Context(), UserContextKey, UserContextPayload{ID: "user-a", TenantID: "tenant-a"})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r.WithContext(ctx))
+		return rec.Code
+	}
+
+	assert.Equal(t, http.StatusOK, call(), "1st request should pass both buckets")
+	assert.Equal(t, http.StatusTooManyRequests, call(), "2nd request should be rejected by the tight per-user bucket despite tenant budget remaining")
+}
+
 func TestRequireAuth_ExtractsActiveRoleID(t *testing.T) {
 	origSecret := config.AppConfig.JWTSecret
 	config.AppConfig.JWTSecret = "test-secret"

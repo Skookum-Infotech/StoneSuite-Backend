@@ -155,6 +155,49 @@ func (s *relationalStore) SearchRecords(ctx context.Context, pool *pgxpool.Pool,
 	return page, nil
 }
 
+// CountRecordsFiltered is the filtered counterpart to CountRecords for
+// DesignV2: same base predicate and scope composition as SearchRecords, but
+// wrapping query.BuildFilters (no sort/keyset) in a COUNT(*) instead of a
+// SELECT + ORDER BY + LIMIT.
+func (s *relationalStore) CountRecordsFiltered(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, filters []query.Clause) (int, error) {
+	code, ok := crmKeyToCode[key]
+	if !ok {
+		return 0, ClientError{Msg: "Unknown CRM workflow: " + key}
+	}
+
+	where := []string{"rt.record_type_code = $1", "c.customer_deleted_at IS NULL"}
+	args := []any{code}
+	nextIdx := 2
+	if scope != string(authz.ScopeAll) {
+		empID, found := s.employeeIDByIdentity(ctx, pool, actorIdentityID)
+		if !found {
+			return 0, nil // no employee row => no records in scope
+		}
+		where = append(where, "c.customer_crm_owner_user_id = $2")
+		args = append(args, empID)
+		nextIdx = 3
+	}
+
+	filterSQL, filterArgs, err := query.BuildFilters(filters, relationalResolver{}, nextIdx)
+	if err != nil {
+		return 0, err // *query.InvalidFilterError -> caller falls back, never a 500
+	}
+	if filterSQL != "" {
+		where = append(where, filterSQL)
+	}
+	args = append(args, filterArgs...)
+
+	q := `SELECT COUNT(*) FROM customer c
+		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type
+		WHERE ` + strings.Join(where, " AND ")
+
+	var n int
+	if err := pool.QueryRow(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count customer records filtered: %w", err)
+	}
+	return n, nil
+}
+
 // relationalSortValue reads the effective sort field's value from a record to
 // mint the next cursor. Mirrors the sortable allowlist in the query builder.
 func relationalSortValue(rec workflow.Record, field string) any {

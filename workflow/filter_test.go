@@ -89,3 +89,49 @@ func TestBuildRecordQuery_LimitIsNPlusOne(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, sql, "LIMIT 26")
 }
+
+func TestBuildRecordCountQuery_ScopeComposition(t *testing.T) {
+	filters := []query.Clause{{Field: "cf:budget", Op: query.OpGte, Value: float64(100)}}
+
+	t.Run("own scope narrows by owner and ANDs the filter", func(t *testing.T) {
+		sql, args, err := buildRecordCountQuery("wf-1", "own", "user-7", testDefs(), filters)
+		require.NoError(t, err)
+		assert.Contains(t, sql, "COUNT(*)")
+		assert.Contains(t, sql, "workflow_id = $1")
+		assert.Contains(t, sql, "owner_user_id = $2")
+		assert.Contains(t, sql, "(custom_fields->>'budget')::numeric >= $3")
+		assert.NotContains(t, sql, " OR owner_user_id")
+		assert.Equal(t, []any{"wf-1", "user-7", float64(100)}, args)
+	})
+
+	t.Run("all scope has no owner narrowing", func(t *testing.T) {
+		sql, _, err := buildRecordCountQuery("wf-1", "all", "", testDefs(), filters)
+		require.NoError(t, err)
+		assert.NotContains(t, sql, "owner_user_id =")
+		assert.Contains(t, sql, ">= $2")
+	})
+
+	t.Run("no filters yields just the scope predicate", func(t *testing.T) {
+		sql, args, err := buildRecordCountQuery("wf-1", "own", "user-7", testDefs(), nil)
+		require.NoError(t, err)
+		assert.NotContains(t, sql, " AND  AND ") // no dangling empty predicate
+		assert.Equal(t, []any{"wf-1", "user-7"}, args)
+	})
+
+	// Retired/unrecognized scope values must narrow like "own", never like
+	// "all" — the same fail-closed contract as every other scope-composed
+	// query in this codebase.
+	t.Run("unrecognized scope narrows, does not widen", func(t *testing.T) {
+		sql, _, err := buildRecordCountQuery("wf-1", "team", "user-7", testDefs(), nil)
+		require.NoError(t, err)
+		assert.Contains(t, sql, "owner_user_id = $2")
+	})
+}
+
+func TestBuildRecordCountQuery_InvalidFilterPropagates(t *testing.T) {
+	filters := []query.Clause{{Field: "cf:nope", Op: query.OpEq, Value: "x"}}
+	_, _, err := buildRecordCountQuery("wf-1", "all", "", testDefs(), filters)
+	var ife *query.InvalidFilterError
+	require.ErrorAs(t, err, &ife)
+	assert.Equal(t, "cf:nope", ife.Field)
+}

@@ -3,14 +3,19 @@ package controllers
 import (
 	"context"
 	"fmt"
-	ragcore "github.com/Skookum-Infotech/go-rag/rag"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Skookum-Infotech/go-rag/route"
+
+	ragcore "github.com/Skookum-Infotech/go-rag/rag"
+
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/query"
 )
 
 // countCRMTypeKeys maps a keyword found in a question to the CRM workflow
@@ -87,6 +92,145 @@ func classifyCountQuestion(question string) (keys []string, ok bool) {
 		return crmstore.CRMWorkflowKeys(), true
 	}
 	return nil, false
+}
+
+// hasFilterHintCountIntent reports whether question is exactly the case
+// classifyCountQuestion refuses: it matches countIntentRe, names a CRM
+// type/record word, AND contains a filter-hint word. This is the narrow
+// trigger for attempting LLM-routed counting (resolveRoutedFilteredCount) —
+// checked separately from classifyCountQuestion so an unrelated "how many
+// angels dance on a pin" question never pays for a routing call it has no
+// chance of using.
+func hasFilterHintCountIntent(question string) bool {
+	if !countIntentRe.MatchString(question) {
+		return false
+	}
+	lower := strings.ToLower(question)
+	hasHint := false
+	for _, hint := range filterHintWords {
+		if strings.Contains(lower, hint) {
+			hasHint = true
+			break
+		}
+	}
+	if !hasHint {
+		return false
+	}
+	for word := range countCRMTypeKeys {
+		if strings.Contains(lower, word) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "record") || strings.Contains(lower, "crm")
+}
+
+// routeFieldWhitelist is the fixed vocabulary the LLM router may name in a
+// Filter.Field — deliberately smaller than a workflow's full FieldResolver
+// surface. owner_user_id/team_id/id are scope's job, not the model's (see
+// route's package doc); custom fields are left out because they vary per
+// tenant and per workflow, and folding a tenant's whole custom-field schema
+// into the routing prompt is a bigger feature than this pass justifies. These
+// four system fields cover the filters Phase 3 exists to unblock ("closed
+// last quarter", "qualified leads").
+var routeFieldWhitelist = []string{"status", "created_at", "updated_at", "record_number"}
+
+var routeFieldWhitelistSet = func() map[string]bool {
+	m := make(map[string]bool, len(routeFieldWhitelist))
+	for _, f := range routeFieldWhitelist {
+		m[f] = true
+	}
+	return m
+}()
+
+// routeOperatorSet bounds Filter.Op to comparisons that take a single scalar
+// value (route.Filter.Value is always a string) — OpIn/OpBetween need
+// multi-value input the router's schema doesn't offer, so they're rejected
+// here rather than mis-coerced.
+var routeOperatorSet = map[query.Operator]bool{
+	query.OpEq: true, query.OpNeq: true, query.OpGt: true, query.OpGte: true,
+	query.OpLt: true, query.OpLte: true, query.OpContains: true, query.OpStartsWith: true,
+	query.OpIsNull: true, query.OpIsEmpty: true,
+}
+
+// resolveRoutedFilteredCount attempts the LLM-routed filtered-count path: ask
+// llm to classify question via route.Extract, and — only when the model
+// returns intent=count with every filter inside routeFieldWhitelist/
+// routeOperatorSet and every workflow key a real CRM key — execute a
+// scope-composed, filtered count. Returns ok=false for every other outcome
+// (routing unsupported, malformed model output, a non-count intent, or a
+// filter/key outside the whitelist), which the caller treats as "fall back to
+// plain retrieval" — never a fatal error, per the architecture plan's rule
+// that adversarial/malformed model output must degrade, not break, the ask.
+//
+// Security: scope and actorIdentityID are the caller's, resolved from request
+// context before this function is ever reached (see AIOps.Ask) — nothing
+// route.Extract returns can influence WHOSE data is counted, only WHAT is
+// counted. That is what routeFieldWhitelist/routeOperatorSet exist to keep
+// true even if a record's content tries to steer the model via indirect
+// prompt injection: the model can at most choose a bad-but-still-whitelisted
+// filter, never a scope or identity value.
+func resolveRoutedFilteredCount(ctx context.Context, llm ragcore.LLMClient, store crmstore.Store, pool *pgxpool.Pool, scope, actorIdentityID, question string) (ragcore.AskResult, bool) {
+	keys := crmstore.CRMWorkflowKeys()
+	r, err := route.Extract(ctx, llm, keys, routeFieldWhitelist, question, nil)
+	if err != nil {
+		slog.Warn("ai query routing unavailable; falling back to retrieval", "err", err)
+		return ragcore.AskResult{}, false
+	}
+	if r.Intent != route.IntentCount {
+		return ragcore.AskResult{}, false
+	}
+
+	matchedKeys := r.WorkflowKeys
+	if len(matchedKeys) == 0 {
+		matchedKeys = keys
+	}
+	validKeys := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		validKeys[k] = true
+	}
+	for _, k := range matchedKeys {
+		if !validKeys[k] {
+			slog.Warn("ai query router named an unknown workflow key; falling back to retrieval", "key", k)
+			return ragcore.AskResult{}, false
+		}
+	}
+
+	clauses := make([]query.Clause, 0, len(r.Filters))
+	for _, f := range r.Filters {
+		if !routeFieldWhitelistSet[f.Field] {
+			slog.Warn("ai query router named a field outside the routing whitelist; falling back to retrieval", "field", f.Field)
+			return ragcore.AskResult{}, false
+		}
+		op := query.Operator(f.Op)
+		if !routeOperatorSet[op] {
+			slog.Warn("ai query router named an operator outside the routing whitelist; falling back to retrieval", "op", f.Op)
+			return ragcore.AskResult{}, false
+		}
+		clauses = append(clauses, query.Clause{Field: f.Field, Op: op, Value: f.Value})
+	}
+
+	res, err := countCRMRecordsFiltered(ctx, store, pool, scope, actorIdentityID, matchedKeys, clauses)
+	if err != nil {
+		slog.Warn("ai routed count failed; falling back to retrieval", "err", err)
+		return ragcore.AskResult{}, false
+	}
+	return res, true
+}
+
+// countCRMRecordsFiltered is CountRecordsFiltered summed across keys — the
+// filtered counterpart to countCRMRecords, for the LLM-routed count path.
+func countCRMRecordsFiltered(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, scope, actorIdentityID string, keys []string, filters []query.Clause) (ragcore.AskResult, error) {
+	counts := make(map[string]int, len(keys))
+	total := 0
+	for _, key := range keys {
+		n, err := store.CountRecordsFiltered(ctx, pool, key, scope, actorIdentityID, filters)
+		if err != nil {
+			return ragcore.AskResult{}, fmt.Errorf("count filtered %s records: %w", key, err)
+		}
+		counts[key] = n
+		total += n
+	}
+	return ragcore.AskResult{Answer: formatCountAnswer(keys, counts, total), Citations: []ragcore.Citation{}}, nil
 }
 
 // countCRMRecords sums CountRecords across keys under one scope/identity,

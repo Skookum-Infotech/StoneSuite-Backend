@@ -122,6 +122,42 @@ only, zero LLM calls) → filtered count (one LLM call, no synthesis) → full R
 mix, and the metric the architecture plan calls out as deciding whether
 further retrieval-quality or hardware investment is worth it.
 
+## Conversation history: multi-turn context
+
+`POST /api/tenant/ai/ask` accepts an optional `conversation_id`. When set,
+`ConversationStore` (`ai/conversations.go`) loads that conversation's most
+recent messages (bounded — `historyLimit`, currently 20 — so a long-lived
+thread's prompt doesn't grow without bound) and threads them into the LLM
+call ahead of the current turn (`rag.AskRequest.History`), for both the RAG
+path and the routed-filtered-count path (`route.Extract` also takes history,
+so a follow-up like "what about last month?" can resolve against the earlier
+turn). After answering, both the question and the answer are appended to the
+conversation and its title is set from the first question if not already set.
+
+**Conversations are managed via `/api/tenant/ai/conversations/*`**
+(`controllers/ai_conversations.go`): `POST` starts a new, empty, untitled one;
+`GET` lists the caller's own, most recently active first; `GET .../{id}`
+returns one conversation plus its full transcript; `DELETE .../{id}` removes
+it (cascades to its messages). Every single-conversation operation enforces
+strict owner-only access — `Conversation.OwnerUserID` (the same internal
+user id `owner_user_id` columns use elsewhere, resolved via
+`workflow.UserIDByIdentity`) must equal the caller's, or the response is
+**404, never 403** — the same IDOR-safe convention as `recordInScope`
+elsewhere in this codebase. **This is ownership, not RBAC scope**: a
+conversation is personal chat history, visible only to the user who started
+it, regardless of what "all"/"own" CRM scope they hold.
+
+**Only plain question/answer text is stored — never citations or retrieved
+chunks.** Retrieval always re-runs fresh for the current turn under the
+caller's CURRENT scope, so replaying history can never surface data a
+since-revoked permission would now deny. The one residual gap the
+architecture plan flags and this doesn't solve: a stored *answer*'s own text
+could still quote something the caller can no longer read directly — an
+explicit retention/redaction policy is future work, not something this
+schema enforces today. History is also untrusted input reaching the
+prompt exactly like retrieved record content already does — the injection-
+scanning `guard/` package the plan calls for is a later phase, not built yet.
+
 ## Observability
 
 `GET /api/metrics` (Prometheus) exposes AI-specific series alongside the

@@ -93,6 +93,12 @@ func (h *AIOps) WithReranker(r ragcore.Reranker, candidateK int) *AIOps {
 
 type askRequestBody struct {
 	Question string `json:"question"`
+	// ConversationID is optional. When set, Ask loads that conversation's
+	// history into the prompt and records this turn onto it (404 if the
+	// conversation doesn't exist or isn't the caller's own — see
+	// ConversationOps for how one is created). Omitted or empty: Ask behaves
+	// exactly as a single-turn ask always has, no history, nothing recorded.
+	ConversationID string `json:"conversation_id"`
 }
 
 // maxQuestionLength keeps the question comfortably under the embedder's
@@ -100,6 +106,34 @@ type askRequestBody struct {
 // long question fails fast with a clear message instead of a generic 502
 // from Ollama's "input length exceeds the context length" error.
 const maxQuestionLength = 2000
+
+// maxConversationTitleLength bounds the auto-generated title set from a
+// conversation's first question — long enough to be recognizable in a list,
+// short enough to never need its own wrapping/truncation in a UI.
+const maxConversationTitleLength = 80
+
+// conversationTitleFromQuestion derives a conversation's title from its first
+// question: trimmed and capped at maxConversationTitleLength, with "..." if
+// it was cut.
+func conversationTitleFromQuestion(question string) string {
+	q := strings.TrimSpace(question)
+	if len(q) <= maxConversationTitleLength {
+		return q
+	}
+	return strings.TrimSpace(q[:maxConversationTitleLength]) + "..."
+}
+
+// writeAskResult writes one successful ask's response, including
+// conversation_id only when the ask was part of a conversation — additive,
+// so a caller not using conversations sees exactly the response shape it
+// always has.
+func writeAskResult(w http.ResponseWriter, res ragcore.AskResult, conv *ai.Conversation) {
+	data := map[string]any{"success": true, "data": res}
+	if conv != nil {
+		data["conversation_id"] = conv.ID
+	}
+	writeJSON(w, http.StatusOK, data)
+}
 
 // Ask handles POST /api/tenant/ai/ask. Chain: RequireAuth -> per-tenant rate
 // limit -> TenantResolver (via tenantChain in main.go). Scope is resolved
@@ -151,6 +185,55 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+
+	// Conversation resolution: 404 (never 403) on any owner mismatch or
+	// missing id, the same IDOR-safe convention as recordInScope elsewhere —
+	// a conversation is personal chat history keyed on callerUserID, not RBAC
+	// scope, and its existence must not be distinguishable from "not yours".
+	convStore := ai.NewConversationStore(pool)
+	var conv *ai.Conversation
+	var history []ragcore.Message
+	if body.ConversationID != "" {
+		c, found, err := convStore.Get(r.Context(), body.ConversationID)
+		if err != nil {
+			slog.Error("ai conversation lookup failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+			fail(w, http.StatusInternalServerError, "Failed to load conversation.")
+			return
+		}
+		if !found || c.OwnerUserID != callerUserID {
+			logSecurityEvent(r, "idor_denied", "identity", payload.ID, "conversation", body.ConversationID)
+			fail(w, http.StatusNotFound, "Conversation not found.")
+			return
+		}
+		conv = &c
+		history, err = convStore.History(r.Context(), conv.ID)
+		if err != nil {
+			slog.Error("ai conversation history load failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+			fail(w, http.StatusInternalServerError, "Failed to load conversation history.")
+			return
+		}
+	}
+
+	// recordTurn persists this question/answer onto the active conversation,
+	// if any — a no-op otherwise. Best-effort: a logging failure here must
+	// not fail an ask that already succeeded, so errors are logged, not
+	// returned to the caller.
+	recordTurn := func(answer string) {
+		if conv == nil {
+			return
+		}
+		if err := convStore.AppendMessage(r.Context(), conv.ID, "user", body.Question); err != nil {
+			slog.Error("failed to record ai conversation message", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		}
+		if err := convStore.AppendMessage(r.Context(), conv.ID, "assistant", answer); err != nil {
+			slog.Error("failed to record ai conversation message", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		}
+		if err := convStore.SetTitleIfEmpty(r.Context(), conv.ID, conversationTitleFromQuestion(body.Question)); err != nil {
+			slog.Error("failed to set ai conversation title", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		}
+	}
+
 	store := crmstore.For(tenant.DesignVersion)
 
 	if keys, matched := classifyCountQuestion(body.Question); matched {
@@ -161,8 +244,9 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		metrics.ObserveAIQueryRoute("count_direct")
+		recordTurn(res.Answer)
 		logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
+		writeAskResult(w, res, conv)
 		return
 	}
 
@@ -172,15 +256,15 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	// failure or unparseable/adversarial model output falls through to plain
 	// RAG below rather than erroring — see resolveRoutedFilteredCount.
 	if hasFilterHintCountIntent(body.Question) {
-		if res, ok := resolveRoutedFilteredCount(r.Context(), h.llm, store, pool, string(scope), payload.ID, body.Question); ok {
+		if res, ok := resolveRoutedFilteredCount(r.Context(), h.llm, store, pool, string(scope), payload.ID, body.Question, history); ok {
 			metrics.ObserveAIQueryRoute("count_routed")
+			recordTurn(res.Answer)
 			logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
-			writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
+			writeAskResult(w, res, conv)
 			return
 		}
 	}
 
-	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
 	assistant := ai.NewAssistant(pool, h.cpPool, h.queryEmbed, h.llm).WithMetrics(metrics.AI{})
 	if h.reranker != nil {
 		assistant = assistant.WithReranker(h.reranker, h.rerankCandidates)
@@ -189,6 +273,7 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		Question:     body.Question,
 		Scope:        string(scope),
 		CallerUserID: callerUserID,
+		History:      history,
 	})
 	if err != nil {
 		slog.Error("ai ask failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
@@ -197,8 +282,9 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	metrics.ObserveAIQueryRoute("rag")
+	recordTurn(res.Answer)
 	logSecurityEvent(r, "ai_query", "tenant_id", tenant.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res})
+	writeAskResult(w, res, conv)
 }
 
 // Reindex handles POST /api/tenant/ai/reindex (admin only). Enqueues every

@@ -288,7 +288,7 @@ func TestHasFilterHintCountIntent(t *testing.T) {
 func TestResolveRoutedFilteredCount_UnsupportedLLMFallsBack(t *testing.T) {
 	llm := &ragcore.FakeLLM{Reply: "unused"} // implements Chat only, not ChatJSON
 	store := &fakeCountStore{}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads closed last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads closed last week", nil)
 	if ok {
 		t.Fatal("expected fallback (ok=false) for an LLM without structured output support")
 	}
@@ -306,7 +306,7 @@ func TestResolveRoutedFilteredCount_HappyPath(t *testing.T) {
 	}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 4}}
 
-	res, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads are qualified this week")
+	res, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads are qualified this week", nil)
 	if !ok {
 		t.Fatal("expected the routed count path to succeed")
 	}
@@ -329,7 +329,7 @@ func TestResolveRoutedFilteredCount_NoWorkflowKeysCountsAll(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": [], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1, "prospect": 2, "customer": 3}}
 
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many records were touched last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many records were touched last week", nil)
 	if !ok {
 		t.Fatal("expected success")
 	}
@@ -341,7 +341,7 @@ func TestResolveRoutedFilteredCount_NoWorkflowKeysCountsAll(t *testing.T) {
 func TestResolveRoutedFilteredCount_NonCountIntentFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "search", "workflow_keys": [], "filters": [], "search_text": "x"}`}
 	store := &fakeCountStore{}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "tell me about last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "tell me about last week", nil)
 	if ok {
 		t.Fatal("expected fallback for a non-count intent")
 	}
@@ -350,7 +350,7 @@ func TestResolveRoutedFilteredCount_NonCountIntentFallsBack(t *testing.T) {
 func TestResolveRoutedFilteredCount_MalformedModelOutputFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `not json`}
 	store := &fakeCountStore{}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads last week", nil)
 	if ok {
 		t.Fatal("expected fallback for malformed model output")
 	}
@@ -362,7 +362,7 @@ func TestResolveRoutedFilteredCount_MalformedModelOutputFallsBack(t *testing.T) 
 func TestResolveRoutedFilteredCount_UnknownWorkflowKeyFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": ["invoice"], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1}}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many invoices last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many invoices last week", nil)
 	if ok {
 		t.Fatal("expected fallback for a workflow key that is not a real CRM key")
 	}
@@ -388,7 +388,7 @@ func TestResolveRoutedFilteredCount_DisallowedFieldFallsBack(t *testing.T) {
 				"search_text": ""
 			}`}
 			store := &fakeCountStore{counts: map[string]int{"lead": 1}}
-			_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many leads last week")
+			_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many leads last week", nil)
 			if ok {
 				t.Fatalf("expected fallback for filter field %q outside the whitelist", field)
 			}
@@ -407,7 +407,7 @@ func TestResolveRoutedFilteredCount_DisallowedOperatorFallsBack(t *testing.T) {
 		"search_text": ""
 	}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1}}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many leads last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many leads last week", nil)
 	if ok {
 		t.Fatal("expected fallback for an operator outside routeOperatorSet (OpIn needs multi-value input this path doesn't offer)")
 	}
@@ -419,7 +419,7 @@ func TestResolveRoutedFilteredCount_DisallowedOperatorFallsBack(t *testing.T) {
 func TestResolveRoutedFilteredCount_StoreErrorFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": ["lead"], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{err: errBoomAnalytical}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads last week")
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads last week", nil)
 	if ok {
 		t.Fatal("expected fallback when the store call itself fails")
 	}

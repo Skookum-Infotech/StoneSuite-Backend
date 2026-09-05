@@ -107,6 +107,10 @@ type AskRequest struct {
 	Question     string
 	Scope        string
 	CallerUserID string
+	// History is prior turns of the caller's conversation, oldest first —
+	// see ConversationStore.History. Optional: nil behaves exactly as a
+	// single-turn ask always has.
+	History []rag.Message
 }
 
 // Assistant builds a per-caller orchestrator over StoneSuite's corpora.
@@ -172,5 +176,5 @@ func (a *Assistant) ForCaller(scope, callerUserID string) *rag.Orchestrator {
 
 // Ask answers one question within the caller's scope.
 func (a *Assistant) Ask(ctx context.Context, req AskRequest) (rag.AskResult, error) {
-	return a.ForCaller(req.Scope, req.CallerUserID).Ask(ctx, rag.AskRequest{Question: req.Question})
+	return a.ForCaller(req.Scope, req.CallerUserID).Ask(ctx, rag.AskRequest{Question: req.Question, History: req.History})
 }

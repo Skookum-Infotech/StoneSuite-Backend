@@ -2289,6 +2289,116 @@
           }
         },
         {
+          "name": "GET /api/tenant/ai/conversations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staffToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/ai/conversations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tenant",
+                "ai",
+                "conversations"
+              ]
+            },
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1261"
+          }
+        },
+        {
+          "name": "POST /api/tenant/ai/conversations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staffToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/ai/conversations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tenant",
+                "ai",
+                "conversations"
+              ]
+            },
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1260"
+          }
+        },
+        {
+          "name": "DELETE /api/tenant/ai/conversations/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staffToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/ai/conversations/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tenant",
+                "ai",
+                "conversations",
+                "{id}"
+              ]
+            },
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1263"
+          }
+        },
+        {
+          "name": "GET /api/tenant/ai/conversations/{id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staffToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/ai/conversations/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tenant",
+                "ai",
+                "conversations",
+                "{id}"
+              ]
+            },
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1262"
+          }
+        },
+        {
           "name": "POST /api/tenant/ai/reindex",
           "request": {
             "method": "POST",

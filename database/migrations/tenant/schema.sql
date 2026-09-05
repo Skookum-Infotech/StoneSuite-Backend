@@ -7985,3 +7985,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_workflow_approver_wildcard
 -- =====================================================================
 
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS custom_fields_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- =====================================================================
+-- AI ASSISTANT: conversation history (2026-09-05)
+-- =====================================================================
+-- Multi-turn context for the AI assistant (see docs/ai-assistant.md and
+-- ai/conversations.go). Stores only the plain question/answer text of each
+-- turn -- never retrieved chunks or citations. Retrieval always re-runs per
+-- turn under the caller's CURRENT RBAC scope (see ai.Assistant.Ask), so
+-- replaying stored history into the prompt can never surface data a
+-- since-revoked permission would now deny; only a past *answer*'s own text
+-- could still quote something the caller can no longer read directly, which
+-- is a known residual risk the architecture plan flags for an explicit
+-- retention decision, not something this schema solves.
+--
+-- Ownership is the caller's own user id, not RBAC scope ("all"/"own"): a
+-- conversation is personal chat history, visible only to the user who
+-- started it, regardless of what CRM scope they hold.
+CREATE TABLE IF NOT EXISTS ai_conversations (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_id UUID NOT NULL,
+    title         TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_owner
+    ON ai_conversations (owner_user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_ai_messages_role CHECK (role IN ('user', 'assistant'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation
+    ON ai_messages (conversation_id, created_at);

@@ -26,6 +26,10 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	if _, err := pool.Exec(context.Background(), `TRUNCATE rag_chunks`); err != nil {
 		t.Fatalf("truncate rag_chunks: %v", err)
 	}
+	// CASCADE takes ai_messages with it (conversation_id FK).
+	if _, err := pool.Exec(context.Background(), `TRUNCATE ai_conversations CASCADE`); err != nil {
+		t.Fatalf("truncate ai_conversations: %v", err)
+	}
 	return pool
 }
 

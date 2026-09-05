@@ -1252,6 +1252,15 @@ func main() {
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
+
+		// AI assistant conversation history — personal chat threads, owner-only
+		// (see ConversationOps), not RBAC-scoped CRM data. Cheap CRUD, so the
+		// generic tenantChain is enough; no need for aiChain's tighter AI budget.
+		convOps := controllers.NewConversationOps()
+		mux.Handle("POST /api/tenant/ai/conversations", tenantChain(convOps.Create))
+		mux.Handle("GET /api/tenant/ai/conversations", tenantChain(convOps.List))
+		mux.Handle("GET /api/tenant/ai/conversations/{id}", tenantChain(convOps.Get))
+		mux.Handle("DELETE /api/tenant/ai/conversations/{id}", tenantChain(convOps.Delete))
 	}
 
 	// Build the CORS allowlist once from the comma-separated CORS_ORIGIN value.

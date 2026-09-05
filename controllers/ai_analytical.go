@@ -169,9 +169,15 @@ var routeOperatorSet = map[query.Operator]bool{
 // true even if a record's content tries to steer the model via indirect
 // prompt injection: the model can at most choose a bad-but-still-whitelisted
 // filter, never a scope or identity value.
-func resolveRoutedFilteredCount(ctx context.Context, llm ragcore.LLMClient, store crmstore.Store, pool *pgxpool.Pool, scope, actorIdentityID, question string) (ragcore.AskResult, bool) {
+//
+// history is the caller's prior conversation turns, if any (see
+// ai.ConversationStore.History) — passed straight to route.Extract so a
+// follow-up like "what about last month?" can resolve against the earlier
+// turn's context. Same untrusted-input caveat as any other conversation
+// content reaching the model: it can steer word choice, never scope.
+func resolveRoutedFilteredCount(ctx context.Context, llm ragcore.LLMClient, store crmstore.Store, pool *pgxpool.Pool, scope, actorIdentityID, question string, history []ragcore.Message) (ragcore.AskResult, bool) {
 	keys := crmstore.CRMWorkflowKeys()
-	r, err := route.Extract(ctx, llm, keys, routeFieldWhitelist, question, nil)
+	r, err := route.Extract(ctx, llm, keys, routeFieldWhitelist, question, history)
 	if err != nil {
 		slog.Warn("ai query routing unavailable; falling back to retrieval", "err", err)
 		return ragcore.AskResult{}, false

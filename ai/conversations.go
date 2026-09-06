@@ -20,20 +20,20 @@ const historyLimit = 20
 
 // Conversation is one AI assistant chat thread, owned by exactly one user.
 type Conversation struct {
-	ID          string
-	OwnerUserID string
-	Title       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string    `json:"id"`
+	OwnerUserID string    `json:"ownerUserId"`
+	Title       string    `json:"title"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // Message is one stored turn: plain role+content text only, never citations
 // or retrieved chunks — see the ai_conversations/ai_messages schema doc
 // comment on why (grounding always re-retrieves fresh per turn).
 type Message struct {
-	Role      string
-	Content   string
-	CreatedAt time.Time
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // ConversationStore persists AI assistant conversation history.

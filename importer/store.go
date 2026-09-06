@@ -11,20 +11,20 @@ import (
 
 // Row is one staged candidate record — a row from import_rows.
 type Row struct {
-	ID       string
-	JobID    string
-	RowIndex int
+	ID       string `json:"id"`
+	JobID    string `json:"jobId"`
+	RowIndex int    `json:"rowIndex"`
 	// Raw is the parsed row/extracted fields exactly as found, before any
 	// mapping — display-only (e.g. "here's what we found in column 3"),
 	// never read back programmatically, so it stays a raw JSON value rather
 	// than a typed Go value.
-	Raw json.RawMessage
+	Raw json.RawMessage `json:"raw"`
 	// Mapped is Raw's fields resolved onto the target record's shape —
 	// what Commit actually reads.
-	Mapped   MappedFields
-	Errors   []string
-	Status   string
-	RecordID string // set once committed
+	Mapped   MappedFields `json:"mapped"`
+	Errors   []string     `json:"errors"`
+	Status   string       `json:"status"`
+	RecordID string       `json:"recordId"` // set once committed
 }
 
 // Store persists import_rows for one tenant.

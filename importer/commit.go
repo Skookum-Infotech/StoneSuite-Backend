@@ -31,9 +31,9 @@ func LoadWorkflowDefinition(ctx context.Context, pool *pgxpool.Pool, key string)
 
 // Summary tallies the outcome of one CommitJob run.
 type Summary struct {
-	Committed int
-	Failed    int
-	Skipped   int
+	Committed int `json:"committed"`
+	Failed    int `json:"failed"`
+	Skipped   int `json:"skipped"`
 }
 
 // CommitJob turns every still-pending (or previously failed) staged row of

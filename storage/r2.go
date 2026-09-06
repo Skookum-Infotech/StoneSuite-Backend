@@ -172,6 +172,78 @@ func (c *Client) Put(ctx context.Context, key, contentType string, body []byte) 
 	return fmt.Errorf("r2 put returned HTTP %d", resp.StatusCode)
 }
 
+// maxGetBytes bounds how much of an object's body Get will read — matches
+// the per-file upload cap enforced when files are accepted (see e.g.
+// controllers/attachments.go's maxFileSizeBytes), applied again here so this
+// server-side fetch never trusts an object's declared Content-Length alone.
+const maxGetBytes = 25 * 1024 * 1024
+
+// Get downloads an object's full body via an authenticated SigV4 GET — the
+// server-side counterpart to PresignGet's browser-facing URL, for callers
+// (e.g. the import worker) that need the bytes directly rather than handing
+// a URL to a browser. Returns an error if the object doesn't exist or the
+// body exceeds maxGetBytes.
+func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
+	if c == nil {
+		return nil, ErrStorageNotConfigured
+	}
+	now := time.Now().UTC()
+	dateStamp := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+
+	credScope := dateStamp + "/" + awsRegion + "/" + awsService + "/aws4_request"
+	signedHdrs := "host;x-amz-content-sha256;x-amz-date"
+
+	canonURI := "/" + awsEncodeSegment(c.bucket) + "/" + encodeKeyPath(key)
+	canonHeaders := "host:" + c.host + "\n" +
+		"x-amz-content-sha256:" + emptyBodySHA256 + "\n" +
+		"x-amz-date:" + amzDate + "\n"
+
+	canonReq := strings.Join([]string{
+		"GET", canonURI, "", canonHeaders, signedHdrs, emptyBodySHA256,
+	}, "\n")
+
+	s2s := strings.Join([]string{
+		awsAlgorithm, amzDate, credScope, hexSHA256([]byte(canonReq)),
+	}, "\n")
+	sig := hexHMAC(signingKey(c.secretKey, dateStamp, awsRegion, awsService), []byte(s2s))
+
+	authHeader := fmt.Sprintf(
+		"%s Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
+	)
+
+	objURL := "https://" + c.host + "/" + c.bucket + "/" + encodeKeyPath(key)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, objURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build r2 get request: %w", err)
+	}
+	req.Header.Set("Host", c.host)
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute r2 get: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil, fmt.Errorf("r2 get returned HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGetBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read r2 object body: %w", err)
+	}
+	if int64(len(body)) > maxGetBytes {
+		return nil, fmt.Errorf("object exceeds the %d byte limit", maxGetBytes)
+	}
+	return body, nil
+}
+
 // ---- presigning (AWS SigV4 query-parameter auth) ----------------------------
 
 // presignURL constructs a presigned AWS SigV4 URL using path-style R2 access.

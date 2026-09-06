@@ -8022,3 +8022,32 @@ CREATE TABLE IF NOT EXISTS ai_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation
     ON ai_messages (conversation_id, created_at);
+
+-- =====================================================================
+-- DOCUMENT IMPORTER: staged rows (2026-09-05)
+-- =====================================================================
+-- The document importer (see importer/) parses an uploaded CSV/XLSX/DOCX/PDF
+-- (go-rag's parse package) into candidate CRM records and stages each one
+-- here for review before it becomes a real record. job_id is an
+-- async_jobs.id (control-plane -- see jobqueue.Queue), not a local foreign
+-- key: the job queue and its rows deliberately live in different databases,
+-- the same split provisioning already uses.
+--
+-- record_id is set only once a row is actually committed via
+-- crmstore.CreateRecord, and doubles as that commit's idempotency key: a
+-- resumed/retried commit skips any row that already has one rather than
+-- creating a duplicate record.
+CREATE TABLE IF NOT EXISTS import_rows (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id     TEXT NOT NULL,
+    row_index  INTEGER NOT NULL,
+    raw        JSONB NOT NULL,
+    mapped     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    errors     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    record_id  UUID NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_import_rows_status CHECK (status IN ('pending', 'committed', 'failed', 'skipped'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_rows_job ON import_rows (job_id, row_index);

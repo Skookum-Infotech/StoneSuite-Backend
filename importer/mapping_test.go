@@ -10,19 +10,23 @@ import (
 )
 
 func TestApplyColumnMapping(t *testing.T) {
+	numberDefs := []workflow.FieldDefinition{{Key: "budget", DataType: workflow.TypeNumber}}
+
 	tests := []struct {
 		name    string
 		row     map[string]string
 		mapping map[string]string
+		defs    []workflow.FieldDefinition
 		want    MappedFields
 	}{
 		{
-			name:    "core and custom fields split",
+			name:    "core and custom fields split, custom value coerced to its DataType",
 			row:     map[string]string{"Name": "Acme", "Budget": "5000", "Notes": "ignore me"},
 			mapping: map[string]string{"Name": "core:name", "Budget": "cf:budget", "Notes": ""},
+			defs:    numberDefs,
 			want: MappedFields{
 				Core:   map[string]any{"name": "Acme"},
-				Custom: map[string]any{"budget": "5000"},
+				Custom: map[string]any{"budget": 5000.0},
 			},
 		},
 		{
@@ -40,8 +44,35 @@ func TestApplyColumnMapping(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ApplyColumnMapping(tc.row, tc.mapping)
+			got := ApplyColumnMapping(tc.row, tc.mapping, tc.defs)
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestCoerceCustomValue(t *testing.T) {
+	tests := []struct {
+		name string
+		def  workflow.FieldDefinition
+		raw  string
+		want any
+	}{
+		{"number parses", workflow.FieldDefinition{DataType: workflow.TypeNumber}, "5000", 5000.0},
+		{"number with decimal parses", workflow.FieldDefinition{DataType: workflow.TypeNumber}, "12.5", 12.5},
+		{"unparseable number falls back to raw string", workflow.FieldDefinition{DataType: workflow.TypeNumber}, "not-a-number", "not-a-number"},
+		{"bool true parses", workflow.FieldDefinition{DataType: workflow.TypeBool}, "true", true},
+		{"bool false parses", workflow.FieldDefinition{DataType: workflow.TypeBool}, "false", false},
+		{"unparseable bool falls back to raw string", workflow.FieldDefinition{DataType: workflow.TypeBool}, "maybe", "maybe"},
+		{"string stays a string", workflow.FieldDefinition{DataType: workflow.TypeString}, "hello", "hello"},
+		{"email stays a string", workflow.FieldDefinition{DataType: workflow.TypeEmail}, "a@b.com", "a@b.com"},
+		{"enum stays a string", workflow.FieldDefinition{DataType: workflow.TypeEnum}, "high", "high"},
+		{"date stays a string", workflow.FieldDefinition{DataType: workflow.TypeDate}, "2026-01-01", "2026-01-01"},
+		{"empty number cell stays an empty string, not 0", workflow.FieldDefinition{DataType: workflow.TypeNumber}, "", ""},
+		{"whitespace-only cell stays as-is", workflow.FieldDefinition{DataType: workflow.TypeBool}, "  ", "  "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, coerceCustomValue(tc.def, tc.raw))
 		})
 	}
 }

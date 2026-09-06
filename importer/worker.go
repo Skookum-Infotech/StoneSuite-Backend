@@ -194,7 +194,7 @@ func (w *Worker) stageTabular(ctx context.Context, rows *Store, jobID string, ta
 	total := len(tableRows)
 	_ = w.queue.UpdateProgress(ctx, jobID, map[string]any{"step": "staging", "staged": 0, "total": total})
 	for i, tr := range tableRows {
-		mapped := ApplyColumnMapping(tr, mapping)
+		mapped := ApplyColumnMapping(tr, mapping, defs)
 		if _, err := rows.InsertRow(ctx, jobID, i, tr, mapped, stageErrors(defs, mapped.Custom)); err != nil {
 			return fmt.Errorf("stage row %d: %w", i, err)
 		}

@@ -3,6 +3,7 @@ package importer
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"stonesuite-backend/workflow"
@@ -14,7 +15,18 @@ import (
 // absent from mapping, mapped to "", or mapped to an unrecognized prefix is
 // silently skipped — see ValidateMapping for surfacing a bad mapping to the
 // caller once, at job-creation time, rather than per-row.
-func ApplyColumnMapping(row map[string]string, mapping map[string]string) MappedFields {
+//
+// defs is the target workflow's custom field definitions: a cell's text is
+// coerced to its cf: field's DataType (e.g. "5000" -> 5000.0 for a number
+// field) via coerceCustomValue — workflow.ValidateCustomFields requires an
+// actual JSON number/bool, not a numeric string, since manual create-record
+// calls send typed JSON, so leaving every cell as a string would make any
+// non-string/enum/email custom field impossible to import.
+func ApplyColumnMapping(row map[string]string, mapping map[string]string, defs []workflow.FieldDefinition) MappedFields {
+	defByKey := make(map[string]workflow.FieldDefinition, len(defs))
+	for _, d := range defs {
+		defByKey[d.Key] = d
+	}
 	out := MappedFields{Core: map[string]any{}, Custom: map[string]any{}}
 	for col, val := range row {
 		target := mapping[col]
@@ -24,10 +36,35 @@ func ApplyColumnMapping(row map[string]string, mapping map[string]string) Mapped
 		case strings.HasPrefix(target, corePrefix):
 			out.Core[strings.TrimPrefix(target, corePrefix)] = val
 		case strings.HasPrefix(target, cfPrefix):
-			out.Custom[strings.TrimPrefix(target, cfPrefix)] = val
+			key := strings.TrimPrefix(target, cfPrefix)
+			out.Custom[key] = coerceCustomValue(defByKey[key], val)
 		}
 	}
 	return out
+}
+
+// coerceCustomValue converts one cell's raw text to the Go type
+// workflow.ValidateCustomFields expects for def.DataType. An empty cell is
+// left as an empty string — isEmpty treats that as "not provided", the same
+// as a missing key, rather than becoming a false/zero value that IS
+// provided. A cell that fails to parse is also left as the raw string, so
+// validation reports its own normal "must be a number"/"must be true or
+// false" message instead of this package inventing one.
+func coerceCustomValue(def workflow.FieldDefinition, raw string) any {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	switch def.DataType {
+	case workflow.TypeNumber:
+		if n, err := strconv.ParseFloat(raw, 64); err == nil {
+			return n
+		}
+	case workflow.TypeBool:
+		if b, err := strconv.ParseBool(raw); err == nil {
+			return b
+		}
+	}
+	return raw
 }
 
 // ValidateMapping checks that every non-empty mapping target names either

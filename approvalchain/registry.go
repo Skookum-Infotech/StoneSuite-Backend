@@ -86,6 +86,7 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "estimate_approval_status", ApprovedByColumn: "estimate_approved_by",
 			UpdatedAtColumn: "estimate_updated_at", UpdatedByColumn: "estimate_updated_by",
 			RecordVersionColumn: "estimate_record_version", DeletedAtColumn: "estimate_deleted_at",
+			CreatedAtColumn: "estimate_created_at",
 		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
@@ -97,6 +98,7 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "quote_approval_status", ApprovedByColumn: "quote_approved_by",
 			UpdatedAtColumn: "quote_updated_at", UpdatedByColumn: "quote_updated_by",
 			RecordVersionColumn: "quote_record_version", DeletedAtColumn: "quote_deleted_at",
+			CreatedAtColumn: "quote_created_at",
 		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
@@ -108,6 +110,7 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "sales_order_approval_status", ApprovedByColumn: "sales_order_approved_by",
 			UpdatedAtColumn: "sales_order_updated_at", UpdatedByColumn: "sales_order_updated_by",
 			RecordVersionColumn: "sales_order_record_version", DeletedAtColumn: "sales_order_deleted_at",
+			CreatedAtColumn: "sales_order_created_at",
 		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 	},
@@ -119,7 +122,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "purchase_order_approval_status", ApprovedByColumn: "purchase_order_approved_by",
 			UpdatedAtColumn: "purchase_order_updated_at", UpdatedByColumn: "purchase_order_updated_by",
 			RecordVersionColumn: "purchase_order_record_version", DeletedAtColumn: "purchase_order_deleted_at",
-			OwnerColumn: "purchase_order_owner_id", NumberColumn: "purchase_order_number",
+			CreatedAtColumn: "purchase_order_created_at",
+			OwnerColumn:     "purchase_order_owner_id", NumberColumn: "purchase_order_number",
 		},
 		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 		DisplayName: "Purchase Order",
@@ -133,6 +137,7 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "requisition_approval_status", ApprovedByColumn: "requisition_approved_by",
 			UpdatedAtColumn: "requisition_updated_at", UpdatedByColumn: "requisition_updated_by",
 			RecordVersionColumn: "requisition_record_version", DeletedAtColumn: "requisition_deleted_at",
+			CreatedAtColumn: "requisition_created_at",
 			// requisition has no separate owner_id column -- the requester is
 			// also the IDOR scope owner (schema.sql's own comment on
 			// requisition_requested_by_id), so it doubles as the notify owner.
@@ -150,7 +155,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "vendor_bill_approval_status", ApprovedByColumn: "vendor_bill_approved_by",
 			UpdatedAtColumn: "vendor_bill_updated_at", UpdatedByColumn: "vendor_bill_updated_by",
 			RecordVersionColumn: "vendor_bill_record_version", DeletedAtColumn: "vendor_bill_deleted_at",
-			OwnerColumn: "vendor_bill_owner_id", NumberColumn: "vendor_bill_number",
+			CreatedAtColumn: "vendor_bill_created_at",
+			OwnerColumn:     "vendor_bill_owner_id", NumberColumn: "vendor_bill_number",
 		},
 		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 		DisplayName: "Vendor Bill",
@@ -164,7 +170,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "vendor_payment_approval_status", ApprovedByColumn: "vendor_payment_approved_by",
 			UpdatedAtColumn: "vendor_payment_updated_at", UpdatedByColumn: "vendor_payment_updated_by",
 			RecordVersionColumn: "vendor_payment_record_version", DeletedAtColumn: "vendor_payment_deleted_at",
-			OwnerColumn: "vendor_payment_owner_id", NumberColumn: "vendor_payment_number",
+			CreatedAtColumn: "vendor_payment_created_at",
+			OwnerColumn:     "vendor_payment_owner_id", NumberColumn: "vendor_payment_number",
 		},
 		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 		DisplayName: "Vendor Payment",
@@ -178,6 +185,7 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "expense_approval_status", ApprovedByColumn: "expense_approved_by",
 			UpdatedAtColumn: "expense_updated_at", UpdatedByColumn: "expense_updated_by",
 			RecordVersionColumn: "expense_record_version", DeletedAtColumn: "expense_deleted_at",
+			CreatedAtColumn: "expense_created_at",
 			// expense has no separate owner_id column -- the claimant is also
 			// the IDOR scope owner (schema.sql's own comment on
 			// expense_claimant_id), so it doubles as the notify owner.
@@ -195,7 +203,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "job_approval_status", ApprovedByColumn: "job_approved_by",
 			UpdatedAtColumn: "fabrication_job_updated_at", UpdatedByColumn: "fabrication_job_updated_by",
 			RecordVersionColumn: "fabrication_job_record_version", DeletedAtColumn: "fabrication_job_deleted_at",
-			OwnerColumn: "job_owner_id", NumberColumn: "fabrication_job_number",
+			CreatedAtColumn: "fabrication_job_created_at",
+			OwnerColumn:     "job_owner_id", NumberColumn: "fabrication_job_number",
 		},
 		Gates: []Gate{
 			{StatusCode: "TMPL", TargetStatusCode: "TAPV"},
@@ -212,7 +221,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "invoice_approval_status", ApprovedByColumn: "invoice_approved_by",
 			UpdatedAtColumn: "invoice_updated_at", UpdatedByColumn: "invoice_updated_by",
 			RecordVersionColumn: "invoice_record_version", DeletedAtColumn: "invoice_deleted_at",
-			OwnerColumn: "invoice_owner_id", NumberColumn: "invoice_number",
+			CreatedAtColumn: "invoice_created_at",
+			OwnerColumn:     "invoice_owner_id", NumberColumn: "invoice_number",
 		},
 		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
 		DisplayName: "Invoice",
@@ -226,7 +236,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "payment_approval_status", ApprovedByColumn: "payment_approved_by",
 			UpdatedAtColumn: "payment_updated_at", UpdatedByColumn: "payment_updated_by",
 			RecordVersionColumn: "payment_record_version", DeletedAtColumn: "payment_deleted_at",
-			OwnerColumn: "payment_owner_id", NumberColumn: "payment_number",
+			CreatedAtColumn: "payment_created_at",
+			OwnerColumn:     "payment_owner_id", NumberColumn: "payment_number",
 		},
 		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
 		DisplayName: "Payment",
@@ -240,7 +251,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "credit_memo_approval_status", ApprovedByColumn: "credit_memo_approved_by",
 			UpdatedAtColumn: "credit_memo_updated_at", UpdatedByColumn: "credit_memo_updated_by",
 			RecordVersionColumn: "credit_memo_record_version", DeletedAtColumn: "credit_memo_deleted_at",
-			OwnerColumn: "credit_memo_owner_id", NumberColumn: "credit_memo_number",
+			CreatedAtColumn: "credit_memo_created_at",
+			OwnerColumn:     "credit_memo_owner_id", NumberColumn: "credit_memo_number",
 		},
 		// Credit Memo has no separate Pending status -- the gate sits on
 		// Draft itself. Void always escapes (AlwaysAllowedExitCodes), so a
@@ -257,7 +269,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "refund_approval_status", ApprovedByColumn: "refund_approved_by",
 			UpdatedAtColumn: "refund_updated_at", UpdatedByColumn: "refund_updated_by",
 			RecordVersionColumn: "refund_record_version", DeletedAtColumn: "refund_deleted_at",
-			OwnerColumn: "refund_owner_id", NumberColumn: "refund_number",
+			CreatedAtColumn: "refund_created_at",
+			OwnerColumn:     "refund_owner_id", NumberColumn: "refund_number",
 		},
 		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
 		DisplayName: "Refund",
@@ -271,7 +284,8 @@ var registry = map[string]ModuleConfig{
 			ApprovalStatusColumn: "vendor_credit_approval_status", ApprovedByColumn: "vendor_credit_approved_by",
 			UpdatedAtColumn: "vendor_credit_updated_at", UpdatedByColumn: "vendor_credit_updated_by",
 			RecordVersionColumn: "vendor_credit_record_version", DeletedAtColumn: "vendor_credit_deleted_at",
-			OwnerColumn: "vendor_credit_owner_id", NumberColumn: "vendor_credit_number",
+			CreatedAtColumn: "vendor_credit_created_at",
+			OwnerColumn:     "vendor_credit_owner_id", NumberColumn: "vendor_credit_number",
 		},
 		// Vendor Credit has no separate Pending status -- the gate sits on
 		// Draft itself, mirroring credit_memo. Void always escapes
@@ -288,4 +302,17 @@ var registry = map[string]ModuleConfig{
 func ForWorkflowKey(key string) (ModuleConfig, bool) {
 	cfg, ok := registry[key]
 	return cfg, ok
+}
+
+// Keys returns every registered workflow key, in no particular order — for
+// callers outside this package that need to enumerate the whole registry
+// (registry itself is unexported), e.g. the KPI strip dashboard widget's
+// "Needs Approval" metric, which sums a pending count across every
+// approval-chain module the caller can see.
+func Keys() []string {
+	out := make([]string, 0, len(registry))
+	for k := range registry {
+		out = append(out, k)
+	}
+	return out
 }

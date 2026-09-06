@@ -167,6 +167,16 @@ func approverEmployeeIDs(ctx context.Context, pool *pgxpool.Pool, table string, 
 	return out, rows.Err()
 }
 
+// RecordTypeIDByCode resolves a lkp_record_type_code (e.g. "REQN") to its
+// record_type_id. Exported for callers outside this package that need to
+// join against an approver table generically -- e.g. the KPI strip
+// dashboard widget's "Needs Approval" metric (controllers/dashboard_kpi.go),
+// which determines eligibility the same way engine.go's isConfiguredApprover
+// does, without needing a specific record already loaded.
+func RecordTypeIDByCode(ctx context.Context, q workflow.Querier, code string) (int, error) {
+	return recordTypeIDByCode(ctx, q, code)
+}
+
 func recordTypeIDByCode(ctx context.Context, q workflow.Querier, code string) (int, error) {
 	var id int
 	if err := q.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1`, code).Scan(&id); err != nil {

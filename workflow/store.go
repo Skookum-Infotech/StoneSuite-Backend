@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,32 @@ var (
 	ErrFieldCap          = fmt.Errorf("a workflow may have at most %d custom fields", MaxCustomFields)
 	ErrDisableDependency = errors.New("workflow has upstream dependency")
 )
+
+// disableDependencyError carries the user-facing message for a blocked
+// disable so callers get a clean, human-readable sentence — Error() does not
+// repeat ErrDisableDependency's own text or fall back to Go's %v slice
+// syntax (e.g. "[Lead]") the way a plain fmt.Errorf("%w: ...", ...) would.
+// Unwrap keeps errors.Is(err, ErrDisableDependency) working for callers.
+type disableDependencyError struct {
+	workflowName string
+	upstreams    []string
+}
+
+func (e *disableDependencyError) Error() string {
+	return fmt.Sprintf("Cannot disable %q while %s still enabled — disable the upstream workflow(s) first.",
+		e.workflowName, joinUpstreamNames(e.upstreams))
+}
+
+func (e *disableDependencyError) Unwrap() error { return ErrDisableDependency }
+
+func joinUpstreamNames(names []string) string {
+	switch len(names) {
+	case 1:
+		return fmt.Sprintf("%q is", names[0])
+	default:
+		return fmt.Sprintf("%s are", strings.Join(names, ", "))
+	}
+}
 
 // ----- workflows -------------------------------------------------------------
 
@@ -153,8 +180,7 @@ func checkDisableDependency(ctx context.Context, q Querier, id string) error {
 		return err
 	}
 	if len(upstreams) > 0 {
-		return fmt.Errorf("%w: cannot disable %q while %v is still enabled — disable the upstream workflow(s) first",
-			ErrDisableDependency, thisName, upstreams)
+		return &disableDependencyError{workflowName: thisName, upstreams: upstreams}
 	}
 	return nil
 }
@@ -466,16 +492,43 @@ func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID
 // caller's scope — same RBAC narrowing as ListRecords (see its doc comment),
 // without fetching rows.
 func CountRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string) (int, error) {
+	return CountRecordsSince(ctx, q, workflowID, scope, callerUserID, time.Time{})
+}
+
+// CountRecordsSince is CountRecords narrowed to records created at or after
+// since (a zero time.Time means unbounded, identical to CountRecords). Used
+// by the Pipeline mix dashboard widget's date-range filter.
+func CountRecordsSince(ctx context.Context, q Querier, workflowID, scope, callerUserID string, since time.Time) (int, error) {
+	return CountRecordsBetween(ctx, q, workflowID, scope, callerUserID, since, time.Time{})
+}
+
+// CountRecordsBetween is CountRecords narrowed to records created in
+// [since, until) -- a zero since/until means unbounded on that side (a zero
+// since alone is identical to CountRecordsSince; both zero is identical to
+// CountRecords). Used by the KPI strip dashboard widget's delta-window and
+// sparkline-bucket computations.
+func CountRecordsBetween(ctx context.Context, q Querier, workflowID, scope, callerUserID string, since, until time.Time) (int, error) {
 	var (
 		n    int
 		err  error
 		base = `SELECT COUNT(*) FROM workflow_records WHERE workflow_id = $1`
+		args = []any{workflowID}
 	)
+	if !since.IsZero() {
+		args = append(args, since)
+		base += fmt.Sprintf(" AND created_at >= $%d", len(args))
+	}
+	if !until.IsZero() {
+		args = append(args, until)
+		base += fmt.Sprintf(" AND created_at < $%d", len(args))
+	}
 	switch scope {
 	case "all":
-		err = q.QueryRow(ctx, base, workflowID).Scan(&n)
+		err = q.QueryRow(ctx, base, args...).Scan(&n)
 	default: // own (most restrictive)
-		err = q.QueryRow(ctx, base+` AND owner_user_id = $2`, workflowID, nullIfEmpty(callerUserID)).Scan(&n)
+		args = append(args, nullIfEmpty(callerUserID))
+		base += fmt.Sprintf(" AND owner_user_id = $%d", len(args))
+		err = q.QueryRow(ctx, base, args...).Scan(&n)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("count records: %w", err)

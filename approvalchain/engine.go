@@ -75,6 +75,10 @@ type RecordSpec struct {
 	UpdatedByColumn      string
 	RecordVersionColumn  string
 	DeletedAtColumn      string
+	// CreatedAtColumn is e.g. "credit_memo_created_at" -- read by dashboard
+	// aggregates (the KPI strip's "Needs Approval" metric) that need each
+	// module's own creation timestamp, not by engine.go itself.
+	CreatedAtColumn string
 	// OwnerColumn and NumberColumn are only read by notify.go's approval
 	// notification hooks -- e.g. "credit_memo_owner_id" (employee FK) and
 	// "credit_memo_number". Left blank for any module not configured for

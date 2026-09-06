@@ -1,6 +1,7 @@
 package crmstore
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,5 +38,19 @@ func TestRelationalResolver(t *testing.T) {
 			assert.Equal(t, c.wantExpr, expr)
 			assert.Equal(t, c.wantDT, dt)
 		})
+	}
+}
+
+func TestRelationalResolver_SearchPredicate(t *testing.T) {
+	r := relationalResolver{}
+	pred := r.SearchPredicate("$1")
+	for _, want := range []string{
+		"c.customer_doc_num ILIKE",
+		"c.customer_name ILIKE",
+		"c.customer_dba_name ILIKE",
+		"c.customer_contact_email ILIKE",
+		"c.customer_primary_phonenum ILIKE",
+	} {
+		assert.True(t, strings.Contains(pred, want), "search predicate missing %q: %s", want, pred)
 	}
 }

@@ -12,6 +12,7 @@ package crmstore
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -85,6 +86,16 @@ type Store interface {
 	// only narrow, never widen). Used by the AI assistant's LLM-routed
 	// filtered-count path (e.g. "how many leads closed last quarter").
 	CountRecordsFiltered(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, filters []query.Clause) (int, error)
+	// CountRecordsSince is CountRecords narrowed to records created at or
+	// after `since` (a zero time.Time means unbounded, identical to
+	// CountRecords). Used by the Pipeline mix dashboard widget's date-range
+	// filter.
+	CountRecordsSince(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, since time.Time) (int, error)
+	// CountRecordsBetween is CountRecords narrowed to records created in
+	// [since, until) (a zero since/until is unbounded on that side). Used by
+	// the KPI strip dashboard widget's delta-window and sparkline-bucket
+	// computations.
+	CountRecordsBetween(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, since, until time.Time) (int, error)
 	// SearchRecords lists records for key with server-side filtering, sorting,
 	// and keyset pagination, all composed onto the caller's RBAC scope (a filter
 	// can only narrow the scoped set, never widen it). Returns one page + cursor.

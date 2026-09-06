@@ -86,6 +86,20 @@ func (relationalResolver) Resolve(key string) (string, query.DataType, bool) {
 
 var _ query.FieldResolver = relationalResolver{}
 
+// SearchPredicate powers the CRM list's global-search box: doc number,
+// company/contact name, DBA name, email, and primary phone.
+func (relationalResolver) SearchPredicate(ph string) string {
+	return "(" +
+		"c.customer_doc_num ILIKE '%'||" + ph + "||'%'" +
+		" OR c.customer_name ILIKE '%'||" + ph + "||'%'" +
+		" OR c.customer_dba_name ILIKE '%'||" + ph + "||'%'" +
+		" OR c.customer_contact_email ILIKE '%'||" + ph + "||'%'" +
+		" OR c.customer_primary_phonenum ILIKE '%'||" + ph + "||'%'" +
+		")"
+}
+
+var _ query.SearchResolver = relationalResolver{}
+
 // SearchRecords implements scope-safe filtering + keyset pagination for DesignV2.
 // The base predicate pins the record type and excludes soft-deleted rows; the
 // RBAC scope is ANDed before the client filter, so a filter can only narrow the

@@ -3,6 +3,7 @@ module stonesuite-backend
 go 1.25.12
 
 require (
+	github.com/Skookum-Infotech/go-rag v0.0.0-20260905224801-b36aa31334bd
 	github.com/beevik/etree v1.7.0
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-pdf/fpdf v0.9.0
@@ -31,7 +32,6 @@ require (
 )
 
 require (
-	github.com/Skookum-Infotech/go-rag v0.0.0
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
@@ -51,5 +51,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/Skookum-Infotech/go-rag => ../go-rag

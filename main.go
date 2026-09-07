@@ -20,6 +20,10 @@ import (
 	sentry "github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Skookum-Infotech/go-rag/provider/ollama"
+	"github.com/Skookum-Infotech/go-rag/provider/tei"
+	ragcore "github.com/Skookum-Infotech/go-rag/rag"
+
 	"stonesuite-backend/ai"
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/config"
@@ -28,6 +32,7 @@ import (
 	"stonesuite-backend/database"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/estimate"
+	"stonesuite-backend/importer"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/logship"
@@ -111,9 +116,12 @@ func main() {
 	var crmAdminOps *controllers.CRMAdminOps
 	var customerAuthOps *controllers.CustomerAuthOps
 	var provisioner *provisioning.Provisioner
-	var cpPool *pgxpool.Pool     // control-plane pool; used by AIOps for cp_rag_chunks
-	var cp *tenancy.ControlPlane // control-plane handle; also used by AIOps for the reindex-help platform-admin check
-	var cipher *secret.Cipher    // field-level secret cipher; also used by SSOOps to encrypt client secrets
+	var importWorker *importer.Worker
+	var tenantRouter *tenancy.Router // also used below by importWorker construction, outside this block
+	var jobQueue *jobqueue.Queue     // also used below by importWorker construction, outside this block
+	var cpPool *pgxpool.Pool         // control-plane pool; used by AIOps for cp_rag_chunks
+	var cp *tenancy.ControlPlane     // control-plane handle; also used by AIOps for the reindex-help platform-admin check
+	var cipher *secret.Cipher        // field-level secret cipher; also used by SSOOps to encrypt client secrets
 	var ollamaLifecycle *services.OllamaLifecycle
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		var err error
@@ -153,12 +161,12 @@ func main() {
 		} else {
 			log.Println("Tenant DSN encryption: disabled (plaintext DSNs — development only).")
 		}
-		tenantRouter := tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
+		tenantRouter = tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
 		resolver = tenancy.NewResolver(cp, tenantRouter)
 
 		// Durable job queue (async_jobs table): backs tenant provisioning and
 		// future long-running work (e.g. workflow transition actions).
-		jobQueue := jobqueue.New(cp.Pool())
+		jobQueue = jobqueue.New(cp.Pool())
 
 		// Cloudflare client — shared by provisioner and admin repair endpoints.
 		cfClient := storage.NewCFClient(config.AppConfig.CloudflareAccountID, config.AppConfig.CloudflareAPIToken)
@@ -215,9 +223,9 @@ func main() {
 					// lazily on first inference. Best-effort: a failed
 					// warmup just means the first real request pays that
 					// latency itself, same as before this existed.
-					warmupEmb := ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel)
-					warmupLLM := ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
-					if err := ai.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
+					warmupEmb := ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
+					warmupLLM := ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
+					if err := ragcore.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
 						log.Printf("ollama-lifecycle: warmup failed: %v", err)
 					}
 				}()
@@ -377,6 +385,13 @@ func main() {
 		// spend rather than relying on the CRUD-sized limit above.
 		aiRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.5, 5)
 
+		// Per-user AI rate limit, beneath the per-tenant one above: without
+		// this, one user could consume their whole tenant's 0.5 req/sec AI
+		// budget alone, starving every other user in the same tenant. Tighter
+		// than the tenant bucket since it bounds a single person rather than
+		// everyone sharing it.
+		aiUserRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 3)
+
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
 
 		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
@@ -473,10 +488,13 @@ func main() {
 		// document's own resource (invoice:read to read the thread,
 		// invoice:update to reply), so message access follows document access.
 
-		// aiChain layers the AI-specific rate limit on top of tenantChain's
-		// generic one, for routes that make a synchronous embedding/LLM call.
+		// aiChain layers the AI-specific rate limits on top of tenantChain's
+		// generic one, for routes that make a synchronous embedding/LLM call:
+		// per-user (tightest, innermost) inside per-tenant inside the generic
+		// tenant limit. Each layer enforces its own bucket independently, so
+		// any one of them can reject a request the others would allow.
 		aiChain := func(h http.HandlerFunc) http.Handler {
-			return middleware.RequireAuth(aiRateLimiter.PerTenant(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
+			return middleware.RequireAuth(aiRateLimiter.PerTenant(aiUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h)))))
 		}
 
 		// Public: customer-portal auth. A separate rate limiter from
@@ -629,6 +647,28 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/attachments", tenantChain(attachOps.ListAttachments))
 		mux.Handle("GET /api/tenant/records/{id}/attachments/{attachmentId}/download", tenantChain(attachOps.DownloadAttachment))
 		mux.Handle("DELETE /api/tenant/records/{id}/attachments/{attachmentId}", tenantChain(attachOps.DeleteAttachment))
+
+		// Document importer: CSV/XLSX/DOCX/PDF -> staged candidate CRM records
+		// -> review -> commit (see importer/ package doc). The worker runs on
+		// its own jobqueue worker pool (JobTypeImport only), so an import
+		// backlog can never starve tenant provisioning above, or vice versa.
+		// Uses the same Ollama chat model as the AI assistant for DOCX/PDF
+		// field extraction (ollama.NewLLMClient implements the optional
+		// rag.StructuredLLMClient — see ai/ollama_llm.go); import still works
+		// for CSV/XLSX without it, since tabular staging never calls the LLM.
+		importWorker = importer.NewWorker(cp, tenantRouter, jobQueue, r2Client,
+			ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel))
+		importWorker.Start(2)
+		log.Println("Import worker started (2 workers, durable queue).")
+
+		importOps := controllers.NewImportOps(r2Client, jobQueue)
+		mux.Handle("POST /api/tenant/import/presign", tenantChain(importOps.Presign))
+		mux.Handle("POST /api/tenant/import/jobs", tenantChain(importOps.CreateJob))
+		mux.Handle("GET /api/tenant/import/jobs", tenantChain(importOps.ListJobs))
+		mux.Handle("GET /api/tenant/import/jobs/{jobId}", tenantChain(importOps.GetJob))
+		mux.Handle("GET /api/tenant/import/jobs/{jobId}/rows", tenantChain(importOps.ListRows))
+		mux.Handle("PATCH /api/tenant/import/jobs/{jobId}/rows/{rowId}", tenantChain(importOps.UpdateRow))
+		mux.Handle("POST /api/tenant/import/jobs/{jobId}/commit", tenantChain(importOps.Commit))
 
 		// In-app feedback tickets (bugs / feature requests / UX / performance),
 		// filed by tenant staff or customer-portal users, triaged by platform
@@ -1247,14 +1287,28 @@ func main() {
 		// (ADR-001) — no third-party LLM account, API key, or quota.
 		aiOps := controllers.NewAIOps(
 			cpPool,
-			ai.NewOllamaQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
-			ai.NewOllamaLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
+			ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
+			ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
 			cp,
-			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
+		// Reranking is off unless a TEI deployment is actually configured —
+		// see config.AppConfig.AIRerankBaseURL.
+		if config.AppConfig.AIRerankBaseURL != "" {
+			aiOps = aiOps.WithReranker(tei.NewReranker(config.AppConfig.AIRerankBaseURL), config.AppConfig.AIRerankCandidates)
+		}
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
+
+		// AI assistant conversation history — personal chat threads, owner-only
+		// (see ConversationOps), not RBAC-scoped CRM data. Cheap CRUD, so the
+		// generic tenantChain is enough; no need for aiChain's tighter AI budget.
+		convOps := controllers.NewConversationOps()
+		mux.Handle("POST /api/tenant/ai/conversations", tenantChain(convOps.Create))
+		mux.Handle("GET /api/tenant/ai/conversations", tenantChain(convOps.List))
+		mux.Handle("GET /api/tenant/ai/conversations/{id}", tenantChain(convOps.Get))
+		mux.Handle("DELETE /api/tenant/ai/conversations/{id}", tenantChain(convOps.Delete))
 	}
 
 	// Build the CORS allowlist once from the comma-separated CORS_ORIGIN value.
@@ -1350,6 +1404,9 @@ func main() {
 	log.Println("Shutting down: draining in-flight requests (up to 10s)...")
 	if provisioner != nil {
 		provisioner.Stop()
+	}
+	if importWorker != nil {
+		importWorker.Stop()
 	}
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1448,7 +1505,7 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 		w := index.NewWorker(
 			q,
 			crmstore.NewRAGRecordLoader(store, pool),
-			ai.NewOllamaDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel),
+			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 			ai.NewRagStore(pool),
 		)
 		go runTenantIndexWorker(ctx, t.Slug, w, q)

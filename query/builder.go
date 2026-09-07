@@ -44,6 +44,43 @@ func (p *params) add(v any) string {
 	return s
 }
 
+// buildFilterPreds validates clauses against r's whitelist and returns one
+// parameterized predicate per clause (ANDed by the caller). Shared by Build
+// (list/search, which also needs sort + keyset) and BuildFilters (count,
+// which needs only this).
+func buildFilterPreds(clauses []Clause, r FieldResolver, p *params) ([]string, error) {
+	var preds []string
+	for _, c := range clauses {
+		expr, dt, ok := r.Resolve(c.Field)
+		if !ok {
+			return nil, invalid(c.Field, "unknown field")
+		}
+		if !opAllowed(dt, c.Op) {
+			return nil, invalid(c.Field, "operator "+string(c.Op)+" not allowed for "+string(dt))
+		}
+		sql, err := clauseSQL(expr, dt, c, p)
+		if err != nil {
+			return nil, err
+		}
+		preds = append(preds, sql)
+	}
+	return preds, nil
+}
+
+// BuildFilters validates clauses against r's whitelist and emits a single
+// parameterized WHERE predicate (clauses ANDed together, "" if clauses is
+// empty) — the filter-only counterpart to Build, for callers that need a
+// scope-composed count rather than a sorted, paginated page. startIdx is the
+// next free placeholder number, same convention as Build.
+func BuildFilters(clauses []Clause, r FieldResolver, startIdx int) (whereSQL string, args []any, err error) {
+	p := &params{idx: startIdx}
+	preds, err := buildFilterPreds(clauses, r, p)
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.Join(preds, " AND "), p.args, nil
+}
+
 // Build validates a Request against the resolver's whitelist and emits
 // parameterized SQL. startIdx is the next free placeholder number (the store's
 // scope clause uses $1..$startIdx-1). It never returns raw client strings as
@@ -53,20 +90,9 @@ func Build(req Request, r FieldResolver, startIdx int) (Built, error) {
 	p := &params{idx: startIdx}
 
 	// --- filters (ANDed) ---
-	var preds []string
-	for _, c := range req.Filters {
-		expr, dt, ok := r.Resolve(c.Field)
-		if !ok {
-			return Built{}, invalid(c.Field, "unknown field")
-		}
-		if !opAllowed(dt, c.Op) {
-			return Built{}, invalid(c.Field, "operator "+string(c.Op)+" not allowed for "+string(dt))
-		}
-		sql, err := clauseSQL(expr, dt, c, p)
-		if err != nil {
-			return Built{}, err
-		}
-		preds = append(preds, sql)
+	preds, err := buildFilterPreds(req.Filters, r, p)
+	if err != nil {
+		return Built{}, err
 	}
 
 	// --- global search (optional) ---

@@ -3,6 +3,7 @@ module stonesuite-backend
 go 1.25.12
 
 require (
+	github.com/Skookum-Infotech/go-rag v0.0.0-20260905224801-b36aa31334bd
 	github.com/beevik/etree v1.7.0
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-pdf/fpdf v0.9.0
@@ -17,6 +18,17 @@ require (
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
+)
+
+require (
+	github.com/ledongthuc/pdf v0.0.0-20260903153007-b3c860c23753 // indirect
+	github.com/richardlehane/mscfb v1.0.7 // indirect
+	github.com/richardlehane/msoleps v1.0.6 // indirect
+	github.com/tiendc/go-deepcopy v1.7.2 // indirect
+	github.com/xuri/efp v0.0.1 // indirect
+	github.com/xuri/excelize/v2 v2.11.0 // indirect
+	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	golang.org/x/net v0.57.0 // indirect
 )
 
 require (

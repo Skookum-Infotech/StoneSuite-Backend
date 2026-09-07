@@ -80,6 +80,12 @@ type Store interface {
 	// scope — same RBAC narrowing as ListRecords, without fetching rows. Used
 	// by the AI assistant's analytical (count) question path.
 	CountRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) (int, error)
+	// CountRecordsFiltered returns how many records of key match filters,
+	// under the caller's RBAC scope — the filtered counterpart to
+	// CountRecords, without fetching rows. filters is ANDed onto scope (can
+	// only narrow, never widen). Used by the AI assistant's LLM-routed
+	// filtered-count path (e.g. "how many leads closed last quarter").
+	CountRecordsFiltered(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, filters []query.Clause) (int, error)
 	// CountRecordsSince is CountRecords narrowed to records created at or
 	// after `since` (a zero time.Time means unbounded, identical to
 	// CountRecords). Used by the Pipeline mix dashboard widget's date-range

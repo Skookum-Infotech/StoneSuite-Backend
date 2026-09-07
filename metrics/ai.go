@@ -38,6 +38,16 @@ var (
 		Help: `Asks where the assistant answered "I don't have that information." Refusal rate = this / ai_asks_total.`,
 	})
 
+	// aiQueryRouteTotal is the query-mix signal the architecture plan calls
+	// out as the metric that decides whether investing further in retrieval
+	// quality (or a GPU) is ever worth it: if real traffic is overwhelmingly
+	// count_direct/count_routed, synthesis latency barely matters; if it's
+	// overwhelmingly rag, that's where money and effort belong.
+	aiQueryRouteTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "ai_query_route_total",
+		Help: "AI assistant asks by dispatch route: count_direct (zero-LLM deterministic count), count_routed (one LLM call resolves a filtered count), or rag (full retrieval + synthesis).",
+	}, []string{"route"})
+
 	ragIndexQueuePending = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "rag_index_queue_pending",
 		Help: "Number of rag_index_queue jobs still pending, by tenant.",
@@ -70,6 +80,10 @@ func ObserveAIAsk(refused bool) {
 		aiRefusalsTotal.Inc()
 	}
 }
+
+// ObserveAIQueryRoute records one ask's dispatch route ("count_direct",
+// "count_routed", or "rag" — see AIOps.Ask's three-way dispatch).
+func ObserveAIQueryRoute(route string) { aiQueryRouteTotal.WithLabelValues(route).Inc() }
 
 // SetRAGIndexQueueStats publishes one tenant's rag_index_queue backlog —
 // pending job count and the oldest pending job's age — so an operator can

@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/prasannakumarnagaboyina/pkumardev/StoneSuite-Backend/.codex/hooks/check-schema.sh'"
+          },
+          {
+            "type": "command",
+            "command": "bash '/Users/prasannakumarnagaboyina/pkumardev/StoneSuite-Backend/.codex/hooks/check-module-package.sh'"
+          }
+        ]
+      }
+    ]
+  }
+}

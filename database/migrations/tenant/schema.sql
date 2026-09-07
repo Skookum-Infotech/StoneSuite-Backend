@@ -7986,6 +7986,72 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_workflow_approver_wildcard
 
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS custom_fields_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- =====================================================================
+-- AI ASSISTANT: conversation history (2026-09-05)
+-- =====================================================================
+-- Multi-turn context for the AI assistant (see docs/ai-assistant.md and
+-- ai/conversations.go). Stores only the plain question/answer text of each
+-- turn -- never retrieved chunks or citations. Retrieval always re-runs per
+-- turn under the caller's CURRENT RBAC scope (see ai.Assistant.Ask), so
+-- replaying stored history into the prompt can never surface data a
+-- since-revoked permission would now deny; only a past *answer*'s own text
+-- could still quote something the caller can no longer read directly, which
+-- is a known residual risk the architecture plan flags for an explicit
+-- retention decision, not something this schema solves.
+--
+-- Ownership is the caller's own user id, not RBAC scope ("all"/"own"): a
+-- conversation is personal chat history, visible only to the user who
+-- started it, regardless of what CRM scope they hold.
+CREATE TABLE IF NOT EXISTS ai_conversations (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_id UUID NOT NULL,
+    title         TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_owner
+    ON ai_conversations (owner_user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_ai_messages_role CHECK (role IN ('user', 'assistant'))
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation
+    ON ai_messages (conversation_id, created_at);
+
+-- =====================================================================
+-- DOCUMENT IMPORTER: staged rows (2026-09-05)
+-- =====================================================================
+-- The document importer (see importer/) parses an uploaded CSV/XLSX/DOCX/PDF
+-- (go-rag's parse package) into candidate CRM records and stages each one
+-- here for review before it becomes a real record. job_id is an
+-- async_jobs.id (control-plane -- see jobqueue.Queue), not a local foreign
+-- key: the job queue and its rows deliberately live in different databases,
+-- the same split provisioning already uses.
+--
+-- record_id is set only once a row is actually committed via
+-- crmstore.CreateRecord, and doubles as that commit's idempotency key: a
+-- resumed/retried commit skips any row that already has one rather than
+-- creating a duplicate record.
+CREATE TABLE IF NOT EXISTS import_rows (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id     TEXT NOT NULL,
+    row_index  INTEGER NOT NULL,
+    raw        JSONB NOT NULL,
+    mapped     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    errors     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    record_id  UUID NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_import_rows_status CHECK (status IN ('pending', 'committed', 'failed', 'skipped'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_rows_job ON import_rows (job_id, row_index);
+
 -- -- 000040_credit_memo_owner_backfill ---------------------------------------
 -- =====================================================================
 -- Tenant-template schema -- Phase 40: backfill credit_memo_owner_id.

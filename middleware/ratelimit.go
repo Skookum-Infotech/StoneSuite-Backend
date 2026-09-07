@@ -129,6 +129,38 @@ func (rl *RateLimiter) PerTenant(next http.Handler) http.Handler {
 	})
 }
 
+// PerUser returns middleware that rate-limits requests by the authenticated
+// request's user id (payload.ID), independent of PerTenant's per-tenant
+// bucket. It MUST run after RequireAuth. Requests without a user id pass
+// through unlimited here — the same convention as PerTenant.
+//
+// Exists so a single user cannot exhaust their whole tenant's shared AI
+// budget: PerTenant alone caps the tenant's total ask rate, but nothing
+// stops one user inside it from being the entire burst. Compose the two by
+// wrapping one around the other (see main.go) — each layer enforces its own
+// bucket independently, so either can reject a request the other would allow.
+func (rl *RateLimiter) PerUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, err := GetUserFromContext(r.Context())
+		if err != nil || payload.ID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !rl.allow(payload.ID) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(models.APIResponse{
+				Success: false,
+				Message: "Too many requests. Please slow down and try again shortly.",
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // PerIP returns middleware that rate-limits requests by client IP. It is the
 // brute-force guard for UNAUTHENTICATED endpoints — login, password reset,
 // token activation — where there is no tenant id yet to key on, so a single

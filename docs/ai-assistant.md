@@ -90,6 +90,74 @@ correctness, refusal rate) needs a seeded tenant and a running model, which
 CI doesn't have today — `ai_refusals_total` / `ai_asks_total` (below) is the
 production substitute for that signal.
 
+## Filtered counts: one LLM call resolves what the fast-path refuses
+
+The fast-path above answers *unfiltered* counts only — a question naming a
+date/status/outcome concept falls through to full RAG, which honestly refuses
+rather than silently mislabeling an unfiltered total as the filtered answer.
+`hasFilterHintCountIntent` + `resolveRoutedFilteredCount`
+(`controllers/ai_analytical.go`) close part of that gap: when a question hits
+exactly that refusal case, one schema-constrained LLM call
+(`route.Extract`, from `github.com/Skookum-Infotech/go-rag/route`) classifies
+it and — if the model returns `intent=count` with filters entirely inside a
+small, fixed field whitelist (`status`, `created_at`, `updated_at`,
+`record_number`) and a comparison-only operator set — resolves it to a real
+`crmstore.Store.CountRecordsFiltered` call instead of falling through.
+
+**The model chooses WHAT to filter on, never WHOSE data.** Scope and caller
+identity are already resolved from request context before routing runs and
+are never influenced by anything the model returns. Fields shaped like
+identity (`owner_user_id`, `team_id`, `id`) are excluded from the whitelist as
+defense in depth, even though the ANDed scope clause would already prevent
+them from widening a result — the model simply isn't offered that vocabulary.
+Any failure mode — routing unsupported, malformed/adversarial model output, an
+unknown workflow key, a filter naming a field or operator outside the
+whitelist, or the count query itself erroring — falls back to plain RAG
+rather than erroring the request. See `route`'s package doc in go-rag for the
+full contract.
+
+This makes the dispatch a three-way choice per ask: unfiltered count (regex
+only, zero LLM calls) → filtered count (one LLM call, no synthesis) → full RAG
+(embed + retrieve + synthesize). `ai_query_route_total{route}` (below) is the
+mix, and the metric the architecture plan calls out as deciding whether
+further retrieval-quality or hardware investment is worth it.
+
+## Conversation history: multi-turn context
+
+`POST /api/tenant/ai/ask` accepts an optional `conversation_id`. When set,
+`ConversationStore` (`ai/conversations.go`) loads that conversation's most
+recent messages (bounded — `historyLimit`, currently 20 — so a long-lived
+thread's prompt doesn't grow without bound) and threads them into the LLM
+call ahead of the current turn (`rag.AskRequest.History`), for both the RAG
+path and the routed-filtered-count path (`route.Extract` also takes history,
+so a follow-up like "what about last month?" can resolve against the earlier
+turn). After answering, both the question and the answer are appended to the
+conversation and its title is set from the first question if not already set.
+
+**Conversations are managed via `/api/tenant/ai/conversations/*`**
+(`controllers/ai_conversations.go`): `POST` starts a new, empty, untitled one;
+`GET` lists the caller's own, most recently active first; `GET .../{id}`
+returns one conversation plus its full transcript; `DELETE .../{id}` removes
+it (cascades to its messages). Every single-conversation operation enforces
+strict owner-only access — `Conversation.OwnerUserID` (the same internal
+user id `owner_user_id` columns use elsewhere, resolved via
+`workflow.UserIDByIdentity`) must equal the caller's, or the response is
+**404, never 403** — the same IDOR-safe convention as `recordInScope`
+elsewhere in this codebase. **This is ownership, not RBAC scope**: a
+conversation is personal chat history, visible only to the user who started
+it, regardless of what "all"/"own" CRM scope they hold.
+
+**Only plain question/answer text is stored — never citations or retrieved
+chunks.** Retrieval always re-runs fresh for the current turn under the
+caller's CURRENT scope, so replaying history can never surface data a
+since-revoked permission would now deny. The one residual gap the
+architecture plan flags and this doesn't solve: a stored *answer*'s own text
+could still quote something the caller can no longer read directly — an
+explicit retention/redaction policy is future work, not something this
+schema enforces today. History is also untrusted input reaching the
+prompt exactly like retrieved record content already does — the injection-
+scanning `guard/` package the plan calls for is a later phase, not built yet.
+
 ## Observability
 
 `GET /api/metrics` (Prometheus) exposes AI-specific series alongside the
@@ -107,6 +175,11 @@ generic HTTP ones, all defined in `metrics/ai.go`:
   grounding content. Counts only asks that reach a chat completion — the
   analytical count fast-path (below) is exact and never refuses, so it's
   intentionally excluded.
+- `ai_query_route_total{route}` — one ask's dispatch route: `count_direct`
+  (zero-LLM deterministic count), `count_routed` (one LLM call resolves a
+  filtered count), or `rag` (full retrieval + synthesis). The query-mix signal
+  that decides whether investing further in retrieval quality or hardware is
+  worth it.
 - `rag_index_queue_pending` / `rag_index_queue_oldest_pending_age_seconds`
   (labeled by tenant) — published every drain tick (`ai/index.Queue.Stats`,
   `main.go`'s `runTenantIndexWorker`); a growing backlog or aging oldest-job

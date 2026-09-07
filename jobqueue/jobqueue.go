@@ -198,6 +198,22 @@ func (q *Queue) Retry(ctx context.Context, id string) error {
 	return nil
 }
 
+// Get fetches one job by id. Returns ErrNoJob if it doesn't exist (the same
+// sentinel ClaimNext uses for "nothing here" — a caller checking a specific
+// id and one polling for any pending job are both asking "is there a job I
+// can act on", so they share one not-found signal).
+func (q *Queue) Get(ctx context.Context, id string) (*Job, error) {
+	row := q.pool.QueryRow(ctx, `SELECT `+jobColumns+` FROM async_jobs WHERE id = $1`, id)
+	j, err := scanJob(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoJob
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get job %s: %w", id, err)
+	}
+	return j, nil
+}
+
 // ListForTenant returns the most recent jobs for a tenant, newest first.
 func (q *Queue) ListForTenant(ctx context.Context, tenantID string, limit int) ([]Job, error) {
 	if limit <= 0 {

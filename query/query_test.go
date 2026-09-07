@@ -177,3 +177,63 @@ func mustBuild(t *testing.T, req Request) Built {
 	require.NoError(t, err)
 	return b
 }
+
+func TestBuildFilters_EmptyClausesYieldsEmptyWhere(t *testing.T) {
+	where, args, err := BuildFilters(nil, testResolver(), 2)
+	require.NoError(t, err)
+	assert.Equal(t, "", where)
+	assert.Empty(t, args)
+}
+
+func TestBuildFilters_SingleClause(t *testing.T) {
+	where, args, err := BuildFilters([]Clause{{"status", OpEq, "qualified"}}, testResolver(), 2)
+	require.NoError(t, err)
+	assert.Equal(t, "current_state_id = $2", where)
+	assert.Equal(t, []any{"qualified"}, args)
+}
+
+func TestBuildFilters_MultipleClausesAnded(t *testing.T) {
+	where, _, err := BuildFilters([]Clause{
+		{"status", OpEq, "qualified"},
+		{"created_at", OpGte, "2026-01-01"},
+	}, testResolver(), 2)
+	require.NoError(t, err)
+	assert.Contains(t, where, " AND ")
+}
+
+func TestBuildFilters_ParamOffsetMatchesCaller(t *testing.T) {
+	// startIdx=5 mirrors a caller that already bound $1..$4 for its own scope
+	// clause — BuildFilters must continue numbering from there, never restart.
+	where, _, err := BuildFilters([]Clause{{"status", OpEq, "x"}}, testResolver(), 5)
+	require.NoError(t, err)
+	assert.Equal(t, "current_state_id = $5", where)
+}
+
+func TestBuildFilters_UnknownFieldIsInvalidFilterError(t *testing.T) {
+	_, _, err := BuildFilters([]Clause{{"nope", OpEq, "x"}}, testResolver(), 2)
+	var ife *InvalidFilterError
+	require.ErrorAs(t, err, &ife)
+}
+
+func TestBuildFilters_DisallowedOperatorForTypeIsInvalidFilterError(t *testing.T) {
+	// "status" resolves to TypeString; OpGt is not in opsByType[TypeString].
+	_, _, err := BuildFilters([]Clause{{"status", OpGt, "x"}}, testResolver(), 2)
+	var ife *InvalidFilterError
+	require.ErrorAs(t, err, &ife)
+}
+
+// TestBuildFilters_MatchesBuildForSameClauses pins BuildFilters and Build to
+// produce the identical filter predicate for the same input — BuildFilters is
+// meant to be Build's filter-only subset, not a second implementation that
+// could drift from it.
+func TestBuildFilters_MatchesBuildForSameClauses(t *testing.T) {
+	clauses := []Clause{{"status", OpEq, "qualified"}, {"cf:budget", OpGte, float64(100)}}
+	where, args, err := BuildFilters(clauses, testResolver(), 2)
+	require.NoError(t, err)
+
+	built, err := Build(Request{Filters: clauses}, testResolver(), 2)
+	require.NoError(t, err)
+
+	assert.Equal(t, built.Where, where)
+	assert.Equal(t, built.Args, args)
+}

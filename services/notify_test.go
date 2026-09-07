@@ -50,6 +50,42 @@ func TestSendNotification_PostsToCorrectPath(t *testing.T) {
 	assert.Equal(t, "INV-1.pdf", gotBody.Attachments[0].FileName)
 }
 
+func TestSendNotificationWithResult_ParsesNotificationIDs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"n-1"},{"id":"n-2"}]}}`))
+	}))
+	defer server.Close()
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	res, err := SendNotificationWithResult(context.Background(), NotificationRequest{
+		TenantID:   "tenant-1",
+		Recipients: []RecipientTarget{{Email: "a@x.com"}, {Email: "b@x.com"}},
+		EventType:  "document.sent", Resource: "invoice", ResourceID: "inv-1", Title: "sent",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"n-1", "n-2"}, res.NotificationIDs)
+}
+
+func TestSendNotificationWithResult_UnparseableBodyIsNotAnError(t *testing.T) {
+	// The notifications were still created; we just can't correlate them
+	// later. Must not fail the caller's document-send over it.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated) // empty body
+	}))
+	defer server.Close()
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	res, err := SendNotificationWithResult(context.Background(), NotificationRequest{
+		TenantID: "t", Recipients: []RecipientTarget{{Email: "a@x.com"}},
+		EventType: "e", Resource: "r", ResourceID: "id", Title: "t",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.NotificationIDs)
+}
+
 func TestSendNotification_IncludesEmailBodyHTML(t *testing.T) {
 	var gotBody NotificationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

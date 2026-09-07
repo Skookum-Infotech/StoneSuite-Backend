@@ -8037,3 +8037,15 @@ CREATE INDEX IF NOT EXISTS idx_pym_pending  ON payment        (payment_created_a
 CREATE INDEX IF NOT EXISTS idx_cm_pending   ON credit_memo    (credit_memo_created_at)    WHERE credit_memo_approval_status = 'pending' AND credit_memo_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_rfnd_pending ON refund         (refund_created_at)         WHERE refund_approval_status = 'pending' AND refund_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vcrd_pending ON vendor_credit  (vendor_credit_created_at)  WHERE vendor_credit_approval_status = 'pending' AND vendor_credit_deleted_at IS NULL;
+
+
+-- -- 000042_document_sends_notify_ids ------------------------------------
+-- The customer document-send email is delivered asynchronously by
+-- stonesuite-notify (queue + retries), which returns one notification id
+-- per recipient from POST /api/notifications/internal. Persisting those
+-- ids here lets support / a reconciliation job correlate a send back to
+-- its notify deliveries (GET /api/notifications/{id}/deliveries) and see
+-- whether the customer actually received it — the backend otherwise never
+-- hears the async outcome. Empty array = pre-migration rows, or a send
+-- whose notify response could not be parsed (non-fatal).
+ALTER TABLE document_sends ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';

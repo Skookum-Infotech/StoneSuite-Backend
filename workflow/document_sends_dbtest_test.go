@@ -35,10 +35,11 @@ func TestDocumentSends_InsertAndList(t *testing.T) {
 	recordID := "11111111-1111-1111-1111-111111111111"
 
 	id, err := InsertDocumentSend(ctx, pool, DocumentSend{
-		RecordID:    recordID,
-		WorkflowKey: "invoice",
-		SentTo:      "bob@buyer.example",
-		Subject:     "Your Invoice INV-1001",
+		RecordID:              recordID,
+		WorkflowKey:           "invoice",
+		SentTo:                "bob@buyer.example",
+		Subject:               "Your Invoice INV-1001",
+		NotifyNotificationIDs: []string{"notif-1", "notif-2"},
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
@@ -48,4 +49,15 @@ func TestDocumentSends_InsertAndList(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, "invoice", list[0].WorkflowKey)
 	assert.Equal(t, "bob@buyer.example", list[0].SentTo)
+	assert.Equal(t, []string{"notif-1", "notif-2"}, list[0].NotifyNotificationIDs)
+
+	// A send recorded with no notify ids round-trips as an empty slice
+	// (the column DEFAULT '{}'), never a scan error.
+	other := "22222222-2222-2222-2222-222222222222"
+	_, err = InsertDocumentSend(ctx, pool, DocumentSend{RecordID: other, WorkflowKey: "quote", SentTo: "x@y.z"})
+	require.NoError(t, err)
+	list, err = ListDocumentSends(ctx, pool, other)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Empty(t, list[0].NotifyNotificationIDs)
 }

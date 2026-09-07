@@ -9,9 +9,17 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"stonesuite-backend/config"
 )
+
+// notifyClient bounds every call to stonesuite-notify. Without it (the old
+// http.DefaultClient) a slow or cold-starting notify service could hang a
+// user's document-send request for as long as the browser kept the
+// connection open. 30s covers notify's ~1-2s scale-to-zero cold start plus a
+// PDF-attachment upload with comfortable margin.
+var notifyClient = &http.Client{Timeout: 30 * time.Second}
 
 // RecipientTarget specifies a user to notify.
 type RecipientTarget struct {
@@ -88,7 +96,7 @@ func SendNotification(ctx context.Context, req NotificationRequest) error {
 	// the header name here needs to match notify's actual auth model.
 	httpReq.Header.Set("X-Internal-Secret", cfg.NotifyAPIKey)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := notifyClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("execute notify request: %w", err)
 	}

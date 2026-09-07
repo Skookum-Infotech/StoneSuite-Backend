@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,4 +78,31 @@ func TestSendNotification_NotConfigured_ReturnsError(t *testing.T) {
 	config.AppConfig = config.Config{}
 	err := SendNotification(context.Background(), NotificationRequest{})
 	assert.Error(t, err)
+}
+
+func TestSendNotification_SlowNotifyService_TimesOutInsteadOfHanging(t *testing.T) {
+	block := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // never respond until the test tears down
+	}))
+	defer server.Close()
+	defer close(block)
+
+	orig := notifyClient
+	notifyClient = &http.Client{Timeout: 100 * time.Millisecond}
+	t.Cleanup(func() { notifyClient = orig })
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- SendNotification(context.Background(), NotificationRequest{TenantID: "t"})
+	}()
+
+	select {
+	case err := <-done:
+		assert.Error(t, err, "a hanging notify service must surface as an error, not a nil success")
+	case <-time.After(2 * time.Second):
+		t.Fatal("SendNotification did not return — the notify client has no effective timeout")
+	}
 }

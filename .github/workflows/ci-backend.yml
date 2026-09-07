@@ -40,25 +40,26 @@ jobs:
             echo "Run: gofmt -w \$(gofmt -l . | grep -v '^vendor/')"
             exit 1
           fi
-      # Deterministic and zero-cost. Guards a regression that has already
-      # happened twice (PRs #167 -> #170 -> #171, Sep 2026): a bad merge
-      # silently dropped the fix and put COOKIE_SAME_SITE_MODE=none back on
-      # dev-stonesuite-api, activating the CSRF double-submit check, which is
-      # unreliable across this app's scale-to-zero restarts and caused
-      # recurring 403 csrf_mismatch errors on dev.stonesuite.app. Re-checking
-      # the file's actual content in CI catches that class of regression
-      # regardless of how tangled the merge history gets. See fly.dev.toml's
-      # comment for the full story.
-      - name: Guard against dev COOKIE_SAME_SITE_MODE=none regression
+      # Deterministic and zero-cost. dev-stonesuite-api runs cross-origin from
+      # the dev WebUI, so fly.dev.toml sets COOKIE_SAME_SITE_MODE=none (auth
+      # cookies must be SameSite=None to survive a cross-site refresh). Browsers
+      # silently drop a SameSite=None cookie that is not also Secure, and Secure
+      # is gated on APP_ENV=production (config.IsProduction). A past bad merge
+      # (PRs #167 -> #170 -> #171 -> #178) flipped these independently; if only
+      # one is set, every dev login is logged out on the next hard refresh with
+      # no visible error. Guard that they stay set together.
+      - name: Guard dev cross-origin cookie config is self-consistent
         run: |
           if grep -q 'COOKIE_SAME_SITE_MODE *= *"none"' fly.dev.toml; then
-            echo "fly.dev.toml sets COOKIE_SAME_SITE_MODE=none. This has caused"
-            echo "recurring 403 csrf_mismatch errors on dev.stonesuite.app twice"
-            echo "already. Do not re-add it without also restoring the"
-            echo "frontend's direct cross-origin call path -- see"
-            echo "docs/superpowers/specs/2026-08-12-dev-direct-cors-auth-design.md."
-            echo "If this is a deliberate, reviewed change, update this guard too."
-            exit 1
+            if ! grep -q 'APP_ENV *= *"production"' fly.dev.toml; then
+              echo "fly.dev.toml sets COOKIE_SAME_SITE_MODE=none but not"
+              echo "APP_ENV=production. Browsers drop SameSite=None cookies that"
+              echo "are not Secure, and Secure needs APP_ENV=production, so dev"
+              echo "auth would silently break on every page refresh. Add"
+              echo 'APP_ENV = "production" to fly.dev.toml [env] or remove the'
+              echo "COOKIE_SAME_SITE_MODE=none line. See fly.dev.toml's comment."
+              exit 1
+            fi
           fi
       - name: Build
         run: go build ./...

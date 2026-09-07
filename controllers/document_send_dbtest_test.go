@@ -152,6 +152,7 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 	// dbtest without a live Notify service.
 	notifyStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"notif-abc"}]}}`))
 	}))
 	t.Cleanup(notifyStub.Close)
 	config.AppConfig = config.Config{NotifyURL: notifyStub.URL, NotifyAPIKey: "nk_dbtest_stub_secret"}
@@ -176,4 +177,6 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 	assert.Equal(t, "sales_order", sends[0].WorkflowKey)
 	assert.Equal(t, "bob@buyer.example", sends[0].SentTo)
 	assert.Empty(t, sends[0].AttachmentID, "no attachment is persisted; the PDF is emailed directly")
+	assert.Equal(t, []string{"notif-abc"}, sends[0].NotifyNotificationIDs,
+		"notify's returned notification ids are persisted for later delivery-status lookup")
 }

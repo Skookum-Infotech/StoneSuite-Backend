@@ -135,6 +135,17 @@ func setAuthCookiesAt(w http.ResponseWriter, token string, d time.Duration, refr
 		if err != nil {
 			return fmt.Errorf("generate csrf token: %w", err)
 		}
+		// Outlive the access token: the session stays alive across access-token
+		// expiry via the refresh cookie, and a csrf_token that vanished at the
+		// 1h access-token mark would make every state-changing request fail
+		// (the double-submit half of csrfValid) until the next full re-login.
+		// It's a non-secret nonce, regenerated on every login/refresh anyway.
+		csrfMaxAge := int(d.Seconds())
+		if !refreshExpiry.IsZero() {
+			if secs := int(time.Until(refreshExpiry).Seconds()); secs > csrfMaxAge {
+				csrfMaxAge = secs
+			}
+		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     "csrf_token",
 			Value:    csrfToken,
@@ -142,7 +153,7 @@ func setAuthCookiesAt(w http.ResponseWriter, token string, d time.Duration, refr
 			HttpOnly: false, // must be JS-readable so the frontend can echo it back
 			Secure:   secure,
 			SameSite: sameSite,
-			MaxAge:   int(d.Seconds()),
+			MaxAge:   csrfMaxAge,
 		})
 	}
 

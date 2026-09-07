@@ -193,10 +193,13 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Email with the PDF attached, via Notify — gets the same
 	// queue/retry/audit reliability layer the owner ping below already
-	// uses, instead of a direct, unretried Resend/SMTP call.
-	if err := services.SendNotification(r.Context(),
+	// uses, instead of a direct, unretried Resend/SMTP call. The returned
+	// notification ids are stored on the send row (step 3) so the async
+	// delivery outcome can be looked back up from notify later.
+	notifyResult, err := services.SendNotificationWithResult(r.Context(),
 		customerSendRequest(tenant.ID, actorUserID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
-	); err != nil {
+	)
+	if err != nil {
 		fail(w, http.StatusBadGateway, "Failed to send email.")
 		return
 	}
@@ -206,6 +209,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		RecordID: recordID, WorkflowKey: meta.WorkflowKey,
 		SentTo: joinRecipients(to), CC: joinRecipients(cc),
 		Subject: subject, SentByUserID: actorUserID,
+		NotifyNotificationIDs: notifyResult.NotificationIDs,
 	})
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to record send.")

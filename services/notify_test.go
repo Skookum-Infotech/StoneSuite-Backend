@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +50,42 @@ func TestSendNotification_PostsToCorrectPath(t *testing.T) {
 	assert.Equal(t, "INV-1.pdf", gotBody.Attachments[0].FileName)
 }
 
+func TestSendNotificationWithResult_ParsesNotificationIDs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"n-1"},{"id":"n-2"}]}}`))
+	}))
+	defer server.Close()
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	res, err := SendNotificationWithResult(context.Background(), NotificationRequest{
+		TenantID:   "tenant-1",
+		Recipients: []RecipientTarget{{Email: "a@x.com"}, {Email: "b@x.com"}},
+		EventType:  "document.sent", Resource: "invoice", ResourceID: "inv-1", Title: "sent",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"n-1", "n-2"}, res.NotificationIDs)
+}
+
+func TestSendNotificationWithResult_UnparseableBodyIsNotAnError(t *testing.T) {
+	// The notifications were still created; we just can't correlate them
+	// later. Must not fail the caller's document-send over it.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated) // empty body
+	}))
+	defer server.Close()
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	res, err := SendNotificationWithResult(context.Background(), NotificationRequest{
+		TenantID: "t", Recipients: []RecipientTarget{{Email: "a@x.com"}},
+		EventType: "e", Resource: "r", ResourceID: "id", Title: "t",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.NotificationIDs)
+}
+
 func TestSendNotification_IncludesEmailBodyHTML(t *testing.T) {
 	var gotBody NotificationRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,4 +114,31 @@ func TestSendNotification_NotConfigured_ReturnsError(t *testing.T) {
 	config.AppConfig = config.Config{}
 	err := SendNotification(context.Background(), NotificationRequest{})
 	assert.Error(t, err)
+}
+
+func TestSendNotification_SlowNotifyService_TimesOutInsteadOfHanging(t *testing.T) {
+	block := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // never respond until the test tears down
+	}))
+	defer server.Close()
+	defer close(block)
+
+	orig := notifyClient
+	notifyClient = &http.Client{Timeout: 100 * time.Millisecond}
+	t.Cleanup(func() { notifyClient = orig })
+
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- SendNotification(context.Background(), NotificationRequest{TenantID: "t"})
+	}()
+
+	select {
+	case err := <-done:
+		assert.Error(t, err, "a hanging notify service must surface as an error, not a nil success")
+	case <-time.After(2 * time.Second):
+		t.Fatal("SendNotification did not return — the notify client has no effective timeout")
+	}
 }

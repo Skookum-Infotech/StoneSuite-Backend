@@ -13,21 +13,25 @@ primary_region = "iad"
   # before deploying. A mismatch will block all browser API calls with CORS 403 errors.
   CORS_ORIGIN         = "https://dev.stonesuite.app,https://dev-stonesuite-webui.pages.dev"
   FRONTEND_URL        = "https://dev.stonesuite.app"
-  # COOKIE_SAME_SITE_MODE intentionally omitted (defaults to "lax", same as
-  # UAT/PROD): the WebUI dev deployment calls this backend through Cloudflare
-  # Pages' same-origin proxy Function (functions/api/[[path]].ts in
-  # StoneSuite-WebUI), not directly cross-origin. "none" makes the
-  # double-submit CSRF check in middleware/csrf.go active but unreliable
-  # across this app's scale-to-zero restarts, causing intermittent 403
-  # csrf_mismatch errors on every mutating/search request.
+  # The deployed dev WebUI (dev.stonesuite.app and dev-stonesuite-webui.pages.dev)
+  # calls this backend directly cross-origin — VITE_API_BASE_URL is the absolute
+  # https://dev-stonesuite-api.fly.dev/api, not a same-origin "/api" proxy.
+  # A cross-site response cannot set a SameSite=Lax cookie the browser will send
+  # back on later XHR, so the auth_token / refresh_token cookies must be
+  # SameSite=None or every dev session is logged out on the next hard refresh.
   #
-  # DO NOT re-add this without also re-adding the frontend's direct
-  # cross-origin call path (see docs/superpowers/specs/2026-08-12-dev-direct-
-  # cors-auth-design.md) and X-CSRF-Token header plumbing in StoneSuite-WebUI.
-  # This exact line has been added and silently dropped by a bad merge twice
-  # already (PRs #167 -> #170 -> #171) — if you're re-adding it, verify with
-  # `git log -- fly.dev.toml` that this comment block itself isn't already
-  # sitting on top of a stale merge.
+  # "none" also activates the CSRF check in middleware/csrf.go. That check now
+  # accepts a request whose Origin is in CORS_ORIGIN (below) as well as the
+  # X-CSRF-Token double-submit token, so it no longer 403s when the csrf_token
+  # cookie is absent/expired — the flapping that got this line reverted before
+  # (PRs #167 -> #170 -> #171 -> #178). Requires APP_ENV = "production" above so
+  # cookies are Secure; browsers drop SameSite=None cookies that are not Secure.
+  # ci-backend.yml guards that both stay set together.
+  #
+  # Prod (fly.toml / fly.prod.toml) intentionally stays on the "lax" default —
+  # changing the production backend is a separate, higher-stakes decision. See
+  # docs/superpowers/specs/2026-08-12-dev-direct-cors-auth-design.md.
+  COOKIE_SAME_SITE_MODE = "none"
   SMTP_PORT           = "587"
   INVITE_EXPIRY_HOURS = "24"
 

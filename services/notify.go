@@ -9,9 +9,17 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"stonesuite-backend/config"
 )
+
+// notifyClient bounds every call to stonesuite-notify. Without it (the old
+// http.DefaultClient) a slow or cold-starting notify service could hang a
+// user's document-send request for as long as the browser kept the
+// connection open. 30s covers notify's ~1-2s scale-to-zero cold start plus a
+// PDF-attachment upload with comfortable margin.
+var notifyClient = &http.Client{Timeout: 30 * time.Second}
 
 // RecipientTarget specifies a user to notify.
 type RecipientTarget struct {
@@ -62,22 +70,40 @@ func (a NotifyAttachment) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// NotificationResult is what the notify service reports back from a create
+// call: the id of each notification row it wrote, one per recipient. A
+// caller that needs to check async delivery status later (via notify's
+// GET /api/notifications/{id}/deliveries) persists these against its own
+// record; callers that don't just use SendNotification and ignore it.
+type NotificationResult struct {
+	NotificationIDs []string
+}
+
 // SendNotification POSTs an event to the notify service.
 func SendNotification(ctx context.Context, req NotificationRequest) error {
+	_, err := SendNotificationWithResult(ctx, req)
+	return err
+}
+
+// SendNotificationWithResult is SendNotification plus the ids of the
+// notification rows the service created, parsed from its response. A
+// response body that can't be parsed is not an error — the notifications
+// were still created — the id list just comes back empty.
+func SendNotificationWithResult(ctx context.Context, req NotificationRequest) (NotificationResult, error) {
 	cfg := config.AppConfig
 	if cfg.NotifyURL == "" || cfg.NotifyAPIKey == "" {
-		return fmt.Errorf("notify service not configured")
+		return NotificationResult{}, fmt.Errorf("notify service not configured")
 	}
 
 	payload, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("marshal notification: %w", err)
+		return NotificationResult{}, fmt.Errorf("marshal notification: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/api/notifications/internal", strings.TrimRight(cfg.NotifyURL, "/"))
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("build notify request: %w", err)
+		return NotificationResult{}, fmt.Errorf("build notify request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -88,16 +114,33 @@ func SendNotification(ctx context.Context, req NotificationRequest) error {
 	// the header name here needs to match notify's actual auth model.
 	httpReq.Header.Set("X-Internal-Secret", cfg.NotifyAPIKey)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := notifyClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("execute notify request: %w", err)
+		return NotificationResult{}, fmt.Errorf("execute notify request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("notify service returned %d: %s", resp.StatusCode, body)
+		return NotificationResult{}, fmt.Errorf("notify service returned %d: %s", resp.StatusCode, body)
 	}
 
-	return nil
+	// { "success": true, "data": { "notifications": [ { "id": "..." }, ... ] } }
+	var decoded struct {
+		Data struct {
+			Notifications []struct {
+				ID string `json:"id"`
+			} `json:"notifications"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return NotificationResult{}, nil // created OK; we just don't get ids back
+	}
+	ids := make([]string, 0, len(decoded.Data.Notifications))
+	for _, n := range decoded.Data.Notifications {
+		if n.ID != "" {
+			ids = append(ids, n.ID)
+		}
+	}
+	return NotificationResult{NotificationIDs: ids}, nil
 }

@@ -1,8 +1,31 @@
 # Direct Cross-Origin API Calls for the Azure DevOps Dev Environment
 
-**Status:** Approved, not yet implemented
+**Status:** Implemented (backend). See 2026-09 update below.
 **Date:** 2026-08-12
 **Repos affected:** `StoneSuite-Backend` (primary), `StoneSuite-WebUI`
+
+> **Update 2026-09-07.** The "Known issue: dev.stonesuite.app (not in scope)"
+> below became the reported bug: every hard refresh on `dev.stonesuite.app`
+> logged the user out. Reality had also shifted — `dev.stonesuite.app` now
+> calls `dev-stonesuite-api.fly.dev` directly (its `VITE_API_BASE_URL` is the
+> absolute URL), **not** `stonesuite-backend.fly.dev`. So the dev-only fix in
+> this doc is the right fix for `dev.stonesuite.app` too, applied to
+> `dev-stonesuite-api`:
+>
+> - `fly.dev.toml`: `COOKIE_SAME_SITE_MODE = "none"` re-added (it has
+>   `APP_ENV = "production"`, so cookies are `Secure`). `ci-backend.yml` now
+>   guards that the two stay set together instead of forbidding `none`.
+> - `middleware/csrf.go` `csrfValid` now also passes a request whose `Origin`
+>   is in `CORS_ORIGIN`, not only the `X-CSRF-Token` double-submit token. The
+>   double-submit-only check was what flapped across scale-to-zero restarts
+>   (403 `csrf_mismatch` when the `csrf_token` cookie was absent/expired,
+>   PRs #167 → #170 → #171 → #178); the `Origin` check has no cookie to lose.
+> - `csrf_token` cookie now outlives the access token (tied to the refresh
+>   window) so it can't silently expire mid-session.
+>
+> Prod (`stonesuite-backend` / `stonesuite.pages.dev`) is still untouched and
+> still on `SameSite=Lax` — see the known-issue section, which now also covers
+> `system.stonesuite.app`.
 
 ## Context
 

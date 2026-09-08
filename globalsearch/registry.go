@@ -24,7 +24,9 @@ import (
 )
 
 // Result is the common lightweight shape every provider maps its native
-// record into.
+// record into. Domain and Module are stamped centrally by the fan-out from the
+// owning Provider (mirroring controllers/dashboard_recent.go's recentRecord) --
+// a provider's own SearchFunc leaves them zero.
 type Result struct {
 	Type        string    `json:"type"`
 	ID          string    `json:"id"`
@@ -32,6 +34,8 @@ type Result struct {
 	DisplayName string    `json:"displayName"`
 	Subtitle    string    `json:"subtitle,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	Domain      string    `json:"domain"` // route segment 1: crm|sales|purchases|inventory|finance|config
+	Module      string    `json:"module"` // route segment 2: the frontend's path segment, e.g. "installation" for fabrication_job
 }
 
 // SearchFunc runs one module's own search with RBAC scope already resolved,
@@ -43,6 +47,8 @@ type SearchFunc func(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope,
 type Provider struct {
 	Key      string         // registry key: JSON group name and &modules= filter value
 	Resource authz.Resource // RBAC resource gating this group
+	Domain   string         // frontend route segment 1 (see Result.Domain)
+	Module   string         // frontend route segment 2 (see Result.Module); often == Key, but not always
 	Search   SearchFunc
 }
 

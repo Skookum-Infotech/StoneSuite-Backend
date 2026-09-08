@@ -17,7 +17,7 @@ import (
 	"stonesuite-backend/vendors"
 )
 
-var _ = addProvider(Provider{Key: "vendor", Resource: authz.ResourceVendor, Search: searchVendors})
+var _ = addProvider(Provider{Key: "vendor", Resource: authz.ResourceVendor, Domain: "purchases", Module: "vendor", Search: searchVendors})
 
 func searchVendors(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := vendors.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -31,7 +31,7 @@ func searchVendors(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, i
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "requisition", Resource: authz.ResourceRequisition, Search: searchRequisitions})
+var _ = addProvider(Provider{Key: "requisition", Resource: authz.ResourceRequisition, Domain: "purchases", Module: "requisition", Search: searchRequisitions})
 
 func searchRequisitions(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := requisition.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -49,7 +49,7 @@ func searchRequisitions(ctx context.Context, pool *pgxpool.Pool, scope authz.Sco
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "purchase_order", Resource: authz.ResourcePurchaseOrder, Search: searchPurchaseOrders})
+var _ = addProvider(Provider{Key: "purchase_order", Resource: authz.ResourcePurchaseOrder, Domain: "purchases", Module: "purchase_order", Search: searchPurchaseOrders})
 
 func searchPurchaseOrders(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := purchaseorder.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -63,7 +63,7 @@ func searchPurchaseOrders(ctx context.Context, pool *pgxpool.Pool, scope authz.S
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "item_receipt", Resource: authz.ResourceItemReceipt, Search: searchItemReceipts})
+var _ = addProvider(Provider{Key: "item_receipt", Resource: authz.ResourceItemReceipt, Domain: "purchases", Module: "item_receipt", Search: searchItemReceipts})
 
 func searchItemReceipts(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := itemreceipt.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -77,7 +77,7 @@ func searchItemReceipts(ctx context.Context, pool *pgxpool.Pool, scope authz.Sco
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "vendor_bill", Resource: authz.ResourceVendorBill, Search: searchVendorBills})
+var _ = addProvider(Provider{Key: "vendor_bill", Resource: authz.ResourceVendorBill, Domain: "purchases", Module: "vendor_bill", Search: searchVendorBills})
 
 func searchVendorBills(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := vendorbill.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -91,7 +91,7 @@ func searchVendorBills(ctx context.Context, pool *pgxpool.Pool, scope authz.Scop
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "vendor_payment", Resource: authz.ResourceVendorPayment, Search: searchVendorPayments})
+var _ = addProvider(Provider{Key: "vendor_payment", Resource: authz.ResourceVendorPayment, Domain: "purchases", Module: "vendor_payment", Search: searchVendorPayments})
 
 func searchVendorPayments(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := vendorpayment.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -105,7 +105,7 @@ func searchVendorPayments(ctx context.Context, pool *pgxpool.Pool, scope authz.S
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "vendor_credit", Resource: authz.ResourceVendorCredit, Search: searchVendorCredits})
+var _ = addProvider(Provider{Key: "vendor_credit", Resource: authz.ResourceVendorCredit, Domain: "purchases", Module: "vendor_credit", Search: searchVendorCredits})
 
 func searchVendorCredits(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := vendorcredit.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -119,7 +119,7 @@ func searchVendorCredits(ctx context.Context, pool *pgxpool.Pool, scope authz.Sc
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "expense", Resource: authz.ResourceExpense, Search: searchExpenses})
+var _ = addProvider(Provider{Key: "expense", Resource: authz.ResourceExpense, Domain: "purchases", Module: "expense", Search: searchExpenses})
 
 func searchExpenses(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := expense.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})

@@ -32,6 +32,7 @@ var chainAuth = []struct {
 	{"customerAuthRateLimiter", AuthPublicLimited},
 	{"tenantChain", AuthStaffTenant},
 	{"aiChain", AuthStaffTenant},
+	{"searchChain", AuthStaffTenant},
 }
 
 // classifyAuth reports what an endpoint requires, and which surface it belongs

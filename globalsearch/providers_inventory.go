@@ -17,7 +17,7 @@ import (
 // only (permission-gate, no "own" narrowing), so these adapters ignore the
 // scope/identityID parameters.
 
-var _ = addProvider(Provider{Key: "inventory_item", Resource: authz.ResourceInventoryItem, Search: searchInventoryItems})
+var _ = addProvider(Provider{Key: "inventory_item", Resource: authz.ResourceInventoryItem, Domain: "inventory", Module: "item", Search: searchInventoryItems})
 
 func searchInventoryItems(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
 	page, err := inventory.Search(ctx, pool, query.Request{Search: term, Limit: cap})
@@ -31,7 +31,7 @@ func searchInventoryItems(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "inventory_unit", Resource: authz.ResourceInventoryUnit, Search: searchInventoryUnits})
+var _ = addProvider(Provider{Key: "inventory_unit", Resource: authz.ResourceInventoryUnit, Domain: "inventory", Module: "unit", Search: searchInventoryUnits})
 
 func searchInventoryUnits(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
 	page, err := inventory.SearchUnits(ctx, pool, query.Request{Search: term, Limit: cap})
@@ -45,7 +45,7 @@ func searchInventoryUnits(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "inventory_adjustment", Resource: authz.ResourceInventoryAdjustment, Search: searchInventoryAdjustments})
+var _ = addProvider(Provider{Key: "inventory_adjustment", Resource: authz.ResourceInventoryAdjustment, Domain: "inventory", Module: "adjustment", Search: searchInventoryAdjustments})
 
 func searchInventoryAdjustments(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
 	page, err := inventoryadjustment.Search(ctx, pool, query.Request{Search: term, Limit: cap})
@@ -59,7 +59,7 @@ func searchInventoryAdjustments(ctx context.Context, pool *pgxpool.Pool, _ authz
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "inventory_transfer", Resource: authz.ResourceInventoryTransfer, Search: searchInventoryTransfers})
+var _ = addProvider(Provider{Key: "inventory_transfer", Resource: authz.ResourceInventoryTransfer, Domain: "inventory", Module: "transfer", Search: searchInventoryTransfers})
 
 func searchInventoryTransfers(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
 	page, err := inventorytransfer.Search(ctx, pool, query.Request{Search: term, Limit: cap})
@@ -73,7 +73,7 @@ func searchInventoryTransfers(ctx context.Context, pool *pgxpool.Pool, _ authz.S
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "inventory_count", Resource: authz.ResourceInventoryCount, Search: searchInventoryCounts})
+var _ = addProvider(Provider{Key: "inventory_count", Resource: authz.ResourceInventoryCount, Domain: "inventory", Module: "count", Search: searchInventoryCounts})
 
 func searchInventoryCounts(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
 	page, err := inventorycount.Search(ctx, pool, query.Request{Search: term, Limit: cap})

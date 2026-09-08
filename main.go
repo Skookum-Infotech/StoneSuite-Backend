@@ -400,6 +400,16 @@ func main() {
 			return middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(h)))
 		}
 
+		// Per-user global-search rate limit, beneath the generic per-tenant one:
+		// each /tenant/search request fans a leading-wildcard ILIKE out to ~28
+		// modules in parallel, far heavier than a CRUD call, so a single user's
+		// type-ahead (or a script) shouldn't get the full tenant budget. 2
+		// req/sec sustained, burst 6 — comfortably above a 300ms-debounced box.
+		searchUserRateLimiter := middleware.NewRateLimiter(shutdownCtx, 2, 6)
+		searchChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(searchUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
+		}
+
 		// ---- Customer portal ------------------------------------------------
 		//
 		// A separate route tree with its own chain. Portal tokens carry
@@ -768,7 +778,7 @@ func main() {
 		// returns results grouped by entity type. See globalsearch/ for the
 		// registry of participating modules.
 		gsOps := controllers.NewGlobalSearchOps()
-		mux.Handle("GET /api/tenant/search", tenantChain(gsOps.Search))
+		mux.Handle("GET /api/tenant/search", searchChain(gsOps.Search))
 
 		// Unified CRM: lead, prospect, customer all backed by workflow_records.
 		// Portal access is granted separately and explicitly by staff (Portal

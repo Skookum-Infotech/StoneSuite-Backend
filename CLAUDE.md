@@ -160,11 +160,20 @@ separate deployed service, `stonesuite-notify` (its own repo, shares this app's
    Approve/reject already fire from the shared engine; transition does not, so hand-port
    this call to every new module the same way as auth/scope/logging.
 3. **Set `ActorUserID` on every `services.NotificationRequest`** you build outside the
-   engine (e.g. document-send in `controllers/documents.go`) — omitting it means Notify
-   can't tell who performed the action, which breaks any "you just did this" notification
-   addressed back to the actor.
+   engine (e.g. document-send in `controllers/documents.go`, workspace invites in
+   `controllers/user.go` via `services.SendUserInviteEmailWithResult`) — omitting it means
+   Notify can't tell who performed the action, which breaks any "you just did this"
+   notification addressed back to the actor.
 4. **Don't inline notify HTTP calls into `controllers/`** — go through `services/notify.go`'s
    existing client.
+5. **A handler that sends a transactional email must surface the outcome, not swallow it.**
+   Return `"emailSent": bool` in the JSON response and log failures via `slog` (never a new
+   `log.Printf` — CI guards this in the request-path packages). Best-effort delivery is fine
+   (the invite/reset link is still returned), but a silent "sent" when Notify or its
+   downstream Resend is failing is the bug that keeps recurring. Persist the returned notify
+   ids on the domain row (`SendNotificationWithResult` + a `notify_notification_ids TEXT[]`
+   column) so a "did it actually arrive?" reconciliation is possible — `controllers/user.go`
+   `InviteUser` and `controllers/documents.go` `Send` are the reference.
 
 ### Global Search (`globalsearch/` + `GET /api/tenant/search`)
 Cross-module search fans a term out to every registered provider in parallel, each

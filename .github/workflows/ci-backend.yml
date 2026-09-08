@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so the request-path logging guard below can diff the
+          # PR branch against its merge base.
+          fetch-depth: 0
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
@@ -60,6 +64,31 @@ jobs:
               echo "COOKIE_SAME_SITE_MODE=none line. See fly.dev.toml's comment."
               exit 1
             fi
+          fi
+      # Deterministic and zero-cost. CLAUDE.md bans new log.Printf in request
+      # paths, but that only bites at review time -- and a swallowed
+      # transactional-email failure (log.Printf the error, return 200 anyway,
+      # no "emailSent" in the body) is exactly how the invite/customer email
+      # "it silently never arrived" bugs keep recurring. Fail the PR on any
+      # NEWLY ADDED log.Printf/Println/Print under controllers/, services/ or
+      # middleware/. Diff-scoped so it never fires on the ~100 pre-existing
+      # calls (same technique as .claude/hooks/check-schema.sh).
+      - name: Guard against new swallowed request-path logging
+        if: github.event_name == 'pull_request'
+        run: |
+          base="origin/${{ github.event.pull_request.base.ref }}"
+          added=$(git diff "$base...HEAD" --unified=0 \
+                    -- 'controllers/*.go' 'services/*.go' 'middleware/*.go' \
+                  | grep -E '^\+' | grep -vE '^\+\+\+' \
+                  | grep -nE '\blog\.(Printf|Println|Print)\(' || true)
+          if [ -n "$added" ]; then
+            echo "::error::New log.Printf/Println/Print in a request-path package."
+            echo "Use log/slog for a structured, alertable line. For a transactional-"
+            echo "email send, surface the outcome to the caller (\"emailSent\": bool)"
+            echo "instead of only logging the failure -- see controllers/user.go"
+            echo "InviteUser and the CLAUDE.md Notifications section."
+            echo "$added"
+            exit 1
           fi
       - name: Build
         run: go build ./...

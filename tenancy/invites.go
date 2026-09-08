@@ -142,11 +142,18 @@ type UserInvite struct {
 	ExpiresAt     time.Time
 	AcceptedAt    *time.Time
 	CreatedAt     time.Time
+	// NotifyNotificationIDs holds the stonesuite-notify notification id for
+	// each recipient of the most recent invite email send. Used to reconcile
+	// async delivery later (GET /api/notifications/{id}/deliveries). Empty for
+	// invites created before this column existed, invites whose notify response
+	// could not be parsed, or invites whose email send failed outright.
+	NotifyNotificationIDs []string
 }
 
 const userInviteColumns = `id, tenant_id, email, full_name,
 	COALESCE(initial_role_id::text,''), token, status,
-	COALESCE(invited_by::text,''), expires_at, accepted_at, created_at`
+	COALESCE(invited_by::text,''), expires_at, accepted_at, created_at,
+	notify_notification_ids`
 
 func scanUserInvite(row pgx.Row) (*UserInvite, error) {
 	var inv UserInvite
@@ -154,6 +161,7 @@ func scanUserInvite(row pgx.Row) (*UserInvite, error) {
 		&inv.ID, &inv.TenantID, &inv.Email, &inv.FullName,
 		&inv.InitialRoleID, &inv.Token, &inv.Status,
 		&inv.InvitedBy, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt,
+		&inv.NotifyNotificationIDs,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrUserInviteNotFound
@@ -247,11 +255,32 @@ func (c *ControlPlane) RevokeUserInvite(ctx context.Context, id string) error {
 	return nil
 }
 
-// RefreshUserInvite re-issues a user invite with a new token and expiry (resend path).
+// RefreshUserInvite re-issues a user invite with a new token and expiry (resend
+// path). notify_notification_ids is reset so a failed resend email does not
+// leave the previous send's ids implying the new email is trackable.
 func (c *ControlPlane) RefreshUserInvite(ctx context.Context, id, token string, expiresAt time.Time) (*UserInvite, error) {
 	q := `UPDATE user_invites
-		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL, updated_at = NOW()
+		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL,
+		    notify_notification_ids = '{}', updated_at = NOW()
 		WHERE id = $1
 		RETURNING ` + userInviteColumns
 	return scanUserInvite(c.pool.QueryRow(ctx, q, id, token, expiresAt))
+}
+
+// SetUserInviteNotifyIDs records the stonesuite-notify notification ids returned
+// for the most recent invite email send, so async delivery can be reconciled
+// later. Replaces any previous value. A nil slice is stored as an empty array.
+// Best-effort: a missing row (invite since revoked) affects zero rows and is not
+// an error.
+func (c *ControlPlane) SetUserInviteNotifyIDs(ctx context.Context, id string, ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
+	_, err := c.pool.Exec(ctx,
+		`UPDATE user_invites SET notify_notification_ids = $2, updated_at = NOW() WHERE id = $1`,
+		id, ids)
+	if err != nil {
+		return fmt.Errorf("set user invite notify ids: %w", err)
+	}
+	return nil
 }

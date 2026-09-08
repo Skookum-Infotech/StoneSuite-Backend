@@ -82,7 +82,7 @@ func SendPasswordSetupEmail(ctx context.Context, tenantID, identityID, recipient
 
 // buildUserInviteNotification builds the Notify request for a colleague
 // workspace invite email.
-func buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink string) NotificationRequest {
+func buildUserInviteNotification(tenantID, inviteID, actorUserID, recipientEmail, recipientName, workspaceName, inviteLink string) NotificationRequest {
 	subject := "You've been invited to " + workspaceName
 	body := fmt.Sprintf(`
 		<html>
@@ -102,6 +102,7 @@ func buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientNa
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
+		ActorUserID:   actorUserID,
 		EventType:     "user.invited",
 		Resource:      "user",
 		ResourceID:    inviteID,
@@ -112,9 +113,21 @@ func buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientNa
 	}
 }
 
-// SendUserInviteEmail sends an email to a colleague invited to join a tenant workspace.
-func SendUserInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink string) error {
-	return SendNotification(ctx, buildUserInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, inviteLink))
+// SendUserInviteEmailWithResult sends the colleague workspace-invite email and
+// returns the notify notification ids for later delivery reconciliation. An
+// unparseable response body is not an error (see SendNotificationWithResult) —
+// the ids just come back empty.
+func SendUserInviteEmailWithResult(ctx context.Context, tenantID, inviteID, actorUserID, recipientEmail, recipientName, workspaceName, inviteLink string) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildUserInviteNotification(
+		tenantID, inviteID, actorUserID, recipientEmail, recipientName, workspaceName, inviteLink))
+}
+
+// SendUserInviteEmail sends an email to a colleague invited to join a tenant
+// workspace. Thin wrapper over SendUserInviteEmailWithResult for callers that do
+// not need the notification ids.
+func SendUserInviteEmail(ctx context.Context, tenantID, inviteID, actorUserID, recipientEmail, recipientName, workspaceName, inviteLink string) error {
+	_, err := SendUserInviteEmailWithResult(ctx, tenantID, inviteID, actorUserID, recipientEmail, recipientName, workspaceName, inviteLink)
+	return err
 }
 
 // buildPasswordResetNotification builds the Notify request for a

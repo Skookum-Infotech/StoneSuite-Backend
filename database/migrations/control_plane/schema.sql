@@ -252,6 +252,17 @@ CREATE INDEX IF NOT EXISTS idx_user_invites_tenant ON user_invites(tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_invites_tenant_email_pending
     ON user_invites(tenant_id, LOWER(email)) WHERE status = 'pending';
 
+-- stonesuite-notify delivers the workspace-invite email asynchronously
+-- (queue + retries) and returns one notification id per recipient from
+-- POST /api/notifications/internal. Persisting those ids lets support / a
+-- reconciliation job correlate an invite back to its notify deliveries
+-- (GET /api/notifications/{id}/deliveries) and confirm the invitee actually
+-- received it -- the backend otherwise never hears the async outcome. Empty
+-- array = pre-migration rows, a send whose notify response could not be
+-- parsed, or an invite whose email send failed outright. Mirrors
+-- document_sends.notify_notification_ids (tenant schema migration 000042).
+ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
+
 -- ── async_jobs ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS async_jobs (
     id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),

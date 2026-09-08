@@ -84,12 +84,21 @@ not up front.
     `controllers/rbac_catalog_drift_test.go` asserts every mapped resource has
     all 5 CRM actions, so this is enforced for the generic router only.
 
-11. **DB-backed tests.** `<mod>/store_test.go` with `//go:build dbtest` on line
+11. **Global search provider.** `globalsearch/providers_<domain>.go` — one
+    `addProvider(Provider{Key, Resource, Domain, Module, Search})` + a `searchX`
+    adapter that calls your module's `Search(...)` with
+    `query.Request{Search: term, Limit: cap}` and maps `page.Records` → `[]Result`
+    (copy the nearest sibling in that file). Then add the key to
+    `globalsearch/registry_test.go`'s `TestRegistry_ExpectedKeys`. `Domain`/`Module`
+    are the **frontend** route segments (`/{domain}/{module}/{id}`), not always the
+    registry key. Skip only if the record has no detail page to navigate to.
+
+12. **DB-backed tests.** `<mod>/store_test.go` with `//go:build dbtest` on line
     1 **and** the `TEST_DATABASE_URL` skip guard — both layers, matching
     `payment/store_test.go`. These do not compile into `go test ./...`; CI runs
     them in the `schema-apply` job.
 
-12. **Verify.**
+13. **Verify.**
     ```bash
     go build ./... && go vet ./... && go test ./...
     ```
@@ -109,7 +118,7 @@ not up front.
     several dbtests assert on the absence of global config, so a shared
     database makes them order-dependent.
 
-13. **Review.** Run `module-drift-checker`, then `tenancy-security-reviewer`,
+14. **Review.** Run `module-drift-checker`, then `tenancy-security-reviewer`,
     then `migration-auditor` on the diff.
 
 ## Red flags (stop and fix)

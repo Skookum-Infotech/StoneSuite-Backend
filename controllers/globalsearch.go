@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"stonesuite-backend/globalsearch"
@@ -45,8 +46,14 @@ func (h *GlobalSearchOps) Search(w http.ResponseWriter, r *http.Request) {
 	if m := r.URL.Query().Get("modules"); m != "" {
 		modules = strings.Split(m, ",")
 	}
+	// limit is the per-group cap: unset for the type-ahead dropdown (defaults to
+	// globalsearch.PerGroupCap), raised by the full results page.
+	perGroup := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		perGroup, _ = strconv.Atoi(l)
+	}
 
-	resp := globalsearch.Search(r.Context(), pool, payload.ID, q, modules)
+	resp := globalsearch.Search(r.Context(), pool, payload.ID, q, modules, perGroup)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"query":   resp.Query,

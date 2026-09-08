@@ -38,3 +38,27 @@ func TestSelectProviders(t *testing.T) {
 		assert.Len(t, got, 2)
 	})
 }
+
+func TestClampCap(t *testing.T) {
+	cases := []struct{ in, want int }{
+		{0, PerGroupCap},
+		{-5, PerGroupCap},
+		{1, 1},
+		{25, 25},
+		{MaxPerGroupCap, MaxPerGroupCap},
+		{MaxPerGroupCap + 1, MaxPerGroupCap},
+		{9999, MaxPerGroupCap},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, clampCap(c.in), "clampCap(%d)", c.in)
+	}
+}
+
+// Every provider must map to a route the frontend router actually serves; a
+// blank Domain/Module means a hit that navigates nowhere.
+func TestProviders_HaveRoutingSegments(t *testing.T) {
+	for _, p := range All() {
+		assert.NotEmpty(t, p.Domain, "%s: Domain", p.Key)
+		assert.NotEmpty(t, p.Module, "%s: Module", p.Key)
+	}
+}

@@ -16,7 +16,7 @@ import (
 	"stonesuite-backend/salesorder"
 )
 
-var _ = addProvider(Provider{Key: "quote", Resource: authz.ResourceQuote, Search: searchQuotes})
+var _ = addProvider(Provider{Key: "quote", Resource: authz.ResourceQuote, Domain: "sales", Module: "quote", Search: searchQuotes})
 
 func searchQuotes(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := quote.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -30,7 +30,7 @@ func searchQuotes(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, id
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "estimate", Resource: authz.ResourceEstimate, Search: searchEstimates})
+var _ = addProvider(Provider{Key: "estimate", Resource: authz.ResourceEstimate, Domain: "sales", Module: "estimate", Search: searchEstimates})
 
 func searchEstimates(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := estimate.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -44,7 +44,7 @@ func searchEstimates(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope,
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "sales_order", Resource: authz.ResourceSalesOrder, Search: searchSalesOrders})
+var _ = addProvider(Provider{Key: "sales_order", Resource: authz.ResourceSalesOrder, Domain: "sales", Module: "sales_order", Search: searchSalesOrders})
 
 func searchSalesOrders(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := salesorder.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -58,7 +58,7 @@ func searchSalesOrders(ctx context.Context, pool *pgxpool.Pool, scope authz.Scop
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "invoice", Resource: authz.ResourceInvoice, Search: searchInvoices})
+var _ = addProvider(Provider{Key: "invoice", Resource: authz.ResourceInvoice, Domain: "sales", Module: "invoice", Search: searchInvoices})
 
 func searchInvoices(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := invoice.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -72,7 +72,7 @@ func searchInvoices(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, 
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "payment", Resource: authz.ResourcePayment, Search: searchPayments})
+var _ = addProvider(Provider{Key: "payment", Resource: authz.ResourcePayment, Domain: "sales", Module: "payment", Search: searchPayments})
 
 func searchPayments(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := payment.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -86,7 +86,7 @@ func searchPayments(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, 
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "credit_memo", Resource: authz.ResourceCreditMemo, Search: searchCreditMemos})
+var _ = addProvider(Provider{Key: "credit_memo", Resource: authz.ResourceCreditMemo, Domain: "sales", Module: "credit_memo", Search: searchCreditMemos})
 
 func searchCreditMemos(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := creditmemo.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -100,7 +100,7 @@ func searchCreditMemos(ctx context.Context, pool *pgxpool.Pool, scope authz.Scop
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "refund", Resource: authz.ResourceRefund, Search: searchRefunds})
+var _ = addProvider(Provider{Key: "refund", Resource: authz.ResourceRefund, Domain: "sales", Module: "refund", Search: searchRefunds})
 
 func searchRefunds(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := refund.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})

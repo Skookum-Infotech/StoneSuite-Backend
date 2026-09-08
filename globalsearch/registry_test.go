@@ -13,11 +13,12 @@ import (
 // shipping with no global-search coverage.
 func TestRegistry_ExpectedKeys(t *testing.T) {
 	want := []string{
-		"customer", "lead", "prospect",
+		"customer", "lead", "prospect", "crm_activity", "customer_note",
 		"quote", "estimate", "sales_order", "invoice", "payment", "credit_memo", "refund",
 		"vendor", "requisition", "purchase_order", "item_receipt", "vendor_bill", "vendor_payment", "vendor_credit", "expense",
 		"inventory_item", "inventory_unit", "inventory_adjustment", "inventory_transfer", "inventory_count",
 		"chart_of_account", "cash_transfer", "fabrication_job",
+		"user",
 	}
 
 	all := All()
@@ -33,12 +34,15 @@ func TestRegistry_ExpectedKeys(t *testing.T) {
 }
 
 // TestRegistry_NoEmptyFields catches a copy-paste registration mistake (e.g. a
-// forgotten Resource or Search func) across the ~26 near-identical entries.
+// forgotten Resource, Search func, or routing segment) across the ~26
+// near-identical entries.
 func TestRegistry_NoEmptyFields(t *testing.T) {
 	for _, p := range All() {
 		t.Run(p.Key, func(t *testing.T) {
 			assert.NotEmpty(t, p.Key)
 			assert.NotEmpty(t, p.Resource)
+			assert.NotEmpty(t, p.Domain, "Domain drives the frontend route segment")
+			assert.NotEmpty(t, p.Module, "Module drives the frontend route segment")
 			assert.NotNil(t, p.Search)
 		})
 	}

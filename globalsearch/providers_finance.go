@@ -15,7 +15,7 @@ import (
 // chartofaccounts has no owner column or scope narrowing — RBAC is
 // resource-level only, so this adapter ignores scope/identityID and passes
 // a zero-value Filters{} (no extra narrowing).
-var _ = addProvider(Provider{Key: "chart_of_account", Resource: authz.ResourceChartOfAccount, Search: searchChartOfAccounts})
+var _ = addProvider(Provider{Key: "chart_of_account", Resource: authz.ResourceChartOfAccount, Domain: "finance", Module: "chart-of-accounts", Search: searchChartOfAccounts})
 
 func searchChartOfAccounts(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
 	page, err := chartofaccounts.Search(ctx, pool, query.Request{Search: term, Limit: cap}, chartofaccounts.Filters{})
@@ -29,7 +29,10 @@ func searchChartOfAccounts(ctx context.Context, pool *pgxpool.Pool, _ authz.Scop
 	return out, page.HasMore, nil
 }
 
-var _ = addProvider(Provider{Key: "cash_transfer", Resource: authz.ResourceCashTransfer, Search: searchCashTransfers})
+// The frontend surfaces this module as "Journal Entries" (finance/journal-entries)
+// -- the backend still calls it cash_transfer. There is no separate journal-entry
+// entity: journal/ is the internal GL posting engine, not a browsable record.
+var _ = addProvider(Provider{Key: "cash_transfer", Resource: authz.ResourceCashTransfer, Domain: "finance", Module: "journal-entries", Search: searchCashTransfers})
 
 func searchCashTransfers(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := cashtransfer.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})
@@ -44,8 +47,9 @@ func searchCashTransfers(ctx context.Context, pool *pgxpool.Pool, scope authz.Sc
 }
 
 // fabrication (job) is guarded by authz.ResourceInstallation, not a
-// "fabrication" resource -- see controllers/fabrication.go.
-var _ = addProvider(Provider{Key: "fabrication_job", Resource: authz.ResourceInstallation, Search: searchFabricationJobs})
+// "fabrication" resource -- see controllers/fabrication.go -- and the frontend
+// routes it under sales/installation, so Module diverges from Key here.
+var _ = addProvider(Provider{Key: "fabrication_job", Resource: authz.ResourceInstallation, Domain: "sales", Module: "installation", Search: searchFabricationJobs})
 
 func searchFabricationJobs(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
 	page, err := fabrication.Search(ctx, pool, string(scope), identityID, query.Request{Search: term, Limit: cap})

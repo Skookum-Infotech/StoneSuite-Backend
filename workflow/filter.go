@@ -69,6 +69,32 @@ func (r recordResolver) Resolve(key string) (string, query.DataType, bool) {
 	return "", "", false
 }
 
+// searchableCoreKeys are the conventional core_fields keys global search matches
+// on a v1 JSONB record. core_fields has no schema, so this is a fixed best-effort
+// set covering the seeded CRM workflows (company/contact) and the name/title an
+// admin-defined workflow typically uses. All entries are literals -- never client
+// input -- so they are injection-safe to interpolate.
+var searchableCoreKeys = []string{
+	"customer_name", "company_name", "name", "title",
+	"customer_contact_email", "email",
+	"customer_primary_phonenum", "phone",
+}
+
+// SearchPredicate powers global search over v1 JSONB records: the record number
+// plus the conventional core-field keys above. Without this, ListRecordsFiltered
+// returns *query.InvalidFilterError (400) for any free-text term, which makes the
+// CRM groups silently vanish from global search on non-DesignV2 tenants.
+func (recordResolver) SearchPredicate(ph string) string {
+	parts := make([]string, 0, len(searchableCoreKeys)+1)
+	parts = append(parts, "COALESCE(record_number,'') ILIKE '%'||"+ph+"||'%'")
+	for _, k := range searchableCoreKeys {
+		parts = append(parts, "core_fields->>'"+k+"' ILIKE '%'||"+ph+"||'%'")
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+var _ query.SearchResolver = recordResolver{}
+
 // jsonbExpr builds a typed JSONB text-extraction expression. The key is a
 // validated identifier (custom keys pass validFieldKey at creation; core keys
 // are checked in Resolve), so interpolation here is injection-safe.

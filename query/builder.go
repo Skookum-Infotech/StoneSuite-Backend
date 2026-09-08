@@ -101,9 +101,22 @@ func Build(req Request, r FieldResolver, startIdx int) (Built, error) {
 		if !ok {
 			return Built{}, invalid("search", "search is not supported for this resource")
 		}
-		frag := sr.SearchPredicate(p.add(req.Search))
-		if frag != "" {
-			preds = append(preds, frag)
+		// Split on whitespace and require every token to match (AND); the
+		// resolver's fragment ORs across its own columns for a single token, so
+		// "acme granite" matches a row containing both words in any searched
+		// column, in any order. Each token is stripped of LIKE metacharacters
+		// (SearchPredicate fragments wildcard the bound value themselves with no
+		// ESCAPE clause -- see search.go) and bound as its own parameter, so the
+		// "filter x scope = AND" invariant still holds (each token is just one
+		// more AND-ed predicate).
+		for _, tok := range strings.Fields(req.Search) {
+			tok = StripLikeMeta(tok)
+			if tok == "" {
+				continue
+			}
+			if frag := sr.SearchPredicate(p.add(tok)); frag != "" {
+				preds = append(preds, frag)
+			}
 		}
 	}
 
@@ -257,6 +270,23 @@ func cmpOp(op Operator) string {
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
+}
+
+// StripLikeMeta drops LIKE/ILIKE wildcard metacharacters from a free-text search
+// token. Unlike escapeLike (which pairs with an `ESCAPE '\'` clause), the
+// SearchResolver fragments wildcard the bound value themselves and carry no
+// ESCAPE clause, so a stray '%' or '_' typed into the search box would act as a
+// wildcard. A search box is a loose contains-match; removing these is simpler and
+// less surprising than matching them literally. Exported so hand-rolled searches
+// that don't go through Build (e.g. userstore) get the same protection.
+func StripLikeMeta(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '%', '_', '\\':
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // sortExprFor returns the ORDER BY / keyset expression + data type for a sort

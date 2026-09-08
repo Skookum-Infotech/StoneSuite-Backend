@@ -12,8 +12,26 @@ import (
 	"stonesuite-backend/authz"
 )
 
-// PerGroupCap is the maximum number of results returned per module group.
-const PerGroupCap = 6
+// PerGroupCap is the default number of results returned per module group (the
+// type-ahead dropdown). MaxPerGroupCap bounds what the full results page may ask
+// for via the limit parameter.
+const (
+	PerGroupCap    = 6
+	MaxPerGroupCap = 50
+)
+
+// clampCap keeps a caller-supplied per-group limit in [1, MaxPerGroupCap],
+// defaulting to PerGroupCap when unset or invalid.
+func clampCap(n int) int {
+	switch {
+	case n <= 0:
+		return PerGroupCap
+	case n > MaxPerGroupCap:
+		return MaxPerGroupCap
+	default:
+		return n
+	}
+}
 
 // fanoutTimeout bounds the whole fan-out so one slow module can't hang the
 // request indefinitely; each provider's own query still respects it via ctx
@@ -40,9 +58,12 @@ type Response struct {
 // modules, if non-empty, restricts the fan-out to that allowlist of registry
 // keys (unknown keys are ignored — it's a convenience filter, not a security
 // boundary; RBAC is still enforced per-provider regardless of this list).
-func Search(ctx context.Context, pool *pgxpool.Pool, identityID, term string, modules []string) Response {
+// perGroup caps how many results each group returns; it is clamped to
+// [1, MaxPerGroupCap] and defaults to PerGroupCap when zero.
+func Search(ctx context.Context, pool *pgxpool.Pool, identityID, term string, modules []string, perGroup int) Response {
 	term = strings.TrimSpace(term)
 	providers := selectProviders(modules)
+	groupCap := clampCap(perGroup)
 
 	ctx, cancel := context.WithTimeout(ctx, fanoutTimeout)
 	defer cancel()
@@ -61,10 +82,17 @@ func Search(ctx context.Context, pool *pgxpool.Pool, identityID, term string, mo
 			if err != nil || !decision.Allowed {
 				return // no permission => omit the group (not a security event; see globalsearch/search.go doc)
 			}
-			results, hasMore, err := p.Search(ctx, pool, decision.Scope, identityID, term, PerGroupCap)
+			results, hasMore, err := p.Search(ctx, pool, decision.Scope, identityID, term, groupCap)
 			if err != nil {
 				slog.Warn("global search provider failed", "module", p.Key, "error", err)
 				return
+			}
+			// Stamp routing centrally so each SearchFunc stays unconcerned with
+			// where the frontend renders its detail page (mirrors
+			// controllers/dashboard_recent.go's fetchAllRecent).
+			for i := range results {
+				results[i].Domain = p.Domain
+				results[i].Module = p.Module
 			}
 			mu.Lock()
 			out.Groups[p.Key] = Group{Results: results, HasMore: hasMore}

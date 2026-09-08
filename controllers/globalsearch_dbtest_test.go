@@ -150,4 +150,57 @@ func TestGlobalSearchOps_Search_DB(t *testing.T) {
 		require.Contains(t, resp.Groups, "customer", "customer group must appear now that its SearchPredicate is fixed")
 		assert.NotEmpty(t, resp.Groups["customer"].Results, "the customer/lead/prospect search fix must surface matching customers end-to-end")
 	})
+
+	t.Run("every result carries frontend routing segments", func(t *testing.T) {
+		identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
+		roleID := seedRBACTestRole(t, pool, "gs-routing", authz.Grant{Resource: authz.ResourceQuote, Action: authz.ActionRead, Scope: authz.ScopeAll})
+		require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleID))
+
+		rec := doSearch(t, identity.ID, term)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Groups map[string]struct {
+				Results []struct {
+					Domain string `json:"domain"`
+					Module string `json:"module"`
+				} `json:"results"`
+			} `json:"groups"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.NotEmpty(t, resp.Groups["quote"].Results)
+		for _, r := range resp.Groups["quote"].Results {
+			assert.Equal(t, "sales", r.Domain)
+			assert.Equal(t, "quote", r.Module)
+		}
+	})
+
+	t.Run("limit param caps each group and reports hasMore", func(t *testing.T) {
+		// a second matching quote so the quote group has >1 result
+		q2 := quote.CreateQuoteInput{CustomerUUID: custUUID}
+		q2.Items = []quote.LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
+		_, err := quote.Create(context.Background(), pool, q2, 1)
+		require.NoError(t, err)
+
+		identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
+		roleID := seedRBACTestRole(t, pool, "gs-limit", authz.Grant{Resource: authz.ResourceQuote, Action: authz.ActionRead, Scope: authz.ScopeAll})
+		require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleID))
+
+		req := httptest.NewRequest(http.MethodGet, "/api/tenant/search?q="+term+"&limit=1", nil)
+		payload := middleware.UserContextPayload{ID: identity.ID, TenantID: tenant.ID}
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
+		rec := httptest.NewRecorder()
+		resolver.Middleware(http.HandlerFunc(gsOps.Search)).ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Groups map[string]struct {
+				Results []json.RawMessage `json:"results"`
+				HasMore bool              `json:"hasMore"`
+			} `json:"groups"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Len(t, resp.Groups["quote"].Results, 1, "limit=1 caps the group")
+		assert.True(t, resp.Groups["quote"].HasMore, "hasMore true when more than the cap matched")
+	})
 }

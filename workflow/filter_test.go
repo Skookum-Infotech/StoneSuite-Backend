@@ -45,6 +45,27 @@ func TestRecordResolver(t *testing.T) {
 	}
 }
 
+func TestRecordResolver_SearchPredicate(t *testing.T) {
+	frag := recordResolver{}.SearchPredicate("$3")
+	// record number + every conventional core key, all bound to the same $3,
+	// OR-ed together inside one parenthesised group.
+	assert.True(t, strings.HasPrefix(frag, "(") && strings.HasSuffix(frag, ")"))
+	assert.Contains(t, frag, "COALESCE(record_number,'') ILIKE '%'||$3||'%'")
+	assert.Contains(t, frag, "core_fields->>'customer_name' ILIKE '%'||$3||'%'")
+	assert.Contains(t, frag, "core_fields->>'title' ILIKE '%'||$3||'%'")
+	assert.NotContains(t, frag, " AND ") // columns OR within a token
+}
+
+func TestBuildRecordQuery_SearchComposesWithScope(t *testing.T) {
+	req := query.Request{Search: "acme"}
+	sql, args, _, err := buildRecordQuery("wf-1", "own", "user-7", testDefs(), req)
+	require.NoError(t, err)
+	assert.Contains(t, sql, "owner_user_id = $2")                               // scope still first
+	assert.Contains(t, sql, "core_fields->>'customer_name' ILIKE '%'||$3||'%'") // search after scope
+	assert.Contains(t, sql, " AND (")                                           // search group ANDed onto scope
+	assert.Equal(t, []any{"wf-1", "user-7", "acme"}, args)
+}
+
 func TestBuildRecordQuery_ScopeComposition(t *testing.T) {
 	req := query.Request{Filters: []query.Clause{{Field: "cf:budget", Op: query.OpGte, Value: float64(100)}}}
 

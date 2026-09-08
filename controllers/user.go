@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -216,8 +217,18 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := userInviteLink(token)
-	if err := services.SendUserInviteEmail(r.Context(), tenant.ID, invite.ID, req.Email, req.FullName, tenant.DisplayName, link); err != nil {
-		log.Printf("user invite email to %s failed (invite still valid): %v", req.Email, err)
+	notifyResult, emailErr := services.SendUserInviteEmailWithResult(
+		r.Context(), tenant.ID, invite.ID, payload.UserID,
+		req.Email, req.FullName, tenant.DisplayName, link,
+	)
+	if emailErr != nil {
+		slog.WarnContext(r.Context(), "user invite email failed (invite still valid)",
+			"invite_id", invite.ID, "email", req.Email, "error", emailErr)
+	} else if len(notifyResult.NotificationIDs) > 0 {
+		if err := h.CP.SetUserInviteNotifyIDs(r.Context(), invite.ID, notifyResult.NotificationIDs); err != nil {
+			slog.WarnContext(r.Context(), "user invite: persist notify ids failed (non-fatal)",
+				"invite_id", invite.ID, "error", err)
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -225,6 +236,7 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 		"message":    "Invitation sent.",
 		"inviteId":   invite.ID,
 		"inviteLink": link, // returned for dev/debug; omit in production UI
+		"emailSent":  emailErr == nil,
 	})
 }
 
@@ -448,7 +460,6 @@ func (h *UserOps) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = payload
 	tenant, err := tenancy.TenantFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
@@ -495,14 +506,25 @@ func (h *UserOps) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := userInviteLink(token)
-	if err := services.SendUserInviteEmail(r.Context(), tenant.ID, refreshed.ID, refreshed.Email, refreshed.FullName, tenant.DisplayName, link); err != nil {
-		log.Printf("resend user invite email to %s failed (link still valid): %v", refreshed.Email, err)
+	notifyResult, emailErr := services.SendUserInviteEmailWithResult(
+		r.Context(), tenant.ID, refreshed.ID, payload.UserID,
+		refreshed.Email, refreshed.FullName, tenant.DisplayName, link,
+	)
+	if emailErr != nil {
+		slog.WarnContext(r.Context(), "resend user invite email failed (link still valid)",
+			"invite_id", refreshed.ID, "email", refreshed.Email, "error", emailErr)
+	} else if len(notifyResult.NotificationIDs) > 0 {
+		if err := h.CP.SetUserInviteNotifyIDs(r.Context(), refreshed.ID, notifyResult.NotificationIDs); err != nil {
+			slog.WarnContext(r.Context(), "resend user invite: persist notify ids failed (non-fatal)",
+				"invite_id", refreshed.ID, "error", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
 		"message":    "Invitation resent.",
 		"inviteLink": link,
+		"emailSent":  emailErr == nil,
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"log"
 	"log/slog"
 	"net/http"
@@ -650,18 +651,21 @@ func notifyCustomerWelcome(
 }
 
 // welcomeEmailHTML is the branded welcome message sent to a new customer's
-// contact — mirrors documents.go's documentEmailHTML (same logo, same
-// minimal inline styling for broad email-client support).
+// contact — mirrors documents.go's documentEmailHTML: goes through
+// services.WrapEmailHTML for a well-formed document, and HTML-escapes the
+// caller-supplied names.
 func welcomeEmailHTML(tenantName, customerName string) string {
 	greeting := "Hello,"
 	if customerName != "" {
-		greeting = "Hello " + customerName + ","
+		greeting = "Hello " + html.EscapeString(customerName) + ","
 	}
-	return `<html><body style="font-family:Arial,sans-serif;color:#333;">` +
-		`<img src="` + frontendBase() + `/logo-dark.png" alt="Logo" style="height:40px;margin-bottom:16px;" />` +
-		`<p>` + greeting + `</p>` +
-		`<p>Welcome to ` + tenantName + `! We're glad to have you as a customer.</p>` +
-		`<p>Regards,<br>` + tenantName + `</p></body></html>`
+	name := html.EscapeString(tenantName)
+	return services.WrapEmailHTML(
+		"Welcome to "+tenantName+".",
+		`<p style="margin:0 0 14px;">`+greeting+`</p>`+
+			`<p style="margin:0 0 14px;">Welcome to `+name+`! We're glad to have you as a customer.</p>`+
+			`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>`+name+`</p>`,
+	)
 }
 
 // ---- approval ---------------------------------------------------------------

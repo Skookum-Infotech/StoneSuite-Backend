@@ -103,10 +103,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmp
 		return nil, fmt.Errorf("insert fabrication job: %w", err)
 	}
 
-	number := FormatNumber(int64(jobInternalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE fabrication_job SET fabrication_job_number = $1 WHERE fabrication_job_id = $2`, number, jobInternalID); err != nil {
-		return nil, fmt.Errorf("set job number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(jobInternalID)); err != nil {
+		return nil, err
 	}
 
 	pieceIDs, err := insertPieces(ctx, tx, jobInternalID, soInternalID, in.Pieces, actorEmployeeID)

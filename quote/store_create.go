@@ -247,10 +247,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 		return nil, fmt.Errorf("insert quote: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE quote SET quote_number = $1 WHERE quote_id = $2`, number, internalID); err != nil {
-		return nil, fmt.Errorf("set quote number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, err
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

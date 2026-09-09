@@ -200,9 +200,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 		return nil, fmt.Errorf("insert invoice: %w", err)
 	}
 
-	number := FormatNumber(int64(newID))
-	if _, err := tx.Exec(ctx, `UPDATE invoice SET invoice_number = $1 WHERE invoice_id = $2`, number, newID); err != nil {
-		return nil, fmt.Errorf("set invoice number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(newID)); err != nil {
+		return nil, err
 	}
 
 	for i, rl := range resolved {

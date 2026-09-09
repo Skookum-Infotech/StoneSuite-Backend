@@ -130,6 +130,27 @@ function around a hunk before flagging — never flag on a fragment.
    the estimate/quote seeds historically omitted `inventory_item_unit_id`.
    **MEDIUM**.
 
+8. **Record numbering goes through the shared helper.** Every place a module
+   sets its `<mod>_number` column (`store_create.go`, and `store_convert.go` when
+   the module converts from another) must call `assignNumber(ctx, tx, int64(id))`
+   — never a bare `FormatNumber(...)` + `UPDATE <mod> SET <mod>_number = $1`.
+   The bare path silently ignores the tenant's **Configure → Record Numbering**
+   config; it was the bug (fixed 2026‑09) that forced this wiring into all 16
+   document modules. `numbering.go` must declare
+   `numberTarget = workflow.NumberTarget{WorkflowKey, UpdateSQL, Fallback: FormatNumber}`
+   and `assignNumber` (map `workflow.IsNumberConfigError` → the module's
+   `ClientError`). `WorkflowKey` must be the module's `workflows.key` from the
+   schema seed (`sales_order`, `credit_memo`, `installation` for fabrication —
+   not the Go package name). **HIGH** — a `grep -n "FormatNumber(int64" <mod>/`
+   hit outside `numbering.go` is the tell.
+
+   **Baseline:** all 16 (`quote`, `estimate`, `sales_order`, `invoice`,
+   `payment`, `credit_memo`, `refund`, `fabrication`, `purchase_order`,
+   `requisition`, `vendor_bill`, `vendor_payment`, `vendor_credit`, `expense`,
+   `item_receipt`, `vendor`) are wired. `journal`, `cash_transfer`, and the three
+   `inventory_*` modules have no `workflows` row, are absent from the Record
+   Numbering UI, and keep their serial format — not drift.
+
 ## Not your rules (do not flag)
 
 - `Approve` enforcing `authz.ActionTransition` rather than `ActionApprove`.

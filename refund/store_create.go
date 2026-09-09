@@ -188,9 +188,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 		return nil, fmt.Errorf("insert refund: %w", err)
 	}
 
-	number := FormatNumber(int64(newID))
-	if _, err := tx.Exec(ctx, `UPDATE refund SET refund_number = $1 WHERE refund_id = $2`, number, newID); err != nil {
-		return nil, fmt.Errorf("set refund number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(newID)); err != nil {
+		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `

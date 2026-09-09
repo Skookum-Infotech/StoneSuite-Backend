@@ -111,9 +111,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 		return nil, fmt.Errorf("insert payment: %w", err)
 	}
 
-	number := FormatNumber(int64(newID))
-	if _, err := tx.Exec(ctx, `UPDATE payment SET payment_number = $1 WHERE payment_id = $2`, number, newID); err != nil {
-		return nil, fmt.Errorf("set payment number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(newID)); err != nil {
+		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `

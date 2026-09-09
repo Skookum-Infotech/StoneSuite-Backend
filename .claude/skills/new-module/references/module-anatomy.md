@@ -8,7 +8,7 @@ Compare against `estimate/` or `payment/`. Roles:
 |---|---|---|
 | `types.go` | Wire DTOs: `CreateXInput`, `UpdateXInput`, shared `xFields` embed, `Line`, `X` response, `Page` | yes |
 | `calc.go` (`money.go` in payment) | `ComputeLine`, `ComputeHeader` — money math | **yes** |
-| `numbering.go` | `numberPrefix` const + `FormatNumber(serialID)` → `QUOT-000001` | **yes** |
+| `numbering.go` | `numberPrefix` const + `FormatNumber(serialID)` → `QUOT-000001` (pure, tested); `numberTarget` (`workflow.NumberTarget`) + `assignNumber(ctx, tx, serialID)` wiring the module into Configure → Record Numbering | mixed |
 | `transitions.go` | static `allowedTransitions` map, `CanTransition`, `ValidateTransition`, `ErrInvalidTransition` | **yes** |
 | `resolver.go` | `filterFields` / `sortFields` whitelists for the `query` engine, custom-field escape hatch, global-search SQL | **yes** |
 | `approval.go` | AD-8 gate: `approverCount`, `signOffCount`, `ErrNotApprover`, `ErrApprovalRequired`, `ErrApprovalNotRequired` | mixed |

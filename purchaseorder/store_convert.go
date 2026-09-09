@@ -251,10 +251,8 @@ func ConvertFromRequisition(ctx context.Context, pool *pgxpool.Pool, requisition
 		return nil, false, fmt.Errorf("insert converted purchase order: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE purchase_order SET purchase_order_number = $1 WHERE purchase_order_id = $2`, number, internalID); err != nil {
-		return nil, false, fmt.Errorf("set purchase order number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, false, err
 	}
 
 	lineMap, err := insertConvertedLines(ctx, tx, internalID, lines, src.salesTaxPercent, actorEmployeeID)

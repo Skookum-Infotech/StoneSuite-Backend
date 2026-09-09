@@ -239,10 +239,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateEstimateInput, act
 		return nil, fmt.Errorf("insert estimate: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE estimate SET estimate_number = $1 WHERE estimate_id = $2`, number, internalID); err != nil {
-		return nil, fmt.Errorf("set estimate number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, err
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

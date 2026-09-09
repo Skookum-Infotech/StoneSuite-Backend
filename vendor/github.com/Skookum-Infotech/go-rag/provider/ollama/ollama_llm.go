@@ -36,7 +36,12 @@ func NewLLMClient(baseURL, model string) *LLMClient {
 	return &LLMClient{
 		baseURL:    baseURL,
 		model:      model,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		// 100s, not 60s: on the CPU-only iad box, prefill alone runs at
+		// ~20-25 tok/s, so a full 800+ token context (system prompt + top-K
+		// retrieved chunks + question) can burn 30-40s before generation even
+		// starts. At 60s a legitimately-in-progress answer was hard-failing
+		// with a cancelled request instead of finishing a few seconds later.
+		httpClient: &http.Client{Timeout: 100 * time.Second},
 	}
 }
 

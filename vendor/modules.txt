@@ -1,4 +1,4 @@
-# github.com/Skookum-Infotech/go-rag v0.0.0-20260905224801-b36aa31334bd
+# github.com/Skookum-Infotech/go-rag v0.0.0-20260909021210-b0963552102d
 ## explicit; go 1.25.0
 github.com/Skookum-Infotech/go-rag/chunk
 github.com/Skookum-Infotech/go-rag/eval

@@ -218,9 +218,15 @@ jobs:
         with:
           go-version: '1.25.13'
           cache-dependency-path: go.sum
+      # Pinned, not @latest: x/vuln v1.8.0 bumped its own go directive to
+      # go1.26.0, which this CI's pinned go1.25.13 (see top-of-file comment)
+      # can't build -- govulncheck failed on every PR with an install error,
+      # not a real vulnerability. v1.7.0 is the last release that only
+      # requires go1.25.0. Bump this deliberately alongside the pinned Go
+      # version above, not automatically.
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           govulncheck ./...
 
   gitleaks:

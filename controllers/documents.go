@@ -190,6 +190,9 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileName := workflow.SanitizeFileName(meta.Number + ".pdf")
+	// actorUserID (tenant users.id) is for the document_sends row and the
+	// tenant audit log below. Notify, by contrast, scopes by the control-plane
+	// identity id — so identityID is what goes on the notification requests.
 	actorUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
 
 	// 2. Email with the PDF attached, via Notify — gets the same
@@ -198,7 +201,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	// notification ids are stored on the send row (step 3) so the async
 	// delivery outcome can be looked back up from notify later.
 	notifyResult, err := services.SendNotificationWithResult(r.Context(),
-		customerSendRequest(tenant.ID, actorUserID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
+		customerSendRequest(tenant.ID, identityID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
 	)
 	if err != nil {
 		fail(w, http.StatusBadGateway, "Failed to send email.")
@@ -219,8 +222,9 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	_ = workflow.LogAudit(r.Context(), pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
 
-	notifyOwnerOfSend(r.Context(), services.SendNotification, ownerEmail(r.Context(), pool, ownerUserID),
-		tenant.ID, ownerUserID, actorUserID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
+	ownerAddr, ownerIdentityID := ownerSendContact(r.Context(), pool, ownerUserID)
+	notifyOwnerOfSend(r.Context(), services.SendNotification, ownerAddr,
+		tenant.ID, ownerIdentityID, identityID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "sendId": sendID, "sentTo": to,
@@ -233,7 +237,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 // audit entry, individually addressed rather than sharing a To/Cc header),
 // sharing the same branded HTML body and PDF attachment.
 func customerSendRequest(
-	tenantID, actorUserID string, meta DocMeta, recordID, subject string,
+	tenantID, actorIdentityID string, meta DocMeta, recordID, subject string,
 	doc docpdf.PrintableDoc, message string, to, cc []string, fileName string, pdf []byte,
 ) services.NotificationRequest {
 	recipients := make([]services.RecipientTarget, 0, len(to)+len(cc))
@@ -243,7 +247,7 @@ func customerSendRequest(
 	return services.NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    recipients,
-		ActorUserID:   actorUserID,
+		ActorUserID:   actorIdentityID,
 		EventType:     "document.sent",
 		Resource:      meta.WorkflowKey,
 		ResourceID:    recordID,
@@ -327,46 +331,48 @@ func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
 	)
 }
 
-// ownerEmail best-effort-looks-up the record owner's email for the owner
-// ping below — Notify never resolves an email from a bare userId (it owns
-// no user directory; see services/notify.go), so the caller must supply one
-// alongside the userId for the email channel to have anywhere to send.
-// Lookup failure is logged and swallowed, same as the ping itself: the
-// in-app bell notification still works without an email, since Notify's
-// UserID-scoped preference resolution doesn't depend on it.
-func ownerEmail(ctx context.Context, pool *pgxpool.Pool, ownerUserID string) string {
+// ownerSendContact best-effort-resolves the record owner's email address and
+// control-plane identity id for the owner ping below. Notify never resolves an
+// email from a bare id (it owns no user directory; see services/notify.go), so
+// the caller must supply the address; and it scopes the in-app bell row by the
+// identity id the JWT carries, never the tenant-local users.id (see
+// approvalchain/notify.go's contact type — a row keyed by users.id is one the
+// bell can never find). Lookup failure is logged and swallowed, same as the
+// ping itself. An empty identity id ⇒ notifyOwnerOfSend no-ops.
+func ownerSendContact(ctx context.Context, pool *pgxpool.Pool, ownerUserID string) (email, identityID string) {
 	if ownerUserID == "" {
-		return ""
+		return "", ""
 	}
 	u, err := userstore.GetUserByID(ctx, pool, ownerUserID)
 	if err != nil {
-		slog.WarnContext(ctx, "documents: load owner email for send notification failed",
+		slog.WarnContext(ctx, "documents: load owner contact for send notification failed",
 			"owner_user_id", ownerUserID, "error", err)
-		return ""
+		return "", ""
 	}
-	return u.Email
+	return u.Email, u.IdentityID
 }
 
 // notifyOwnerOfSend best-effort-notifies the record's internal owner that
 // the document was sent, with the same PDF the customer received attached.
-// notify is injected (defaults to services.SendNotification) so tests don't
-// need a live notify service. A failure here is logged and swallowed —
-// the document has already been sent and recorded by the time this runs,
-// and a Notify outage must never undo that.
+// ownerIdentityID and actorIdentityID are control-plane identity ids (the id
+// Notify scopes by), not tenant users.ids. notify is injected (defaults to
+// services.SendNotification) so tests don't need a live notify service. A
+// failure here is logged and swallowed — the document has already been sent
+// and recorded by the time this runs, and a Notify outage must never undo that.
 func notifyOwnerOfSend(
 	ctx context.Context,
 	notify func(context.Context, services.NotificationRequest) error,
-	ownerUserEmail, tenantID, ownerUserID, actorUserID string,
+	ownerUserEmail, tenantID, ownerIdentityID, actorIdentityID string,
 	doc docpdf.PrintableDoc, number, workflowKey, recordID string,
 	sentTo []string, pdf []byte, fileName string,
 ) {
-	if ownerUserID == "" {
+	if ownerIdentityID == "" {
 		return
 	}
 	err := notify(ctx, services.NotificationRequest{
 		TenantID:    tenantID,
-		Recipients:  []services.RecipientTarget{{UserID: ownerUserID, Email: ownerUserEmail}},
-		ActorUserID: actorUserID,
+		Recipients:  []services.RecipientTarget{{UserID: ownerIdentityID, Email: ownerUserEmail}},
+		ActorUserID: actorIdentityID,
 		EventType:   "document.sent",
 		Resource:    workflowKey,
 		ResourceID:  recordID,

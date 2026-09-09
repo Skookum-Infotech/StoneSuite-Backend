@@ -35,7 +35,7 @@ func notifyTestPool(t *testing.T) *pgxpool.Pool {
 // are exercised against real SQL, not a mock. credit_memo is picked over
 // invoice/payment/refund only because its header has the fewest required
 // columns to seed by hand.
-func seedCreditMemoWithOwner(t *testing.T, pool *pgxpool.Pool) (internalID int, recordTypeID, draftStatusID int, uuid, number, ownerUserID, ownerEmail string) {
+func seedCreditMemoWithOwner(t *testing.T, pool *pgxpool.Pool) (internalID int, recordTypeID, draftStatusID int, uuid, number, ownerUserID, ownerIdentityID, ownerEmail string) {
 	t.Helper()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -51,11 +51,11 @@ func seedCreditMemoWithOwner(t *testing.T, pool *pgxpool.Pool) (internalID int, 
 	}
 
 	ownerEmail = "notify-owner-" + suffix + "@example.test"
-	var ownerUserIDVal string
+	var ownerUserIDVal, ownerIdentityIDVal string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO users (identity_id, email, full_name, status)
-		VALUES (gen_random_uuid(), $1, 'Notify Test Owner', 'active') RETURNING id`,
-		ownerEmail).Scan(&ownerUserIDVal); err != nil {
+		VALUES (gen_random_uuid(), $1, 'Notify Test Owner', 'active') RETURNING id, identity_id`,
+		ownerEmail).Scan(&ownerUserIDVal, &ownerIdentityIDVal); err != nil {
 		t.Fatalf("seed owner user: %v", err)
 	}
 	var ownerEmployeeID int
@@ -89,21 +89,21 @@ func seedCreditMemoWithOwner(t *testing.T, pool *pgxpool.Pool) (internalID int, 
 		recordTypeID, draftStatusID, custID, number, ownerEmployeeID).Scan(&internalID, &uuid); err != nil {
 		t.Fatalf("seed credit memo: %v", err)
 	}
-	return internalID, recordTypeID, draftStatusID, uuid, number, ownerUserIDVal, ownerEmail
+	return internalID, recordTypeID, draftStatusID, uuid, number, ownerUserIDVal, ownerIdentityIDVal, ownerEmail
 }
 
 // seedActorEmployee inserts a real user-linked employee, standing in for
 // whoever's actorEmployeeID gets passed into a module's Create() -- the
 // recipient NotifyCreated/actorContact resolves.
-func seedActorEmployee(t *testing.T, pool *pgxpool.Pool) (employeeID int, userID, email string) {
+func seedActorEmployee(t *testing.T, pool *pgxpool.Pool) (employeeID int, userID, identityID, email string) {
 	t.Helper()
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	email = "notify-actor-" + suffix + "@example.test"
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO users (identity_id, email, full_name, status)
-		VALUES (gen_random_uuid(), $1, 'Notify Test Actor', 'active') RETURNING id`,
-		email).Scan(&userID); err != nil {
+		VALUES (gen_random_uuid(), $1, 'Notify Test Actor', 'active') RETURNING id, identity_id`,
+		email).Scan(&userID, &identityID); err != nil {
 		t.Fatalf("seed actor user: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
@@ -112,12 +112,12 @@ func seedActorEmployee(t *testing.T, pool *pgxpool.Pool) (employeeID int, userID
 		userID, email).Scan(&employeeID); err != nil {
 		t.Fatalf("seed actor employee: %v", err)
 	}
-	return employeeID, userID, email
+	return employeeID, userID, identityID, email
 }
 
 func TestActorContact_ResolvesRealActor(t *testing.T) {
 	pool := notifyTestPool(t)
-	employeeID, userID, email := seedActorEmployee(t, pool)
+	employeeID, _, identityID, email := seedActorEmployee(t, pool)
 
 	c, ok, err := actorContact(context.Background(), pool, employeeID)
 	if err != nil {
@@ -126,8 +126,10 @@ func TestActorContact_ResolvesRealActor(t *testing.T) {
 	if !ok {
 		t.Fatal("actorContact ok = false, want true")
 	}
-	if c.UserID != userID || c.Email != email {
-		t.Errorf("actorContact = %+v, want {UserID:%s Email:%s}", c, userID, email)
+	// contact.UserID is the control-plane identity id (what stonesuite-notify
+	// scopes the bell by), not the tenant users.id.
+	if c.UserID != identityID || c.Email != email {
+		t.Errorf("actorContact = %+v, want {UserID:%s Email:%s}", c, identityID, email)
 	}
 }
 
@@ -157,7 +159,7 @@ func TestActorContact_UnresolvableEmployeeID(t *testing.T) {
 
 func TestFetchNumber(t *testing.T) {
 	pool := notifyTestPool(t)
-	internalID, _, _, _, number, _, _ := seedCreditMemoWithOwner(t, pool)
+	internalID, _, _, _, number, _, _, _ := seedCreditMemoWithOwner(t, pool)
 
 	got, err := fetchNumber(context.Background(), pool, "credit_memo", "credit_memo_id", "credit_memo_number", internalID)
 	if err != nil {
@@ -170,7 +172,7 @@ func TestFetchNumber(t *testing.T) {
 
 func TestOwnerContact_ResolvesRealOwner(t *testing.T) {
 	pool := notifyTestPool(t)
-	internalID, _, _, _, _, ownerUserID, ownerEmail := seedCreditMemoWithOwner(t, pool)
+	internalID, _, _, _, _, _, ownerIdentityID, ownerEmail := seedCreditMemoWithOwner(t, pool)
 
 	c, ok, err := ownerContact(context.Background(), pool, "credit_memo", "credit_memo_id", "credit_memo_owner_id", internalID)
 	if err != nil {
@@ -179,8 +181,9 @@ func TestOwnerContact_ResolvesRealOwner(t *testing.T) {
 	if !ok {
 		t.Fatal("ownerContact ok = false, want true")
 	}
-	if c.UserID != ownerUserID || c.Email != ownerEmail {
-		t.Errorf("ownerContact = %+v, want {UserID:%s Email:%s}", c, ownerUserID, ownerEmail)
+	// contact.UserID is the owner's control-plane identity id, not users.id.
+	if c.UserID != ownerIdentityID || c.Email != ownerEmail {
+		t.Errorf("ownerContact = %+v, want {UserID:%s Email:%s}", c, ownerIdentityID, ownerEmail)
 	}
 }
 
@@ -233,7 +236,7 @@ func TestOwnerContact_NoOwnerSet(t *testing.T) {
 func TestApproverContacts_RequestedThenRemaining(t *testing.T) {
 	pool := notifyTestPool(t)
 	ctx := context.Background()
-	internalID, recordTypeID, draftStatusID, _, _, _, _ := seedCreditMemoWithOwner(t, pool)
+	internalID, recordTypeID, draftStatusID, _, _, _, _, _ := seedCreditMemoWithOwner(t, pool)
 	cfg, _ := ForWorkflowKey("credit_memo")
 	empIDStr := seedEmployeeWithUser(t, pool)
 

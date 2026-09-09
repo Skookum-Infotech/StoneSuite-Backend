@@ -94,12 +94,20 @@ func (h *UserOps) ListUsers(w http.ResponseWriter, r *http.Request) {
 // Edge cases handled:
 //   - Caller cannot invite their own email.
 //   - Email already a workspace member → 409.
-//   - Pending (non-expired) invite already exists for email → 409.
-//   - Expired invite for same email → superseded (new invite created).
+//   - Pending (still valid) invite already exists for email → 409.
+//   - Pending invite exists but has expired → superseded: the stale invite is
+//     revoked and a fresh one is created and emailed (201). Revoke-then-create
+//     rather than RefreshUserInvite so the new request's fullName/initialRoleId
+//     take effect; the old row stays visible as 'revoked'.
+//   - A concurrent invite wins the user_invites partial unique index race → 409.
 //   - Email already registered to another tenant → 409.
 //   - initialRoleId supplied but does not exist → 400.
 //   - initialRoleId supplied without role:update permission → 403.
 //   - initialRoleId names a system role → 403.
+//
+// Each guard's own lookup distinguishes "not found" (continue) from a genuine
+// database error (500) — a swallowed error here previously surfaced as the
+// misleading "Failed to create invitation.".
 func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	payload, ok := h.authorizeUser(w, r, authz.ActionCreate)
 	if !ok {
@@ -139,25 +147,59 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Guard: email already a workspace member.
-	if _, err := userstore.GetUserByEmail(r.Context(), pool, req.Email); err == nil {
-		fail(w, http.StatusConflict, "A user with this email already belongs to this workspace.")
+	switch _, err := userstore.GetUserByEmail(r.Context(), pool, req.Email); {
+	case err == nil:
+		fail(w, http.StatusConflict, "This email address is already a member of this workspace.")
+		return
+	case errors.Is(err, userstore.ErrUserNotFound):
+		// Not a member — continue.
+	default:
+		slog.ErrorContext(r.Context(), "invite: workspace-member check failed",
+			"email", req.Email, "error", err)
+		fail(w, http.StatusInternalServerError,
+			"Couldn't verify whether this email is already a member. Please try again.")
 		return
 	}
 
 	// Guard: email already registered in another tenant's CP identity.
-	if existingIdentity, err := h.CP.IdentityByEmail(r.Context(), req.Email); err == nil {
+	existingIdentity, err := h.CP.IdentityByEmail(r.Context(), req.Email)
+	switch {
+	case err == nil:
 		if existingIdentity.TenantID != tenant.ID {
 			fail(w, http.StatusConflict, "This email address is already registered to another workspace.")
 			return
 		}
 		// Same tenant + identity but no user row → rare edge case (partial provisioning).
 		// Allow invite to continue; accept-invite will find the existing identity.
+	case errors.Is(err, tenancy.ErrIdentityNotFound):
+		// No identity anywhere — continue.
+	default:
+		slog.ErrorContext(r.Context(), "invite: identity lookup failed",
+			"email", req.Email, "error", err)
+		fail(w, http.StatusInternalServerError,
+			"Couldn't verify this email address. Please try again.")
+		return
 	}
 
-	// Guard: active pending invite already exists for this email.
-	existing, err := h.CP.PendingUserInviteByEmail(r.Context(), tenant.ID, req.Email)
-	if err == nil && existing != nil && time.Now().Before(existing.ExpiresAt) {
-		fail(w, http.StatusConflict, "A pending invitation for this email already exists. Use resend to refresh it.")
+	// Guard: a pending invite already exists for this email. A still-valid one
+	// blocks the re-invite (the admin should resend it instead); an expired one
+	// is superseded below, once every remaining check has passed.
+	var supersedeInviteID string
+	existingInvite, err := h.CP.PendingUserInviteByEmail(r.Context(), tenant.ID, req.Email)
+	switch {
+	case err == nil && time.Now().Before(existingInvite.ExpiresAt):
+		fail(w, http.StatusConflict, "This email already has a pending invitation. "+
+			"Use Resend from the Invites list to send it again.")
+		return
+	case err == nil:
+		supersedeInviteID = existingInvite.ID
+	case errors.Is(err, tenancy.ErrUserInviteNotFound):
+		// No pending invite — normal create path.
+	default:
+		slog.ErrorContext(r.Context(), "invite: pending-invite lookup failed",
+			"email", req.Email, "error", err)
+		fail(w, http.StatusInternalServerError,
+			"Couldn't check for an existing invitation. Please try again.")
 		return
 	}
 
@@ -205,6 +247,20 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Supersede an expired invite: revoking it clears the row out of the
+	// user_invites partial unique index (which covers status = 'pending' only),
+	// so the fresh insert below can succeed.
+	if supersedeInviteID != "" {
+		if err := h.CP.RevokeUserInvite(r.Context(), supersedeInviteID); err != nil &&
+			!errors.Is(err, tenancy.ErrUserInviteNotFound) {
+			slog.ErrorContext(r.Context(), "invite: superseding expired invite failed",
+				"invite_id", supersedeInviteID, "error", err)
+			fail(w, http.StatusInternalServerError,
+				"Couldn't replace the expired invitation. Please try again.")
+			return
+		}
+	}
+
 	invite, err := h.CP.CreateUserInvite(
 		r.Context(),
 		tenant.ID, req.Email, req.FullName, req.InitialRoleID,
@@ -212,6 +268,13 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 		time.Now().Add(userInviteExpiry),
 	)
 	if err != nil {
+		// A concurrent invite for the same email won the partial unique index race.
+		if isUniqueViolation(err) {
+			fail(w, http.StatusConflict, "This email already has a pending invitation.")
+			return
+		}
+		slog.ErrorContext(r.Context(), "invite: create user invite failed",
+			"email", req.Email, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to create invitation.")
 		return
 	}

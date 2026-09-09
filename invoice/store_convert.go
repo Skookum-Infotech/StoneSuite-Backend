@@ -307,9 +307,8 @@ func ConvertFromSalesOrder(ctx context.Context, pool *pgxpool.Pool, salesOrderUU
 		return nil, false, fmt.Errorf("insert converted invoice: %w", err)
 	}
 
-	number := FormatNumber(int64(newID))
-	if _, err := tx.Exec(ctx, `UPDATE invoice SET invoice_number = $1 WHERE invoice_id = $2`, number, newID); err != nil {
-		return nil, false, fmt.Errorf("set invoice number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(newID)); err != nil {
+		return nil, false, err
 	}
 
 	if err := insertConvertedLines(ctx, tx, newID, lines, actorEmployeeID); err != nil {

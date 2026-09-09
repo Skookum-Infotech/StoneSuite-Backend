@@ -163,10 +163,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 		return nil, fmt.Errorf("insert expense: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE expense SET expense_number = $1 WHERE expense_id = $2`, number, internalID); err != nil {
-		return nil, fmt.Errorf("set expense number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, err
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

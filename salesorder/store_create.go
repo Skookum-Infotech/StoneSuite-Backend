@@ -130,10 +130,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 		return nil, fmt.Errorf("insert sales order: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE sales_order SET sales_order_number = $1 WHERE sales_order_id = $2`, number, internalID); err != nil {
-		return nil, fmt.Errorf("set sales order number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, err
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

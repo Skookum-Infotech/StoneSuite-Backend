@@ -236,10 +236,8 @@ func ConvertFromPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poUUID st
 		return nil, fmt.Errorf("insert converted vendor bill: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE vendor_bill SET vendor_bill_number = $1 WHERE vendor_bill_id = $2`, number, internalID); err != nil {
-		return nil, fmt.Errorf("set vendor bill number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, err
 	}
 
 	lineMap, lineMoneys, err := insertConvertedLines(ctx, tx, internalID, lines, actorEmployeeID)

@@ -242,12 +242,12 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 		}
 	}
 
-	// The document number is derived from the serial PK, so it can only be set
-	// after the insert returns it. There is no sequence table.
-	number := FormatNumber(int64(newID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE credit_memo SET credit_memo_number = $1 WHERE credit_memo_id = $2`, number, newID); err != nil {
-		return nil, fmt.Errorf("set credit memo number: %w", err)
+	// The document number can only be assigned after the insert returns the
+	// serial PK (the FormatNumber fallback needs it, and there is no sequence
+	// table). assignNumber honors the "credit_memo" Record Numbering config
+	// when one is enabled.
+	if _, err := assignNumber(ctx, tx, int64(newID)); err != nil {
+		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `

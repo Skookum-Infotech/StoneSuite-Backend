@@ -280,10 +280,8 @@ func ConvertFromEstimate(ctx context.Context, pool *pgxpool.Pool, estimateUUID s
 		return nil, false, fmt.Errorf("insert converted quote: %w", err)
 	}
 
-	number := FormatNumber(int64(internalID))
-	if _, err := tx.Exec(ctx,
-		`UPDATE quote SET quote_number = $1 WHERE quote_id = $2`, number, internalID); err != nil {
-		return nil, false, fmt.Errorf("set quote number: %w", err)
+	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
+		return nil, false, err
 	}
 
 	if err := insertConvertedLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

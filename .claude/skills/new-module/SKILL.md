@@ -52,6 +52,14 @@ not up front.
    that is this repo's convention for pure functions):
    `calc.go` / `money.go`, `numbering.go`, `transitions.go`, `resolver.go`.
    These need no database and are the cheapest place to be correct.
+   `numbering.go` also carries the Record Numbering wiring: a
+   `numberTarget = workflow.NumberTarget{WorkflowKey, UpdateSQL, Fallback: FormatNumber}`
+   var and a thin `assignNumber(ctx, tx, serialID)` helper that calls
+   `workflow.AssignRecordNumber` and maps `workflow.ErrNumberCollision` →
+   `ClientError{Msg: workflow.NumberCollisionMessage}`. Copy `quote/numbering.go`.
+   `WorkflowKey` is the module's `workflows.key` (from the schema seed — e.g.
+   `sales_order`, `credit_memo`, `installation` for fabrication), **not** the Go
+   package name.
 
 4. **Types.** `types.go` — `CreateXInput`, `UpdateXInput`, a shared `xFields`
    embed, `Line`, the `X` response, `Page`.
@@ -63,6 +71,12 @@ not up front.
    after the fact is far more work than starting that way. The repo cap is 300
    lines per file; `vendors/store.go` (579) and `quote/store.go` (433) are the
    current counter-examples, not the model.
+   The `<mod>_number` column is assigned post-insert (the serial PK is only
+   known then). In `store_create.go` **and** `store_convert.go`, right after the
+   header INSERT, call `assignNumber(ctx, tx, int64(internalID))` and return its
+   error — do **not** hand-roll `FormatNumber` + an `UPDATE <mod> SET
+   <mod>_number` (that path silently ignores the tenant's Record Numbering
+   config; it was the bug that forced this wiring across every module).
 
 6. **Approval.** `approval.go` — mirror `estimate/approval.go` (AD-8).
 

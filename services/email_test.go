@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -163,8 +164,39 @@ func TestTransactionalEmailBuilders_ContractHolds(t *testing.T) {
 			require.Len(t, req.Recipients, 1, "transactional emails go to exactly one address")
 			assert.NotEmpty(t, req.Recipients[0].Email, "email channel needs a recipient address")
 			assert.Empty(t, req.Recipients[0].UserID, "external recipients are addressed by email, not user id")
+
+			// Deliverability guards (see services/email_layout.go): the body
+			// must be a complete HTML document, and a tokenized link must
+			// never appear as visible body text — a raw "?token=" URL printed
+			// next to "set your password" is the phishing pattern Gmail was
+			// spam-foldering these on.
+			assert.Contains(t, req.EmailBodyHTML, "<!DOCTYPE html>", "body must be a well-formed document, not a bare fragment")
+			assert.NotContains(t, req.EmailBodyHTML, "<p>https://", "a raw URL as visible body text is the signal this guards against")
+			assert.NotContains(t, req.EmailBodyHTML, "copy and paste this link", "the raw-URL fallback line was removed")
 		})
 	}
+}
+
+func TestWrapEmailHTML_WellFormedAndEscapesPreheader(t *testing.T) {
+	out := WrapEmailHTML(`Acme <b>& Co</b>`, `<p>Hi there</p>`)
+
+	assert.True(t, strings.HasPrefix(out, "<!DOCTYPE html>"), "must open with the doctype")
+	assert.Contains(t, out, `<meta charset="utf-8">`)
+	assert.Contains(t, out, "<p>Hi there</p>", "inner content is nested verbatim")
+	// The preheader is developer/tenant text dropped into markup — it must be
+	// escaped, never rendered as tags.
+	assert.Contains(t, out, "Acme &lt;b&gt;&amp; Co&lt;/b&gt;")
+	assert.NotContains(t, out, "Acme <b>& Co</b>")
+}
+
+func TestEmailCTA_LinkOnlyInHref(t *testing.T) {
+	const link = "https://app.example/accept-invite?token=secret"
+	out := emailCTA(link, "Accept invitation")
+
+	assert.Contains(t, out, `href="`+link+`"`, "the destination lives in the anchor href")
+	assert.NotContains(t, out, ">"+link+"<", "and never as visible link text")
+	assert.Contains(t, out, "Accept invitation")
+	assert.Contains(t, out, "Use this link instead", "keeps a button-less fallback")
 }
 
 func TestSendUserInviteEmailWithResult_ParsesIDsAndSetsActor(t *testing.T) {

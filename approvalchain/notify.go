@@ -29,7 +29,11 @@ type EventContext struct {
 }
 
 // contact is one resolved notification recipient: a StoneSuite user reached
-// via their employee record.
+// via their employee record. UserID is the control-plane identity id
+// (users.identity_id), NOT the tenant-local users.id -- stonesuite-notify
+// scopes every bell/feed query by the JWT's "id" claim, which is the identity
+// id (see stonesuite-notify middleware/auth.go and generateTenantJWT), so a
+// recipient keyed by users.id would create a row the bell can never find.
 type contact struct {
 	UserID string
 	Email  string
@@ -201,10 +205,11 @@ func sendApprovalNotification(ctx context.Context, tenantID, resource, eventType
 
 // activeApproverContacts resolves every active approver configured on
 // approverTable at (recordTypeID, statusID) into notifiable contacts.
-// Mirrors GetInfo's own approver join, plus u.email.
+// Mirrors GetInfo's own approver join, but selects u.identity_id (the id
+// stonesuite-notify scopes by, see the contact type) plus u.email.
 func activeApproverContacts(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID int) ([]contact, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`
-		SELECT u.id, u.email
+		SELECT u.identity_id, u.email
 		FROM %s ea
 		JOIN employee e ON e.employee_id = ea.approver_employee_id
 		JOIN users u ON u.id = e.employee_user_id
@@ -221,7 +226,7 @@ func activeApproverContacts(ctx context.Context, q workflow.Querier, approverTab
 // statusID) who have not yet signed off on internalID's current round.
 func remainingApproverContacts(ctx context.Context, q workflow.Querier, approverTable, approvalTable, idColumn string, recordTypeID, statusID, internalID int) ([]contact, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`
-		SELECT u.id, u.email
+		SELECT u.identity_id, u.email
 		FROM %s ea
 		JOIN employee e ON e.employee_id = ea.approver_employee_id
 		JOIN users u ON u.id = e.employee_user_id
@@ -259,7 +264,7 @@ func scanContacts(rows pgx.Rows) ([]contact, error) {
 func ownerContact(ctx context.Context, q workflow.Querier, table, idColumn, ownerColumn string, internalID int) (contact, bool, error) {
 	var c contact
 	err := q.QueryRow(ctx, fmt.Sprintf(`
-		SELECT u.id, u.email
+		SELECT u.identity_id, u.email
 		FROM %s t
 		JOIN employee e ON e.employee_id = t.%s
 		JOIN users u ON u.id = e.employee_user_id
@@ -284,7 +289,7 @@ func actorContact(ctx context.Context, q workflow.Querier, actorEmployeeID int) 
 	}
 	var c contact
 	err := q.QueryRow(ctx, `
-		SELECT u.id, u.email
+		SELECT u.identity_id, u.email
 		FROM employee e
 		JOIN users u ON u.id = e.employee_user_id
 		WHERE e.employee_id = $1`, actorEmployeeID).Scan(&c.UserID, &c.Email)
@@ -308,16 +313,22 @@ func fetchNumber(ctx context.Context, q workflow.Querier, table, idColumn, numbe
 }
 
 // resolveActorUserID best-effort-resolves an approval actor's employee id to
-// their StoneSuite user id -- "" if unresolvable (e.g. actorEmployeeID is 0,
-// or has no linked user), which just omits ActorUserID from the
-// notification rather than failing it.
+// their control-plane identity id (the value stonesuite-notify stores as a
+// notification's actor_user_id -- consistent with recipient ids, see the
+// contact type) -- "" if unresolvable (e.g. actorEmployeeID is 0, or has no
+// linked user), which just omits ActorUserID from the notification rather
+// than failing it.
 func resolveActorUserID(ctx context.Context, q workflow.Querier, actorEmployeeID int) string {
 	if actorEmployeeID == 0 {
 		return ""
 	}
-	var userID string
-	if err := q.QueryRow(ctx, `SELECT employee_user_id FROM employee WHERE employee_id = $1`, actorEmployeeID).Scan(&userID); err != nil {
+	var identityID string
+	if err := q.QueryRow(ctx, `
+		SELECT u.identity_id
+		FROM employee e
+		JOIN users u ON u.id = e.employee_user_id
+		WHERE e.employee_id = $1`, actorEmployeeID).Scan(&identityID); err != nil {
 		return ""
 	}
-	return userID
+	return identityID
 }

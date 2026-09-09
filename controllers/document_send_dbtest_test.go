@@ -4,11 +4,13 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,8 +151,27 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 	// Send() now emails the customer copy via the Notify service
 	// (services.SendNotification), not a direct Resend/SMTP call -- stub it
 	// out the same way services/notify_test.go does, since CI runs this
-	// dbtest without a live Notify service.
+	// dbtest without a live Notify service. Capture each request body so the
+	// test can assert the recipient/actor ids are control-plane identity ids,
+	// never the tenant users.id (a bell row keyed by users.id is one
+	// stonesuite-notify can never find).
+	type capturedNotify struct {
+		ActorUserID string `json:"actorUserId"`
+		Recipients  []struct {
+			UserID string `json:"userId"`
+			Email  string `json:"email"`
+		} `json:"recipients"`
+	}
+	var (
+		notifyMu       sync.Mutex
+		notifyRequests []capturedNotify
+	)
 	notifyStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body capturedNotify
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		notifyMu.Lock()
+		notifyRequests = append(notifyRequests, body)
+		notifyMu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"notif-abc"}]}}`))
 	}))
@@ -179,4 +200,21 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 	assert.Empty(t, sends[0].AttachmentID, "no attachment is persisted; the PDF is emailed directly")
 	assert.Equal(t, []string{"notif-abc"}, sends[0].NotifyNotificationIDs,
 		"notify's returned notification ids are persisted for later delivery-status lookup")
+
+	notifyMu.Lock()
+	defer notifyMu.Unlock()
+	require.NotEmpty(t, notifyRequests, "Send must call the notify service")
+	assert.Equal(t, identityID, notifyRequests[0].ActorUserID,
+		"the customer-copy notification's actor must be the control-plane identity id, not the tenant users.id")
+	for _, nr := range notifyRequests {
+		assert.NotEqual(t, usr.ID, nr.ActorUserID, "actor id must not be the tenant users.id")
+		for _, rcpt := range nr.Recipients {
+			assert.NotEqual(t, usr.ID, rcpt.UserID,
+				"a recipient keyed by users.id is a bell row stonesuite-notify can never find")
+			if rcpt.UserID != "" {
+				assert.Equal(t, identityID, rcpt.UserID,
+					"the owner-ping recipient must be the owner's control-plane identity id")
+			}
+		}
+	}
 }

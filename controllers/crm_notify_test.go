@@ -11,11 +11,12 @@ import (
 	"stonesuite-backend/workflow"
 )
 
-func TestWelcomeEmailHTML_IncludesLogoAndGreeting(t *testing.T) {
-	html := welcomeEmailHTML("Acme Stone Co", "Bob Buyer")
-	assert.Contains(t, html, "/logo-dark.png")
-	assert.Contains(t, html, "Hello Bob Buyer,")
-	assert.Contains(t, html, "Welcome to Acme Stone Co!")
+func TestWelcomeEmailHTML_WellFormedWithGreeting(t *testing.T) {
+	body := welcomeEmailHTML("Acme Stone Co", "Bob Buyer")
+	assert.Contains(t, body, "<!DOCTYPE html>")
+	assert.NotContains(t, body, "logo-dark.png", "the remote tracking image was dropped for deliverability")
+	assert.Contains(t, body, "Hello Bob Buyer,")
+	assert.Contains(t, body, "Welcome to Acme Stone Co!")
 }
 
 func TestWelcomeEmailHTML_NoCustomerName_UsesGenericGreeting(t *testing.T) {

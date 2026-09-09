@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -308,16 +309,22 @@ func hasHeaderInjection(s string) bool {
 }
 
 // documentEmailHTML is the transactional email body wrapping an optional
-// sender message.
+// sender message. It goes through services.WrapEmailHTML for a well-formed
+// document (DOCTYPE/head/charset) — a bare fragment plus the old remote logo
+// <img> (broken for most recipients, and a tracking signal) both hurt inbox
+// placement. The sender message and seller name are HTML-escaped: they are
+// free text, not markup.
 func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
 	msg := "Please find your " + strings.ToLower(d.Kind) + " " + d.Number + " attached."
 	if message != "" {
 		msg = message
 	}
-	return `<html><body style="font-family:Arial,sans-serif;color:#333;">` +
-		`<img src="` + frontendBase() + `/logo-dark.png" alt="Logo" style="height:40px;margin-bottom:16px;" />` +
-		`<p>` + msg + `</p>` +
-		`<p>Regards,<br>` + d.Seller.Name + `</p></body></html>`
+	seller := html.EscapeString(d.Seller.Name)
+	return services.WrapEmailHTML(
+		d.Kind+" "+d.Number+" from "+d.Seller.Name,
+		`<p style="margin:0 0 14px;">`+html.EscapeString(msg)+`</p>`+
+			`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>`+seller+`</p>`,
+	)
 }
 
 // ownerEmail best-effort-looks-up the record owner's email for the owner

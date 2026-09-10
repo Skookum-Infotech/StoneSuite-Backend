@@ -993,7 +993,7 @@ func main() {
 		// Sales Order: dedicated relational module (header + line items), a
 		// sibling of the CRM customer table — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.
-		so := controllers.NewSalesOrderOps()
+		so := controllers.NewSalesOrderOps(cp)
 		mux.Handle("GET /api/tenant/sales-orders", tenantChain(so.List))
 		mux.Handle("POST /api/tenant/sales-orders/search", tenantChain(so.Search))
 		mux.Handle("POST /api/tenant/sales-orders", tenantChain(so.Create))

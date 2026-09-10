@@ -1223,7 +1223,7 @@ func main() {
 		mux.Handle("GET /api/tenant/expenses/{uuid}/audit", tenantChain(expOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
-		invOps := controllers.NewInvoiceOps()
+		invOps := controllers.NewInvoiceOps(cp)
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))
 		mux.Handle("POST /api/tenant/invoices/search", tenantChain(invOps.Search))
 		mux.Handle("POST /api/tenant/invoices", tenantChain(invOps.Create))

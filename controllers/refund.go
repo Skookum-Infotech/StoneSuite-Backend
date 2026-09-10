@@ -18,9 +18,11 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
-type RefundOps struct{}
+type RefundOps struct {
+	cp *tenancy.ControlPlane
+}
 
-func NewRefundOps() *RefundOps { return &RefundOps{} }
+func NewRefundOps(cp *tenancy.ControlPlane) *RefundOps { return &RefundOps{cp: cp} }
 
 func (h *RefundOps) authRefund(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
@@ -273,6 +275,9 @@ func (h *RefundOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRefund(r, pool, empID, "approve", uuid, nil, rf)
+	if rf.StatusCode == "APPV" {
+		notifyCustomerApproved(r.Context(), h.cp, identityID, rf.Customer.ID, "refund", "Refund", rf.Number, uuid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})
 }
 

@@ -1279,7 +1279,7 @@ func main() {
 		// unapplied balance via the refund_application ledger, which feeds the
 		// refund-owned payment_refunded_total / credit_memo_refunded_total
 		// rollups (spec docs/superpowers/specs/2026-07-16-refund-module-design.md).
-		rfndOps := controllers.NewRefundOps()
+		rfndOps := controllers.NewRefundOps(cp)
 		mux.Handle("GET /api/tenant/refunds", tenantChain(rfndOps.List))
 		mux.Handle("POST /api/tenant/refunds/search", tenantChain(rfndOps.Search))
 		mux.Handle("POST /api/tenant/refunds", tenantChain(rfndOps.Create))

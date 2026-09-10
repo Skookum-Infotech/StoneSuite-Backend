@@ -275,7 +275,7 @@ func (h *RefundOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRefund(r, pool, empID, "approve", uuid, nil, rf)
-	if rf.StatusCode == "APPV" {
+	if approvalFinalized(rf.StatusCode) {
 		notifyCustomerApproved(r.Context(), h.cp, identityID, rf.Customer.ID, "refund", "Refund", rf.Number, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})

@@ -177,7 +177,7 @@ func (h *InvoiceOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditInvoice(r, pool, empID, "approve", uuid, nil, inv)
-	if inv.StatusCode == "APPV" {
+	if approvalFinalized(inv.StatusCode) {
 		notifyCustomerApproved(r.Context(), h.cp, identityID, inv.Customer.ID, "invoice", "Invoice", inv.Number, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})

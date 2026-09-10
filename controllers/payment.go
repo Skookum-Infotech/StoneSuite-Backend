@@ -228,7 +228,7 @@ func (h *PaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditPayment(r, pool, empID, "approve", uuid, nil, p)
-	if p.StatusCode == "APPV" {
+	if approvalFinalized(p.StatusCode) {
 		notifyCustomerApproved(r.Context(), h.cp, identityID, p.Customer.ID, "payment", "Payment", p.Number, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})

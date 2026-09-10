@@ -69,3 +69,9 @@ func notifyCustomerApproved(ctx context.Context, cp *tenancy.ControlPlane, actor
 		slog.ErrorContext(ctx, "customer notify: send notification failed", "resource", resource, "recordId", recordUUID, "error", err)
 	}
 }
+
+// approvalFinalized reports whether statusCode is the terminal "approved"
+// status that triggers a customer notification.
+func approvalFinalized(statusCode string) bool {
+	return statusCode == approvalTargetStatus
+}

@@ -96,7 +96,7 @@ func TestPaymentApproveFinalizeCondition(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.statusCode == "APPV"
+			got := approvalFinalized(tc.statusCode)
 			if got != tc.wantNotify {
 				t.Errorf("statusCode %q: got notify=%v, want %v", tc.statusCode, got, tc.wantNotify)
 			}

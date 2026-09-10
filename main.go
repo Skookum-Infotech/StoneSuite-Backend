@@ -1238,7 +1238,7 @@ func main() {
 		// Payment: dedicated v2 relational module, sibling of invoice. Its
 		// payment_application ledger is now the source of truth for invoice AR
 		// balances (spec docs/superpowers/specs/2026-07-13-payments-module-design.md).
-		payOps := controllers.NewPaymentOps()
+		payOps := controllers.NewPaymentOps(cp)
 		mux.Handle("GET /api/tenant/payments", tenantChain(payOps.List))
 		mux.Handle("POST /api/tenant/payments/search", tenantChain(payOps.Search))
 		mux.Handle("POST /api/tenant/payments", tenantChain(payOps.Create))

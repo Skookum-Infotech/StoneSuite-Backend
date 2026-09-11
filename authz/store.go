@@ -77,7 +77,14 @@ func invalidateGrants(q Querier) {
 // UI filter. ctx without a request context (e.g. background jobs) behaves as
 // before: all assigned roles apply.
 func EffectiveGrants(ctx context.Context, q Querier, identityID string) ([]Grant, error) {
-	activeRoleID := activeRoleFromContext(ctx)
+	return EffectiveGrantsForRole(ctx, q, identityID, activeRoleFromContext(ctx))
+}
+
+// EffectiveGrantsForRole is EffectiveGrants but takes activeRoleID directly
+// instead of reading it from ctx's request payload — for callers minting a
+// token for a role switch that hasn't been persisted into context yet (see
+// controllers.SwitchRole).
+func EffectiveGrantsForRole(ctx context.Context, q Querier, identityID, activeRoleID string) ([]Grant, error) {
 	if pool, ok := q.(*pgxpool.Pool); ok {
 		key := grantsCacheKey{pool: pool, identityID: identityID, activeRoleID: activeRoleID}
 		if g, ok := grantsCache.Get(key); ok {

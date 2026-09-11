@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"stonesuite-backend/config"
 )
 
@@ -50,7 +52,20 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = time.Hour
 	}
-	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", d)
+	// Best-effort pool resolution for accessible_resources, same shape
+	// tenantDisplayName below uses — tolerant of any failure since this is
+	// enrichment, not the identity/session trust check (already done by ACS
+	// before this login code was minted).
+	var pool *pgxpool.Pool
+	if identity.TenantID != "" {
+		if tenant, tErr := h.cp.TenantByID(ctx, identity.TenantID); tErr == nil && tenant.Servable() {
+			if p, pErr := h.router.PoolFor(ctx, tenant); pErr == nil {
+				pool = p
+			}
+		}
+	}
+	accessibleResources := resolveAccessibleResources(ctx, pool, identity.ID, "")
+	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", accessibleResources, d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return

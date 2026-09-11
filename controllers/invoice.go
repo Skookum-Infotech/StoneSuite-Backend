@@ -17,9 +17,11 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
-type InvoiceOps struct{}
+type InvoiceOps struct {
+	cp *tenancy.ControlPlane
+}
 
-func NewInvoiceOps() *InvoiceOps { return &InvoiceOps{} }
+func NewInvoiceOps(cp *tenancy.ControlPlane) *InvoiceOps { return &InvoiceOps{cp: cp} }
 
 func (h *InvoiceOps) authInvoice(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
@@ -175,6 +177,9 @@ func (h *InvoiceOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditInvoice(r, pool, empID, "approve", uuid, nil, inv)
+	if approvalFinalized(inv.StatusCode) {
+		notifyCustomerApproved(r.Context(), h.cp, identityID, inv.Customer.ID, "invoice", "Invoice", inv.Number, uuid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})
 }
 

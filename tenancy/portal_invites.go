@@ -97,6 +97,21 @@ func (c *ControlPlane) PendingPortalInviteByEmail(ctx context.Context, tenantID,
 	return scanPortalInvite(c.pool.QueryRow(ctx, q, tenantID, email))
 }
 
+// PortalInviteForCustomer returns the most recently accepted portal invite
+// linking customerUUID (a tenant-DB customer.customer_uuid) to a
+// control-plane identity, or ErrPortalInviteNotFound if this customer has no
+// accepted portal invite in this tenant. The caller must additionally check
+// PortalLinkActive before treating the result as currently notifiable --
+// revoking access updates identity_tenants.status, not portal_invites.status,
+// so a revoked customer's invite still shows as "accepted" here.
+func (c *ControlPlane) PortalInviteForCustomer(ctx context.Context, tenantID, customerUUID string) (*PortalInvite, error) {
+	q := `SELECT ` + portalInviteColumns + `
+		FROM portal_invites
+		WHERE tenant_id = $1 AND customer_uuid = $2 AND status = 'accepted'
+		ORDER BY accepted_at DESC LIMIT 1`
+	return scanPortalInvite(c.pool.QueryRow(ctx, q, tenantID, customerUUID))
+}
+
 // LatestPortalInviteForIdentity returns the most recent invite for an identity
 // in a workspace, whatever its status.
 //

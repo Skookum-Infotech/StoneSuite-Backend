@@ -32,10 +32,12 @@ import (
 //	POST   /api/tenant/sales-orders/{uuid}/convert       — convert to an Invoice
 //	GET    /api/tenant/sales-orders/{uuid}/inventory     — inventory tab
 //	GET    /api/tenant/sales-orders/{uuid}/audit         — audit trail
-type SalesOrderOps struct{}
+type SalesOrderOps struct {
+	cp *tenancy.ControlPlane
+}
 
 // NewSalesOrderOps constructs the handler group.
-func NewSalesOrderOps() *SalesOrderOps { return &SalesOrderOps{} }
+func NewSalesOrderOps(cp *tenancy.ControlPlane) *SalesOrderOps { return &SalesOrderOps{cp: cp} }
 
 // authSO resolves JWT + tenant pool + the sales_order:<action> RBAC grant for
 // requests with no specific record yet (list/search/create).
@@ -297,6 +299,9 @@ func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditSO(r, pool, identityID, "approve", uuid, nil, order)
+	if approvalFinalized(order.StatusCode) {
+		notifyCustomerApproved(r.Context(), h.cp, identityID, order.Customer.ID, "sales_order", "Sales Order", order.Number, uuid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
 }
 

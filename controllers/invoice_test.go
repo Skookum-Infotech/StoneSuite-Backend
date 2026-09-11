@@ -14,7 +14,7 @@ import (
 )
 
 func TestInvoiceOps_RequiresAuth(t *testing.T) {
-	h := NewInvoiceOps()
+	h := NewInvoiceOps(nil)
 	handlers := map[string]http.HandlerFunc{
 		"Create":        h.Create,
 		"Get":           h.Get,

@@ -14,7 +14,7 @@ import (
 )
 
 func TestPaymentOps_RequiresAuth(t *testing.T) {
-	h := NewPaymentOps()
+	h := NewPaymentOps(nil)
 	handlers := map[string]http.HandlerFunc{
 		"Create":     h.Create,
 		"Get":        h.Get,
@@ -39,7 +39,7 @@ func TestPaymentOps_RequiresAuth(t *testing.T) {
 }
 
 func TestPaymentOps_Apply_RequiresInvoiceUuidAndAmount(t *testing.T) {
-	h := NewPaymentOps()
+	h := NewPaymentOps(nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/tenant/payments/x/apply", strings.NewReader(`{}`))
 	req.SetPathValue("uuid", "does-not-matter")
 	rr := httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestPaymentOps_Apply_RequiresInvoiceUuidAndAmount(t *testing.T) {
 }
 
 func TestPaymentOps_Create_RequiresAuthEvenWithInlineApplications(t *testing.T) {
-	h := NewPaymentOps()
+	h := NewPaymentOps(nil)
 	body := `{"customerUuid":"does-not-matter","methodId":1,"amount":100,
 		"applications":[{"invoiceUuid":"victim-invoice","amount":100}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/tenant/payments", strings.NewReader(body))
@@ -81,6 +81,25 @@ func TestPaymentFail_MapsStoreErrorsToHTTPStatus(t *testing.T) {
 			rr := httptest.NewRecorder()
 			paymentFail(rr, tt.err, "server error")
 			assert.Equal(t, tt.wantStatus, rr.Code)
+		})
+	}
+}
+
+func TestPaymentApproveFinalizeCondition(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode string
+		wantNotify bool
+	}{
+		{"still gated after a partial sign-off", "PEND", false},
+		{"finalized this call", "APPV", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := approvalFinalized(tc.statusCode)
+			if got != tc.wantNotify {
+				t.Errorf("statusCode %q: got notify=%v, want %v", tc.statusCode, got, tc.wantNotify)
+			}
 		})
 	}
 }

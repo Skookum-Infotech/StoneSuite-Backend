@@ -17,9 +17,11 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
-type PaymentOps struct{}
+type PaymentOps struct {
+	cp *tenancy.ControlPlane
+}
 
-func NewPaymentOps() *PaymentOps { return &PaymentOps{} }
+func NewPaymentOps(cp *tenancy.ControlPlane) *PaymentOps { return &PaymentOps{cp: cp} }
 
 func (h *PaymentOps) authPayment(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
@@ -226,6 +228,9 @@ func (h *PaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditPayment(r, pool, empID, "approve", uuid, nil, p)
+	if approvalFinalized(p.StatusCode) {
+		notifyCustomerApproved(r.Context(), h.cp, identityID, p.Customer.ID, "payment", "Payment", p.Number, uuid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }
 

@@ -993,7 +993,7 @@ func main() {
 		// Sales Order: dedicated relational module (header + line items), a
 		// sibling of the CRM customer table — not served through the generic
 		// /api/tenant/crm/{workflowKey} JSONB router.
-		so := controllers.NewSalesOrderOps()
+		so := controllers.NewSalesOrderOps(cp)
 		mux.Handle("GET /api/tenant/sales-orders", tenantChain(so.List))
 		mux.Handle("POST /api/tenant/sales-orders/search", tenantChain(so.Search))
 		mux.Handle("POST /api/tenant/sales-orders", tenantChain(so.Create))
@@ -1223,7 +1223,7 @@ func main() {
 		mux.Handle("GET /api/tenant/expenses/{uuid}/audit", tenantChain(expOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.
-		invOps := controllers.NewInvoiceOps()
+		invOps := controllers.NewInvoiceOps(cp)
 		mux.Handle("GET /api/tenant/invoices", tenantChain(invOps.List))
 		mux.Handle("POST /api/tenant/invoices/search", tenantChain(invOps.Search))
 		mux.Handle("POST /api/tenant/invoices", tenantChain(invOps.Create))
@@ -1238,7 +1238,7 @@ func main() {
 		// Payment: dedicated v2 relational module, sibling of invoice. Its
 		// payment_application ledger is now the source of truth for invoice AR
 		// balances (spec docs/superpowers/specs/2026-07-13-payments-module-design.md).
-		payOps := controllers.NewPaymentOps()
+		payOps := controllers.NewPaymentOps(cp)
 		mux.Handle("GET /api/tenant/payments", tenantChain(payOps.List))
 		mux.Handle("POST /api/tenant/payments/search", tenantChain(payOps.Search))
 		mux.Handle("POST /api/tenant/payments", tenantChain(payOps.Create))
@@ -1279,7 +1279,7 @@ func main() {
 		// unapplied balance via the refund_application ledger, which feeds the
 		// refund-owned payment_refunded_total / credit_memo_refunded_total
 		// rollups (spec docs/superpowers/specs/2026-07-16-refund-module-design.md).
-		rfndOps := controllers.NewRefundOps()
+		rfndOps := controllers.NewRefundOps(cp)
 		mux.Handle("GET /api/tenant/refunds", tenantChain(rfndOps.List))
 		mux.Handle("POST /api/tenant/refunds/search", tenantChain(rfndOps.Search))
 		mux.Handle("POST /api/tenant/refunds", tenantChain(rfndOps.Create))

@@ -1066,8 +1066,19 @@ func (h *TenantOps) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // RefreshSession issues a new access + refresh token pair given a valid refresh
-// token cookie. The old refresh token is revoked (rotation). Path: POST /api/auth/refresh
+// token cookie. The old refresh token is revoked (rotation). An optional
+// JSON body {"activeRoleId": "..."} lets the caller re-assert an active-role
+// selection across the refresh -- see the activeRoleID note below for why
+// this exists. Path: POST /api/auth/refresh
 func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
+	// Best-effort: an absent or malformed body (every caller before this
+	// field existed) just means no active role to preserve, not an error --
+	// this must never block a refresh.
+	var req struct {
+		ActiveRoleID string `json:"activeRoleId"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil || cookie.Value == "" {
 		fail(w, http.StatusUnauthorized, "No refresh token.")
@@ -1112,6 +1123,7 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	// let a portal customer's refresh token mint a fresh staff-scoped access
 	// token with this handler.
 	var pool *pgxpool.Pool
+	var activeRoleID string
 	if identity.TenantID != "" {
 		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
 			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
@@ -1131,6 +1143,19 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 					fail(w, http.StatusForbidden, "Account suspended. Please contact your administrator.")
 					return
 				}
+				// Only honor a requested active role if this identity still
+				// holds it -- same check SwitchRole uses (rbac.go). A stale
+				// or tampered client-supplied id just falls back to no active
+				// role (the pre-existing behavior) rather than failing the
+				// refresh outright.
+				if req.ActiveRoleID != "" {
+					for _, ur := range u.Roles {
+						if ur.ID == req.ActiveRoleID {
+							activeRoleID = req.ActiveRoleID
+							break
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1140,13 +1165,14 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = time.Hour
 	}
-	// Note: refresh always drops any active-role selection from the token
-	// being refreshed — the caller has no way to pass it, and this handler
-	// only rebuilds claims from the stored identity. Callers relying on an
-	// active role must re-issue POST /api/tenant/auth/switch-role after a
-	// refresh.
-	accessibleResources := resolveAccessibleResources(r.Context(), pool, identity.ID, "")
-	newToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", accessibleResources, d)
+	// activeRoleID preserves whatever role the caller had selected (see the
+	// request body parsing above) instead of always dropping it -- silent
+	// refreshes happen often enough (any 401 against a cross-origin client
+	// like stonesuite-notify triggers one) that always resetting to the full
+	// aggregate of every assigned role made an explicit "switch to a
+	// restricted role" selection unreliable in practice.
+	accessibleResources := resolveAccessibleResources(r.Context(), pool, identity.ID, activeRoleID)
+	newToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, activeRoleID, accessibleResources, d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return
@@ -1165,12 +1191,12 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refresh always drops any active-role selection (see note above), so the
-	// grants below are always the caller's full aggregate — never a stale
-	// role-narrowed set left over from before the refresh.
+	// EffectiveGrantsForRole, not context-based EffectiveGrants: the request
+	// context still reflects the token being replaced, not activeRoleID just
+	// resolved above (same reasoning as SwitchRole, rbac.go).
 	var grants []authz.Grant
 	if pool != nil {
-		if g, gErr := authz.EffectiveGrants(r.Context(), pool, identity.ID); gErr == nil {
+		if g, gErr := authz.EffectiveGrantsForRole(r.Context(), pool, identity.ID, activeRoleID); gErr == nil {
 			grants = g
 		}
 	}
@@ -1182,7 +1208,7 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		"success":      true,
 		"token":        newToken,
 		"expiresAt":    accessExpiry.UnixMilli(),
-		"activeRoleId": "",
+		"activeRoleId": activeRoleID,
 		"grants":       grants,
 	})
 }

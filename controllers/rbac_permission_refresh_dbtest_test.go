@@ -142,10 +142,13 @@ func TestRBACOps_SwitchRole_ReturnsRoleScopedGrants_DB(t *testing.T) {
 		"grants must reflect the newly-selected role only, never the old active role from the request's own token")
 }
 
-// TestTenantOps_RefreshSession_ReturnsAggregateGrants_DB confirms a refreshed
-// session always reports the caller's full aggregate grants (every assigned
-// role's permissions combined) and an empty activeRoleId, matching the fact
-// that refresh always drops any prior active-role narrowing.
+// TestTenantOps_RefreshSession_ReturnsAggregateGrants_DB confirms a refresh
+// carrying no activeRoleId in its request body (nil body below -- every
+// caller before that field existed, and any caller with no active role
+// selected) reports the caller's full aggregate grants (every assigned
+// role's permissions combined) and an empty activeRoleId. See
+// TestTenantOps_RefreshSession_PreservesHeldActiveRole_DB for the opposite
+// case, where the caller does ask to preserve one.
 func TestTenantOps_RefreshSession_ReturnsAggregateGrants_DB(t *testing.T) {
 	withTestJWTSecret(t)
 	pool, dsn := testCustomerTenantPool(t)
@@ -193,6 +196,113 @@ func TestTenantOps_RefreshSession_ReturnsAggregateGrants_DB(t *testing.T) {
 		{Resource: authz.ResourceRole, Action: authz.ActionRead, Scope: authz.ScopeAll},
 		{Resource: authz.ResourceRole, Action: authz.ActionCreate, Scope: authz.ScopeAll},
 	}, resp.Grants)
+}
+
+// TestTenantOps_RefreshSession_PreservesHeldActiveRole_DB confirms a refresh
+// whose request body names a role the caller actually holds re-mints the
+// token scoped to that one role, not the full aggregate -- the fix for a
+// silent refresh (e.g. stonesuite-notify's client refreshing on a 401)
+// silently widening an intentionally-narrowed session back open.
+func TestTenantOps_RefreshSession_PreservesHeldActiveRole_DB(t *testing.T) {
+	withTestJWTSecret(t)
+	pool, dsn := testCustomerTenantPool(t)
+	cp := newSAMLTestControlPlane(t)
+	tenant := seedServableCustomerTestTenant(t, cp, dsn)
+
+	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
+	roleA := seedRBACTestRole(t, pool, "preserve-role-a", authz.Grant{
+		Resource: authz.ResourceRole, Action: authz.ActionRead, Scope: authz.ScopeAll,
+	})
+	roleB := seedRBACTestRole(t, pool, "preserve-role-b", authz.Grant{
+		Resource: authz.ResourceRole, Action: authz.ActionCreate, Scope: authz.ScopeAll,
+	})
+	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleA))
+	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleB))
+
+	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
+		"email": identity.Email, "password": "correct-password",
+	}))
+	loginRec := httptest.NewRecorder()
+	h.TenantLogin(loginRec, loginReq)
+	require.Equal(t, http.StatusOK, loginRec.Code)
+
+	var refreshCookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == "refresh_token" {
+			refreshCookie = c
+		}
+	}
+	require.NotNil(t, refreshCookie, "expected login to set a refresh_token cookie")
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/api/auth/refresh",
+		jsonBody(t, map[string]any{"activeRoleId": roleA}))
+	refreshReq.AddCookie(refreshCookie)
+	refreshRec := httptest.NewRecorder()
+	h.RefreshSession(refreshRec, refreshReq)
+
+	require.Equal(t, http.StatusOK, refreshRec.Code, "body=%s", refreshRec.Body.String())
+	var resp grantsBearingResponse
+	require.NoError(t, json.Unmarshal(refreshRec.Body.Bytes(), &resp))
+	assert.True(t, resp.Success)
+	assert.Equal(t, roleA, resp.ActiveRoleID)
+	assert.Equal(t, []authz.Grant{
+		{Resource: authz.ResourceRole, Action: authz.ActionRead, Scope: authz.ScopeAll},
+	}, resp.Grants, "grants must reflect only the preserved role, not the full aggregate")
+}
+
+// TestTenantOps_RefreshSession_IgnoresUnheldActiveRole_DB confirms a refresh
+// whose request body names a role the caller does NOT hold falls back to no
+// active role (the pre-existing default) instead of failing the refresh --
+// a background refresh must never hard-fail the session over a stale or
+// tampered client-supplied role id.
+func TestTenantOps_RefreshSession_IgnoresUnheldActiveRole_DB(t *testing.T) {
+	withTestJWTSecret(t)
+	pool, dsn := testCustomerTenantPool(t)
+	cp := newSAMLTestControlPlane(t)
+	tenant := seedServableCustomerTestTenant(t, cp, dsn)
+
+	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
+	heldRole := seedRBACTestRole(t, pool, "ignore-held-role", authz.Grant{
+		Resource: authz.ResourceRole, Action: authz.ActionRead, Scope: authz.ScopeAll,
+	})
+	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, heldRole))
+	notHeldRole := seedRBACTestRole(t, pool, "ignore-not-held-role", authz.Grant{
+		Resource: authz.ResourceRole, Action: authz.ActionDelete, Scope: authz.ScopeAll,
+	})
+
+	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
+		"email": identity.Email, "password": "correct-password",
+	}))
+	loginRec := httptest.NewRecorder()
+	h.TenantLogin(loginRec, loginReq)
+	require.Equal(t, http.StatusOK, loginRec.Code)
+
+	var refreshCookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == "refresh_token" {
+			refreshCookie = c
+		}
+	}
+	require.NotNil(t, refreshCookie, "expected login to set a refresh_token cookie")
+
+	refreshReq := httptest.NewRequest(http.MethodPost, "/api/auth/refresh",
+		jsonBody(t, map[string]any{"activeRoleId": notHeldRole}))
+	refreshReq.AddCookie(refreshCookie)
+	refreshRec := httptest.NewRecorder()
+	h.RefreshSession(refreshRec, refreshReq)
+
+	require.Equal(t, http.StatusOK, refreshRec.Code, "an unheld activeRoleId must not fail the refresh")
+	var resp grantsBearingResponse
+	require.NoError(t, json.Unmarshal(refreshRec.Body.Bytes(), &resp))
+	assert.True(t, resp.Success)
+	assert.Equal(t, "", resp.ActiveRoleID, "unheld role must not be applied")
+	assert.Equal(t, []authz.Grant{
+		{Resource: authz.ResourceRole, Action: authz.ActionRead, Scope: authz.ScopeAll},
+	}, resp.Grants, "must fall back to the caller's actual (held-role) grants")
 }
 
 // jsonBody marshals v into a request body reader.

@@ -67,6 +67,14 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap exposes the wrapped ResponseWriter to http.ResponseController, which
+// traverses wrappers by this exact method name. Without it, embedding the
+// ResponseWriter interface promotes only Header/Write/WriteHeader, so Flush and
+// SetWriteDeadline resolve to nothing and every ResponseController call returns
+// http.ErrNotSupported — which silently buffers streaming responses (SSE) until
+// the handler returns.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // Status returns the response status code seen by the recorder (200 default).
 func (r *statusRecorder) Status() int {
 	if r.status == 0 {

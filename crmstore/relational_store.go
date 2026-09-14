@@ -155,6 +155,27 @@ var customerFields = []cfield{
 // Enforcement is deferred until the frontend collects them (the forms are a
 // separate follow-up); kept here as the single reference.
 
+// KnownCoreFieldKeys returns the CoreFields keys DesignV2 actually persists —
+// the customerFields registry above, which is also what writeArg's INSERT/
+// UPDATE column list is built from. A CoreFields key outside this set is not
+// rejected anywhere on the write path; relationalStore.insertCustomer simply
+// never looks at it, so the value is accepted, silently never stored, and the
+// caller sees a normal success response. Exposed so a caller assembling
+// CoreFields from an external source (e.g. importer.ValidateMapping) can
+// catch a typo'd key before that happens, instead of after.
+//
+// DesignV1's core_fields is unrestricted JSONB with no fixed schema (see this
+// package's doc comment) — there is no V1 analogue, and none should be
+// invented; V1 workflows are intentionally free to use whatever core keys
+// they like.
+func KnownCoreFieldKeys() map[string]bool {
+	known := make(map[string]bool, len(customerFields))
+	for _, f := range customerFields {
+		known[f.core] = true
+	}
+	return known
+}
+
 // selectExpr returns the SELECT expression for a registry column, normalising
 // nullable text/decimal/date to non-null strings so scanning is uniform.
 func selectExpr(f cfield) string {

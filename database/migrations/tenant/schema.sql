@@ -8257,7 +8257,6 @@ CREATE INDEX IF NOT EXISTS idx_vcrd_pending ON vendor_credit  (vendor_credit_cre
 -- whose notify response could not be parsed (non-fatal).
 ALTER TABLE document_sends ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
 
-
 -- =====================================================================
 -- Tenant-template schema -- Phase 42: Company Info (tenant's own company
 -- identity/address, editable at Configuration -> Company Info).
@@ -8480,3 +8479,53 @@ UPDATE lkp_crm_status AS cs
    AND cs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'CUST')
    AND cs.crm_status_deleted_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM customer c WHERE c.customer_crm_status = cs.crm_status_id);
+
+-- -- 000043_import_rows_unique ---------------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 43: make (job_id, row_index) unique on
+-- import_rows, so restaging a job converges on its rows instead of
+-- appending a second copy of every one of them.
+--
+-- runImport (importer/worker.go) only ever inserted rows, and nothing
+-- cleared a job's prior rows before restaging it -- so a job that failed or
+-- crashed partway through staging (worker crash, a stale-reap requeue that
+-- flipped a still-legitimately-running job back to pending, or the queue's
+-- own attempts-based retry) would restage from row 0 on its next attempt,
+-- landing a second row at every row_index the first attempt already reached.
+-- A job that failed at row 8,000 of 10,000 could end up with 18,000 staged
+-- rows, half of them duplicates a reviewer would have to spot by hand.
+--
+-- The Go-side fix (importer/store.go's UpsertRow + DeletePendingRowsForJob,
+-- called by runImport right before staging begins) needs this unique index
+-- to converge against; without it, UpsertRow's own ON CONFLICT clause has
+-- nothing to conflict on and silently behaves like a plain INSERT again.
+--
+-- This file is re-applied on every boot, so any tenant that already hit the
+-- bug pre-fix has real duplicate (job_id, row_index) pairs on disk today --
+-- asserting uniqueness before converging them would fail every subsequent
+-- boot for that tenant. The DELETE below runs first and is idempotent: a
+-- committed row is NEVER a deletion candidate (already produced a real CRM
+-- record; a status filter, not a tie-break, keeps it out of harm's way even
+-- against another committed duplicate -- the one shape of this bug the
+-- migration deliberately does not resolve on its own, since discarding
+-- either row's tracking metadata could not undo an already-created second
+-- record). Among non-committed duplicates it keeps the most recently
+-- inserted one, so once no duplicates remain it's a no-op.
+--
+-- idx_import_rows_job (job_id, row_index) is superseded by the new unique
+-- index below, which serves every lookup the old one did plus the
+-- uniqueness guarantee -- dropped by name only, per this repo's rule for
+-- correcting an index in place rather than leaving the superseded
+-- definition live alongside its replacement.
+-- =====================================================================
+
+DELETE FROM import_rows a USING import_rows b
+WHERE a.job_id = b.job_id
+  AND a.row_index = b.row_index
+  AND a.id <> b.id
+  AND a.status <> 'committed'
+  AND ( b.status = 'committed'
+     OR (a.created_at, a.id) < (b.created_at, b.id) );
+
+CREATE UNIQUE INDEX IF NOT EXISTS import_rows_job_row_idx ON import_rows (job_id, row_index);
+DROP INDEX IF EXISTS idx_import_rows_job;

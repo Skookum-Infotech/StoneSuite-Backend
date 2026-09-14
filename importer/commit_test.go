@@ -105,7 +105,7 @@ func TestCommitJob_PartialFailureReturnsSummaryAlongsideError(t *testing.T) {
 	jobID := "job-commit-partial"
 	empty := MappedFields{Core: map[string]any{}, Custom: map[string]any{}}
 	for i := 0; i < 3; i++ {
-		_, err := rows.InsertRow(ctx, jobID, i, map[string]string{}, empty, nil)
+		_, err := rows.UpsertRow(ctx, jobID, i, map[string]string{}, empty, nil)
 		require.NoError(t, err)
 	}
 
@@ -144,15 +144,15 @@ func TestCommitJob_AlreadyCommittedOrSkippedRowsAreNeverReprocessed(t *testing.T
 
 	jobID := "job-commit-idempotent"
 	empty := MappedFields{Core: map[string]any{}, Custom: map[string]any{}}
-	committedID, err := rows.InsertRow(ctx, jobID, 0, map[string]string{}, empty, nil)
+	committedID, err := rows.UpsertRow(ctx, jobID, 0, map[string]string{}, empty, nil)
 	require.NoError(t, err)
 	require.NoError(t, rows.MarkCommitted(ctx, committedID, testUUID(0)))
 
-	skippedID, err := rows.InsertRow(ctx, jobID, 1, map[string]string{}, empty, nil)
+	skippedID, err := rows.UpsertRow(ctx, jobID, 1, map[string]string{}, empty, nil)
 	require.NoError(t, err)
 	require.NoError(t, rows.MarkSkipped(ctx, skippedID))
 
-	pendingID, err := rows.InsertRow(ctx, jobID, 2, map[string]string{}, empty, nil)
+	pendingID, err := rows.UpsertRow(ctx, jobID, 2, map[string]string{}, empty, nil)
 	require.NoError(t, err)
 
 	crm := &fakeCrmStore{}
@@ -189,9 +189,9 @@ func TestCommitJob_ValidationFailureIsSkippedNotFatal(t *testing.T) {
 	jobID := "job-commit-validation"
 	invalid := MappedFields{Core: map[string]any{}, Custom: map[string]any{}} // missing required "budget"
 	valid := MappedFields{Core: map[string]any{}, Custom: map[string]any{"budget": 100.0}}
-	_, err = rows.InsertRow(ctx, jobID, 0, map[string]string{}, invalid, nil)
+	_, err = rows.UpsertRow(ctx, jobID, 0, map[string]string{}, invalid, nil)
 	require.NoError(t, err)
-	_, err = rows.InsertRow(ctx, jobID, 1, map[string]string{}, valid, nil)
+	_, err = rows.UpsertRow(ctx, jobID, 1, map[string]string{}, valid, nil)
 	require.NoError(t, err)
 
 	crm := &fakeCrmStore{}
@@ -222,9 +222,9 @@ func TestCommitJob_CreateRecordFailureIsSkippedNotFatal(t *testing.T) {
 
 	jobID := "job-commit-create-error"
 	empty := MappedFields{Core: map[string]any{}, Custom: map[string]any{}}
-	_, err := rows.InsertRow(ctx, jobID, 0, map[string]string{}, empty, nil)
+	_, err := rows.UpsertRow(ctx, jobID, 0, map[string]string{}, empty, nil)
 	require.NoError(t, err)
-	_, err = rows.InsertRow(ctx, jobID, 1, map[string]string{}, empty, nil)
+	_, err = rows.UpsertRow(ctx, jobID, 1, map[string]string{}, empty, nil)
 	require.NoError(t, err)
 
 	crm := &fakeCrmStore{failOnCall: 1} // the first CreateRecord call errors, the second succeeds

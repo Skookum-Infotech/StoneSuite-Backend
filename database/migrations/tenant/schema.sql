@@ -8115,3 +8115,37 @@ CREATE INDEX IF NOT EXISTS idx_vcrd_pending ON vendor_credit  (vendor_credit_cre
 -- hears the async outcome. Empty array = pre-migration rows, or a send
 -- whose notify response could not be parsed (non-fatal).
 ALTER TABLE document_sends ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
+
+
+-- =====================================================================
+-- Tenant-template schema -- Phase 42: Company Info (tenant's own company
+-- identity/address, editable at Configuration -> Company Info).
+--
+-- One singleton row per tenant database (id is always 1) -- the tenant's
+-- own company name/address, distinct from a CRM Lead/Prospect/Customer's
+-- address (leads/prospects/customer tables) and from a vendor's
+-- (vendor_physical_address). Onboarding already collects a free-text
+-- version of this into the platform-only tenants.metadata JSONB (control
+-- plane, not this database) for the initial signup review; this table is
+-- the tenant's own structured, editable copy going forward and is not
+-- backfilled from that blob.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS company_profile (
+    id                SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+
+    company_name      VARCHAR(255) NOT NULL DEFAULT '',
+    legal_name        VARCHAR(255) NOT NULL DEFAULT '',
+    industry          VARCHAR(255) NOT NULL DEFAULT '',
+    website           VARCHAR(255) NOT NULL DEFAULT '',
+    country           VARCHAR(255) NOT NULL DEFAULT '',
+    currency          VARCHAR(255) NOT NULL DEFAULT '',
+    timezone          VARCHAR(255) NOT NULL DEFAULT '',
+    tax_id            VARCHAR(255) NOT NULL DEFAULT '',
+
+    billing_address   TEXT         NOT NULL DEFAULT '',
+    shipping_address  TEXT         NOT NULL DEFAULT '',
+    return_address    TEXT         NOT NULL DEFAULT '',
+
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);

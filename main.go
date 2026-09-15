@@ -614,6 +614,11 @@ func main() {
 		auditOps := controllers.NewAuditOps()
 		mux.Handle("GET /api/tenant/audit", tenantChain(auditOps.ListAudit))
 
+		// Tenant's own Company Info (name/address -- Configuration -> Company Info).
+		companyProfileOps := controllers.NewCompanyProfileOps()
+		mux.Handle("GET /api/tenant/company-profile", tenantChain(companyProfileOps.GetProfile))
+		mux.Handle("PUT /api/tenant/company-profile", tenantChain(companyProfileOps.UpdateProfile))
+
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))

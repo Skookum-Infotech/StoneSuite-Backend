@@ -30,6 +30,7 @@ const (
 	ResourceRole           Resource = "role"            // roles & permissions
 	ResourceWorkflowConfig Resource = "workflow_config" // states/transitions/fields config
 	ResourceSSOConfig      Resource = "sso_config"      // per-tenant SSO settings
+	ResourceCompanyProfile Resource = "company_profile" // tenant's own company name/address (Configuration -> Company Info)
 	ResourceAudit          Resource = "audit"           // audit log
 
 	// ResourceDashboardWidget covers which dashboard widgets each role's
@@ -403,6 +404,9 @@ var catalog = []Permission{
 
 	{ResourceSSOConfig, ActionRead},
 	{ResourceSSOConfig, ActionConfigure},
+
+	{ResourceCompanyProfile, ActionRead},
+	{ResourceCompanyProfile, ActionConfigure},
 
 	{ResourceDashboardWidget, ActionRead},
 	{ResourceDashboardWidget, ActionConfigure},

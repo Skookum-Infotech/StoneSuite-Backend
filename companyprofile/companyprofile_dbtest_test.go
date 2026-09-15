@@ -49,17 +49,23 @@ func TestUpsert_ThenGet_RoundTrips(t *testing.T) {
 	ctx := context.Background()
 
 	want := Profile{
-		CompanyName:     "Acme Stone Co.",
-		LegalName:       "Acme Stone Company LLC",
-		Industry:        "Fabrication",
-		Website:         "https://acmestone.example",
-		Country:         "United States",
-		Currency:        "USD",
-		Timezone:        "America/Chicago",
-		TaxID:           "12-3456789",
-		BillingAddress:  "123 Main St\nSpringfield, IL 62704",
-		ShippingAddress: "456 Warehouse Ave\nSpringfield, IL 62704",
-		ReturnAddress:   "789 Returns Dock\nSpringfield, IL 62704",
+		CompanyName: "Acme Stone Co.",
+		LegalName:   "Acme Stone Company LLC",
+		Industry:    "Fabrication",
+		Website:     "https://acmestone.example",
+		Country:     "United States",
+		Currency:    "USD",
+		Timezone:    "America/Chicago",
+		TaxID:       "12-3456789",
+		BillingAddress: Address{
+			Line1: "123 Main St", Suite: "400", City: "Springfield", Country: "United States", State: "IL", Zip: "62704",
+		},
+		ShippingAddress: Address{
+			Line1: "456 Warehouse Ave", City: "Springfield", Country: "United States", State: "IL", Zip: "62704",
+		},
+		ReturnAddress: Address{
+			Line1: "789 Returns Dock", City: "Springfield", Country: "United States", State: "IL", Zip: "62704",
+		},
 	}
 	if err := Upsert(ctx, pool, want); err != nil {
 		t.Fatalf("Upsert() error = %v, want nil", err)

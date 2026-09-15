@@ -6,14 +6,14 @@ func TestValidate(t *testing.T) {
 	base := func() Profile {
 		return Profile{CompanyName: "Acme Stone Co."}
 	}
-	longShort := make([]byte, MaxShortFieldLength+1)
-	for i := range longShort {
-		longShort[i] = 'a'
-	}
-	longAddress := make([]byte, MaxAddressLength+1)
-	for i := range longAddress {
-		longAddress[i] = 'a'
-	}
+	tooLong := func() string {
+		b := make([]byte, MaxFieldLength+1)
+		for i := range b {
+			b[i] = 'a'
+		}
+		return string(b)
+	}()
+	atMax := tooLong[:MaxFieldLength]
 
 	tests := []struct {
 		name    string
@@ -23,19 +23,31 @@ func TestValidate(t *testing.T) {
 		{"valid minimal", func(p *Profile) {}, false},
 		{"company name empty", func(p *Profile) { p.CompanyName = "" }, true},
 		{"company name whitespace only", func(p *Profile) { p.CompanyName = "   " }, true},
-		{"company name at max length", func(p *Profile) { p.CompanyName = string(longShort[:MaxShortFieldLength]) }, false},
-		{"company name too long", func(p *Profile) { p.CompanyName = string(longShort) }, true},
-		{"legal name too long", func(p *Profile) { p.LegalName = string(longShort) }, true},
-		{"industry too long", func(p *Profile) { p.Industry = string(longShort) }, true},
-		{"website too long", func(p *Profile) { p.Website = string(longShort) }, true},
-		{"country too long", func(p *Profile) { p.Country = string(longShort) }, true},
-		{"currency too long", func(p *Profile) { p.Currency = string(longShort) }, true},
-		{"timezone too long", func(p *Profile) { p.Timezone = string(longShort) }, true},
-		{"tax id too long", func(p *Profile) { p.TaxID = string(longShort) }, true},
-		{"billing address at max length", func(p *Profile) { p.BillingAddress = string(longAddress[:MaxAddressLength]) }, false},
-		{"billing address too long", func(p *Profile) { p.BillingAddress = string(longAddress) }, true},
-		{"shipping address too long", func(p *Profile) { p.ShippingAddress = string(longAddress) }, true},
-		{"return address too long", func(p *Profile) { p.ReturnAddress = string(longAddress) }, true},
+		{"company name at max length", func(p *Profile) { p.CompanyName = atMax }, false},
+		{"company name too long", func(p *Profile) { p.CompanyName = tooLong }, true},
+		{"legal name too long", func(p *Profile) { p.LegalName = tooLong }, true},
+		{"industry too long", func(p *Profile) { p.Industry = tooLong }, true},
+		{"website too long", func(p *Profile) { p.Website = tooLong }, true},
+		{"country too long", func(p *Profile) { p.Country = tooLong }, true},
+		{"currency too long", func(p *Profile) { p.Currency = tooLong }, true},
+		{"timezone too long", func(p *Profile) { p.Timezone = tooLong }, true},
+		{"tax id too long", func(p *Profile) { p.TaxID = tooLong }, true},
+
+		{"valid full address", func(p *Profile) {
+			p.BillingAddress = Address{
+				Line1: "123 Main St", Line2: "Suite 400", Suite: "400",
+				City: "Springfield", Country: "United States", State: "IL", Zip: "62704",
+			}
+		}, false},
+		{"billing address line1 too long", func(p *Profile) { p.BillingAddress.Line1 = tooLong }, true},
+		{"billing address line2 too long", func(p *Profile) { p.BillingAddress.Line2 = tooLong }, true},
+		{"billing address suite too long", func(p *Profile) { p.BillingAddress.Suite = tooLong }, true},
+		{"billing address city too long", func(p *Profile) { p.BillingAddress.City = tooLong }, true},
+		{"billing address country too long", func(p *Profile) { p.BillingAddress.Country = tooLong }, true},
+		{"billing address state too long", func(p *Profile) { p.BillingAddress.State = tooLong }, true},
+		{"billing address zip too long", func(p *Profile) { p.BillingAddress.Zip = tooLong }, true},
+		{"shipping address line1 too long", func(p *Profile) { p.ShippingAddress.Line1 = tooLong }, true},
+		{"return address line1 too long", func(p *Profile) { p.ReturnAddress.Line1 = tooLong }, true},
 	}
 
 	for _, tt := range tests {

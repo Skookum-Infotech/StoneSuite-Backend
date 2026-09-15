@@ -8143,9 +8143,33 @@ CREATE TABLE IF NOT EXISTS company_profile (
     timezone          VARCHAR(255) NOT NULL DEFAULT '',
     tax_id            VARCHAR(255) NOT NULL DEFAULT '',
 
-    billing_address   TEXT         NOT NULL DEFAULT '',
-    shipping_address  TEXT         NOT NULL DEFAULT '',
-    return_address    TEXT         NOT NULL DEFAULT '',
+    -- Same line1/line2/suite/city/country/state/zip shape as a CRM record's
+    -- *_addr_* columns (e.g. customer_bill_addr_line1) -- structured, not one
+    -- free-text blob, so the tenant's own address is captured like any other
+    -- address in the app.
+    billing_addr_line1    VARCHAR(255) NOT NULL DEFAULT '',
+    billing_addr_line2    VARCHAR(255) NOT NULL DEFAULT '',
+    billing_addr_suite    VARCHAR(255) NOT NULL DEFAULT '',
+    billing_addr_city     VARCHAR(255) NOT NULL DEFAULT '',
+    billing_addr_country  VARCHAR(255) NOT NULL DEFAULT '',
+    billing_addr_state    VARCHAR(255) NOT NULL DEFAULT '',
+    billing_addr_zip      VARCHAR(255) NOT NULL DEFAULT '',
+
+    shipping_addr_line1   VARCHAR(255) NOT NULL DEFAULT '',
+    shipping_addr_line2   VARCHAR(255) NOT NULL DEFAULT '',
+    shipping_addr_suite   VARCHAR(255) NOT NULL DEFAULT '',
+    shipping_addr_city    VARCHAR(255) NOT NULL DEFAULT '',
+    shipping_addr_country VARCHAR(255) NOT NULL DEFAULT '',
+    shipping_addr_state   VARCHAR(255) NOT NULL DEFAULT '',
+    shipping_addr_zip     VARCHAR(255) NOT NULL DEFAULT '',
+
+    return_addr_line1    VARCHAR(255) NOT NULL DEFAULT '',
+    return_addr_line2    VARCHAR(255) NOT NULL DEFAULT '',
+    return_addr_suite    VARCHAR(255) NOT NULL DEFAULT '',
+    return_addr_city     VARCHAR(255) NOT NULL DEFAULT '',
+    return_addr_country  VARCHAR(255) NOT NULL DEFAULT '',
+    return_addr_state    VARCHAR(255) NOT NULL DEFAULT '',
+    return_addr_zip      VARCHAR(255) NOT NULL DEFAULT '',
 
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

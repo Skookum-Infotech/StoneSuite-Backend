@@ -8131,6 +8131,10 @@ ALTER TABLE document_sends ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT
 -- backfilled from that blob.
 -- =====================================================================
 
+-- Original shape as first deployed -- do not add columns here. This table
+-- already exists on real tenant databases (CREATE TABLE IF NOT EXISTS is a
+-- no-op once a table exists), so every column added since goes through
+-- ALTER TABLE ADD COLUMN IF NOT EXISTS below, per this file's own rules.
 CREATE TABLE IF NOT EXISTS company_profile (
     id                SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 
@@ -8143,33 +8147,40 @@ CREATE TABLE IF NOT EXISTS company_profile (
     timezone          VARCHAR(255) NOT NULL DEFAULT '',
     tax_id            VARCHAR(255) NOT NULL DEFAULT '',
 
-    -- Same line1/line2/suite/city/country/state/zip shape as a CRM record's
-    -- *_addr_* columns (e.g. customer_bill_addr_line1) -- structured, not one
-    -- free-text blob, so the tenant's own address is captured like any other
-    -- address in the app.
-    billing_addr_line1    VARCHAR(255) NOT NULL DEFAULT '',
-    billing_addr_line2    VARCHAR(255) NOT NULL DEFAULT '',
-    billing_addr_suite    VARCHAR(255) NOT NULL DEFAULT '',
-    billing_addr_city     VARCHAR(255) NOT NULL DEFAULT '',
-    billing_addr_country  VARCHAR(255) NOT NULL DEFAULT '',
-    billing_addr_state    VARCHAR(255) NOT NULL DEFAULT '',
-    billing_addr_zip      VARCHAR(255) NOT NULL DEFAULT '',
-
-    shipping_addr_line1   VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_addr_line2   VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_addr_suite   VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_addr_city    VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_addr_country VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_addr_state   VARCHAR(255) NOT NULL DEFAULT '',
-    shipping_addr_zip     VARCHAR(255) NOT NULL DEFAULT '',
-
-    return_addr_line1    VARCHAR(255) NOT NULL DEFAULT '',
-    return_addr_line2    VARCHAR(255) NOT NULL DEFAULT '',
-    return_addr_suite    VARCHAR(255) NOT NULL DEFAULT '',
-    return_addr_city     VARCHAR(255) NOT NULL DEFAULT '',
-    return_addr_country  VARCHAR(255) NOT NULL DEFAULT '',
-    return_addr_state    VARCHAR(255) NOT NULL DEFAULT '',
-    return_addr_zip      VARCHAR(255) NOT NULL DEFAULT '',
+    -- Superseded by the structured billing/shipping/return_addr_* columns
+    -- below -- kept, not dropped (no DROP COLUMN on a table that may already
+    -- hold real data), and no longer read or written by companyprofile.go.
+    billing_address   TEXT         NOT NULL DEFAULT '',
+    shipping_address  TEXT         NOT NULL DEFAULT '',
+    return_address    TEXT         NOT NULL DEFAULT '',
 
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
+
+-- Structured line1/line2/suite/city/country/state/zip address columns --
+-- same shape as a CRM record's *_addr_* columns (e.g.
+-- customer_bill_addr_line1) -- replacing the free-text billing_address/
+-- shipping_address/return_address columns above (superseded, not dropped).
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_line1    VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_line2    VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_suite    VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_city     VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_country  VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_state    VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS billing_addr_zip      VARCHAR(255) NOT NULL DEFAULT '';
+
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_line1   VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_line2   VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_suite   VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_city    VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_country VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_state   VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS shipping_addr_zip     VARCHAR(255) NOT NULL DEFAULT '';
+
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_line1     VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_line2     VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_suite     VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_city      VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_country   VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_state     VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_zip       VARCHAR(255) NOT NULL DEFAULT '';

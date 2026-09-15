@@ -41,6 +41,23 @@ var ErrRoleNotFound = authz.ErrRoleNotFound
 // cannot be individually configured.
 var ErrRoleLocked = errors.New("role has a wildcard grant and cannot be configured")
 
+// widgetRequiredResource maps a single-gated widget id to the one
+// authz.Resource its data endpoint requires read on (see
+// controllers/dashboard_*.go — each of these 403s outright without that
+// grant). A widget id absent from this map is composable/degrading
+// (kpi-strip, pipeline-donut, recent-records) and must NEVER be filtered by
+// this check — their own endpoints already omit ungranted sub-parts instead
+// of failing widget-wide.
+var widgetRequiredResource = map[string]authz.Resource{
+	"sales-orders-snapshot": authz.ResourceSalesOrder,
+	"top-customers":         authz.ResourceInvoice,
+	"inventory-alerts":      authz.ResourceInventoryItem,
+	"material-consumption":  authz.ResourceInventoryItem,
+	"purchases-status":      authz.ResourcePurchaseOrder,
+	"ar-outstanding":        authz.ResourceInvoice,
+	"accounting-snapshot":   authz.ResourceCashTransfer,
+}
+
 // ErrInvalidWidgetID is returned when an allocation references a widget id
 // outside the catalog whitelist.
 type ErrInvalidWidgetID struct {
@@ -122,6 +139,11 @@ func GetForIdentity(ctx context.Context, q Querier, identityID, userID, activeRo
 	}
 	out := make([]string, 0, len(union))
 	for id := range union {
+		if resource, gated := widgetRequiredResource[id]; gated {
+			if !authz.DecideAny(grants, []authz.Resource{resource}, authz.ActionRead).Allowed {
+				continue
+			}
+		}
 		out = append(out, id)
 	}
 	return out, nil

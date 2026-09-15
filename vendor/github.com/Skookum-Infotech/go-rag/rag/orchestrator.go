@@ -173,14 +173,17 @@ func (o *Orchestrator) searchCorpus(ctx context.Context, cc CorpusConfig, queryV
 	return fused, nil
 }
 
-// Ask embeds the question, retrieves from every corpus, and asks the LLM to
-// answer strictly from that context.
-func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, error) {
+// retrieve runs the embed-and-search half of Ask/AskStream: embed the
+// question, search every corpus, and assemble the messages the LLM sees
+// (prior history plus one user message carrying the numbered context block).
+// Shared verbatim by both entry points so they can never drift on what
+// "grounded in" means for one but not the other.
+func (o *Orchestrator) retrieve(ctx context.Context, req AskRequest) ([]Citation, []Message, error) {
 	embedStart := time.Now()
 	vecs, err := o.emb.Embed(ctx, []string{req.Question})
 	o.metrics.ObserveEmbed(time.Since(embedStart).Seconds())
 	if err != nil {
-		return AskResult{}, fmt.Errorf("embed question: %w", err)
+		return nil, nil, fmt.Errorf("embed question: %w", err)
 	}
 	queryVec := vecs[0]
 
@@ -188,7 +191,7 @@ func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, erro
 	for _, cc := range o.corpora {
 		found, err := o.searchCorpus(ctx, cc, queryVec, req.Question)
 		if err != nil {
-			return AskResult{}, err
+			return nil, nil, err
 		}
 		cites = append(cites, found...)
 	}
@@ -203,8 +206,64 @@ func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, erro
 	messages = append(messages, req.History...)
 	messages = append(messages, Message{Role: "user", Content: msg})
 
+	return cites, messages, nil
+}
+
+// Ask embeds the question, retrieves from every corpus, and asks the LLM to
+// answer strictly from that context.
+func (o *Orchestrator) Ask(ctx context.Context, req AskRequest) (AskResult, error) {
+	cites, messages, err := o.retrieve(ctx, req)
+	if err != nil {
+		return AskResult{}, err
+	}
+
 	llmStart := time.Now()
 	answer, err := o.llm.Chat(ctx, o.systemPrompt, messages)
+	o.metrics.ObserveLLM(time.Since(llmStart).Seconds(), errors.Is(err, context.DeadlineExceeded))
+	if err != nil {
+		return AskResult{}, fmt.Errorf("llm: %w", err)
+	}
+	o.metrics.ObserveAsk(strings.Contains(answer, o.refusalPhrase))
+	return AskResult{Answer: answer, Citations: citedOnly(cites, answer)}, nil
+}
+
+// StreamSink receives the events of a streaming Ask, in order, all on the
+// calling goroutine: OnRetrieved once, with the raw retrieved set (before
+// generation starts and before it's known which of them the answer actually
+// cites — render this as a dimmed "found N sources", never as citations);
+// then OnToken once per generated chunk. Returning a non-nil error from
+// either aborts the stream and that error is returned from AskStream,
+// wrapped.
+type StreamSink interface {
+	OnRetrieved(cites []Citation) error
+	OnToken(token string) error
+}
+
+// AskStream is Ask's streaming twin: identical retrieval (via the shared
+// retrieve), but the reply is delivered to sink token-by-token as it's
+// generated instead of all at once. Falls back to one whole-answer OnToken
+// call when o.llm doesn't implement StreamingLLMClient, so a fake or a
+// non-streaming provider still works through this one entry point — callers
+// don't need a separate non-streaming code path just to support tests.
+func (o *Orchestrator) AskStream(ctx context.Context, req AskRequest, sink StreamSink) (AskResult, error) {
+	cites, messages, err := o.retrieve(ctx, req)
+	if err != nil {
+		return AskResult{}, err
+	}
+	if err := sink.OnRetrieved(cites); err != nil {
+		return AskResult{}, fmt.Errorf("sink: %w", err)
+	}
+
+	llmStart := time.Now()
+	var answer string
+	if streamer, ok := o.llm.(StreamingLLMClient); ok {
+		answer, err = streamer.ChatStream(ctx, o.systemPrompt, messages, sink.OnToken)
+	} else {
+		answer, err = o.llm.Chat(ctx, o.systemPrompt, messages)
+		if err == nil {
+			err = sink.OnToken(answer)
+		}
+	}
 	o.metrics.ObserveLLM(time.Since(llmStart).Seconds(), errors.Is(err, context.DeadlineExceeded))
 	if err != nil {
 		return AskResult{}, fmt.Errorf("llm: %w", err)

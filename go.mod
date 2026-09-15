@@ -51,3 +51,9 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// TEMPORARY dev-time pin: builds against the local go-rag checkout's
+// feat/sse-streaming branch (Phase 2 SSE streaming work, not yet pushed).
+// Remove this replace and update the require above to a real pseudo-version
+// once that branch is pushed and reviewed.
+replace github.com/Skookum-Infotech/go-rag => /Users/prasannakumarnagaboyina/pkumardev/go-rag

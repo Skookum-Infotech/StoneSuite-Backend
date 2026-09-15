@@ -78,6 +78,24 @@ type StructuredLLMClient interface {
 	ChatJSON(ctx context.Context, system string, messages []Message, schema []byte) (string, error)
 }
 
+// StreamingLLMClient is an optional companion to LLMClient (same
+// point-of-use pattern as StructuredLLMClient): an LLMClient that can stream
+// its reply token-by-token instead of returning the whole completion at
+// once. onToken is called once per chunk, in order, on the calling
+// goroutine — a callback rather than a channel so this package never owns a
+// goroutine's lifetime; backpressure is just "the callback hasn't returned
+// yet", and the caller aborts a stream by returning a non-nil error from it
+// (or cancelling ctx), not by closing anything.
+//
+// Optional rather than folded into LLMClient: Orchestrator.AskStream type-
+// asserts for this and falls back to LLMClient.Chat plus one whole-answer
+// "token" when the wired client doesn't implement it — same degrade shape as
+// Reranker's absence, so fakes and non-streaming clients keep working
+// through the one AskStream entry point.
+type StreamingLLMClient interface {
+	ChatStream(ctx context.Context, system string, messages []Message, onToken func(string) error) (string, error)
+}
+
 // Reranker re-scores retrieval candidates against the original question and
 // returns up to n of them, most relevant first. A cross-encoder reranker sees
 // the question and each candidate together, so it can catch relevance a

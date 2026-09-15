@@ -1405,6 +1405,7 @@ func main() {
 			aiOps = aiOps.WithReranker(tei.NewReranker(config.AppConfig.AIRerankBaseURL), config.AppConfig.AIRerankCandidates)
 		}
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
+		mux.Handle("POST /api/tenant/ai/ask/stream", aiChain(aiOps.AskStream))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
 

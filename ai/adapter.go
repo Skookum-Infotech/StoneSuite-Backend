@@ -178,3 +178,10 @@ func (a *Assistant) ForCaller(scope, callerUserID string) *rag.Orchestrator {
 func (a *Assistant) Ask(ctx context.Context, req AskRequest) (rag.AskResult, error) {
 	return a.ForCaller(req.Scope, req.CallerUserID).Ask(ctx, rag.AskRequest{Question: req.Question, History: req.History})
 }
+
+// AskStream is Ask's streaming twin: identical scope/corpora/prompt, but the
+// reply is delivered to sink token-by-token as it's generated — see
+// rag.Orchestrator.AskStream.
+func (a *Assistant) AskStream(ctx context.Context, req AskRequest, sink rag.StreamSink) (rag.AskResult, error) {
+	return a.ForCaller(req.Scope, req.CallerUserID).AskStream(ctx, rag.AskRequest{Question: req.Question, History: req.History}, sink)
+}

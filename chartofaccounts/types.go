@@ -9,14 +9,21 @@ package chartofaccounts
 import "time"
 
 // Account is one chart-of-accounts entry.
+//
+// The three SubCategory* fields are omitted entirely for an account placed
+// directly under a category; Category* is always populated, whichever placement
+// the account uses. They are pointers rather than zero-valued ints so the
+// absence is explicit in the JSON instead of arriving as a code of 0 that every
+// consumer would have to know to special-case.
 type Account struct {
 	ID              string         `json:"id"` // uuid
 	Code            string         `json:"code"`
 	Name            string         `json:"name"`
 	Description     string         `json:"description"`
-	SubCategoryID   int            `json:"subCategoryId"`
-	SubCategoryCode int            `json:"subCategoryCode"`
-	SubCategoryName string         `json:"subCategoryName"`
+	SubCategoryID   *int           `json:"subCategoryId,omitempty"`
+	SubCategoryCode *int           `json:"subCategoryCode,omitempty"`
+	SubCategoryName string         `json:"subCategoryName,omitempty"`
+	CategoryID      int            `json:"categoryId"`
 	CategoryCode    int            `json:"categoryCode"`
 	CategoryName    string         `json:"categoryName"`
 	ParentID        *string        `json:"parentId,omitempty"` // uuid
@@ -33,7 +40,10 @@ type Account struct {
 	UpdatedAt       time.Time      `json:"updatedAt"`
 }
 
-// Category is a fixed top-level classification (1000 Assets ... 9000 System).
+// Category is a top-level classification (1000 Assets ... 9000 System). Nine
+// are seeded; tenants may rename any of them and append their own. Code, range
+// and normal balance are server-assigned and immutable -- re-coding a category
+// would strand every account code already allocated inside its range.
 type Category struct {
 	ID            int    `json:"id"`
 	Code          int    `json:"code"`
@@ -41,10 +51,12 @@ type Category struct {
 	RangeLow      int    `json:"rangeLow"`
 	RangeHigh     int    `json:"rangeHigh"`
 	NormalBalance string `json:"normalBalance"` // "debit" | "credit"
+	BSPNL         string `json:"bsPnl"`         // "BS" | "PNL" | "MIXED"
 	SortOrder     int    `json:"sortOrder"`
 }
 
-// SubCategory is a fixed second-level classification (1100 Current Assets ...).
+// SubCategory is a second-level classification (1100 Current Assets ...).
+// Seventeen are seeded; same rename-only rule as Category.
 type SubCategory struct {
 	ID           int    `json:"id"`
 	CategoryID   int    `json:"categoryId"`
@@ -54,6 +66,31 @@ type SubCategory struct {
 	RangeLow     int    `json:"rangeLow"`
 	RangeHigh    int    `json:"rangeHigh"`
 	SortOrder    int    `json:"sortOrder"`
+}
+
+// CategoryCreateInput is the payload for appending a category. Code, range and
+// sort order are server-assigned; the name, the side and the normal balance are
+// the caller's. NormalBalance is asked for rather than derived because BS/PNL
+// does not imply it -- 1000 Assets and 6000 Operating Expenses are both debit,
+// 2000 Liabilities and 4000 Revenue are both credit.
+type CategoryCreateInput struct {
+	Name          string `json:"name"`
+	BSPNL         string `json:"bsPnl"`         // "BS" | "PNL" | "MIXED"
+	NormalBalance string `json:"normalBalance"` // "debit" | "credit"
+}
+
+// SubCategoryCreateInput is the payload for appending a sub-category under an
+// existing category. Code and range are server-assigned from the parent
+// category's free blocks; the side is inherited from the parent.
+type SubCategoryCreateInput struct {
+	CategoryID int    `json:"categoryId"`
+	Name       string `json:"name"`
+}
+
+// RenameInput is the payload for renaming a category or a sub-category. Name is
+// the only mutable field on either (AD-1 relaxed to rename-only).
+type RenameInput struct {
+	Name string `json:"name"`
 }
 
 // DefaultSlot is a named mapping from a posting purpose to one account.
@@ -69,15 +106,20 @@ type DefaultSlot struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// CreateInput is the payload for creating an account. Code, depth and
-// bs_pnl are server-assigned; bs_pnl is accepted ONLY under sub-category
-// 9100, the one sub-category that mixes BS and PNL (AD-2).
+// CreateInput is the payload for creating an account. Code, depth and bs_pnl
+// are server-assigned; bs_pnl is accepted ONLY under a MIXED category (AD-2),
+// which is 9000 System & Control among the seeded rows.
+//
+// Placement is exactly one of: SubCategoryID (under a sub-category),
+// CategoryID (directly under a category), or ParentID (a sub-account, which
+// inherits whichever placement its parent uses -- AD-5).
 type CreateInput struct {
 	Name          string         `json:"name"`
 	Description   string         `json:"description"`
-	SubCategoryID int            `json:"subCategoryId"` // required when ParentID is empty
-	ParentID      string         `json:"parentId"`      // uuid; empty means top-level
-	BSPNL         string         `json:"bsPnl"`         // required only under 9100
+	SubCategoryID int            `json:"subCategoryId"`
+	CategoryID    int            `json:"categoryId"`
+	ParentID      string         `json:"parentId"` // uuid; empty means top-level
+	BSPNL         string         `json:"bsPnl"`    // required only under a MIXED category
 	Type          string         `json:"type"`
 	Attributes    map[string]any `json:"attributes"`
 	IsPostable    *bool          `json:"isPostable"`

@@ -152,12 +152,15 @@ func sortValue(a *Account, field string) any {
 	}
 }
 
-// Categories returns the fixed reference tree: 9 categories and 17
-// sub-categories, both in sort order. Neither is user-editable (AD-1).
-func Categories(ctx context.Context, pool *pgxpool.Pool) ([]Category, []SubCategory, error) {
+// Categories returns the reference tree: the 9 seeded categories and 17 seeded
+// sub-categories plus anything the tenant has appended, both in sort order.
+// Names are editable and rows are appendable; codes and ranges are not (AD-1,
+// relaxed to rename-only -- see store_taxonomy.go).
+func Categories(ctx context.Context, pool rowQuerier) ([]Category, []SubCategory, error) {
 	catRows, err := pool.Query(ctx, `
 		SELECT category_id, category_code, category_name, category_range_low,
-		       category_range_high, category_normal_balance, category_sort_order
+		       category_range_high, category_normal_balance, category_bs_pnl,
+		       category_sort_order
 		FROM lkp_coa_category ORDER BY category_sort_order, category_code`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list categories: %w", err)
@@ -168,7 +171,7 @@ func Categories(ctx context.Context, pool *pgxpool.Pool) ([]Category, []SubCateg
 	for catRows.Next() {
 		var c Category
 		if err := catRows.Scan(&c.ID, &c.Code, &c.Name, &c.RangeLow,
-			&c.RangeHigh, &c.NormalBalance, &c.SortOrder); err != nil {
+			&c.RangeHigh, &c.NormalBalance, &c.BSPNL, &c.SortOrder); err != nil {
 			return nil, nil, fmt.Errorf("scan category: %w", err)
 		}
 		cats = append(cats, c)

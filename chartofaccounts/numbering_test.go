@@ -18,7 +18,11 @@ func TestNextChildCode(t *testing.T) {
 	}{
 		{"first child", "1103", nil, "1103.01", ""},
 		{"second child", "1103", []string{"1103.01"}, "1103.02", ""},
-		{"fills a gap left by a deleted child", "1103", []string{"1103.01", "1103.03"}, "1103.02", ""},
+		// A new child goes to the bottom of the list, not into a gap an
+		// earlier deletion left open -- that gap is only reused once .99 is
+		// reached (see the exhaustion case below).
+		{"does not backfill a gap while the ceiling is still open", "1103",
+			[]string{"1103.01", "1103.03"}, "1103.04", ""},
 		{"ignores other parents' children", "1103", []string{"1104.01", "1105.01"}, "1103.01", ""},
 		{"ignores the parent's own code", "1103", []string{"1103"}, "1103.01", ""},
 		{"pads to two digits", "1103", []string{"1103.01", "1103.02", "1103.03", "1103.04",
@@ -48,6 +52,22 @@ func TestNextChildCode(t *testing.T) {
 	}
 }
 
+// Once every suffix up to the ceiling is taken, a gap below it is the only
+// thing left to hand out -- this is the fallback the "does not backfill"
+// cases above are deliberately NOT exercising.
+func TestNextChildCodeFallsBackToAGapOnceTheCeilingIsFull(t *testing.T) {
+	var taken []string
+	for i := 1; i <= MaxChildSuffix; i++ {
+		if i == 50 {
+			continue // leave exactly one gap
+		}
+		taken = append(taken, fmt.Sprintf("1103.%02d", i))
+	}
+	got, err := NextChildCode("1103", taken)
+	require.NoError(t, err)
+	assert.Equal(t, "1103.50", got)
+}
+
 func TestNextChildCodeExhausted(t *testing.T) {
 	var taken []string
 	for i := 1; i <= MaxChildSuffix; i++ {
@@ -69,11 +89,17 @@ func TestNextTopLevelCode(t *testing.T) {
 		wantErr bool
 	}{
 		{"empty range starts at the low bound", 1100, 1199, nil, "1100", false},
-		{"skips taken codes", 1100, 1199, []string{"1100", "1101"}, "1102", false},
-		{"fills an interior gap", 1100, 1199, []string{"1100", "1102"}, "1101", false},
+		{"appends after the highest taken code", 1100, 1199, []string{"1100", "1101"}, "1102", false},
+		// A new account goes to the bottom of the sub-category's list, not
+		// into a gap an earlier deletion left open -- that gap is only reused
+		// once the range is full at the top (see the fallback case below).
+		{"does not backfill an interior gap while room remains at the top", 1100, 1199,
+			[]string{"1100", "1102"}, "1103", false},
 		{"ignores child codes in the range", 1100, 1199, []string{"1100", "1100.01"}, "1101", false},
 		{"ignores codes outside the range", 1100, 1199, []string{"2100", "2101"}, "1100", false},
 		{"uses the last slot", 1100, 1101, []string{"1100"}, "1101", false},
+		{"falls back to an interior gap once the range is full at the top", 1100, 1102,
+			[]string{"1100", "1102"}, "1101", false},
 		{"exhausted range conflicts", 1100, 1101, []string{"1100", "1101"}, "", true},
 	}
 
@@ -131,8 +157,13 @@ func TestNextCategoryCode(t *testing.T) {
 		{"empty chart", nil, 1000, false},
 		{"the nine seeded categories", seeded, 10000, false},
 		{"one tenant category already added", append(append([]int{}, seeded...), 10000), 11000, false},
-		{"gaps are reused", []int{1000, 3000}, 2000, false},
-		{"unaligned codes do not consume a block", []int{1500, 2500}, 1000, false},
+		// A new category goes below the last one, not into a gap an earlier
+		// deletion left open -- that gap is only reused once every block above
+		// it is taken (see the fallback case below).
+		{"does not backfill a gap while blocks remain above", []int{1000, 3000}, 4000, false},
+		{"unaligned codes do not consume a block, or advance past one", []int{1500, 2500}, 1000, false},
+		{"falls back to a gap once every block above it is taken",
+			allCategoryBlocksExcept(50000), 50000, false},
 		{"every block taken", allCategoryBlocks(), 0, true},
 	}
 
@@ -161,6 +192,18 @@ func allCategoryBlocks() []int {
 	return out
 }
 
+// allCategoryBlocksExcept is every category code except one, leaving exactly
+// one gap for the fallback-to-a-gap case to find.
+func allCategoryBlocksExcept(gap int) []int {
+	var out []int
+	for _, c := range allCategoryBlocks() {
+		if c != gap {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func TestNextSubCategoryCode(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -175,7 +218,13 @@ func TestNextSubCategoryCode(t *testing.T) {
 		{"assets with its three seeded subs", 1000, 1999, []int{1100, 1200, 1300}, 1400, ""},
 		{"operating expenses with five seeded subs", 6000, 6999,
 			[]int{6100, 6200, 6300, 6400, 6500}, 6600, ""},
-		{"gaps are reused", 1000, 1999, []int{1100, 1300}, 1200, ""},
+		// A new sub-category goes below the last one, not into a gap an
+		// earlier deletion left open -- that gap is only reused once every
+		// block above it is taken (see the fallback case below).
+		{"does not backfill a gap while blocks remain above", 1000, 1999, []int{1100, 1300}, 1400, ""},
+		{"unaligned codes do not consume a block, or advance past one", 1000, 1999, []int{1050, 1150}, 1100, ""},
+		{"falls back to an interior gap once the range is full at the top", 1000, 1399,
+			[]int{1100, 1300}, 1200, ""},
 		// Codes are unique table-wide (uq_coa_subcategory_code), so a code taken
 		// under another category is still taken -- but one outside this
 		// category's range cannot block it.

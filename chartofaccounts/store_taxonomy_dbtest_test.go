@@ -4,6 +4,7 @@ package chartofaccounts
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -442,4 +443,49 @@ func findTreeCategory(sections []TreeSection, code int) *TreeCategory {
 		}
 	}
 	return nil
+}
+
+// TestCreateAppendsAfterTheHighestCodeInsteadOfBackfillingAGap locks in the
+// reported numbering behavior end-to-end: a new account goes to the bottom
+// of its sub-category's list -- one past whatever the highest live code
+// there currently is -- rather than backfilling a gap a deletion just
+// opened up. The gap is only reused once the range is genuinely full (that
+// fallback is covered cheaply at the pure-function level by
+// TestNextTopLevelCode's "falls back to an interior gap" case; repeating it
+// here would mean creating on the order of 100 real accounts).
+//
+// Deliberately run against a FRESHLY created sub-category rather than a
+// seeded one: several other dbtests in this package create fixtures under
+// seeded sub-categories (1100 among them) without cleaning them up, so a
+// seeded range's live code count only ever grows across repeated runs --
+// asserting an exact resulting code against one would be asserting against
+// however much other tests happened to leave behind. A brand-new
+// sub-category's range has never been touched by anything, and is fully
+// torn down at the end, so this test's result can't depend on the database's
+// history.
+func TestCreateAppendsAfterTheHighestCodeInsteadOfBackfillingAGap(t *testing.T) {
+	pool, ctx := testPool(t), context.Background()
+	cipher := testCipher(t)
+
+	sub, err := CreateSubCategory(ctx, pool, SubCategoryCreateInput{
+		CategoryID: categoryIDByCode(t, ctx, pool, 7000), Name: "T-Numbering Fresh Sub",
+	}, 1)
+	require.NoError(t, err)
+	t.Cleanup(func() { purgeSubCategory(t, ctx, pool, sub.Code) })
+
+	a, err := Create(ctx, pool, cipher, CreateInput{Name: "T-Numbering A", SubCategoryID: sub.ID}, 1)
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(sub.Code), a.Code, "first account takes the range's own starting code")
+
+	b, err := Create(ctx, pool, cipher, CreateInput{Name: "T-Numbering B", SubCategoryID: sub.ID}, 1)
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(sub.Code+1), b.Code)
+
+	// Free up A's code -- a gap now sits at the bottom of the range, below B.
+	require.NoError(t, SoftDelete(ctx, pool, a.ID, 1))
+
+	c, err := Create(ctx, pool, cipher, CreateInput{Name: "T-Numbering C", SubCategoryID: sub.ID}, 1)
+	require.NoError(t, err)
+	assert.Equal(t, strconv.Itoa(sub.Code+2), c.Code,
+		"must append past B, not reuse A's now-open code while the range still has room above")
 }

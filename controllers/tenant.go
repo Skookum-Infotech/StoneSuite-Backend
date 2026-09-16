@@ -190,7 +190,7 @@ func setupLink(token string) string {
 }
 
 // resetLink is the public URL where any user resets a forgotten password.
-func resetLink(token string) string { return frontendBase() + "/reset-password?token=" + token }
+func resetLink(token string) string { return frontendBase() + "/auth/reset-password?token=" + token }
 
 // generateTenantJWT signs an access token for identityID. activeRoleID is
 // optional: when set (see SwitchRole), the token carries an active_role_id

@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-512 endpoints across 7 surfaces, read from `main.go`.
+516 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 431 |
+| staff token + tenant | 435 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 17 |
@@ -311,7 +311,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 430 endpoints
+## `tenant` — 434 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -527,7 +527,11 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/finance/accounts` | staff token + tenant | `coa.Create` |
 | `PATCH` | `/api/tenant/finance/accounts/bulk` | staff token + tenant | `coa.BulkUpdate` |
 | `GET` | `/api/tenant/finance/accounts/categories` | staff token + tenant | `coa.Categories` |
+| `POST` | `/api/tenant/finance/accounts/categories` | staff token + tenant | `coa.CreateCategory` |
+| `PATCH` | `/api/tenant/finance/accounts/categories/{id}` | staff token + tenant | `coa.RenameCategory` |
 | `POST` | `/api/tenant/finance/accounts/search` | staff token + tenant | `coa.Search` |
+| `POST` | `/api/tenant/finance/accounts/subcategories` | staff token + tenant | `coa.CreateSubCategory` |
+| `PATCH` | `/api/tenant/finance/accounts/subcategories/{id}` | staff token + tenant | `coa.RenameSubCategory` |
 | `GET` | `/api/tenant/finance/accounts/tree` | staff token + tenant | `coa.Tree` |
 | `DELETE` | `/api/tenant/finance/accounts/{uuid}` | staff token + tenant | `coa.Delete` |
 | `GET` | `/api/tenant/finance/accounts/{uuid}` | staff token + tenant | `coa.Get` |

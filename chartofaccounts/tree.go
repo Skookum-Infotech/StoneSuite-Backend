@@ -23,12 +23,14 @@ type TreeSubCategory struct {
 	Accounts []*TreeAccount `json:"accounts"`
 }
 
-// TreeCategory groups sub-categories under a fixed category.
+// TreeCategory groups sub-categories under a category. Accounts holds the
+// accounts placed directly on the category, rendered above its sub-categories.
 type TreeCategory struct {
 	ID            int                `json:"id"`
 	Code          int                `json:"code"`
 	Name          string             `json:"name"`
 	NormalBalance string             `json:"normalBalance"`
+	Accounts      []*TreeAccount     `json:"accounts"`
 	SubCategories []*TreeSubCategory `json:"subCategories"`
 }
 
@@ -47,10 +49,12 @@ var sectionLabels = map[string]string{
 
 // BuildTree assembles flat rows into the report structure:
 //
-//	BS/PNL -> category -> sub-category -> account -> children
+//	BS/PNL -> category -> [direct accounts] -> sub-category -> account -> children
 //
 // Sub-categories are kept even when empty, so the report shows the tenant's
-// full account structure rather than only the parts currently populated.
+// full account structure rather than only the parts currently populated, and a
+// category with neither sub-categories nor direct accounts still appears -- a
+// freshly created one must be visible to be worth adding anything to.
 //
 // A section appears only when at least one of its categories does. An account
 // whose parent was filtered out is promoted to top level rather than dropped:
@@ -74,9 +78,16 @@ func BuildTree(cats []Category, subs []SubCategory, accts []*Account, opts TreeO
 		roots = append(roots, a) // top-level, or an orphan we promote
 	}
 
+	// Split roots by placement: an account carries a sub-category id or a
+	// category id, never both (chk_coa_placement).
 	rootsBySub := make(map[int][]*Account, len(subs))
+	rootsByCategory := make(map[int][]*Account, len(cats))
 	for _, a := range roots {
-		rootsBySub[a.SubCategoryID] = append(rootsBySub[a.SubCategoryID], a)
+		if a.SubCategoryID != nil {
+			rootsBySub[*a.SubCategoryID] = append(rootsBySub[*a.SubCategoryID], a)
+			continue
+		}
+		rootsByCategory[a.CategoryID] = append(rootsByCategory[a.CategoryID], a)
 	}
 
 	subsByCategory := make(map[int][]SubCategory, len(cats))
@@ -87,6 +98,44 @@ func BuildTree(cats []Category, subs []SubCategory, accts []*Account, opts TreeO
 	byBSPNL := map[string][]*TreeCategory{}
 	for _, c := range cats {
 		grouped := map[string]*TreeCategory{}
+		// One category can appear on both sides (see the AD-2 note below), so
+		// every append goes through here rather than creating the node inline.
+		nodeFor := func(side string) *TreeCategory {
+			tc, ok := grouped[side]
+			if !ok {
+				// Accounts/SubCategories start as non-nil empty slices, not the
+				// zero-value nil -- encoding/json marshals a nil slice as
+				// "null", and a category with nothing placed directly on it
+				// (true of every category today; direct placement is brand
+				// new) would otherwise send "accounts":null. The frontend
+				// renders cat.accounts unconditionally, so that null crashes
+				// the whole tree on page load. wrap() below exists for the
+				// identical reason on TreeAccount.Children.
+				tc = &TreeCategory{
+					ID: c.ID, Code: c.Code, Name: c.Name, NormalBalance: c.NormalBalance,
+					Accounts:      make([]*TreeAccount, 0),
+					SubCategories: make([]*TreeSubCategory, 0),
+				}
+				grouped[side] = tc
+			}
+			return tc
+		}
+
+		// Accounts placed directly on the category, partitioned the same way
+		// its sub-categories' accounts are.
+		for _, side := range []string{BalanceSheet, ProfitAndLoss} {
+			for _, a := range sortByCode(rootsByCategory[c.ID]) {
+				if a.BSPNL != side {
+					continue
+				}
+				tc := nodeFor(side)
+				tc.Accounts = append(tc.Accounts, &TreeAccount{
+					Account:  a,
+					Children: wrap(sortByCode(childrenOf[a.ID])),
+				})
+			}
+		}
+
 		for _, s := range subsByCategory[c.ID] {
 			// Partition the sub-category's accounts by EACH ACCOUNT's own side,
 			// not by one side for the whole sub-category. Sub-category 9100
@@ -100,8 +149,8 @@ func BuildTree(cats []Category, subs []SubCategory, accts []*Account, opts TreeO
 			}
 			if len(bySide) == 0 {
 				// No accounts, but the structure is still shown, on the side
-				// the sub-category is fixed to.
-				bySide[fixedSide(s.Code)] = nil
+				// the sub-category inherits from its category.
+				bySide[fixedSide(c.BSPNL)] = nil
 			}
 
 			// Iterate the sides in fixed order; ranging a map would make the
@@ -111,21 +160,26 @@ func BuildTree(cats []Category, subs []SubCategory, accts []*Account, opts TreeO
 				if !present {
 					continue
 				}
-				ts := &TreeSubCategory{ID: s.ID, Code: s.Code, Name: s.Name}
+				// Same non-nil-empty-slice reasoning as TreeCategory.Accounts
+				// above: a genuinely empty sub-category (kept visible by
+				// design -- see the doc comment on BuildTree) must still send
+				// "accounts":[], not "accounts":null.
+				ts := &TreeSubCategory{ID: s.ID, Code: s.Code, Name: s.Name, Accounts: make([]*TreeAccount, 0)}
 				for _, a := range accts {
 					ts.Accounts = append(ts.Accounts, &TreeAccount{
 						Account:  a,
 						Children: wrap(sortByCode(childrenOf[a.ID])),
 					})
 				}
-				tc, ok := grouped[side]
-				if !ok {
-					tc = &TreeCategory{ID: c.ID, Code: c.Code, Name: c.Name, NormalBalance: c.NormalBalance}
-					grouped[side] = tc
-				}
-				tc.SubCategories = append(tc.SubCategories, ts)
+				nodeFor(side).SubCategories = append(nodeFor(side).SubCategories, ts)
 			}
 		}
+
+		// An empty category still shows, on its own side.
+		if len(grouped) == 0 {
+			nodeFor(fixedSide(c.BSPNL))
+		}
+
 		for side, tc := range grouped {
 			sort.SliceStable(tc.SubCategories, func(i, j int) bool {
 				return tc.SubCategories[i].Code < tc.SubCategories[j].Code
@@ -179,13 +233,12 @@ func wrap(in []*Account) []*TreeAccount {
 	return out
 }
 
-// fixedSide reports the side an EMPTY sub-category is displayed under. It is
-// only consulted when a sub-category has no accounts to partition by; when it
-// has accounts, each account's own BSPNL decides. Sub-category 9100 has no
-// fixed side (DeriveBSPNL errors for it), so an empty 9100 shows under the
-// balance sheet.
-func fixedSide(subCategoryCode int) string {
-	if side, err := DeriveBSPNL(subCategoryCode, ""); err == nil {
+// fixedSide reports the side an EMPTY sub-category or category is displayed
+// under. It is only consulted when there are no accounts to partition by; when
+// there are, each account's own BSPNL decides. A MIXED category (9000 among the
+// seeded rows) has no fixed side, so an empty one shows under the balance sheet.
+func fixedSide(categorySide string) string {
+	if side, err := DeriveBSPNL(categorySide, ""); err == nil {
 		return side
 	}
 	return BalanceSheet

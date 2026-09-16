@@ -2,54 +2,61 @@ package chartofaccounts
 
 import "fmt"
 
-// MixedSubCategoryCode is sub-category 9100 (System & Control Accounts) -- the
-// only sub-category holding both balance-sheet accounts (9101 Opening Balance
-// Equity, 9102 Suspense) and P&L accounts (9103-9107). Everywhere else BS/PNL
-// follows the category, which is why the flag lives on the account (AD-2).
-const MixedSubCategoryCode = 9100
-
 // Balance-sheet vs profit-and-loss markers, matching chk_coa_bs_pnl.
 const (
 	BalanceSheet  = "BS"
 	ProfitAndLoss = "PNL"
 )
 
-// bsPnlBySubCategory maps every non-mixed sub-category to its fixed side.
-var bsPnlBySubCategory = map[int]string{
-	1100: BalanceSheet, 1200: BalanceSheet, 1300: BalanceSheet,
-	2100: BalanceSheet, 2200: BalanceSheet,
-	3100: BalanceSheet,
-	4100: ProfitAndLoss, 4200: ProfitAndLoss,
-	5100: ProfitAndLoss,
-	6100: ProfitAndLoss, 6200: ProfitAndLoss, 6300: ProfitAndLoss,
-	6400: ProfitAndLoss, 6500: ProfitAndLoss,
-	7100: ProfitAndLoss,
-	8100: ProfitAndLoss,
-}
+// MixedSide marks a category whose accounts do not all share one side, so each
+// account carries its own (AD-2). 9000 System & Control is the only seeded one:
+// 9101 Opening Balance Equity and 9102 Suspense are balance-sheet accounts,
+// 9103-9107 are P&L. Stored in lkp_coa_category.category_bs_pnl.
+const MixedSide = "MIXED"
 
-// DeriveBSPNL returns the BS/PNL side for an account in subCategoryCode.
+// MixedSubCategoryCode is sub-category 9100, the seeded sub-category under the
+// one MIXED category. Kept as a named constant because the seed data and the
+// dbtest fixtures still refer to it by code; derivation itself no longer keys
+// off it.
+const MixedSubCategoryCode = 9100
+
+// DeriveBSPNL returns the BS/PNL side for an account placed under a category
+// whose own side is categorySide.
 //
-// For every sub-category except 9100 the side is derived and any supplied
-// value is ignored -- a user must not be able to file a revenue account on the
-// balance sheet. Under 9100 the side is genuinely ambiguous, so supplied is
+// The side used to come from a package-level map keyed by the 17 seeded
+// sub-category codes. That map could not answer for a sub-category a tenant
+// created, so the side now lives on the category row and every sub-category
+// inherits its parent category's -- which is what the map encoded anyway
+// (1100/1200/1300 all BS under 1000 Assets, 6100-6500 all PNL under 6000
+// Operating Expenses, and so on).
+//
+// For a BS or PNL category the side is derived and any supplied value is
+// ignored: a user must not be able to file a revenue account on the balance
+// sheet. Under a MIXED category the side is genuinely ambiguous, so supplied is
 // required and must be exactly "BS" or "PNL".
-func DeriveBSPNL(subCategoryCode int, supplied string) (string, error) {
-	if side, ok := bsPnlBySubCategory[subCategoryCode]; ok {
-		return side, nil
-	}
-	if subCategoryCode != MixedSubCategoryCode {
-		return "", ClientError{Msg: fmt.Sprintf(
-			"Unknown sub-category code %d.", subCategoryCode)}
-	}
-	switch supplied {
+func DeriveBSPNL(categorySide, supplied string) (string, error) {
+	switch categorySide {
 	case BalanceSheet, ProfitAndLoss:
-		return supplied, nil
-	case "":
-		return "", ClientError{Msg: fmt.Sprintf(
-			"bsPnl is required for sub-category %d (System & Control Accounts), "+
-				"which contains both balance-sheet and P&L accounts.", MixedSubCategoryCode)}
+		return categorySide, nil
+	case MixedSide:
+		switch supplied {
+		case BalanceSheet, ProfitAndLoss:
+			return supplied, nil
+		case "":
+			return "", ClientError{Msg: "bsPnl is required for this category, " +
+				"which contains both balance-sheet and P&L accounts."}
+		default:
+			return "", ClientError{Msg: fmt.Sprintf(
+				"bsPnl must be %q or %q, got %q.", BalanceSheet, ProfitAndLoss, supplied)}
+		}
 	default:
 		return "", ClientError{Msg: fmt.Sprintf(
-			"bsPnl must be %q or %q, got %q.", BalanceSheet, ProfitAndLoss, supplied)}
+			"Unknown category side %q.", categorySide)}
 	}
+}
+
+// ValidCategorySide reports whether s is one of the three sides a category row
+// may declare. Used to validate the side supplied when creating a category.
+func ValidCategorySide(s string) bool {
+	return s == BalanceSheet || s == ProfitAndLoss || s == MixedSide
 }

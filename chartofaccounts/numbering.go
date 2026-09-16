@@ -82,3 +82,80 @@ func NextTopLevelCode(rangeLow, rangeHigh int, taken []string) (string, error) {
 	return "", ConflictError{Msg: fmt.Sprintf(
 		"No account codes remain in the range %d-%d.", rangeLow, rangeHigh)}
 }
+
+// Block sizes for the taxonomy. A category owns a thousand-block (1000 Assets
+// covers 1000-1999); a sub-category owns a hundred-block inside its category
+// (1100 Current Assets covers 1100-1199). Both match the seeded rows, so a
+// tenant-created category or sub-category is indistinguishable in shape from a
+// seeded one.
+const (
+	CategoryBlockSize    = 1000
+	SubCategoryBlockSize = 100
+)
+
+// FirstCategoryCode is where category allocation starts. MaxCategoryCode caps
+// it: codes stay at most five digits, which keeps every account code short
+// enough to stay readable in the report's fixed-width code column.
+const (
+	FirstCategoryCode = 1000
+	MaxCategoryCode   = 99000
+)
+
+// CategoryDirectRange returns the code window reserved for accounts placed
+// directly under a category rather than under one of its sub-categories.
+//
+// It is the FIRST hundred-block of the category's range and never more, even
+// when the category has no sub-categories yet. Sizing it by the gap below the
+// lowest existing sub-category would be wider today and would silently overlap
+// tomorrow: a direct account allocated at 1150 while 1100 did not exist would
+// land inside sub-category 1100's range the moment someone created it, and
+// codes are immutable after allocation. A fixed first block cannot collide,
+// because NextSubCategoryCode never hands that block out.
+func CategoryDirectRange(rangeLow, rangeHigh int) (int, int) {
+	high := rangeLow + SubCategoryBlockSize - 1
+	if high > rangeHigh {
+		high = rangeHigh
+	}
+	return rangeLow, high
+}
+
+// NextCategoryCode returns the lowest free thousand-block code for a new
+// category, given every category code currently in use. The nine seeded
+// categories occupy 1000-9000, so the first tenant-created category is 10000.
+func NextCategoryCode(taken []int) (int, error) {
+	used := make(map[int]bool, len(taken))
+	for _, c := range taken {
+		used[c] = true
+	}
+	for code := FirstCategoryCode; code <= MaxCategoryCode; code += CategoryBlockSize {
+		if !used[code] {
+			return code, nil
+		}
+	}
+	return 0, ConflictError{Msg: fmt.Sprintf(
+		"No category codes remain below %d.", MaxCategoryCode)}
+}
+
+// NextSubCategoryCode returns the lowest free hundred-block code for a new
+// sub-category of the category spanning [rangeLow, rangeHigh], given every
+// sub-category code currently in use anywhere.
+//
+// Allocation starts one block ABOVE rangeLow, leaving the category's first
+// block to CategoryDirectRange. That matches the seeded rows (1000 Assets ->
+// 1100, 1200, 1300) and is what keeps the two allocators from ever colliding.
+func NextSubCategoryCode(rangeLow, rangeHigh int, taken []int) (int, error) {
+	if rangeLow <= 0 || rangeHigh < rangeLow {
+		return 0, fmt.Errorf("invalid category code range %d-%d", rangeLow, rangeHigh)
+	}
+	used := make(map[int]bool, len(taken))
+	for _, c := range taken {
+		used[c] = true
+	}
+	for code := rangeLow + SubCategoryBlockSize; code+SubCategoryBlockSize-1 <= rangeHigh; code += SubCategoryBlockSize {
+		if !used[code] {
+			return code, nil
+		}
+	}
+	return 0, ConflictError{Msg: fmt.Sprintf(
+		"No sub-category codes remain in the range %d-%d.", rangeLow, rangeHigh)}
+}

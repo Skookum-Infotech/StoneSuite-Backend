@@ -4983,6 +4983,105 @@ CREATE TABLE IF NOT EXISTS coa_default_mapping (
 );
 CREATE INDEX IF NOT EXISTS idx_coa_slot_account ON coa_default_mapping (coa_account_id);
 
+-- ---------------------------------------------------------------------------
+-- CoA taxonomy: user-extensible categories + category-level accounts.
+--
+-- Supersedes AD-1 ("the category/sub-category tree is fixed and read-only").
+-- Tenants may now rename any category/sub-category and append new ones, and an
+-- account may hang directly off a category instead of a sub-category -- the
+-- 3000/5000/7000/8000/9000 categories each have a single same-named
+-- sub-category, and forcing every account through that redundant level was the
+-- original complaint. Codes and ranges stay server-assigned: renaming is safe,
+-- but re-coding a category would strand every account code already allocated
+-- inside its range.
+-- ---------------------------------------------------------------------------
+
+-- BS/PNL moves from a hardcoded Go map keyed by the 17 seeded sub-category
+-- codes (chartofaccounts/bspnl.go) onto the category row, because a
+-- user-created sub-category has no entry in that map and would be
+-- underivable. 'MIXED' marks a category whose accounts each carry their own
+-- side -- 9000 System & Control is the only seeded one (AD-2).
+ALTER TABLE lkp_coa_category
+    ADD COLUMN IF NOT EXISTS category_bs_pnl VARCHAR(5) NOT NULL DEFAULT 'BS';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_coa_category_bs_pnl') THEN
+    ALTER TABLE lkp_coa_category ADD CONSTRAINT chk_coa_category_bs_pnl
+      CHECK (category_bs_pnl IN ('BS','PNL','MIXED'));
+  END IF;
+END $$;
+
+-- Backfills the nine seeded categories to the sides bsPnlBySubCategory used to
+-- hardcode. Filtered by category_code, which is never user-editable, so this is
+-- a no-op on every boot after the first and can never touch a tenant-created
+-- category. IS DISTINCT FROM keeps it from writing rows that already match.
+UPDATE lkp_coa_category SET category_bs_pnl = 'PNL'
+ WHERE category_code IN (4000,5000,6000,7000,8000) AND category_bs_pnl IS DISTINCT FROM 'PNL';
+UPDATE lkp_coa_category SET category_bs_pnl = 'MIXED'
+ WHERE category_code = 9000 AND category_bs_pnl IS DISTINCT FROM 'MIXED';
+
+-- An account now sits under EITHER a sub-category (the original placement) or
+-- a category directly. Exactly one of the two columns is set; chk_coa_placement
+-- below is what makes "either" mean "exactly one" rather than "at least one".
+-- Existing rows all have subcategory_id set and category_id NULL, so they
+-- satisfy it untouched and need no backfill.
+ALTER TABLE coa_account ALTER COLUMN subcategory_id DROP NOT NULL;
+ALTER TABLE coa_account
+    ADD COLUMN IF NOT EXISTS category_id INTEGER NULL REFERENCES lkp_coa_category(category_id);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_coa_placement') THEN
+    ALTER TABLE coa_account ADD CONSTRAINT chk_coa_placement
+      CHECK ((subcategory_id IS NULL) <> (category_id IS NULL));
+  END IF;
+END $$;
+
+-- AD-5 for the category placement: a child inherits its parent's category,
+-- enforced by the database exactly as fk_coa_parent_subcat does for the
+-- sub-category placement. Both are MATCH SIMPLE, so each is satisfied trivially
+-- whenever its own placement column is NULL -- which is why the pair composes
+-- instead of conflicting, and why chk_coa_placement above is what keeps an
+-- account from escaping both.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_coa_account_id_category') THEN
+    ALTER TABLE coa_account ADD CONSTRAINT uq_coa_account_id_category
+      UNIQUE (coa_account_id, category_id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_coa_parent_category') THEN
+    ALTER TABLE coa_account ADD CONSTRAINT fk_coa_parent_category
+      FOREIGN KEY (parent_id, category_id)
+      REFERENCES coa_account (coa_account_id, category_id);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_coa_account_category ON coa_account (category_id)
+    WHERE coa_account_deleted_at IS NULL;
+
+-- coa_taxonomy_history -- append-only audit for category/sub-category renames
+-- and additions. A separate table rather than a third target column on
+-- coa_account_history: that table's chk_coa_history_target and its two partial
+-- indexes are built around exactly two targets (an account, or a default slot),
+-- and widening them would mean constraint surgery on the module's existing
+-- audit trail to record something that shares none of its columns.
+CREATE TABLE IF NOT EXISTS coa_taxonomy_history (
+    coa_taxonomy_history_id SERIAL      PRIMARY KEY,
+    taxonomy_kind           VARCHAR(12) NOT NULL,
+    taxonomy_code           INTEGER     NOT NULL,
+    history_action          VARCHAR(20) NOT NULL,
+    history_field           VARCHAR(60) NOT NULL DEFAULT '',
+    history_old_value       TEXT        NOT NULL DEFAULT '',
+    history_new_value       TEXT        NOT NULL DEFAULT '',
+    history_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    history_by              INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT chk_coa_taxonomy_kind   CHECK (taxonomy_kind IN ('category','subcategory')),
+    CONSTRAINT chk_coa_taxonomy_action CHECK (history_action IN ('create','update'))
+);
+CREATE INDEX IF NOT EXISTS idx_coa_taxonomy_history_target
+    ON coa_taxonomy_history (taxonomy_kind, taxonomy_code, history_at DESC);
+
 -- ── Cash Transfer module + GL foundation (journal/) ────────────────────
 
 -- accounting_settings -- singleton; the entire "closed period" concept --------

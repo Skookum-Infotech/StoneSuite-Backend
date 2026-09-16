@@ -91,3 +91,111 @@ func TestNextTopLevelCode(t *testing.T) {
 		})
 	}
 }
+
+func TestCategoryDirectRange(t *testing.T) {
+	tests := []struct {
+		name           string
+		lo, hi         int
+		wantLo, wantHi int
+	}{
+		// The seeded categories: the first hundred-block only, so 1100 Current
+		// Assets' own range can never overlap it.
+		{"assets", 1000, 1999, 1000, 1099},
+		{"revenue", 4000, 4999, 4000, 4099},
+		{"system", 9000, 9999, 9000, 9099},
+		{"tenant-created block", 10000, 10999, 10000, 10099},
+		// A category narrower than one block keeps its own ceiling rather than
+		// handing out codes past the end of its range.
+		{"range shorter than a block", 1000, 1049, 1000, 1049},
+		{"range exactly one block", 1000, 1099, 1000, 1099},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lo, hi := CategoryDirectRange(tt.lo, tt.hi)
+			assert.Equal(t, tt.wantLo, lo)
+			assert.Equal(t, tt.wantHi, hi)
+		})
+	}
+}
+
+func TestNextCategoryCode(t *testing.T) {
+	seeded := []int{1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000}
+
+	tests := []struct {
+		name    string
+		taken   []int
+		want    int
+		wantErr bool
+	}{
+		{"empty chart", nil, 1000, false},
+		{"the nine seeded categories", seeded, 10000, false},
+		{"one tenant category already added", append(append([]int{}, seeded...), 10000), 11000, false},
+		{"gaps are reused", []int{1000, 3000}, 2000, false},
+		{"unaligned codes do not consume a block", []int{1500, 2500}, 1000, false},
+		{"every block taken", allCategoryBlocks(), 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NextCategoryCode(tt.taken)
+			if tt.wantErr {
+				require.Error(t, err)
+				_, ok := IsConflict(err)
+				assert.True(t, ok, "want ConflictError, got %T", err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// allCategoryBlocks is every code NextCategoryCode can hand out, for the
+// exhausted-range case.
+func allCategoryBlocks() []int {
+	var out []int
+	for c := FirstCategoryCode; c <= MaxCategoryCode; c += CategoryBlockSize {
+		out = append(out, c)
+	}
+	return out
+}
+
+func TestNextSubCategoryCode(t *testing.T) {
+	tests := []struct {
+		name    string
+		lo, hi  int
+		taken   []int
+		want    int
+		wantErr string
+	}{
+		// Allocation starts one block above the category floor: the first block
+		// belongs to CategoryDirectRange, so 1000 is never handed out here.
+		{"first sub-category of an empty category", 1000, 1999, nil, 1100, ""},
+		{"assets with its three seeded subs", 1000, 1999, []int{1100, 1200, 1300}, 1400, ""},
+		{"operating expenses with five seeded subs", 6000, 6999,
+			[]int{6100, 6200, 6300, 6400, 6500}, 6600, ""},
+		{"gaps are reused", 1000, 1999, []int{1100, 1300}, 1200, ""},
+		// Codes are unique table-wide (uq_coa_subcategory_code), so a code taken
+		// under another category is still taken -- but one outside this
+		// category's range cannot block it.
+		{"codes outside the range are irrelevant", 1000, 1999, []int{2100, 2200}, 1100, ""},
+		{"exhausted range", 1000, 1199, []int{1100}, 0, "No sub-category codes remain"},
+		{"range with no room for a sub-category", 1000, 1099, nil, 0, "No sub-category codes remain"},
+		{"inverted range", 1999, 1000, nil, 0, "invalid category code range"},
+		{"non-positive range", 0, 999, nil, 0, "invalid category code range"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NextSubCategoryCode(tt.lo, tt.hi, tt.taken)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

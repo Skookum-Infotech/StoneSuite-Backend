@@ -24,7 +24,8 @@ type rowQuerier interface {
 // these, in this order, so scanAccount is the single scanner.
 const accountColumns = `
 	a.coa_account_uuid, a.coa_account_code, a.coa_account_name, a.coa_account_description,
-	a.subcategory_id, s.subcategory_code, s.subcategory_name, c.category_code, c.category_name,
+	a.subcategory_id, s.subcategory_code, s.subcategory_name,
+	c.category_id, c.category_code, c.category_name,
 	p.coa_account_uuid, a.coa_account_depth, a.coa_account_bs_pnl, a.coa_account_type,
 	a.coa_account_attributes, a.coa_account_is_postable, a.coa_account_is_active,
 	a.coa_account_is_visible, a.coa_account_is_system, a.coa_account_record_version,
@@ -32,10 +33,18 @@ const accountColumns = `
 
 // accountFrom is the shared FROM/JOIN chain. The parent join is LEFT so
 // top-level accounts (parent_id NULL) still return a row.
+//
+// The sub-category join is LEFT because an account may instead be placed
+// directly under a category (chk_coa_placement: exactly one of the two columns
+// is set). The category join stays INNER and resolves through whichever
+// placement the row uses, so every account still yields exactly one category --
+// that is what lets the report, the filter resolver's category_code/
+// category_name fields, and the flat table keep treating the category as
+// always-present.
 const accountFrom = `
 	FROM coa_account a
-	JOIN lkp_coa_subcategory s ON s.subcategory_id = a.subcategory_id
-	JOIN lkp_coa_category    c ON c.category_id    = s.category_id
+	LEFT JOIN lkp_coa_subcategory s ON s.subcategory_id = a.subcategory_id
+	JOIN lkp_coa_category    c ON c.category_id    = COALESCE(s.category_id, a.category_id)
 	LEFT JOIN coa_account    p ON p.coa_account_id = a.parent_id`
 
 // accountSelect is the full read projection over live rows.
@@ -54,11 +63,13 @@ func scanAccount(row pgx.Row) (*Account, error) {
 	var (
 		a          Account
 		parentUUID *string
+		subName    *string
 		attrs      scanAttributes
 	)
 	if err := row.Scan(
 		&a.ID, &a.Code, &a.Name, &a.Description,
-		&a.SubCategoryID, &a.SubCategoryCode, &a.SubCategoryName, &a.CategoryCode, &a.CategoryName,
+		&a.SubCategoryID, &a.SubCategoryCode, &subName,
+		&a.CategoryID, &a.CategoryCode, &a.CategoryName,
 		&parentUUID, &a.Depth, &a.BSPNL, &a.Type,
 		&attrs, &a.IsPostable, &a.IsActive,
 		&a.IsVisible, &a.IsSystem, &a.RecordVersion,
@@ -67,6 +78,9 @@ func scanAccount(row pgx.Row) (*Account, error) {
 		return nil, err
 	}
 	a.ParentID = parentUUID
+	if subName != nil {
+		a.SubCategoryName = *subName
+	}
 	a.Attributes = MaskAttributes(attrs)
 	return &a, nil
 }

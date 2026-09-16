@@ -7,10 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ptr is the fixtures' shorthand for the nullable placement columns: an account
+// carries a sub-category id or a category id, never both.
+func ptr[T any](v T) *T { return &v }
+
 func treeFixture() ([]Category, []SubCategory, []*Account) {
 	cats := []Category{
-		{ID: 1, Code: 1000, Name: "Assets", NormalBalance: "debit", SortOrder: 1},
-		{ID: 4, Code: 4000, Name: "Revenue", NormalBalance: "credit", SortOrder: 4},
+		{ID: 1, Code: 1000, Name: "Assets", NormalBalance: "debit", BSPNL: BalanceSheet, SortOrder: 1},
+		{ID: 4, Code: 4000, Name: "Revenue", NormalBalance: "credit", BSPNL: ProfitAndLoss, SortOrder: 4},
 	}
 	subs := []SubCategory{
 		{ID: 1, CategoryID: 1, CategoryCode: 1000, Code: 1100, Name: "Current Assets", SortOrder: 1},
@@ -19,20 +23,20 @@ func treeFixture() ([]Category, []SubCategory, []*Account) {
 	}
 	parent := "uuid-1103"
 	accts := []*Account{
-		{ID: "uuid-1103", Code: "1103", Name: "Bank Account - Operating", SubCategoryID: 1,
-			SubCategoryCode: 1100, CategoryCode: 1000, BSPNL: "BS", Depth: 0,
+		{ID: "uuid-1103", Code: "1103", Name: "Bank Account - Operating", SubCategoryID: ptr(1),
+			SubCategoryCode: ptr(1100), CategoryID: 1, CategoryCode: 1000, BSPNL: "BS", Depth: 0,
 			IsActive: true, IsVisible: true, IsPostable: true},
-		{ID: "uuid-1103-01", Code: "1103.01", Name: "HDFC USA", SubCategoryID: 1,
-			SubCategoryCode: 1100, CategoryCode: 1000, BSPNL: "BS", Depth: 1,
+		{ID: "uuid-1103-01", Code: "1103.01", Name: "HDFC USA", SubCategoryID: ptr(1),
+			SubCategoryCode: ptr(1100), CategoryID: 1, CategoryCode: 1000, BSPNL: "BS", Depth: 1,
 			ParentID: &parent, IsActive: true, IsVisible: true, IsPostable: true},
-		{ID: "uuid-1101", Code: "1101", Name: "Cash on Hand", SubCategoryID: 1,
-			SubCategoryCode: 1100, CategoryCode: 1000, BSPNL: "BS", Depth: 0,
+		{ID: "uuid-1101", Code: "1101", Name: "Cash on Hand", SubCategoryID: ptr(1),
+			SubCategoryCode: ptr(1100), CategoryID: 1, CategoryCode: 1000, BSPNL: "BS", Depth: 0,
 			IsActive: true, IsVisible: true, IsPostable: true},
-		{ID: "uuid-1201", Code: "1201", Name: "Land", SubCategoryID: 2,
-			SubCategoryCode: 1200, CategoryCode: 1000, BSPNL: "BS", Depth: 0,
+		{ID: "uuid-1201", Code: "1201", Name: "Land", SubCategoryID: ptr(2),
+			SubCategoryCode: ptr(1200), CategoryID: 1, CategoryCode: 1000, BSPNL: "BS", Depth: 0,
 			IsActive: false, IsVisible: true, IsPostable: true},
-		{ID: "uuid-4101", Code: "4101", Name: "Product Sales", SubCategoryID: 7,
-			SubCategoryCode: 4100, CategoryCode: 4000, BSPNL: "PNL", Depth: 0,
+		{ID: "uuid-4101", Code: "4101", Name: "Product Sales", SubCategoryID: ptr(7),
+			SubCategoryCode: ptr(4100), CategoryID: 4, CategoryCode: 4000, BSPNL: "PNL", Depth: 0,
 			IsActive: true, IsVisible: true, IsPostable: true},
 	}
 	return cats, subs, accts
@@ -130,21 +134,21 @@ func TestBuildTreeEmptyInputs(t *testing.T) {
 // to prevent.
 func TestBuildTreeSplitsMixedSubCategory(t *testing.T) {
 	cats := []Category{{ID: 9, Code: 9000, Name: "System & Control Accounts",
-		NormalBalance: "debit", SortOrder: 9}}
+		NormalBalance: "debit", BSPNL: MixedSide, SortOrder: 9}}
 	subs := []SubCategory{{ID: 17, CategoryID: 9, CategoryCode: 9000, Code: 9100,
 		Name: "System & Control Accounts", SortOrder: 1}}
 	accts := []*Account{
-		{ID: "u-9101", Code: "9101", Name: "Opening Balance Equity", SubCategoryID: 17,
-			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "BS",
+		{ID: "u-9101", Code: "9101", Name: "Opening Balance Equity", SubCategoryID: ptr(17),
+			SubCategoryCode: ptr(9100), CategoryID: 9, CategoryCode: 9000, BSPNL: "BS",
 			IsActive: true, IsVisible: true, IsPostable: true},
-		{ID: "u-9102", Code: "9102", Name: "Suspense Account", SubCategoryID: 17,
-			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "BS",
+		{ID: "u-9102", Code: "9102", Name: "Suspense Account", SubCategoryID: ptr(17),
+			SubCategoryCode: ptr(9100), CategoryID: 9, CategoryCode: 9000, BSPNL: "BS",
 			IsActive: true, IsVisible: true, IsPostable: true},
-		{ID: "u-9103", Code: "9103", Name: "Rounding Adjustment", SubCategoryID: 17,
-			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "PNL",
+		{ID: "u-9103", Code: "9103", Name: "Rounding Adjustment", SubCategoryID: ptr(17),
+			SubCategoryCode: ptr(9100), CategoryID: 9, CategoryCode: 9000, BSPNL: "PNL",
 			IsActive: true, IsVisible: true, IsPostable: true},
-		{ID: "u-9104", Code: "9104", Name: "Inventory Adjustment", SubCategoryID: 17,
-			SubCategoryCode: 9100, CategoryCode: 9000, BSPNL: "PNL",
+		{ID: "u-9104", Code: "9104", Name: "Inventory Adjustment", SubCategoryID: ptr(17),
+			SubCategoryCode: ptr(9100), CategoryID: 9, CategoryCode: 9000, BSPNL: "PNL",
 			IsActive: true, IsVisible: true, IsPostable: true},
 	}
 
@@ -202,15 +206,15 @@ func TestBuildTreeKeepsEmptySubCategories(t *testing.T) {
 		"structure is shown even when no accounts fall under it")
 }
 
-// Sub-category 9100 is the one sub-category with no fixed BS/PNL side --
-// DeriveBSPNL errors for it, since it mixes BS accounts (9101/9102) and PNL
-// accounts (9103-9107). fixedSide falls back to hardcoded BalanceSheet when
-// 9100 has zero accounts to derive a side from. This is a deliberate,
-// documented choice (tree.go fixedSide); this test pins it down so an empty
-// 9100 appears exactly once, under Balance Sheet, never under P&L.
-func TestBuildTreeEmpty9100FallsBackToBalanceSheet(t *testing.T) {
+// A MIXED category is the one with no fixed BS/PNL side -- DeriveBSPNL errors
+// for it, since 9100 mixes BS accounts (9101/9102) and PNL accounts
+// (9103-9107). fixedSide falls back to hardcoded BalanceSheet when there are
+// zero accounts to derive a side from. This is a deliberate, documented choice
+// (tree.go fixedSide); this test pins it down so an empty 9100 appears exactly
+// once, under Balance Sheet, never under P&L.
+func TestBuildTreeEmptyMixedCategoryFallsBackToBalanceSheet(t *testing.T) {
 	cats := []Category{{ID: 9, Code: 9000, Name: "System & Control Accounts",
-		NormalBalance: "debit", SortOrder: 9}}
+		NormalBalance: "debit", BSPNL: MixedSide, SortOrder: 9}}
 	subs := []SubCategory{{ID: 17, CategoryID: 9, CategoryCode: 9000, Code: 9100,
 		Name: "System & Control Accounts", SortOrder: 1}}
 
@@ -221,4 +225,74 @@ func TestBuildTreeEmpty9100FallsBackToBalanceSheet(t *testing.T) {
 	require.Len(t, got[0].Categories[0].SubCategories, 1)
 	assert.Equal(t, 9100, got[0].Categories[0].SubCategories[0].Code)
 	assert.Empty(t, got[0].Categories[0].SubCategories[0].Accounts)
+}
+
+// An account placed directly on a category is reported on the category node
+// itself, above its sub-categories, rather than being forced through one.
+func TestBuildTreeReportsCategoryDirectAccounts(t *testing.T) {
+	cats, subs, accts := treeFixture()
+	accts = append(accts,
+		&Account{ID: "uuid-1001", Code: "1001", Name: "Assets Control", CategoryID: 1,
+			CategoryCode: 1000, BSPNL: "BS", Depth: 0,
+			IsActive: true, IsVisible: true, IsPostable: false},
+		&Account{ID: "uuid-1000", Code: "1000", Name: "Assets Summary", CategoryID: 1,
+			CategoryCode: 1000, BSPNL: "BS", Depth: 0,
+			IsActive: true, IsVisible: true, IsPostable: false},
+	)
+
+	got := BuildTree(cats, subs, accts, TreeOptions{IncludeInactive: true})
+	assets := got[0].Categories[0]
+
+	require.Len(t, assets.Accounts, 2)
+	assert.Equal(t, "1000", assets.Accounts[0].Code, "direct accounts sort by code")
+	assert.Equal(t, "1001", assets.Accounts[1].Code)
+	assert.Len(t, assets.SubCategories, 2, "sub-categories are unaffected")
+	for _, s := range assets.SubCategories {
+		for _, a := range s.Accounts {
+			assert.NotEqual(t, "1000", a.Code, "a direct account must not also appear under a sub-category")
+			assert.NotEqual(t, "1001", a.Code)
+		}
+	}
+}
+
+// A sub-account of a category-direct account nests under it exactly as one
+// under a sub-category-placed account does.
+func TestBuildTreeNestsChildrenOfCategoryDirectAccounts(t *testing.T) {
+	cats, subs, _ := treeFixture()
+	parent := "uuid-1000"
+	accts := []*Account{
+		{ID: "uuid-1000", Code: "1000", Name: "Assets Summary", CategoryID: 1,
+			CategoryCode: 1000, BSPNL: "BS", Depth: 0,
+			IsActive: true, IsVisible: true, IsPostable: false},
+		{ID: "uuid-1000-01", Code: "1000.01", Name: "Assets Sub", CategoryID: 1,
+			CategoryCode: 1000, BSPNL: "BS", Depth: 1, ParentID: &parent,
+			IsActive: true, IsVisible: true, IsPostable: true},
+	}
+
+	got := BuildTree(cats, subs, accts, TreeOptions{})
+	assets := got[0].Categories[0]
+	require.Len(t, assets.Accounts, 1)
+	require.Len(t, assets.Accounts[0].Children, 1)
+	assert.Equal(t, "1000.01", assets.Accounts[0].Children[0].Code)
+}
+
+// A category a tenant just created has neither sub-categories nor accounts. It
+// must still be reported, or there is nowhere in the UI to add anything to it.
+func TestBuildTreeKeepsEmptyCategories(t *testing.T) {
+	cats := []Category{
+		{ID: 10, Code: 10000, Name: "Statistical", NormalBalance: "debit", BSPNL: BalanceSheet, SortOrder: 10},
+		{ID: 11, Code: 11000, Name: "Memo", NormalBalance: "credit", BSPNL: ProfitAndLoss, SortOrder: 11},
+	}
+
+	got := BuildTree(cats, nil, nil, TreeOptions{})
+	require.Len(t, got, 2)
+	assert.Equal(t, BalanceSheet, got[0].BSPNL)
+	require.Len(t, got[0].Categories, 1)
+	assert.Equal(t, 10000, got[0].Categories[0].Code)
+	assert.Empty(t, got[0].Categories[0].SubCategories)
+	assert.Empty(t, got[0].Categories[0].Accounts)
+
+	assert.Equal(t, ProfitAndLoss, got[1].BSPNL)
+	require.Len(t, got[1].Categories, 1)
+	assert.Equal(t, 11000, got[1].Categories[0].Code)
 }

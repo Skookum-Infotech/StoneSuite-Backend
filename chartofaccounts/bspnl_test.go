@@ -10,43 +10,39 @@ import (
 func TestDeriveBSPNL(t *testing.T) {
 	tests := []struct {
 		name     string
-		subCode  int
+		side     string
 		supplied string
 		want     string
 		wantErr  string
 	}{
-		// Derived, and anything supplied is ignored.
-		{"current assets", 1100, "", "BS", ""},
-		{"fixed assets", 1200, "", "BS", ""},
-		{"intangible assets", 1300, "", "BS", ""},
-		{"current liabilities", 2100, "", "BS", ""},
-		{"long-term liabilities", 2200, "", "BS", ""},
-		{"equity", 3100, "", "BS", ""},
-		{"sales", 4100, "", "PNL", ""},
-		{"returns and discounts", 4200, "", "PNL", ""},
-		{"cogs", 5100, "", "PNL", ""},
-		{"payroll", 6100, "", "PNL", ""},
-		{"administrative", 6200, "", "PNL", ""},
-		{"sales and marketing", 6300, "", "PNL", ""},
-		{"logistics", 6400, "", "PNL", ""},
-		{"depreciation", 6500, "", "PNL", ""},
-		{"finance costs", 7100, "", "PNL", ""},
-		{"other income", 8100, "", "PNL", ""},
-		{"supplied value ignored outside 9100", 1100, "PNL", "BS", ""},
+		// Derived from the category, and anything supplied is ignored. The
+		// cases name the seeded categories whose sides these are, so the table
+		// still reads as the chart it encodes now that the codes are gone.
+		{"assets", BalanceSheet, "", "BS", ""},
+		{"liabilities", BalanceSheet, "", "BS", ""},
+		{"equity", BalanceSheet, "", "BS", ""},
+		{"revenue", ProfitAndLoss, "", "PNL", ""},
+		{"cost of goods sold", ProfitAndLoss, "", "PNL", ""},
+		{"operating expenses", ProfitAndLoss, "", "PNL", ""},
+		{"finance costs", ProfitAndLoss, "", "PNL", ""},
+		{"other income", ProfitAndLoss, "", "PNL", ""},
+		{"supplied value ignored outside a MIXED category", BalanceSheet, "PNL", "BS", ""},
 
-		// 9100 is the ONLY sub-category that mixes BS and PNL (AD-2).
-		{"system requires an explicit value", 9100, "", "", "required"},
-		{"system accepts BS", 9100, "BS", "BS", ""},
-		{"system accepts PNL", 9100, "PNL", "PNL", ""},
-		{"system rejects nonsense", 9100, "XX", "", "must be"},
-		{"system rejects lowercase", 9100, "bs", "", "must be"},
+		// A MIXED category is the ONLY one whose accounts carry their own side
+		// (AD-2); 9000 System & Control is the only seeded one.
+		{"mixed requires an explicit value", MixedSide, "", "", "required"},
+		{"mixed accepts BS", MixedSide, "BS", "BS", ""},
+		{"mixed accepts PNL", MixedSide, "PNL", "PNL", ""},
+		{"mixed rejects nonsense", MixedSide, "XX", "", "must be"},
+		{"mixed rejects lowercase", MixedSide, "bs", "", "must be"},
 
-		{"unknown sub-category", 9900, "", "", "9900"},
+		{"unknown side", "SIDE", "", "", "SIDE"},
+		{"empty side", "", "", "", "Unknown category side"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := DeriveBSPNL(tt.subCode, tt.supplied)
+			got, err := DeriveBSPNL(tt.side, tt.supplied)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.True(t, IsClientError(err), "want ClientError, got %T", err)
@@ -55,6 +51,27 @@ func TestDeriveBSPNL(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidCategorySide(t *testing.T) {
+	tests := []struct {
+		name string
+		side string
+		want bool
+	}{
+		{"balance sheet", BalanceSheet, true},
+		{"profit and loss", ProfitAndLoss, true},
+		{"mixed", MixedSide, true},
+		{"empty", "", false},
+		{"lowercase", "bs", false},
+		{"nonsense", "BOTH", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ValidCategorySide(tt.side))
 		})
 	}
 }

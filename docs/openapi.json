@@ -8358,6 +8358,76 @@
         "tags": [
           "tenant"
         ]
+      },
+      "post": {
+        "operationId": "post_tenant_finance_accounts_categories",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "coa.CreateCategory",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/finance/accounts/categories/{id}": {
+      "patch": {
+        "operationId": "patch_tenant_finance_accounts_categories_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "coa.RenameCategory",
+        "tags": [
+          "tenant"
+        ]
       }
     },
     "/api/tenant/finance/accounts/search": {
@@ -8386,6 +8456,78 @@
           }
         ],
         "summary": "coa.Search",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/finance/accounts/subcategories": {
+      "post": {
+        "operationId": "post_tenant_finance_accounts_subcategories",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "coa.CreateSubCategory",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/finance/accounts/subcategories/{id}": {
+      "patch": {
+        "operationId": "patch_tenant_finance_accounts_subcategories_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "coa.RenameSubCategory",
         "tags": [
           "tenant"
         ]

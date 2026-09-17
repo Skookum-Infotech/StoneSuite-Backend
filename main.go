@@ -41,12 +41,17 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/portal"
 	"stonesuite-backend/provisioning"
+	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/quote"
 	"stonesuite-backend/salesorder"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/vendorbill"
+	"stonesuite-backend/vendorcredit"
+	"stonesuite-backend/vendorpayment"
+	"stonesuite-backend/vendors"
 )
 
 func main() {
@@ -779,6 +784,56 @@ func main() {
 				email, name := salesorder.Recipient(*so)
 				return salesorder.ToPrintable(*so, seller),
 					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
+			},
+			// Purchase-side "Send to Vendor" loaders below -- same shape as the
+			// sales-side loaders above, except Recipient needs ctx/pool: none of
+			// these four modules snapshot a vendor email on the record itself
+			// (only a light VendorRef{ID,Name[,Number]}), so Recipient looks the
+			// vendor up via vendors.Get.
+			"vendor": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				v, err := vendors.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load vendor: %w", err)
+				}
+				email, name := vendors.Recipient(*v)
+				return vendors.ToPrintable(*v, seller),
+					controllers.DocMeta{WorkflowKey: "vendor", Number: v.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Profile " + v.Number}, nil
+			},
+			"purchase_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				po, err := purchaseorder.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load purchase order: %w", err)
+				}
+				email, name := purchaseorder.Recipient(ctx, pool, *po)
+				return purchaseorder.ToPrintable(*po, seller),
+					controllers.DocMeta{WorkflowKey: "purchase_order", Number: po.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Purchase Order " + po.Number}, nil
+			},
+			"vendor_bill": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				vb, err := vendorbill.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load vendor bill: %w", err)
+				}
+				email, name := vendorbill.Recipient(ctx, pool, *vb)
+				return vendorbill.ToPrintable(*vb, seller),
+					controllers.DocMeta{WorkflowKey: "vendor_bill", Number: vb.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Bill " + vb.Number}, nil
+			},
+			"vendor_credit": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				vc, err := vendorcredit.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load vendor credit: %w", err)
+				}
+				email, name := vendorcredit.Recipient(ctx, pool, *vc)
+				return vendorcredit.ToPrintable(*vc, seller),
+					controllers.DocMeta{WorkflowKey: "vendor_credit", Number: vc.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Credit " + vc.Number}, nil
+			},
+			"vendor_payment": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				vp, err := vendorpayment.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load vendor payment: %w", err)
+				}
+				email, name := vendorpayment.Recipient(ctx, pool, *vp)
+				return vendorpayment.ToPrintable(*vp, seller),
+					controllers.DocMeta{WorkflowKey: "vendor_payment", Number: vp.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Payment " + vp.Number}, nil
 			},
 		}
 		docOps := controllers.NewDocumentOps(docLoaders)

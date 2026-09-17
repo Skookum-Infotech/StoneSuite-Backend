@@ -239,6 +239,29 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 		return RecordAccessInfo{}, fmt.Errorf("lookup cash transfer: %w", err)
 	}
 
+	// vendor: dedicated relational module (the vendor master itself, not a
+	// transactional document), owner resolved the same way (employee ->
+	// users.id); no team column. Wired for the "Send to Vendor" contact-card
+	// document-email action. Note: schema.sql migration 010 also seeds an
+	// unrelated legacy v1 JSONB workflow row keyed 'vendor' -- see
+	// vendors/types.go's package doc comment. Real vendor records are relational
+	// rows in the `vendor` table below, so this branch (reached only after the
+	// v1 GetRecord lookup above has already failed) never collides with it.
+	var vOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM vendor v
+		LEFT JOIN employee e ON e.employee_id = v.vendor_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE v.vendor_uuid = $1::uuid AND v.vendor_deleted_at IS NULL`,
+		recordID).Scan(&vOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "vendor", OwnerUserID: vOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup vendor: %w", err)
+	}
+
 	// vendor_bill: dedicated relational module (Vendor Bill spec AD-11), owner
 	// resolved the same way (employee -> users.id); no team column. This is
 	// the first document module wired into the generic attachment mechanism
@@ -258,6 +281,60 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return RecordAccessInfo{}, fmt.Errorf("lookup vendor bill: %w", err)
+	}
+
+	// purchase_order: dedicated relational document module, owner resolved the
+	// same way (employee -> users.id); no team column. Wired for the "Send to
+	// Vendor" document-email action.
+	var poOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM purchase_order po
+		LEFT JOIN employee e ON e.employee_id = po.purchase_order_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE po.purchase_order_uuid = $1::uuid AND po.purchase_order_deleted_at IS NULL`,
+		recordID).Scan(&poOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "purchase_order", OwnerUserID: poOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup purchase order: %w", err)
+	}
+
+	// vendor_credit: dedicated relational module, owner resolved the same way
+	// (employee -> users.id); no team column. Wired for the "Send to Vendor"
+	// document-email action.
+	var vcOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM vendor_credit vc
+		LEFT JOIN employee e ON e.employee_id = vc.vendor_credit_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE vc.vendor_credit_uuid = $1::uuid AND vc.vendor_credit_deleted_at IS NULL`,
+		recordID).Scan(&vcOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "vendor_credit", OwnerUserID: vcOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup vendor credit: %w", err)
+	}
+
+	// vendor_payment: dedicated relational module, owner resolved the same way
+	// (employee -> users.id); no team column. Wired for the "Send to Vendor"
+	// document-email action.
+	var vpOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM vendor_payment vp
+		LEFT JOIN employee e ON e.employee_id = vp.vendor_payment_owner_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE vp.vendor_payment_uuid = $1::uuid AND vp.vendor_payment_deleted_at IS NULL`,
+		recordID).Scan(&vpOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "vendor_payment", OwnerUserID: vpOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup vendor payment: %w", err)
 	}
 
 	// expense: dedicated relational module (Expense Claims), owner resolved

@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/docpdf"
+	"stonesuite-backend/globalsearch"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/userstore"
@@ -26,6 +28,20 @@ type DocMeta struct {
 	DefaultRecipientEmail string
 	DefaultRecipientName  string
 	DefaultSubject        string
+}
+
+// recordLink builds a notification's deep-link path for resource+recordID
+// from globalsearch's registry -- the single source of truth for a
+// resource's frontend route (Domain/Module), reused here rather than
+// hand-maintaining a second copy. "" (never blocking the notification it's
+// building) if resource isn't a registered global-search provider.
+func recordLink(resource, recordID string) string {
+	for _, p := range globalsearch.All() {
+		if string(p.Resource) == resource {
+			return fmt.Sprintf("/%s/%s/%s", p.Domain, p.Module, recordID)
+		}
+	}
+	return ""
 }
 
 // DocumentLoader loads a document by UUID and maps it to a PrintableDoc plus
@@ -378,6 +394,7 @@ func notifyOwnerOfSend(
 		ResourceID:  recordID,
 		Title:       doc.Kind + " " + number + " sent",
 		Body:        "Sent to " + strings.Join(sentTo, ", "),
+		Link:        recordLink(workflowKey, recordID),
 		Channels:    []string{"email"},
 		Attachments: []services.NotifyAttachment{
 			{FileName: fileName, ContentType: "application/pdf", Content: pdf},

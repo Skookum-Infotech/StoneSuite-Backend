@@ -59,9 +59,24 @@ func TestNotifyOwnerOfSend_CallsWithOwnerID(t *testing.T) {
 	assert.Equal(t, "document.sent", gotReq.EventType)
 	assert.Equal(t, "invoice", gotReq.Resource)
 	assert.Equal(t, "rec-1", gotReq.ResourceID)
+	assert.Equal(t, "/sales/invoice/rec-1", gotReq.Link)
 	assert.Equal(t, []string{"email"}, gotReq.Channels)
 	require.Len(t, gotReq.Attachments, 1)
 	assert.Equal(t, "INV-1.pdf", gotReq.Attachments[0].FileName)
+}
+
+func TestNotifyOwnerOfSend_UnregisteredWorkflowKey_EmptyLink(t *testing.T) {
+	var gotReq services.NotificationRequest
+	notify := func(_ context.Context, req services.NotificationRequest) error {
+		gotReq = req
+		return nil
+	}
+
+	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1", "actor-1",
+		docpdf.PrintableDoc{Kind: "WIDGET"}, "W-1", "not-a-resource", "rec-1",
+		[]string{"bob@buyer.example"}, []byte("%PDF-1.4"), "W-1.pdf")
+
+	assert.Empty(t, gotReq.Link)
 }
 
 func TestNotifyOwnerOfSend_NoOwnerID_DoesNotCall(t *testing.T) {
@@ -109,6 +124,24 @@ func TestCustomerSendRequest_NoCC_OneRecipient(t *testing.T) {
 
 	require.Len(t, req.Recipients, 1)
 	assert.Equal(t, "buyer@example.com", req.Recipients[0].Email)
+}
+
+func TestRecordLink(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource string
+		recordID string
+		want     string
+	}{
+		{name: "sales domain resource", resource: "estimate", recordID: "rec-1", want: "/sales/estimate/rec-1"},
+		{name: "purchases domain resource", resource: "vendor", recordID: "rec-2", want: "/purchases/vendor/rec-2"},
+		{name: "unknown resource falls back to empty", resource: "not-a-resource", recordID: "rec-3", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, recordLink(tt.resource, tt.recordID))
+		})
+	}
 }
 
 func TestLooksLikeEmail(t *testing.T) {

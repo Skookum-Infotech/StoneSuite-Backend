@@ -1,6 +1,7 @@
 package vendorbill
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func TestToPrintable_VendorBill(t *testing.T) {
 
 func TestRecipient_VendorBill_NoVendor(t *testing.T) {
 	vb := VendorBill{Vendor: VendorRef{}}
-	email, name := Recipient(nil, nil, vb)
+	email, name := Recipient(context.Background(), nil, vb)
 	assert.Empty(t, email)
 	assert.Empty(t, name)
 }

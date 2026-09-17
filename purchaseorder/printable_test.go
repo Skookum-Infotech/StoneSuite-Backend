@@ -1,6 +1,7 @@
 package purchaseorder
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +32,7 @@ func TestRecipient_PurchaseOrder_NoVendor(t *testing.T) {
 	// Vendor lookup requires a DB pool (covered by the dbtest suite); the
 	// no-vendor short-circuit is pure and can be tested here.
 	po := PurchaseOrder{Vendor: VendorRef{}}
-	email, name := Recipient(nil, nil, po)
+	email, name := Recipient(context.Background(), nil, po)
 	assert.Empty(t, email)
 	assert.Empty(t, name)
 }

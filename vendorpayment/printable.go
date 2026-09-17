@@ -20,7 +20,7 @@ func ToPrintable(vp VendorPayment, seller docpdf.Seller) docpdf.PrintableDoc {
 	}
 	return docpdf.PrintableDoc{
 		Seller: seller, Kind: "VENDOR PAYMENT", Number: vp.Number, Status: vp.StatusName,
-		IssueDate: vp.PaymentDate.Format("2006-01-02"),
+		IssueDate:  vp.PaymentDate.Format("2006-01-02"),
 		Lines:      []docpdf.PrintLine{line},
 		GrandTotal: vp.Amount,
 		Notes:      vp.Memo,

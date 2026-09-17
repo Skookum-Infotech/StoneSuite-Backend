@@ -1,6 +1,7 @@
 package vendorcredit
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func TestToPrintable_VendorCredit(t *testing.T) {
 
 func TestRecipient_VendorCredit_NoVendor(t *testing.T) {
 	vc := VendorCredit{Vendor: VendorRef{}}
-	email, name := Recipient(nil, nil, vc)
+	email, name := Recipient(context.Background(), nil, vc)
 	assert.Empty(t, email)
 	assert.Empty(t, name)
 }

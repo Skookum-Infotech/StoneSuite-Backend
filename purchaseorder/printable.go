@@ -24,8 +24,8 @@ func ToPrintable(po PurchaseOrder, seller docpdf.Seller) docpdf.PrintableDoc {
 	return docpdf.PrintableDoc{
 		Seller: seller, Kind: "PURCHASE ORDER", Number: po.Number, Status: po.Status,
 		IssueDate: po.OrderDate, DueDate: po.ExpectedDate,
-		ShipTo: shipToPrintable(po.ShipTo),
-		Lines:  lines,
+		ShipTo:   shipToPrintable(po.ShipTo),
+		Lines:    lines,
 		Subtotal: po.Subtotal, DiscountTotal: po.DiscountTotal, TaxTotal: po.TaxTotal,
 		ShippingCharge: po.ShippingCharge, Adjustment: po.Adjustment, GrandTotal: po.GrandTotal,
 		Terms: po.TermsConditions, Notes: po.Notes, Memo: po.Memo,

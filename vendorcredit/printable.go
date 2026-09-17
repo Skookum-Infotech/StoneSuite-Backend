@@ -20,7 +20,7 @@ func ToPrintable(vc VendorCredit, seller docpdf.Seller) docpdf.PrintableDoc {
 	}
 	return docpdf.PrintableDoc{
 		Seller: seller, Kind: "VENDOR CREDIT", Number: vc.Number, Status: vc.StatusName,
-		IssueDate: vc.CreditDate.Format("2006-01-02"),
+		IssueDate:  vc.CreditDate.Format("2006-01-02"),
 		Lines:      []docpdf.PrintLine{line},
 		GrandTotal: vc.GrandTotal,
 		Notes:      vc.Memo,

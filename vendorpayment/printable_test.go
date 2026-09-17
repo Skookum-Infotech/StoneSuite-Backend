@@ -1,6 +1,7 @@
 package vendorpayment
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestToPrintable_VendorPayment(t *testing.T) {
 
 func TestRecipient_VendorPayment_NoVendor(t *testing.T) {
 	vp := VendorPayment{Vendor: VendorRef{}}
-	email, name := Recipient(nil, nil, vp)
+	email, name := Recipient(context.Background(), nil, vp)
 	assert.Empty(t, email)
 	assert.Empty(t, name)
 }

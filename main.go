@@ -51,6 +51,7 @@ import (
 	"stonesuite-backend/vendorbill"
 	"stonesuite-backend/vendorcredit"
 	"stonesuite-backend/vendorpayment"
+	"stonesuite-backend/vendors"
 )
 
 func main() {
@@ -781,6 +782,15 @@ func main() {
 			// these four modules snapshot a vendor email on the record itself
 			// (only a light VendorRef{ID,Name[,Number]}), so Recipient looks the
 			// vendor up via vendors.Get.
+			"vendor": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
+				v, err := vendors.Get(ctx, pool, uuid)
+				if err != nil {
+					return docpdf.PrintableDoc{}, controllers.DocMeta{}, fmt.Errorf("load vendor: %w", err)
+				}
+				email, name := vendors.Recipient(*v)
+				return vendors.ToPrintable(*v, seller),
+					controllers.DocMeta{WorkflowKey: "vendor", Number: v.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Profile " + v.Number}, nil
+			},
 			"purchase_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				po, err := purchaseorder.Get(ctx, pool, uuid)
 				if err != nil {

@@ -22,9 +22,14 @@ import (
 	"stonesuite-backend/config"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/middleware"
+	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/salesorder"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/userstore"
+	"stonesuite-backend/vendorbill"
+	"stonesuite-backend/vendorcredit"
+	"stonesuite-backend/vendorpayment"
+	"stonesuite-backend/vendors"
 	"stonesuite-backend/workflow"
 )
 
@@ -216,5 +221,162 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 					"the owner-ping recipient must be the owner's control-plane identity id")
 			}
 		}
+	}
+}
+
+// TestDocumentOps_Send_VendorModules_DB is the purchase-side counterpart to
+// TestDocumentOps_Send_HappyPath_DB: it seeds one vendor with an email on
+// file, creates one record per newly-wired workflow key (purchase_order,
+// vendor_bill, vendor_credit, vendor_payment), and drives Send with an EMPTY
+// recipient list -- exercising the actual value-add of this feature, that
+// Recipient() resolves the vendor's email via a vendors.Get lookup (none of
+// these four modules snapshot an email on the record itself, unlike
+// sales_order's Billing.Email). Unlike the happy-path test above, this
+// doesn't re-assert the notify actor/recipient-id plumbing (unchanged by this
+// feature, already covered there) -- it only asserts each workflow key
+// resolves, dispatches, and records a send to the vendor's email.
+func TestDocumentOps_Send_VendorModules_DB(t *testing.T) {
+	cp := docSendTestControlPlane(t)
+	tenantDSN := docSendTestTenantDSN(t)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	tenant, err := cp.CreateTenant(ctx, "docsend-vendor-test-"+suffix, "Doc Send Vendor Test Tenant", false)
+	require.NoError(t, err)
+	require.NoError(t, cp.SetTenantProvisioned(ctx, tenant.ID, "docsend-vendor-test-db", tenantDSN, 1))
+	tenant, err = cp.TenantByID(ctx, tenant.ID)
+	require.NoError(t, err)
+
+	router := tenancy.NewRouter(nil)
+	t.Cleanup(router.Close)
+	pool, err := router.PoolFor(ctx, tenant)
+	require.NoError(t, err)
+
+	_, itemUUID := seedDocSendCustomerAndItem(t, pool)
+
+	vendorEmail := "vendor-" + suffix + "@example.com"
+	vIn := vendors.CreateVendorInput{VendorType: "Organization"}
+	vIn.Email = vendorEmail
+	vIn.LegalName = "Doc Send Test Vendor " + suffix
+	vendor, err := vendors.Create(ctx, pool, vIn, 1)
+	require.NoError(t, err)
+
+	var methodID int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT payment_method_id FROM lkp_payment_method WHERE payment_method_deleted_at IS NULL ORDER BY payment_method_id LIMIT 1`,
+	).Scan(&methodID))
+
+	poIn := purchaseorder.CreatePurchaseOrderInput{VendorUUID: vendor.ID}
+	poIn.Items = []purchaseorder.LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
+	po, err := purchaseorder.Create(ctx, pool, poIn, 1)
+	require.NoError(t, err)
+
+	vbIn := vendorbill.CreateVendorBillInput{VendorUUID: vendor.ID}
+	vbIn.Items = []vendorbill.LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
+	vb, err := vendorbill.Create(ctx, pool, vbIn, 1)
+	require.NoError(t, err)
+
+	vc, err := vendorcredit.Create(ctx, pool, vendorcredit.CreateVendorCreditInput{VendorUUID: vendor.ID, Amount: 50}, 1)
+	require.NoError(t, err)
+
+	vp, err := vendorpayment.Create(ctx, pool, vendorpayment.CreateVendorPaymentInput{VendorUUID: vendor.ID, MethodID: methodID, Amount: 75}, 1)
+	require.NoError(t, err)
+
+	identityID, err := newAttachUUID()
+	require.NoError(t, err)
+	usr, err := userstore.CreateUser(ctx, pool, identityID, "sender-vendor-"+suffix+"@example.com", "Sender", "active")
+	require.NoError(t, err)
+	require.NoError(t, authz.SeedTenantRBAC(ctx, pool, usr.ID))
+
+	docOps := NewDocumentOps(map[string]DocumentLoader{
+		"purchase_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, DocMeta, error) {
+			po, err := purchaseorder.Get(ctx, pool, uuid)
+			if err != nil {
+				return docpdf.PrintableDoc{}, DocMeta{}, fmt.Errorf("load purchase order: %w", err)
+			}
+			email, name := purchaseorder.Recipient(ctx, pool, *po)
+			return purchaseorder.ToPrintable(*po, seller), DocMeta{
+				WorkflowKey: "purchase_order", Number: po.Number,
+				DefaultRecipientEmail: email, DefaultRecipientName: name,
+				DefaultSubject: "Purchase Order " + po.Number,
+			}, nil
+		},
+		"vendor_bill": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, DocMeta, error) {
+			vb, err := vendorbill.Get(ctx, pool, uuid)
+			if err != nil {
+				return docpdf.PrintableDoc{}, DocMeta{}, fmt.Errorf("load vendor bill: %w", err)
+			}
+			email, name := vendorbill.Recipient(ctx, pool, *vb)
+			return vendorbill.ToPrintable(*vb, seller), DocMeta{
+				WorkflowKey: "vendor_bill", Number: vb.Number,
+				DefaultRecipientEmail: email, DefaultRecipientName: name,
+				DefaultSubject: "Vendor Bill " + vb.Number,
+			}, nil
+		},
+		"vendor_credit": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, DocMeta, error) {
+			vc, err := vendorcredit.Get(ctx, pool, uuid)
+			if err != nil {
+				return docpdf.PrintableDoc{}, DocMeta{}, fmt.Errorf("load vendor credit: %w", err)
+			}
+			email, name := vendorcredit.Recipient(ctx, pool, *vc)
+			return vendorcredit.ToPrintable(*vc, seller), DocMeta{
+				WorkflowKey: "vendor_credit", Number: vc.Number,
+				DefaultRecipientEmail: email, DefaultRecipientName: name,
+				DefaultSubject: "Vendor Credit " + vc.Number,
+			}, nil
+		},
+		"vendor_payment": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, DocMeta, error) {
+			vp, err := vendorpayment.Get(ctx, pool, uuid)
+			if err != nil {
+				return docpdf.PrintableDoc{}, DocMeta{}, fmt.Errorf("load vendor payment: %w", err)
+			}
+			email, name := vendorpayment.Recipient(ctx, pool, *vp)
+			return vendorpayment.ToPrintable(*vp, seller), DocMeta{
+				WorkflowKey: "vendor_payment", Number: vp.Number,
+				DefaultRecipientEmail: email, DefaultRecipientName: name,
+				DefaultSubject: "Vendor Payment " + vp.Number,
+			}, nil
+		},
+	})
+	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
+
+	notifyStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"notif-vendor"}]}}`))
+	}))
+	t.Cleanup(notifyStub.Close)
+	config.AppConfig = config.Config{NotifyURL: notifyStub.URL, NotifyAPIKey: "nk_dbtest_stub_secret"}
+
+	resolver := tenancy.NewResolver(cp, router)
+	handler := resolver.Middleware(http.HandlerFunc(docOps.Send))
+
+	cases := []struct {
+		workflowKey string
+		recordID    string
+	}{
+		{"purchase_order", po.ID},
+		{"vendor_bill", vb.ID},
+		{"vendor_credit", vc.ID},
+		{"vendor_payment", vp.ID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.workflowKey, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/tenant/records/"+tc.recordID+"/document/send", strings.NewReader(""))
+			req.SetPathValue("id", tc.recordID)
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey,
+				middleware.UserContextPayload{ID: identityID, TenantID: tenant.ID}))
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+
+			sends, err := workflow.ListDocumentSends(ctx, pool, tc.recordID)
+			require.NoError(t, err)
+			require.Len(t, sends, 1)
+			assert.Equal(t, tc.workflowKey, sends[0].WorkflowKey)
+			assert.Equal(t, vendorEmail, sends[0].SentTo,
+				"Recipient() must resolve the vendor's email via vendors.Get since the record itself carries no email snapshot")
+		})
 	}
 }

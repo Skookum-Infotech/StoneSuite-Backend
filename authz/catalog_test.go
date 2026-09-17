@@ -72,3 +72,17 @@ func TestCatalog_InvoicePermissions(t *testing.T) {
 		}
 	}
 }
+
+// ResourceImport must stand on its own so granting it can never be read back
+// as a grant on a CRM resource (e.g. lead) it does not gate.
+func TestCatalog_ImportPermissionIsDistinctFromLead(t *testing.T) {
+	if !IsValidPermission(ResourceImport, ActionRead) {
+		t.Fatal("import:read must be a valid permission")
+	}
+	if IsValidPermission(ResourceImport, ActionCreate) {
+		t.Fatal("import should only carry read (page visibility) -- the actual import writes are authorized per target workflow")
+	}
+	if ResourceImport == ResourceLead {
+		t.Fatal("ResourceImport must not alias ResourceLead")
+	}
+}

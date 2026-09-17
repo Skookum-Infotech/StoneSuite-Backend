@@ -39,6 +39,15 @@ const (
 	// role-editing rights.
 	ResourceDashboardWidget Resource = "dashboard_widget"
 
+	// ResourceImport gates visibility of the Import Data page only -- it is
+	// not checked by the import endpoints themselves, which authorize per
+	// record type being imported into (e.g. lead:create, prospect:create).
+	// It exists so the role editor can grant that visibility on its own row
+	// instead of overloading a CRM resource's create action, which used to
+	// make an unrelated row (e.g. Leads) read as fully granted whenever this
+	// one was.
+	ResourceImport Resource = "import"
+
 	// Sales module resources
 	ResourceInventoryItem Resource = "inventory_item"
 	ResourceEstimate      Resource = "estimate"
@@ -412,6 +421,8 @@ var catalog = []Permission{
 	{ResourceDashboardWidget, ActionConfigure},
 
 	{ResourceAudit, ActionRead},
+
+	{ResourceImport, ActionRead},
 }
 
 // Catalog returns a copy of the permission catalog (safe for callers to mutate).

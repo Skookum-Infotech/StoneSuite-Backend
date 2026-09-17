@@ -8283,3 +8283,47 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_city      VARCH
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_country   VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_state     VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_zip       VARCHAR(255) NOT NULL DEFAULT '';
+
+-- =====================================================================
+-- Company Locations — Configuration -> Company Info -> Locations tab.
+-- Physical addresses a tenant operates from (offices, warehouses,
+-- showrooms) -- a distinct concept from company_profile's billing/
+-- shipping/return addresses above (which describe how documents route,
+-- not where the business physically is). Zero rows is a valid, common
+-- state: the frontend falls back to showing company_profile's billing
+-- address as a read-only default until the tenant adds a real location;
+-- nothing here is ever backfilled from that fallback.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS company_location (
+    company_location_id    SERIAL       PRIMARY KEY,
+    company_location_uuid  UUID         NOT NULL DEFAULT gen_random_uuid(),
+
+    name                    VARCHAR(255) NOT NULL,
+    phone                   VARCHAR(255) NOT NULL DEFAULT '',
+
+    addr_line1              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_line2              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_suite              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_city               VARCHAR(255) NOT NULL DEFAULT '',
+    addr_country            VARCHAR(255) NOT NULL DEFAULT '',
+    addr_state              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_zip                VARCHAR(255) NOT NULL DEFAULT '',
+
+    -- The one location Ship-To/other consumers should default to. CreateLocation
+    -- flags the tenant's first location default automatically; every location
+    -- after that starts FALSE and only SetDefault (a transactional swap) moves it,
+    -- so uq_company_location_default never has to reject two TRUE rows at once.
+    is_default              BOOLEAN      NOT NULL DEFAULT FALSE,
+
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by              INTEGER          NULL REFERENCES employee(employee_id),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_at              TIMESTAMPTZ      NULL,
+    deleted_by              INTEGER          NULL REFERENCES employee(employee_id),
+
+    CONSTRAINT uq_company_location_uuid UNIQUE (company_location_uuid)
+);
+
+-- At most one live default location at a time.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_company_location_default
+    ON company_location (is_default) WHERE is_default = TRUE AND deleted_at IS NULL;

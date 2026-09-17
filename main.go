@@ -619,6 +619,14 @@ func main() {
 		mux.Handle("GET /api/tenant/company-profile", tenantChain(companyProfileOps.GetProfile))
 		mux.Handle("PUT /api/tenant/company-profile", tenantChain(companyProfileOps.UpdateProfile))
 
+		// Tenant's physical locations (Configuration -> Company Info -> Locations tab).
+		companyLocationOps := controllers.NewCompanyLocationOps()
+		mux.Handle("GET /api/tenant/company-locations", tenantChain(companyLocationOps.List))
+		mux.Handle("POST /api/tenant/company-locations", tenantChain(companyLocationOps.Create))
+		mux.Handle("PATCH /api/tenant/company-locations/{id}", tenantChain(companyLocationOps.Update))
+		mux.Handle("DELETE /api/tenant/company-locations/{id}", tenantChain(companyLocationOps.Delete))
+		mux.Handle("POST /api/tenant/company-locations/{id}/default", tenantChain(companyLocationOps.SetDefault))
+
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))

@@ -196,6 +196,7 @@ func sendApprovalNotification(ctx context.Context, tenantID, resource, eventType
 		ResourceID:  recordUUID,
 		Title:       title,
 		Body:        body,
+		Link:        resourceRoute(resource, recordUUID),
 		Channels:    []string{"email"},
 	})
 	if err != nil {

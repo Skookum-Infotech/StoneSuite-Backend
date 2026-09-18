@@ -12,9 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/companyprofile"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/globalsearch"
 	"stonesuite-backend/services"
+	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/userstore"
 	"stonesuite-backend/workflow"
@@ -54,11 +56,15 @@ type DocumentOps struct {
 	loaders map[string]DocumentLoader
 	// renderPDF is injectable for tests; defaults to docpdf.Render.
 	renderPDF func(docpdf.PrintableDoc) ([]byte, error)
+	// r2 is nil when R2 is not configured; the tenant-logo lookup is then
+	// skipped (not fatal) and PDFs render with the text-only header.
+	r2 *storage.Client
 }
 
-// NewDocumentOps constructs the handler group.
-func NewDocumentOps(loaders map[string]DocumentLoader) *DocumentOps {
-	return &DocumentOps{loaders: loaders, renderPDF: docpdf.Render}
+// NewDocumentOps constructs the handler group. r2 may be nil when R2
+// credentials are absent.
+func NewDocumentOps(loaders map[string]DocumentLoader, r2 *storage.Client) *DocumentOps {
+	return &DocumentOps{loaders: loaders, renderPDF: docpdf.Render, r2: r2}
 }
 
 // loadForRender runs the shared auth gate, resolves the loader for the record's
@@ -81,7 +87,7 @@ func (h *DocumentOps) loadForRender(
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
 		return nil, docpdf.PrintableDoc{}, DocMeta{}, "", "", false
 	}
-	seller := sellerFromTenant(tenant)
+	seller := h.sellerFromTenant(r.Context(), pool, tenant)
 	doc, meta, err := loader(r.Context(), pool, recordID, seller)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load document.")
@@ -109,9 +115,31 @@ func (h *DocumentOps) GetPDF(w http.ResponseWriter, r *http.Request) {
 }
 
 // sellerFromTenant builds the letterhead from the tenant's display name and
-// whatever company profile fields exist in its onboarding metadata JSON.
-func sellerFromTenant(t *tenancy.Tenant) docpdf.Seller {
-	return sellerFromTenantMeta(t.DisplayName, t.Metadata)
+// whatever company profile fields exist in its onboarding metadata JSON,
+// then additively looks up a logo from company_profile if one has been
+// uploaded (Configuration -> Company Info -> logo). A missing/unreadable
+// logo is logged and skipped -- it must never fail document rendering.
+func (h *DocumentOps) sellerFromTenant(ctx context.Context, pool *pgxpool.Pool, t *tenancy.Tenant) docpdf.Seller {
+	s := sellerFromTenantMeta(t.DisplayName, t.Metadata)
+	profile, err := companyprofile.Get(ctx, pool)
+	if err != nil {
+		slog.Warn("failed to load company profile for PDF logo lookup", "error", err, "tenant", t.ID)
+		return s
+	}
+	if profile.LogoKey == "" {
+		return s
+	}
+	r2 := h.r2.WithBucket(t.R2Bucket)
+	if r2 == nil {
+		return s
+	}
+	logo, err := r2.Get(ctx, profile.LogoKey)
+	if err != nil {
+		slog.Warn("failed to fetch tenant logo for PDF", "error", err, "tenant", t.ID)
+		return s
+	}
+	s.LogoPNG = logo
+	return s
 }
 
 // sellerFromTenantMeta is the pure core of sellerFromTenant (testable without a

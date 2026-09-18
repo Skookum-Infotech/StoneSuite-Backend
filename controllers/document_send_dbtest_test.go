@@ -150,7 +150,7 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 				DefaultSubject: "Your Sales Order " + so.Number,
 			}, nil
 		},
-	})
+	}, nil)
 	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
 
 	// Send() now emails the customer copy via the Notify service
@@ -337,7 +337,7 @@ func TestDocumentOps_Send_VendorModules_DB(t *testing.T) {
 				DefaultSubject: "Vendor Payment " + vp.Number,
 			}, nil
 		},
-	})
+	}, nil)
 	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
 
 	notifyStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

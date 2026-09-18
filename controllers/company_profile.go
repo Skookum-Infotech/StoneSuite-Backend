@@ -193,8 +193,66 @@ func decodeLogoAsPNG(body []byte) ([]byte, error) {
 		return nil, errors.New("logo must be a valid PNG or JPEG image")
 	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	if err := png.Encode(&buf, cropToContent(img)); err != nil {
 		return nil, errors.New("failed to process logo image")
 	}
 	return buf.Bytes(), nil
+}
+
+// cropToContent returns the smallest sub-image containing every non-blank
+// pixel in img. Uploaded logo exports commonly carry large blank or
+// transparent padding around the actual mark (e.g. a wide wordmark centered
+// on a tall square canvas); left uncropped, that padding scales down along
+// with the mark and the logo becomes a near-invisible sliver inside the PDF
+// header's fixed-size box. Returns img unchanged if it has no non-blank
+// pixels (fully blank) or the content already fills the canvas.
+func cropToContent(img image.Image) image.Image {
+	b := img.Bounds()
+	minX, minY := b.Max.X, b.Max.Y
+	maxX, maxY := b.Min.X, b.Min.Y
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, a := img.At(x, y).RGBA()
+			if isBlankishPixel(r, g, bl, a) {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if x > maxX {
+				maxX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if y > maxY {
+				maxY = y
+			}
+		}
+	}
+	if minX > maxX || minY > maxY {
+		return img // fully blank; nothing to crop
+	}
+	if minX == b.Min.X && minY == b.Min.Y && maxX == b.Max.X-1 && maxY == b.Max.Y-1 {
+		return img // content already fills the canvas
+	}
+	type subImager interface {
+		SubImage(r image.Rectangle) image.Image
+	}
+	si, ok := img.(subImager)
+	if !ok {
+		return img
+	}
+	return si.SubImage(image.Rect(minX, minY, maxX+1, maxY+1))
+}
+
+// isBlankishPixel treats a fully (or near-fully) transparent pixel, or a
+// near-white opaque pixel, as background padding rather than logo content.
+// r/g/b/a are alpha-premultiplied 16-bit values as returned by
+// image.Color.RGBA().
+func isBlankishPixel(r, g, b, a uint32) bool {
+	if a>>8 < 10 {
+		return true
+	}
+	return r>>8 > 245 && g>>8 > 245 && b>>8 > 245
 }

@@ -4,6 +4,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"stonesuite-backend/invoice"
@@ -18,12 +19,14 @@ func TestTransition_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	p, err = Transition(ctx, pool, p.ID, "APPV", 1)
-	if err != nil {
-		t.Fatalf("transition to APPV: %v", err)
-	}
+	// No payment_approver rows configured for (PYMT, PEND) in this test DB,
+	// so Create itself auto-skips straight to APPV -- a manual Transition to
+	// APPV is no longer a legal follow-up (see TestCreate_HeaderOnly).
 	if p.StatusCode != "APPV" {
 		t.Fatalf("expected APPV, got %s", p.StatusCode)
+	}
+	if _, err := Transition(ctx, pool, p.ID, "APPV", 1); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Transition APPV->APPV = %v, want ErrInvalidTransition", err)
 	}
 }
 

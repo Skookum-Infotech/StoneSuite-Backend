@@ -14,9 +14,10 @@ import (
 )
 
 // seedApprovedRequisition creates a live requisition with one catalog-priced
-// line and transitions it to APPV (no requisition_approver rows are
-// configured for (REQN, PAPV) in this test DB by default, so the approval
-// gate is open and the transition needs no sign-off — mirrors
+// line and submits it for approval. No requisition_approver rows are
+// configured for (REQN, PAPV) in this test DB by default, so the checkpoint
+// has nothing to wait on and Transition auto-skips straight to APPV instead
+// of parking the requisition on PAPV (mirrors
 // purchaseorder/store_test.go's TestApprove_RequiresConfiguredApprover).
 func seedApprovedRequisition(t *testing.T, pool *pgxpool.Pool, itemUUID string) *requisition.Requisition {
 	t.Helper()
@@ -30,12 +31,9 @@ func seedApprovedRequisition(t *testing.T, pool *pgxpool.Pool, itemUUID string) 
 	if err != nil {
 		t.Fatalf("seed requisition: %v", err)
 	}
-	if _, err := requisition.Transition(ctx, pool, reqn.ID, "PAPV", 1); err != nil {
-		t.Fatalf("transition requisition to PAPV: %v", err)
-	}
-	approved, err := requisition.Transition(ctx, pool, reqn.ID, "APPV", 1)
+	approved, err := requisition.Transition(ctx, pool, reqn.ID, "PAPV", 1)
 	if err != nil {
-		t.Fatalf("transition requisition to APPV: %v", err)
+		t.Fatalf("transition requisition to PAPV (auto-skips to APPV): %v", err)
 	}
 	return approved
 }

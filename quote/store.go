@@ -457,5 +457,8 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Quote, error) {
 		return nil, err
 	}
 	e.Items = items
+	if err := fillNextStatusCodes(ctx, pool, e); err != nil {
+		return nil, err
+	}
 	return e, nil
 }

@@ -160,9 +160,19 @@ func TestSoftDelete_GuardedByStatus(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
+	// Force the claim to SUBM directly (bypassing Transition, which -- with
+	// no expense_approver rows configured for (EXPN, SUBM) -- now auto-skips
+	// straight to APPV, and APPV has no path back to DRFT for this module).
 	// A submitted claim cannot be deleted...
-	if _, err := Transition(ctx, pool, created.ID, "SUBM", 1); err != nil {
-		t.Fatalf("Transition to SUBM: %v", err)
+	var recordTypeID, submStatusID int
+	if err := pool.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'EXPN'`).Scan(&recordTypeID); err != nil {
+		t.Fatalf("resolve EXPN record type: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'SUBM'`, recordTypeID).Scan(&submStatusID); err != nil {
+		t.Fatalf("resolve SUBM status: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE expense SET expense_status = $2 WHERE expense_uuid = $1`, created.ID, submStatusID); err != nil {
+		t.Fatalf("force expense to SUBM: %v", err)
 	}
 	if err := SoftDelete(ctx, pool, created.ID, 1); !IsClientError(err) {
 		t.Fatalf("SoftDelete at SUBM = %v, want ClientError", err)
@@ -286,8 +296,20 @@ func TestReject_UngatedWhenNoApproversConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := Transition(ctx, pool, created.ID, "SUBM", 1); err != nil {
-		t.Fatalf("Transition to SUBM: %v", err)
+	// Force the claim to SUBM directly (bypassing Transition, which -- with
+	// no expense_approver rows configured for (EXPN, SUBM) -- now auto-skips
+	// straight to APPV) so this test can exercise Reject's own permissive
+	// behavior when nothing is configured: anyone can reject an ungated
+	// submission, not just a configured approver.
+	var recordTypeID, submStatusID int
+	if err := pool.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'EXPN'`).Scan(&recordTypeID); err != nil {
+		t.Fatalf("resolve EXPN record type: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'SUBM'`, recordTypeID).Scan(&submStatusID); err != nil {
+		t.Fatalf("resolve SUBM status: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE expense SET expense_status = $2 WHERE expense_uuid = $1`, created.ID, submStatusID); err != nil {
+		t.Fatalf("force expense to SUBM: %v", err)
 	}
 	rejected, err := Reject(ctx, pool, created.ID, 1, "Missing receipt")
 	if err != nil {

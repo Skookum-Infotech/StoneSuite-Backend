@@ -150,5 +150,8 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*PurchaseOrder, 
 		return nil, err
 	}
 	p.Items = items
+	if err := fillNextStatusCodes(ctx, pool, p); err != nil {
+		return nil, err
+	}
 	return p, nil
 }

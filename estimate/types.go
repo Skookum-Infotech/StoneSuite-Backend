@@ -103,9 +103,10 @@ type Line struct {
 type Estimate struct {
 	ID              string      `json:"id"`
 	Number          string      `json:"estimateNumber"`
-	Status          string      `json:"status"`         // human label, e.g. "Draft"
-	StatusCode      string      `json:"statusCode"`     // lkp_record_status code, e.g. "DRFT"
-	ApprovalStatus  string      `json:"approvalStatus"` // none | pending | approved
+	Status          string      `json:"status"`          // human label, e.g. "Draft"
+	StatusCode      string      `json:"statusCode"`      // lkp_record_status code, e.g. "DRFT"
+	ApprovalStatus  string      `json:"approvalStatus"`  // none | pending | approved
+	NextStatusCodes []string    `json:"nextStatusCodes"` // legal next-moves now, an unconfigured approval checkpoint collapsed out (approvalchain.NextStatusCodes)
 	Customer        CustomerRef `json:"customer"`
 	OwnerUserID     string      `json:"-"`
 	EstimateDate    string      `json:"estimateDate"`

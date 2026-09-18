@@ -624,10 +624,19 @@ func (s *relationalStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	// A record awaiting approval is locked: approvers should sign off on the
 	// record they actually reviewed. The one exception is editing a REJECTED
 	// record, which is how its owner resubmits it — handled below, after the
-	// field update succeeds.
+	// field update succeeds. required comes from the live active-approver
+	// count, not the stored approval-status column alone — see
+	// checkTransitionGate — so removing the last configured approver unlocks
+	// records already sitting pending instead of stranding them.
 	priorApprovalStatus, _ := rec.CoreFields["approval_status"].(string)
 	if priorApprovalStatus == StatusPending {
-		return ErrLockedPendingApproval
+		required, err := s.activeApproverCount(ctx, pool, id)
+		if err != nil {
+			return err
+		}
+		if required > 0 {
+			return ErrLockedPendingApproval
+		}
 	}
 	key := rec.WorkflowID // record_type key (lead/prospect/customer)
 	merged := rec.CustomFields

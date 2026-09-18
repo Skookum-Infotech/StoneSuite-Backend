@@ -30,6 +30,15 @@ package approvalchain
 type Gate struct {
 	StatusCode       string // lkp_record_status.record_status_code, scoped to RecordTypeCode -- the gated status
 	TargetStatusCode string // the status Approve moves the record to once resolved, e.g. "APPV"
+	// SkipTargetWhenUngated marks TargetStatusCode as a mere waypoint: when
+	// nobody is configured to approve this gate, a record may move straight
+	// from the status before the gate to the statuses *after* the target
+	// (Draft -> Sent), never stopping on the target at all -- see
+	// NextStatusCodes. Leave it false where the target is a destination in
+	// its own right that other flows depend on reaching: a Requisition rests
+	// on Approved until it is converted to a PO, and a Vendor Bill must be
+	// Approved before anything can be paid against it (vendorbill.PayableStatuses).
+	SkipTargetWhenUngated bool
 }
 
 // ModuleConfig maps one workflows.key to the relational module's approval
@@ -88,7 +97,7 @@ var registry = map[string]ModuleConfig{
 			RecordVersionColumn: "estimate_record_version", DeletedAtColumn: "estimate_deleted_at",
 			CreatedAtColumn: "estimate_created_at",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 	},
 	"quote": {
 		RecordTypeCode: "QUOT", ApproverTable: "quote_approver", ApprovalTable: "quote_approval",
@@ -100,7 +109,7 @@ var registry = map[string]ModuleConfig{
 			RecordVersionColumn: "quote_record_version", DeletedAtColumn: "quote_deleted_at",
 			CreatedAtColumn: "quote_created_at",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 	},
 	"sales_order": {
 		RecordTypeCode: "SORD", ApproverTable: "sales_order_approver", ApprovalTable: "sales_order_approval",
@@ -112,7 +121,7 @@ var registry = map[string]ModuleConfig{
 			RecordVersionColumn: "sales_order_record_version", DeletedAtColumn: "sales_order_deleted_at",
 			CreatedAtColumn: "sales_order_created_at",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 	},
 	"purchase_order": {
 		RecordTypeCode: "PORD", ApproverTable: "purchase_order_approver", ApprovalTable: "purchase_order_approval",
@@ -125,7 +134,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "purchase_order_created_at",
 			OwnerColumn:     "purchase_order_owner_id", NumberColumn: "purchase_order_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 		DisplayName: "Purchase Order",
 		Resource:    "purchase_order",
 	},
@@ -173,7 +182,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "vendor_payment_created_at",
 			OwnerColumn:     "vendor_payment_owner_id", NumberColumn: "vendor_payment_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 		DisplayName: "Vendor Payment",
 		Resource:    "vendor_payment",
 	},
@@ -191,7 +200,7 @@ var registry = map[string]ModuleConfig{
 			// expense_claimant_id), so it doubles as the notify owner.
 			OwnerColumn: "expense_claimant_id", NumberColumn: "expense_number",
 		},
-		Gates:       []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 		DisplayName: "Expense Claim",
 		Resource:    "expense",
 	},
@@ -224,7 +233,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "invoice_created_at",
 			OwnerColumn:     "invoice_owner_id", NumberColumn: "invoice_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
 		DisplayName: "Invoice",
 		Resource:    "invoice",
 	},

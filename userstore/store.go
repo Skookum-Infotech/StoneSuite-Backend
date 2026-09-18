@@ -99,6 +99,41 @@ func ListUsers(ctx context.Context, q Querier) ([]User, error) {
 	return users, rrows.Err()
 }
 
+// AssignableUser is the minimal, non-admin-sensitive projection of a
+// workspace user for "who owns this record" pickers (e.g. the CRM Account
+// Owner field) -- no status or role data, unlike User. That's what makes it
+// safe to expose to any authenticated tenant member rather than gating it
+// behind the user:read permission ListUsers requires.
+type AssignableUser struct {
+	ID       string `json:"id"`
+	FullName string `json:"fullName"`
+	Email    string `json:"email"`
+}
+
+// ListAssignableUsers returns active workspace users as minimal
+// owner-picker options, ordered by name. Suspended/disabled users are
+// excluded -- they're not valid record owners.
+func ListAssignableUsers(ctx context.Context, q Querier) ([]AssignableUser, error) {
+	rows, err := q.Query(ctx, `
+		SELECT id, full_name, email FROM users
+		WHERE status = 'active'
+		ORDER BY full_name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list assignable users: %w", err)
+	}
+	defer rows.Close()
+
+	users := []AssignableUser{}
+	for rows.Next() {
+		var u AssignableUser
+		if err := rows.Scan(&u.ID, &u.FullName, &u.Email); err != nil {
+			return nil, fmt.Errorf("scan assignable user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 // GetUserByID loads a single user with roles by their tenant-local user ID.
 func GetUserByID(ctx context.Context, q Querier, id string) (*User, error) {
 	var u User

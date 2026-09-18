@@ -88,6 +88,27 @@ func (h *UserOps) ListUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "users": users})
 }
 
+// ListAssignableUsers GET /api/tenant/users/assignable
+// Returns the minimal {id, fullName, email} needed to populate a "who owns
+// this record" picker (e.g. the CRM Account Owner field) -- available to any
+// authenticated tenant member, unlike ListUsers, which requires user:read
+// because it also returns status and role assignments. Keeping this
+// response minimal is what makes the lower bar safe -- see
+// userstore.ListAssignableUsers.
+func (h *UserOps) ListAssignableUsers(w http.ResponseWriter, r *http.Request) {
+	pool, err := tenancy.PoolFromContext(r.Context())
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+	users, err := userstore.ListAssignableUsers(r.Context(), pool)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to list users.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "users": users})
+}
+
 // InviteUser POST /api/tenant/users/invite
 // Creates a pending invite, stores it in the control plane, and emails the recipient.
 //

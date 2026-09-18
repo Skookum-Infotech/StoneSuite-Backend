@@ -131,19 +131,12 @@ func TestTransitionAndApprovalGate(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	moved, err := Transition(ctx, pool, bill.ID, "PAPV", 1)
+	// No approvers configured for this tenant's VBIL/PAPV -> the checkpoint
+	// has nothing to wait on, so submitting for approval auto-skips straight
+	// to APPV instead of parking the bill on an unresolvable PAPV.
+	approved, err := Transition(ctx, pool, bill.ID, "PAPV", 1)
 	if err != nil {
-		t.Fatalf("Transition to PAPV: %v", err)
-	}
-	if moved.StatusCode != "PAPV" {
-		t.Fatalf("status = %q, want PAPV", moved.StatusCode)
-	}
-
-	// No approvers configured for this tenant's VBIL/PAPV -> gate is open,
-	// so APPV should succeed with no Approve call first.
-	approved, err := Transition(ctx, pool, bill.ID, "APPV", 1)
-	if err != nil {
-		t.Fatalf("Transition to APPV with no configured approvers: %v", err)
+		t.Fatalf("Transition to PAPV (auto-skips to APPV): %v", err)
 	}
 	if approved.StatusCode != "APPV" {
 		t.Fatalf("status = %q, want APPV", approved.StatusCode)
@@ -169,11 +162,10 @@ func TestRecordPaymentDerivesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	// No approvers configured for this tenant's VBIL/PAPV, so this auto-skips
+	// straight to APPV (see TestTransitionAndApprovalGate).
 	if _, err := Transition(ctx, pool, bill.ID, "PAPV", 1); err != nil {
-		t.Fatalf("Transition to PAPV: %v", err)
-	}
-	if _, err := Transition(ctx, pool, bill.ID, "APPV", 1); err != nil {
-		t.Fatalf("Transition to APPV: %v", err)
+		t.Fatalf("Transition to PAPV (auto-skips to APPV): %v", err)
 	}
 
 	partial, err := RecordPayment(ctx, pool, bill.ID, RecordPaymentInput{Amount: 40, PaidAt: "2026-08-05"}, 1)

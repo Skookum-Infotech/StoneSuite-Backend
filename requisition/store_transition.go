@@ -37,13 +37,26 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	if err != nil {
 		return nil, fmt.Errorf("load requisition for transition: %w", err)
 	}
-	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
-		return nil, err
-	}
-
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, reqnRecordTypeCode)
 	if err != nil {
 		return nil, fmt.Errorf("resolve REQN record type: %w", err)
+	}
+	// The static map has the first word on legality, not the last: with
+	// nobody configured to approve, a move may pass straight through the
+	// approval checkpoint (Draft -> Approved in one step) -- exactly the
+	// moves the status control offers via NextStatusCodes, so the two can't
+	// disagree.
+	var viaGate *approvalchain.Gate
+	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
+		ungated, uerr := approvalchain.UngatedGates(ctx, tx, moduleConfig(), recordTypeID)
+		if uerr != nil {
+			return nil, uerr
+		}
+		gate, ok := approvalchain.PassThroughGate(curStatusCode, toStatusCode, NextStatuses, ungated)
+		if !ok {
+			return nil, err
+		}
+		viaGate = &gate
 	}
 	toStatusID, err := statusIDByCode(ctx, tx, recordTypeID, toStatusCode)
 	if err != nil {
@@ -73,6 +86,32 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	newApprovalStatus := approvalchain.StatusNone
 	if targetApprovers > 0 {
 		newApprovalStatus = approvalchain.StatusPending
+	}
+	// A move onto an approval checkpoint with zero approvers configured
+	// skips straight to the gate's approved target instead of parking the
+	// requisition on a status literally labeled "Pending Approval" that
+	// nothing is actually pending on -- mirrors engine.finalize's own floor
+	// (StatusApproved) for landing on that target.
+	if gate, gated := moduleConfig().GateFor(toStatusCode); gated && targetApprovers == 0 {
+		toStatusCode = gate.TargetStatusCode
+		toStatusID, err = statusIDByCode(ctx, tx, recordTypeID, toStatusCode)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s status: %w", toStatusCode, err)
+		}
+		targetApprovers, err = approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, toStatusID)
+		if err != nil {
+			return nil, err
+		}
+		newApprovalStatus = approvalchain.StatusApproved
+		if targetApprovers > 0 {
+			newApprovalStatus = approvalchain.StatusPending
+		}
+	}
+	// Passing through the unconfigured checkpoint onto its approved target is
+	// the same outcome as the auto-skip above -- record it as approved too,
+	// so the two paths can't disagree about what landing on APPV means.
+	if viaGate != nil && toStatusCode == viaGate.TargetStatusCode && targetApprovers == 0 {
+		newApprovalStatus = approvalchain.StatusApproved
 	}
 
 	if _, err := tx.Exec(ctx, `

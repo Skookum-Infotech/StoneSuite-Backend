@@ -62,6 +62,10 @@ type Invoice struct {
 
 	StatusCode string `json:"statusCode"`
 	StatusName string `json:"status"`
+	// NextStatusCodes are the statuses a manual transition may move the
+	// invoice to right now, with an approval checkpoint nobody is configured
+	// to approve collapsed out of the path (approvalchain.NextStatusCodes).
+	NextStatusCodes []string `json:"nextStatusCodes"`
 
 	Customer   CustomerRef    `json:"customer"`
 	SalesOrder *SalesOrderRef `json:"salesOrder,omitempty"` // nullable lineage

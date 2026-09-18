@@ -82,6 +82,13 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	if err := rows.Err(); err != nil {
 		return Page{}, fmt.Errorf("search vendor bills: %w", err)
 	}
+	ptrs := make([]*VendorBill, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	if err := fillNextStatusCodes(ctx, pool, ptrs...); err != nil {
+		return Page{}, err
+	}
 
 	page := Page{Records: out}
 	if len(out) > built.EffLimit {

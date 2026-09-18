@@ -69,6 +69,10 @@ type VendorPayment struct {
 
 	ApprovalStatus       string `json:"approvalStatus"`
 	ApprovedByEmployeeID *int   `json:"approvedByEmployeeId,omitempty"`
+	// NextStatusCodes are the statuses a manual transition may move the
+	// payment to right now, with an approval checkpoint nobody is configured
+	// to approve collapsed out of the path (approvalchain.NextStatusCodes).
+	NextStatusCodes []string `json:"nextStatusCodes"`
 
 	CustomFields map[string]any `json:"customFields"`
 	Applications []Application  `json:"applications"`

@@ -81,6 +81,13 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 	if err := rows.Err(); err != nil {
 		return Page{}, fmt.Errorf("search requisitions: %w", err)
 	}
+	ptrs := make([]*Requisition, len(out))
+	for i := range out {
+		ptrs[i] = &out[i]
+	}
+	if err := fillNextStatusCodes(ctx, pool, ptrs...); err != nil {
+		return Page{}, err
+	}
 
 	page := Page{Records: out}
 	if len(out) > built.EffLimit {

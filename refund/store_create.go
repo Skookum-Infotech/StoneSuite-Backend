@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 func resolveCustomer(ctx context.Context, pool *pgxpool.Pool, customerUUID string) (int, error) {
@@ -151,6 +153,28 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 		return nil, err
 	}
 
+	// PEND is both refund's creation default and its approval checkpoint
+	// (unlike modules where the checkpoint is entered later via a manual
+	// Transition) -- a refund with zero approvers configured there starts
+	// life already Approved instead of parking on a status literally
+	// labeled "Pending" that nothing is actually pending on. Mirrors
+	// Transition's own auto-skip (store_transition.go).
+	initialStatusID := pendStatusID
+	initialApprovalStatus := approvalchain.StatusNone
+	if gate, gated := moduleConfig().GateFor("PEND"); gated {
+		required, err := approvalchain.ActiveApproverCount(ctx, pool, moduleConfig().ApproverTable, typeID, pendStatusID)
+		if err != nil {
+			return nil, err
+		}
+		if required == 0 {
+			initialStatusID, err = statusIDByCode(ctx, pool, typeID, gate.TargetStatusCode)
+			if err != nil {
+				return nil, err
+			}
+			initialApprovalStatus = approvalchain.StatusApproved
+		}
+	}
+
 	ownerEmp := in.OwnerEmployeeID
 	if ownerEmp == nil && actorEmployeeID != 0 {
 		ownerEmp = &actorEmployeeID
@@ -166,18 +190,18 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 	var newUUID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO refund (
-			record_type, refund_status, refund_customer_id,
+			record_type, refund_status, refund_approval_status, refund_customer_id,
 			refund_payment_id, refund_credit_memo_id, refund_invoice_id,
 			refund_method, refund_reference_number, refund_date, refund_currency,
 			refund_reason, refund_memo, refund_internal_notes,
 			refund_amount, refund_applied_total, refund_unapplied_amount,
 			refund_owner_id, refund_custom_fields, refund_created_by, refund_updated_by
 		) VALUES (
-			$1,$2,$3, $4,$5,$6, $7,$8,COALESCE($9, CURRENT_DATE),$10, $11,$12,$13,
-			$14,0,$14,
-			$15,$16,$17,$17
+			$1,$2,$3,$4, $5,$6,$7, $8,$9,COALESCE($10, CURRENT_DATE),$11, $12,$13,$14,
+			$15,0,$15,
+			$16,$17,$18,$18
 		) RETURNING refund_id, refund_uuid`,
-		typeID, pendStatusID, custID,
+		typeID, initialStatusID, initialApprovalStatus, custID,
 		paymentID, creditMemoID, invoiceID,
 		in.MethodID, in.ReferenceNumber, in.RefundDate, in.CurrencyID,
 		in.Reason, in.Memo, in.InternalNotes,
@@ -194,7 +218,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO refund_history (refund_id, from_status_id, to_status_id, action, actor_employee_id)
-		VALUES ($1, NULL, $2, 'create', $3)`, newID, pendStatusID, nullableInt(actorEmployeeID)); err != nil {
+		VALUES ($1, NULL, $2, 'create', $3)`, newID, initialStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert refund create history: %w", err)
 	}
 

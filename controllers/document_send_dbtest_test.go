@@ -150,7 +150,7 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 				DefaultSubject: "Your Sales Order " + so.Number,
 			}, nil
 		},
-	})
+	}, nil, nil)
 	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
 
 	// Send() now emails the customer copy via the Notify service
@@ -234,7 +234,9 @@ func TestDocumentOps_Send_HappyPath_DB(t *testing.T) {
 // sales_order's Billing.Email). Unlike the happy-path test above, this
 // doesn't re-assert the notify actor/recipient-id plumbing (unchanged by this
 // feature, already covered there) -- it only asserts each workflow key
-// resolves, dispatches, and records a send to the vendor's email.
+// resolves, dispatches, and records a send to the vendor's email. purchase_order
+// is seeded and exercised too, but only to assert Send is disabled for it (404,
+// nothing recorded) while its PDF loader keeps working for Export PDF.
 func TestDocumentOps_Send_VendorModules_DB(t *testing.T) {
 	cp := docSendTestControlPlane(t)
 	tenantDSN := docSendTestTenantDSN(t)
@@ -337,7 +339,7 @@ func TestDocumentOps_Send_VendorModules_DB(t *testing.T) {
 				DefaultSubject: "Vendor Payment " + vp.Number,
 			}, nil
 		},
-	})
+	}, map[string]bool{"purchase_order": true}, nil)
 	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
 
 	notifyStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -353,11 +355,15 @@ func TestDocumentOps_Send_VendorModules_DB(t *testing.T) {
 	cases := []struct {
 		workflowKey string
 		recordID    string
+		wantStatus  int
 	}{
-		{"purchase_order", po.ID},
-		{"vendor_bill", vb.ID},
-		{"vendor_credit", vc.ID},
-		{"vendor_payment", vp.ID},
+		// purchase_order keeps its loader (Export PDF still works) but Send is
+		// disabled -- "Send to Vendor" belongs on the AP documents below and
+		// the vendor profile, not the internal PO.
+		{"purchase_order", po.ID, http.StatusNotFound},
+		{"vendor_bill", vb.ID, http.StatusOK},
+		{"vendor_credit", vc.ID, http.StatusOK},
+		{"vendor_payment", vp.ID, http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.workflowKey, func(t *testing.T) {
@@ -369,10 +375,14 @@ func TestDocumentOps_Send_VendorModules_DB(t *testing.T) {
 
 			handler.ServeHTTP(rr, req)
 
-			require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+			require.Equal(t, tc.wantStatus, rr.Code, "body=%s", rr.Body.String())
 
 			sends, err := workflow.ListDocumentSends(ctx, pool, tc.recordID)
 			require.NoError(t, err)
+			if tc.wantStatus != http.StatusOK {
+				assert.Empty(t, sends, "a disabled workflow key must not record a send")
+				return
+			}
 			require.Len(t, sends, 1)
 			assert.Equal(t, tc.workflowKey, sends[0].WorkflowKey)
 			assert.Equal(t, vendorEmail, sends[0].SentTo,

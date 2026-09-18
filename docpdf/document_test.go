@@ -2,6 +2,8 @@ package docpdf
 
 import (
 	"bytes"
+	"image"
+	"image/png"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,6 +50,50 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDrawAddress_WrapsLongLines(t *testing.T) {
+	pdf := newDoc()
+	startY := pdf.GetY()
+	long := "VAKARANI CAMP, SIRUGUPPA ROAD NEAR HULIGEMMA TEMPLE, BELLARY DISTRICT, KARNATAKA 583101"
+	drawAddress(pdf, marginX, startY, "BILL TO", Address{Name: "Akhila N", Line1: long})
+	endY := pdf.GetY()
+	unwrappedHeight := 5.0 + 4.5 + 4.5 // label + Name + Line1, if each stayed a single (unwrapped) line
+	assert.Greater(t, endY-startY, unwrappedHeight, "long address line must wrap within the column instead of overflowing past it into the neighboring column")
+}
+
+func samplePNGBytes(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 200, 80))
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, img))
+	return buf.Bytes()
+}
+
+func TestDrawHeader_WithLogo_TakesMoreSpaceThanWithout(t *testing.T) {
+	logo := samplePNGBytes(t)
+
+	withoutLogo := newDoc()
+	y0 := withoutLogo.GetY()
+	drawHeader(withoutLogo, sampleDoc())
+	heightWithout := withoutLogo.GetY() - y0
+
+	d := sampleDoc()
+	d.Seller.LogoPNG = logo
+	withLogo := newDoc()
+	y1 := withLogo.GetY()
+	drawHeader(withLogo, d)
+	heightWith := withLogo.GetY() - y1
+
+	assert.GreaterOrEqual(t, heightWith, heightWithout, "a logo must never shrink the header")
+}
+
+func TestDrawHeader_InvalidLogoBytes_FallsBackGracefully(t *testing.T) {
+	d := sampleDoc()
+	d.Seller.LogoPNG = []byte("not a real image")
+	pdf := newDoc()
+	drawHeader(pdf, d) // must not panic or poison the document
+	assert.True(t, pdf.Ok(), "an invalid logo must not break the rest of the PDF")
 }
 
 func TestRender(t *testing.T) {

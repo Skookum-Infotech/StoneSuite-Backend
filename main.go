@@ -621,10 +621,25 @@ func main() {
 		auditOps := controllers.NewAuditOps()
 		mux.Handle("GET /api/tenant/audit", tenantChain(auditOps.ListAudit))
 
+		// R2 client (Cloudflare). Nil when R2 env vars are absent -- R2-backed
+		// endpoints below (attachments, tenant logo) return 503; everything
+		// else still works.
+		r2Client, r2Err := storage.New(config.AppConfig)
+		if r2Err != nil {
+			log.Printf("WARNING: R2 storage client failed to initialise: %v", r2Err)
+		}
+		if r2Client != nil {
+			log.Println("R2 storage: configured.")
+		} else {
+			log.Println("R2 storage: not configured (R2-backed upload/download endpoints will return 503).")
+		}
+
 		// Tenant's own Company Info (name/address -- Configuration -> Company Info).
-		companyProfileOps := controllers.NewCompanyProfileOps()
+		companyProfileOps := controllers.NewCompanyProfileOps(r2Client)
 		mux.Handle("GET /api/tenant/company-profile", tenantChain(companyProfileOps.GetProfile))
 		mux.Handle("PUT /api/tenant/company-profile", tenantChain(companyProfileOps.UpdateProfile))
+		mux.Handle("PUT /api/tenant/company-profile/logo", tenantChain(companyProfileOps.UploadLogo))
+		mux.Handle("DELETE /api/tenant/company-profile/logo", tenantChain(companyProfileOps.DeleteLogo))
 
 		// Tenant's physical locations (Configuration -> Company Info -> Locations tab).
 		companyLocationOps := controllers.NewCompanyLocationOps()
@@ -658,17 +673,9 @@ func main() {
 		mux.Handle("POST /api/tenant/records/{id}/transition", tenantChain(wf.TransitionRecord))
 		mux.Handle("POST /api/tenant/records/{id}/approve", tenantChain(wf.ApproveRecord))
 
-		// Record attachments (Cloudflare R2). r2Client is nil when R2 env vars are
-		// absent — presign/download endpoints return 503; list/metadata still work.
-		r2Client, r2Err := storage.New(config.AppConfig)
-		if r2Err != nil {
-			log.Printf("WARNING: R2 storage client failed to initialise: %v", r2Err)
-		}
-		if r2Client != nil {
-			log.Println("R2 storage: configured.")
-		} else {
-			log.Println("R2 storage: not configured (attachment upload/download endpoints will return 503).")
-		}
+		// Record attachments (Cloudflare R2). r2Client (constructed above) is nil
+		// when R2 env vars are absent — presign/download endpoints return 503;
+		// list/metadata still work.
 		attachOps := controllers.NewAttachmentOps(r2Client)
 		// presign-batch must be registered before the bare /attachments routes so
 		// the more-specific pattern wins in Go's http.ServeMux.
@@ -838,7 +845,11 @@ func main() {
 					controllers.DocMeta{WorkflowKey: "vendor_payment", Number: vp.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Payment " + vp.Number}, nil
 			},
 		}
-		docOps := controllers.NewDocumentOps(docLoaders)
+		// Send to Vendor lives on the vendor-facing AP documents (bill, payment,
+		// credit) and the vendor profile itself, not on the internal purchase
+		// order -- Export PDF stays available for it via docLoaders above.
+		docSendDisabled := map[string]bool{"purchase_order": true}
+		docOps := controllers.NewDocumentOps(docLoaders, docSendDisabled, r2Client)
 		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))

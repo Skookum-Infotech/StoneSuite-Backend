@@ -125,3 +125,38 @@ func TestUpsert_InvalidProfile_ReturnsErrorAndDoesNotSave(t *testing.T) {
 		t.Errorf("CompanyName = %q, want empty (invalid upsert must not persist)", got.CompanyName)
 	}
 }
+
+func TestSetLogoKey_RoundTrip(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	// SetLogoKey must work even before any profile row exists.
+	if err := SetLogoKey(ctx, pool, "company/logo.png"); err != nil {
+		t.Fatalf("SetLogoKey() error = %v, want nil", err)
+	}
+	got, err := Get(ctx, pool)
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+	if got.LogoKey != "company/logo.png" {
+		t.Errorf("LogoKey = %q, want %q", got.LogoKey, "company/logo.png")
+	}
+
+	// Clearing (empty string) must work and must not touch other fields.
+	if err := Upsert(ctx, pool, Profile{CompanyName: "Acme"}); err != nil {
+		t.Fatalf("Upsert() error = %v, want nil", err)
+	}
+	if err := SetLogoKey(ctx, pool, ""); err != nil {
+		t.Fatalf("SetLogoKey(\"\") error = %v, want nil", err)
+	}
+	got, err = Get(ctx, pool)
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+	if got.LogoKey != "" {
+		t.Errorf("LogoKey = %q, want empty after clear", got.LogoKey)
+	}
+	if got.CompanyName != "Acme" {
+		t.Errorf("CompanyName = %q, want %q (SetLogoKey must not clobber other fields)", got.CompanyName, "Acme")
+	}
+}

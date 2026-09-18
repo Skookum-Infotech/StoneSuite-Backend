@@ -1,6 +1,7 @@
 package docpdf
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/go-pdf/fpdf"
@@ -10,6 +11,10 @@ const (
 	marginX     = 15.0
 	pageBottomY = 270.0 // A4 height 297mm minus footer zone
 	fontFace    = "Helvetica"
+
+	logoMaxW   = 35.0 // mm
+	logoMaxH   = 18.0 // mm
+	logoGutter = 4.0  // mm gap between logo and seller name/address text
 )
 
 func newDoc() *fpdf.Fpdf {
@@ -32,8 +37,19 @@ func drawHeader(pdf *fpdf.Fpdf, d PrintableDoc) {
 	startY := pdf.GetY()
 	titleRowH := 8.0
 
+	nameX, nameW := marginX, 100.0
+	logoBottom := startY
+	if len(d.Seller.LogoPNG) > 0 {
+		if w, h, ok := drawLogo(pdf, marginX, startY, d.Seller.LogoPNG); ok {
+			nameX = marginX + w + logoGutter
+			nameW = 100.0 - w - logoGutter
+			logoBottom = startY + h
+		}
+	}
+
+	pdf.SetXY(nameX, startY)
 	pdf.SetFont(fontFace, "B", 16)
-	pdf.Cell(100, titleRowH, d.Seller.Name)
+	pdf.Cell(nameW, titleRowH, d.Seller.Name)
 	pdf.SetFont(fontFace, "B", 20)
 	pdf.CellFormat(0, titleRowH, d.Kind, "", 1, "R", false, 0, "")
 
@@ -42,7 +58,8 @@ func drawHeader(pdf *fpdf.Fpdf, d PrintableDoc) {
 		if ln == "" {
 			continue
 		}
-		pdf.CellFormat(100, 4.5, ln, "", 1, "L", false, 0, "")
+		pdf.SetX(nameX)
+		pdf.CellFormat(nameW, 4.5, ln, "", 2, "L", false, 0, "")
 	}
 	sellerEndY := pdf.GetY()
 
@@ -56,8 +73,39 @@ func drawHeader(pdf *fpdf.Fpdf, d PrintableDoc) {
 	}
 	metaEndY := pdf.GetY()
 
-	pdf.SetY(maxF(sellerEndY, metaEndY))
+	pdf.SetY(maxF(maxF(sellerEndY, metaEndY), logoBottom))
 	pdf.Ln(4)
+}
+
+// drawLogo registers and draws logoPNG (always PNG bytes -- see
+// decodeLogoAsPNG in controllers/company_profile.go, the only writer of
+// Seller.LogoPNG) at (x, y), scaled to fit within logoMaxW x logoMaxH while
+// preserving aspect ratio. Returns the drawn width/height and whether the
+// image was valid and drawn; on any failure it clears fpdf's internal error
+// state (fpdf poisons every subsequent call once an error is set) so an
+// invalid logo degrades to the text-only header instead of breaking the
+// whole document.
+func drawLogo(pdf *fpdf.Fpdf, x, y float64, logoPNG []byte) (w, h float64, ok bool) {
+	info := pdf.RegisterImageOptionsReader("seller-logo", fpdf.ImageOptions{ImageType: "PNG"}, bytes.NewReader(logoPNG))
+	if pdf.Err() || info == nil {
+		pdf.ClearError()
+		return 0, 0, false
+	}
+	iw, ih := info.Extent()
+	if iw <= 0 || ih <= 0 {
+		return 0, 0, false
+	}
+	scale := logoMaxW / iw
+	if ih*scale > logoMaxH {
+		scale = logoMaxH / ih
+	}
+	w, h = iw*scale, ih*scale
+	pdf.ImageOptions("seller-logo", x, y, w, h, false, fpdf.ImageOptions{ImageType: "PNG"}, 0, "")
+	if pdf.Err() {
+		pdf.ClearError()
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 func drawParties(pdf *fpdf.Fpdf, d PrintableDoc) {
@@ -87,7 +135,7 @@ func drawAddress(pdf *fpdf.Fpdf, x, y float64, label string, a Address) {
 			continue
 		}
 		pdf.SetX(x)
-		pdf.CellFormat(85, 4.5, ln, "", 2, "L", false, 0, "")
+		pdf.MultiCell(85, 4.5, ln, "", "L", false)
 	}
 }
 

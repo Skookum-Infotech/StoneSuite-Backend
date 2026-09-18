@@ -67,15 +67,10 @@ func seedSentInvoice(t *testing.T, pool *pgxpool.Pool, amount float64) (custUUID
 	if err != nil {
 		t.Fatalf("seed invoice: %v", err)
 	}
-	// Transition requires an attachment before an invoice can leave DRFT.
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workflow_record_attachments
-			(record_id, file_name, content_type, size_bytes, storage_key, status)
-		VALUES ($1::uuid, 'test.pdf', 'application/pdf', 100, $2, 'clean')`,
-		inv.ID, "test-key/"+inv.ID+"/test.pdf"); err != nil {
-		t.Fatalf("seed attachment: %v", err)
-	}
-	for _, st := range []string{"PAPV", "APPV", "SENT"} {
+	// No invoice_approver rows configured for (INVC, PAPV) in this test DB,
+	// so submitting for approval auto-skips straight to APPV -- only SENT
+	// needs a separate move.
+	for _, st := range []string{"PAPV", "SENT"} {
 		if inv, err = invoice.Transition(ctx, pool, inv.ID, st, 1); err != nil {
 			t.Fatalf("transition invoice to %s: %v", st, err)
 		}
@@ -108,8 +103,12 @@ func TestCreate_HeaderOnly(t *testing.T) {
 	if !strings.HasPrefix(p.Number, "PYMT-") {
 		t.Fatalf("expected PYMT- prefixed number, got %q", p.Number)
 	}
-	if p.StatusCode != "PEND" {
-		t.Fatalf("new payment must start PEND, got %s", p.StatusCode)
+	// No payment_approver rows configured for (PYMT, PEND) in this test DB,
+	// so the checkpoint has nothing to wait on and Create auto-skips
+	// straight to APPV instead of starting the payment on an unresolvable
+	// PEND.
+	if p.StatusCode != "APPV" {
+		t.Fatalf("new payment with no configured approvers must auto-approve, got %s", p.StatusCode)
 	}
 	if p.AppliedTotal != 0 || p.UnappliedAmount != 500 {
 		t.Fatalf("expected 0 applied / 500 unapplied, got applied=%v unapplied=%v", p.AppliedTotal, p.UnappliedAmount)

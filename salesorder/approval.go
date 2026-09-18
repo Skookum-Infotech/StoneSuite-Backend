@@ -24,6 +24,13 @@ const (
 // Transition is for).
 const approvedStatusCode = "APPV"
 
+// approvalGateStatusCode is the checkpoint status an order passes through on
+// its way to approvedStatusCode. Transition uses this to recognize a move
+// onto the checkpoint with zero configured approvers and skip straight to
+// approvedStatusCode instead, rather than parking the order on a status
+// literally labeled "Pending Approval" that nothing is actually pending on.
+const approvalGateStatusCode = "PAPV"
+
 // ErrNotApprover is returned when a caller who is not a configured approver for
 // the order's current status tries to approve it (AD-10). Maps to HTTP 403.
 var ErrNotApprover = errors.New("you are not a configured approver for this order's current status")

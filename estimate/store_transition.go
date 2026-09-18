@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
-	"stonesuite-backend/workflow"
 )
 
 // Transition moves a live estimate to toStatusCode, validating the move
@@ -40,23 +39,27 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	if toStatusCode == "CONV" {
 		return nil, ClientError{Msg: "CONV is not a valid manual transition target."}
 	}
-	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
-		return nil, err
-	}
-	if curStatusCode == "DRFT" && toStatusCode == "PAPV" {
-		has, err := workflow.HasAttachments(ctx, tx, uuid)
-		if err != nil {
-			return nil, fmt.Errorf("check attachments: %w", err)
-		}
-		if !has {
-			return nil, ErrAttachmentRequired
-		}
-	}
-
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, estmRecordTypeCode)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ESTM record type: %w", err)
 	}
+	// The static map has the first word on legality, not the last: with
+	// nobody configured to approve, a move may pass straight through the
+	// approval checkpoint (Draft -> Sent) -- exactly the moves the status
+	// control offers via NextStatusCodes, so the two can't disagree.
+	var viaGate *approvalchain.Gate
+	if err := ValidateTransition(curStatusCode, toStatusCode); err != nil {
+		ungated, uerr := approvalchain.UngatedGates(ctx, tx, moduleConfig(), recordTypeID)
+		if uerr != nil {
+			return nil, uerr
+		}
+		gate, ok := approvalchain.PassThroughGate(curStatusCode, toStatusCode, NextStatuses, ungated)
+		if !ok {
+			return nil, err
+		}
+		viaGate = &gate
+	}
+
 	toStatusID, err := statusIDByCode(ctx, tx, recordTypeID, toStatusCode)
 	if err != nil {
 		return nil, ClientError{Msg: "Unknown target status."}
@@ -78,6 +81,32 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	newApprovalStatus := approvalNone
 	if targetApprovers > 0 {
 		newApprovalStatus = approvalPending
+	}
+	// A move onto the approval checkpoint with zero approvers configured
+	// skips straight to Approved instead of parking the estimate on a
+	// "Pending Approval" label nobody can ever resolve -- mirrors
+	// finalizeApproval's own floor (approvalApproved) for landing on the
+	// gate's approved target.
+	if toStatusCode == approvalGateStatusCode && targetApprovers == 0 {
+		toStatusCode = approvedStatusCode
+		toStatusID, err = statusIDByCode(ctx, tx, recordTypeID, toStatusCode)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s status: %w", toStatusCode, err)
+		}
+		targetApprovers, err = activeApproverCount(ctx, tx, recordTypeID, toStatusID)
+		if err != nil {
+			return nil, err
+		}
+		newApprovalStatus = approvalApproved
+		if targetApprovers > 0 {
+			newApprovalStatus = approvalPending
+		}
+	}
+	// Passing through the unconfigured checkpoint onto its approved target is
+	// the same outcome as the auto-skip above -- record it as approved too,
+	// so the two paths can't disagree about what landing on APPV means.
+	if viaGate != nil && toStatusCode == viaGate.TargetStatusCode && targetApprovers == 0 {
+		newApprovalStatus = approvalApproved
 	}
 
 	if _, err := tx.Exec(ctx, `

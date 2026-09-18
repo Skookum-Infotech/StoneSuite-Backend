@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 func resolveCustomer(ctx context.Context, pool *pgxpool.Pool, customerUUID string) (int, error) {
@@ -76,6 +78,28 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 		return nil, err
 	}
 
+	// PEND is both payment's creation default and its approval checkpoint
+	// (unlike modules where the checkpoint is entered later via a manual
+	// Transition) -- a payment with zero approvers configured there starts
+	// life already Approved instead of parking on a status literally
+	// labeled "Pending" that nothing is actually pending on. Mirrors
+	// Transition's own auto-skip (store_transition.go).
+	initialStatusID := pendStatusID
+	initialApprovalStatus := approvalchain.StatusNone
+	if gate, gated := moduleConfig().GateFor("PEND"); gated {
+		required, err := approvalchain.ActiveApproverCount(ctx, pool, moduleConfig().ApproverTable, typeID, pendStatusID)
+		if err != nil {
+			return nil, err
+		}
+		if required == 0 {
+			initialStatusID, err = statusIDByCode(ctx, pool, typeID, gate.TargetStatusCode)
+			if err != nil {
+				return nil, err
+			}
+			initialApprovalStatus = approvalchain.StatusApproved
+		}
+	}
+
 	ownerEmp := in.OwnerEmployeeID
 	if ownerEmp == nil && actorEmployeeID != 0 {
 		ownerEmp = &actorEmployeeID
@@ -91,17 +115,17 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 	var newUUID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO payment (
-			record_type, payment_status, payment_customer_id,
+			record_type, payment_status, payment_approval_status, payment_customer_id,
 			payment_method, payment_reference_number, payment_date, payment_currency,
 			payment_memo, payment_internal_notes,
 			payment_amount, payment_applied_total, payment_unapplied_amount,
 			payment_owner_id, payment_custom_fields, payment_created_by, payment_updated_by
 		) VALUES (
-			$1,$2,$3, $4,$5,COALESCE($6, CURRENT_DATE),$7, $8,$9,
-			$10,0,$10,
-			$11,$12,$13,$13
+			$1,$2,$3,$4, $5,$6,COALESCE($7, CURRENT_DATE),$8, $9,$10,
+			$11,0,$11,
+			$12,$13,$14,$14
 		) RETURNING payment_id, payment_uuid`,
-		typeID, pendStatusID, custID,
+		typeID, initialStatusID, initialApprovalStatus, custID,
 		in.MethodID, in.ReferenceNumber, in.PaymentDate, in.CurrencyID,
 		in.Memo, in.InternalNotes,
 		in.Amount,
@@ -117,7 +141,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO payment_history (payment_id, from_status_id, to_status_id, action, actor_employee_id)
-		VALUES ($1, NULL, $2, 'create', $3)`, newID, pendStatusID, nullableInt(actorEmployeeID)); err != nil {
+		VALUES ($1, NULL, $2, 'create', $3)`, newID, initialStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert payment create history: %w", err)
 	}
 

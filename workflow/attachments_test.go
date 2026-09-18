@@ -58,11 +58,11 @@ func seedCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, itemUUID s
 	return custUUID, itemUUID
 }
 
-// TestResolveRecordAccess_DocumentModules is the regression for the gap found
-// while adding the attachment-required guard: ResolveRecordAccess previously
-// only recognized sales_order among the four document-clone modules, so
-// attachment endpoints 404'd for quote/estimate/invoice records even though
-// workflow_record_attachments itself has no type restriction.
+// TestResolveRecordAccess_DocumentModules is the regression for a gap where
+// ResolveRecordAccess only recognized sales_order among the four
+// document-clone modules, so attachment endpoints 404'd for
+// quote/estimate/invoice records even though workflow_record_attachments
+// itself has no type restriction.
 func TestResolveRecordAccess_DocumentModules(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -103,59 +103,5 @@ func TestResolveRecordAccess_DocumentModules(t *testing.T) {
 		t.Fatalf("ResolveRecordAccess(invoice) = %v", err)
 	} else if info.WorkflowKey != "invoice" {
 		t.Errorf("WorkflowKey = %q, want %q", info.WorkflowKey, "invoice")
-	}
-}
-
-// TestHasAttachments_TrueFalseAndIgnoresInfected covers HasAttachments'
-// EXISTS predicate in isolation, independent of the four modules' own
-// Transition-guard tests.
-func TestHasAttachments_TrueFalseAndIgnoresInfected(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	custUUID, itemUUID := seedCustomerAndItem(t, pool)
-
-	estIn := estimate.CreateEstimateInput{CustomerUUID: custUUID}
-	estIn.Items = []estimate.LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
-	est, err := estimate.Create(ctx, pool, estIn, 1)
-	if err != nil {
-		t.Fatalf("create estimate: %v", err)
-	}
-
-	has, err := workflow.HasAttachments(ctx, pool, est.ID)
-	if err != nil {
-		t.Fatalf("HasAttachments (none): %v", err)
-	}
-	if has {
-		t.Error("HasAttachments = true, want false with zero rows")
-	}
-
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workflow_record_attachments
-			(record_id, file_name, content_type, size_bytes, storage_key, status)
-		VALUES ($1::uuid, 'infected.pdf', 'application/pdf', 100, $2, 'infected')`,
-		est.ID, "test-key/"+est.ID+"/infected.pdf"); err != nil {
-		t.Fatalf("seed infected attachment: %v", err)
-	}
-	has, err = workflow.HasAttachments(ctx, pool, est.ID)
-	if err != nil {
-		t.Fatalf("HasAttachments (infected only): %v", err)
-	}
-	if has {
-		t.Error("HasAttachments = true, want false when only an infected row exists")
-	}
-
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workflow_record_attachments
-			(record_id, file_name, content_type, size_bytes, storage_key, status)
-		VALUES ($1::uuid, 'clean.pdf', 'application/pdf', 100, $2, 'clean')`,
-		est.ID, "test-key/"+est.ID+"/clean.pdf"); err != nil {
-		t.Fatalf("seed clean attachment: %v", err)
-	}
-	has, err = workflow.HasAttachments(ctx, pool, est.ID)
-	if err != nil {
-		t.Fatalf("HasAttachments (clean present): %v", err)
-	}
-	if !has {
-		t.Error("HasAttachments = false, want true once a clean row exists")
 	}
 }

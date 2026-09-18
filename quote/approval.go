@@ -25,6 +25,13 @@ const (
 // Transition is for).
 const approvedStatusCode = "APPV"
 
+// approvalGateStatusCode is the checkpoint status a quote passes through on
+// its way to approvedStatusCode. Transition uses this to recognize a move
+// onto the checkpoint with zero configured approvers and skip straight to
+// approvedStatusCode instead, rather than parking the quote on a status
+// literally labeled "Pending Approval" that nothing is actually pending on.
+const approvalGateStatusCode = "PAPV"
+
 // ErrNotApprover is returned when a caller who is not a configured approver
 // for the quote's current status tries to approve it (AD-8). Maps to 403.
 var ErrNotApprover = errors.New("you are not a configured approver for this quote's current status")

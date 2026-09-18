@@ -77,7 +77,12 @@ type Requisition struct {
 	Status         string `json:"status"`         // human label, e.g. "Draft"
 	StatusCode     string `json:"statusCode"`     // lkp_record_status code, e.g. "DRFT"
 	ApprovalStatus string `json:"approvalStatus"` // none | pending | approved
-	OwnerUserID    string `json:"-"`
+	// NextStatusCodes are the statuses a manual transition may move the
+	// requisition to right now, with an approval checkpoint nobody is
+	// configured to approve collapsed out of the path
+	// (approvalchain.NextStatusCodes).
+	NextStatusCodes []string `json:"nextStatusCodes"`
+	OwnerUserID     string   `json:"-"`
 
 	RequestedByEmployeeID int    `json:"requestedByEmployeeId"`
 	Department            string `json:"department"`

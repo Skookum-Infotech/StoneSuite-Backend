@@ -131,8 +131,12 @@ func TestCreate_HeaderOnly(t *testing.T) {
 	if !strings.HasPrefix(rf.Number, "RFND-") {
 		t.Fatalf("expected RFND- prefixed number, got %q", rf.Number)
 	}
-	if rf.StatusCode != "PEND" {
-		t.Fatalf("new refund must start PEND, got %s", rf.StatusCode)
+	// No refund_approver rows configured for (RFND, PEND) in this test DB,
+	// so the checkpoint has nothing to wait on and Create auto-skips
+	// straight to APPV instead of starting the refund on an unresolvable
+	// PEND.
+	if rf.StatusCode != "APPV" {
+		t.Fatalf("new refund with no configured approvers must auto-approve, got %s", rf.StatusCode)
 	}
 	if rf.AppliedTotal != 0 || rf.UnappliedAmount != 500 {
 		t.Fatalf("expected 0 applied / 500 unapplied, got applied=%v unapplied=%v", rf.AppliedTotal, rf.UnappliedAmount)
@@ -156,9 +160,33 @@ func TestApply_RejectsWhilePending(t *testing.T) {
 	ctx := context.Background()
 	custUUID, paymentUUID := seedUnappliedPayment(t, pool, 100)
 	methodID := firstMethodID(t, pool)
+
+	// Configure an approver on PEND so this refund is genuinely gated and
+	// stays PEND after Create instead of auto-skipping to APPV (see
+	// TestCreate_HeaderOnly).
+	var recordTypeID, pendStatusID int
+	if err := pool.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'RFND'`).Scan(&recordTypeID); err != nil {
+		t.Fatalf("resolve RFND record type: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'PEND'`, recordTypeID).Scan(&pendStatusID); err != nil {
+		t.Fatalf("resolve PEND status: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO refund_approver (record_type_id, record_status_id, approver_employee_id)
+		VALUES ($1, $2, 1) ON CONFLICT DO NOTHING`, recordTypeID, pendStatusID); err != nil {
+		t.Fatalf("seed refund_approver: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM refund_approver WHERE record_type_id = $1 AND record_status_id = $2`, recordTypeID, pendStatusID)
+	})
+
 	rf, err := Create(ctx, pool, CreateRefundInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 50}, 1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
+	}
+	if rf.StatusCode != "PEND" {
+		t.Fatalf("expected refund to stay PEND while gated, got %s", rf.StatusCode)
 	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 50, 1); err == nil {
 		t.Fatal("expected error applying a refund that is still PEND (AD-5)")
@@ -173,9 +201,6 @@ func TestApply_FromPaymentOverpayment(t *testing.T) {
 	rf, err := Create(ctx, pool, CreateRefundInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
-	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
 	}
 	rf2, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 60, 1)
 	if err != nil {
@@ -201,9 +226,6 @@ func TestApply_FromCreditMemo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
 	rf2, err := Apply(ctx, pool, rf.ID, "", cmUUID, 80, 1)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -225,9 +247,6 @@ func TestApply_RejectsOverAmount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
 	// Payment has 100 available but the refund itself only has 50 unapplied —
 	// capped at the refund's own balance, not the source's.
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 60, 1); err == nil {
@@ -245,9 +264,6 @@ func TestApply_RejectsCrossCustomerSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 50, 1); err == nil {
 		t.Fatal("expected error applying from a payment belonging to a different customer")
 	}
@@ -264,9 +280,6 @@ func TestApply_RejectsVoidedPaymentSource(t *testing.T) {
 	rf, err := Create(ctx, pool, CreateRefundInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 50}, 1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
-	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
 	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 50, 1); err == nil {
 		t.Fatal("expected error applying from a voided payment")
@@ -289,9 +302,6 @@ func TestApply_RejectsUnapprovedCreditMemoSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create refund: %v", err)
 	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve refund: %v", err)
-	}
 	if _, err := Apply(ctx, pool, rf.ID, "", cm.ID, 50, 1); err == nil {
 		t.Fatal("expected error applying from a DRFT (unapproved) credit memo")
 	}
@@ -305,9 +315,6 @@ func TestUnapply_RestoresBalances(t *testing.T) {
 	rf, err := Create(ctx, pool, CreateRefundInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
-	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
 	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 100, 1); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -336,9 +343,6 @@ func TestApply_ReapplyIncreasesExistingRow(t *testing.T) {
 	rf, err := Create(ctx, pool, CreateRefundInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
-	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
 	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 40, 1); err != nil {
 		t.Fatalf("apply 1: %v", err)
@@ -381,9 +385,6 @@ func TestTransition_VoidCascadesBothSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create refund: %v", err)
 	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve refund: %v", err)
-	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 60, 1); err != nil {
 		t.Fatalf("apply payment source: %v", err)
 	}
@@ -425,9 +426,6 @@ func TestSoftDelete_BlockedWithLiveApplications(t *testing.T) {
 	rf, err := Create(ctx, pool, CreateRefundInput{CustomerUUID: custUUID, MethodID: methodID, Amount: 100}, 1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
-	}
-	if _, err := Transition(ctx, pool, rf.ID, "APPV", 1); err != nil {
-		t.Fatalf("approve: %v", err)
 	}
 	if _, err := Apply(ctx, pool, rf.ID, paymentUUID, "", 100, 1); err != nil {
 		t.Fatalf("apply: %v", err)

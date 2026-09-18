@@ -8284,6 +8284,10 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_country   VARCH
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_state     VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_zip       VARCHAR(255) NOT NULL DEFAULT '';
 
+-- logo_r2_key holds an R2 object key (not bytes) -- the logo image itself
+-- lives in the tenant's own R2 bucket. Empty string means no logo uploaded.
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_r2_key VARCHAR(255) NOT NULL DEFAULT '';
+
 -- =====================================================================
 -- Company Locations — Configuration -> Company Info -> Locations tab.
 -- Physical addresses a tenant operates from (offices, warehouses,

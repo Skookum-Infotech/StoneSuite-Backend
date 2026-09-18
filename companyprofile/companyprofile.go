@@ -44,6 +44,7 @@ type Profile struct {
 	Currency    string `json:"currency"`
 	Timezone    string `json:"timezone"`
 	TaxID       string `json:"taxId"`
+	LogoKey     string `json:"logoKey"`
 
 	BillingAddress  Address `json:"billingAddress"`
 	ShippingAddress Address `json:"shippingAddress"`
@@ -119,13 +120,13 @@ func Validate(p Profile) error {
 func Get(ctx context.Context, q Querier) (*Profile, error) {
 	p := &Profile{}
 	err := q.QueryRow(ctx, `
-		SELECT company_name, legal_name, industry, website, country, currency, timezone, tax_id,
+		SELECT company_name, legal_name, industry, website, country, currency, timezone, tax_id, logo_r2_key,
 		       billing_addr_line1, billing_addr_line2, billing_addr_suite, billing_addr_city, billing_addr_country, billing_addr_state, billing_addr_zip,
 		       shipping_addr_line1, shipping_addr_line2, shipping_addr_suite, shipping_addr_city, shipping_addr_country, shipping_addr_state, shipping_addr_zip,
 		       return_addr_line1, return_addr_line2, return_addr_suite, return_addr_city, return_addr_country, return_addr_state, return_addr_zip
 		FROM company_profile WHERE id = 1`).
 		Scan(
-			&p.CompanyName, &p.LegalName, &p.Industry, &p.Website, &p.Country, &p.Currency, &p.Timezone, &p.TaxID,
+			&p.CompanyName, &p.LegalName, &p.Industry, &p.Website, &p.Country, &p.Currency, &p.Timezone, &p.TaxID, &p.LogoKey,
 			&p.BillingAddress.Line1, &p.BillingAddress.Line2, &p.BillingAddress.Suite, &p.BillingAddress.City, &p.BillingAddress.Country, &p.BillingAddress.State, &p.BillingAddress.Zip,
 			&p.ShippingAddress.Line1, &p.ShippingAddress.Line2, &p.ShippingAddress.Suite, &p.ShippingAddress.City, &p.ShippingAddress.Country, &p.ShippingAddress.State, &p.ShippingAddress.Zip,
 			&p.ReturnAddress.Line1, &p.ReturnAddress.Line2, &p.ReturnAddress.Suite, &p.ReturnAddress.City, &p.ReturnAddress.Country, &p.ReturnAddress.State, &p.ReturnAddress.Zip,
@@ -194,6 +195,21 @@ func Upsert(ctx context.Context, q Querier, p Profile) error {
 	)
 	if err != nil {
 		return fmt.Errorf("upsert company profile: %w", err)
+	}
+	return nil
+}
+
+// SetLogoKey stores (or clears, with an empty string) the tenant's logo R2
+// object key without touching any other company_profile field -- kept
+// separate from Upsert so the logo endpoints never need to round-trip the
+// rest of the profile just to change the logo.
+func SetLogoKey(ctx context.Context, q Querier, key string) error {
+	_, err := q.Exec(ctx, `
+		INSERT INTO company_profile (id, logo_r2_key) VALUES (1, $1)
+		ON CONFLICT (id) DO UPDATE SET logo_r2_key = EXCLUDED.logo_r2_key, updated_at = NOW()`,
+		key)
+	if err != nil {
+		return fmt.Errorf("set company profile logo key: %w", err)
 	}
 	return nil
 }

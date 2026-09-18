@@ -50,6 +50,16 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestDrawAddress_WrapsLongLines(t *testing.T) {
+	pdf := newDoc()
+	startY := pdf.GetY()
+	long := "VAKARANI CAMP, SIRUGUPPA ROAD NEAR HULIGEMMA TEMPLE, BELLARY DISTRICT, KARNATAKA 583101"
+	drawAddress(pdf, marginX, startY, "BILL TO", Address{Name: "Akhila N", Line1: long})
+	endY := pdf.GetY()
+	unwrappedHeight := 5.0 + 4.5 + 4.5 // label + Name + Line1, if each stayed a single (unwrapped) line
+	assert.Greater(t, endY-startY, unwrappedHeight, "long address line must wrap within the column instead of overflowing past it into the neighboring column")
+}
+
 func TestRender(t *testing.T) {
 	tests := []struct {
 		name   string

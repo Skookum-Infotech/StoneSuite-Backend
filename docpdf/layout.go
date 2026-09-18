@@ -87,7 +87,7 @@ func drawAddress(pdf *fpdf.Fpdf, x, y float64, label string, a Address) {
 			continue
 		}
 		pdf.SetX(x)
-		pdf.CellFormat(85, 4.5, ln, "", 2, "L", false, 0, "")
+		pdf.MultiCell(85, 4.5, ln, "", "L", false)
 	}
 }
 

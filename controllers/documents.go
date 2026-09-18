@@ -54,6 +54,11 @@ type DocumentLoader func(ctx context.Context, pool *pgxpool.Pool, uuid string, s
 // dispatching to a per-module loader resolved from the record's type.
 type DocumentOps struct {
 	loaders map[string]DocumentLoader
+	// sendDisabled marks workflow keys that may still render/export a PDF
+	// (GetPDF) but must not be emailed via Send -- e.g. purchase_order, where
+	// "Send to Vendor" belongs on the vendor-facing AP documents (bill,
+	// payment, credit, vendor profile) rather than the internal PO itself.
+	sendDisabled map[string]bool
 	// renderPDF is injectable for tests; defaults to docpdf.Render.
 	renderPDF func(docpdf.PrintableDoc) ([]byte, error)
 	// r2 is nil when R2 is not configured; the tenant-logo lookup is then
@@ -61,10 +66,10 @@ type DocumentOps struct {
 	r2 *storage.Client
 }
 
-// NewDocumentOps constructs the handler group. r2 may be nil when R2
-// credentials are absent.
-func NewDocumentOps(loaders map[string]DocumentLoader, r2 *storage.Client) *DocumentOps {
-	return &DocumentOps{loaders: loaders, renderPDF: docpdf.Render, r2: r2}
+// NewDocumentOps constructs the handler group. sendDisabled and r2 may both
+// be nil.
+func NewDocumentOps(loaders map[string]DocumentLoader, sendDisabled map[string]bool, r2 *storage.Client) *DocumentOps {
+	return &DocumentOps{loaders: loaders, sendDisabled: sendDisabled, renderPDF: docpdf.Render, r2: r2}
 }
 
 // loadForRender runs the shared auth gate, resolves the loader for the record's
@@ -186,6 +191,10 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
 	pool, doc, meta, identityID, ownerUserID, ok := h.loadForRender(w, r, recordID, authz.ActionUpdate)
 	if !ok {
+		return
+	}
+	if h.sendDisabled[meta.WorkflowKey] {
+		fail(w, http.StatusNotFound, "This record type does not support sending.")
 		return
 	}
 

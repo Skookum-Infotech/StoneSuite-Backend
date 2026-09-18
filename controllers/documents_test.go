@@ -14,7 +14,7 @@ import (
 )
 
 func TestDocumentOps_RequiresAuth(t *testing.T) {
-	h := NewDocumentOps(map[string]DocumentLoader{}, nil)
+	h := NewDocumentOps(map[string]DocumentLoader{}, nil, nil)
 	for name, fn := range map[string]http.HandlerFunc{
 		"GetPDF": h.GetPDF, "Send": h.Send, "Sends": h.Sends,
 	} {

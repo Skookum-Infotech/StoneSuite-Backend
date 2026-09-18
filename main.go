@@ -843,7 +843,11 @@ func main() {
 					controllers.DocMeta{WorkflowKey: "vendor_payment", Number: vp.Number, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Vendor Payment " + vp.Number}, nil
 			},
 		}
-		docOps := controllers.NewDocumentOps(docLoaders, r2Client)
+		// Send to Vendor lives on the vendor-facing AP documents (bill, payment,
+		// credit) and the vendor profile itself, not on the internal purchase
+		// order -- Export PDF stays available for it via docLoaders above.
+		docSendDisabled := map[string]bool{"purchase_order": true}
+		docOps := controllers.NewDocumentOps(docLoaders, docSendDisabled, r2Client)
 		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))

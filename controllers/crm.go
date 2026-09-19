@@ -652,19 +652,23 @@ func notifyCustomerWelcome(
 
 // welcomeEmailHTML is the branded welcome message sent to a new customer's
 // contact — mirrors documents.go's documentEmailHTML: goes through
-// services.WrapEmailHTML for a well-formed document, and HTML-escapes the
-// caller-supplied names.
+// services.WrapEmailHTMLWithBanner, the one shared shell every StoneSuite
+// email uses, and HTML-escapes the caller-supplied names.
 func welcomeEmailHTML(tenantName, customerName string) string {
 	greeting := "Hello,"
 	if customerName != "" {
 		greeting = "Hello " + html.EscapeString(customerName) + ","
 	}
 	name := html.EscapeString(tenantName)
-	return services.WrapEmailHTML(
+	inner := `<p style="margin:0 0 14px;">` + greeting + `</p>` +
+		services.EmailMessageBox(`<p style="margin:0 0 14px;">Welcome to `+name+`! We're glad to have you as a customer.</p>`) +
+		`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>` + name + `</p>`
+	return services.WrapEmailHTMLWithBanner(
 		"Welcome to "+tenantName+".",
-		`<p style="margin:0 0 14px;">`+greeting+`</p>`+
-			`<p style="margin:0 0 14px;">Welcome to `+name+`! We're glad to have you as a customer.</p>`+
-			`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>`+name+`</p>`,
+		"Welcome",
+		"Welcome to",
+		tenantName,
+		inner,
 	)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestDocumentOps_RequiresAuth(t *testing.T) {
-	h := NewDocumentOps(map[string]DocumentLoader{})
+	h := NewDocumentOps(map[string]DocumentLoader{}, nil)
 	for name, fn := range map[string]http.HandlerFunc{
 		"GetPDF": h.GetPDF, "Send": h.Send, "Sends": h.Sends,
 	} {
@@ -26,6 +27,26 @@ func TestDocumentOps_RequiresAuth(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, rr.Code)
 		})
 	}
+}
+
+func TestDocumentEmailHTML_UsesSharedShellWithAttachmentChip(t *testing.T) {
+	doc := docpdf.PrintableDoc{Kind: "Invoice", Number: "INV-000123", Seller: docpdf.Seller{Name: "Elevation Stone"}}
+	out := documentEmailHTML(doc, "", "INV-000123.pdf")
+
+	assert.True(t, strings.HasPrefix(out, "<!DOCTYPE html>"))
+	assert.Contains(t, out, "linear-gradient(135deg,#0f172a,#134e4a)", "uses the one shared banner shell, not a separate co-branded one")
+	assert.Contains(t, out, "DOCUMENT SENT", "pill badge")
+	assert.Contains(t, out, "INV-000123.pdf", "attachment chip shows the file name")
+	assert.Contains(t, out, "Please find your invoice INV-000123 attached.")
+	assert.Contains(t, out, "Regards,<br>Elevation Stone", "tenant identity appears in the signature, not a swapped header logo")
+}
+
+func TestDocumentEmailHTML_CustomMessageOverridesDefault(t *testing.T) {
+	doc := docpdf.PrintableDoc{Kind: "Estimate", Number: "EST-1", Seller: docpdf.Seller{Name: "Acme"}}
+	out := documentEmailHTML(doc, "Here's your custom note.", "EST-1.pdf")
+
+	assert.Contains(t, out, "Here&#39;s your custom note.")
+	assert.NotContains(t, out, "Please find your estimate")
 }
 
 func TestSellerFromTenant_UsesDisplayName(t *testing.T) {

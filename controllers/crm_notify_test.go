@@ -17,6 +17,8 @@ func TestWelcomeEmailHTML_WellFormedWithGreeting(t *testing.T) {
 	assert.NotContains(t, body, "logo-dark.png", "the remote tracking image was dropped for deliverability")
 	assert.Contains(t, body, "Hello Bob Buyer,")
 	assert.Contains(t, body, "Welcome to Acme Stone Co!")
+	assert.Contains(t, body, "WELCOME", "pill badge")
+	assert.Contains(t, body, "linear-gradient(135deg,#0f172a,#134e4a)", "uses the one shared banner shell, not a separate co-branded one")
 }
 
 func TestWelcomeEmailHTML_NoCustomerName_UsesGenericGreeting(t *testing.T) {

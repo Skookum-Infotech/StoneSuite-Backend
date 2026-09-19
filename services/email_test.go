@@ -29,6 +29,8 @@ func TestBuildOnboardingInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "Jane Owner")
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/apply?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the shared banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "ONBOARDING INVITE", "banner pill badge")
 }
 
 func TestBuildPasswordSetupNotification(t *testing.T) {
@@ -46,6 +48,8 @@ func TestBuildPasswordSetupNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "Sam Customer")
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/set-password?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "ACCOUNT SETUP", "banner pill badge")
 }
 
 func TestBuildUserInviteNotification(t *testing.T) {
@@ -65,6 +69,10 @@ func TestBuildUserInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "Acme Stone Co")
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/accept?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	// Workspace invite uses the dark banner shell (WrapEmailHTMLWithBanner),
+	// not the plain card — see email_layout.go.
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "WORKSPACE INVITE", "banner pill badge")
 }
 
 func TestBuildPasswordResetNotification(t *testing.T) {
@@ -82,6 +90,8 @@ func TestBuildPasswordResetNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "Sam User")
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/reset?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the shared banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "PASSWORD RESET", "banner pill badge")
 }
 
 func TestBuildPortalInviteNotification(t *testing.T) {
@@ -100,6 +110,8 @@ func TestBuildPortalInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "72 hours")
 	assert.Contains(t, req.EmailBodyHTML, "https://app.example/portal-setup?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "PORTAL ACCESS", "banner pill badge")
 }
 
 func TestBuildCustomerPortalInviteNotification(t *testing.T) {
@@ -117,6 +129,8 @@ func TestBuildCustomerPortalInviteNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "Casey Buyer")
 	assert.Contains(t, req.EmailBodyHTML, "https://portal.example/set-password?token=abc")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "PORTAL INVITE", "banner pill badge")
 }
 
 func TestBuildCustomerNoteConfirmationNotification(t *testing.T) {
@@ -134,6 +148,8 @@ func TestBuildCustomerNoteConfirmationNotification(t *testing.T) {
 	assert.Contains(t, req.EmailBodyHTML, "Casey Buyer")
 	assert.Contains(t, req.EmailBodyHTML, "Acme Stone Co")
 	assert.Equal(t, []string{"email"}, req.Channels)
+	assert.Contains(t, req.EmailBodyHTML, "linear-gradient(135deg,#0f172a,#134e4a)", "must use the banner shell")
+	assert.Contains(t, req.EmailBodyHTML, "RECEIPT CONFIRMED", "banner pill badge")
 }
 
 // TestTransactionalEmailBuilders_ContractHolds is a recurrence guard: every
@@ -177,26 +193,120 @@ func TestTransactionalEmailBuilders_ContractHolds(t *testing.T) {
 	}
 }
 
-func TestWrapEmailHTML_WellFormedAndEscapesPreheader(t *testing.T) {
-	out := WrapEmailHTML(`Acme <b>& Co</b>`, `<p>Hi there</p>`)
+func withTestEmailBrand(t *testing.T) {
+	t.Helper()
+	prev := config.AppConfig
+	config.AppConfig = config.Config{
+		EmailBrandName:          "StoneSuite",
+		SupportEmail:            "support@stonesuite.app",
+		EmailPreferencesURL:     "https://app.stonesuite.io/settings/notifications",
+		EmailSocialXURL:         "https://x.com/stonesuite",
+		EmailSocialInstagramURL: "https://instagram.com/stonesuite",
+	}
+	t.Cleanup(func() { config.AppConfig = prev })
+}
+
+func TestWrapEmailHTMLWithBanner_WellFormedAndEscapesInputs(t *testing.T) {
+	withTestEmailBrand(t)
+	out := WrapEmailHTMLWithBanner(`Acme <b>& Co</b>`, `Team <b>Invite</b>`, `You're invited to join`, `Acme <b>Co</b>`, `<p>Hi there</p>`)
 
 	assert.True(t, strings.HasPrefix(out, "<!DOCTYPE html>"), "must open with the doctype")
 	assert.Contains(t, out, `<meta charset="utf-8">`)
 	assert.Contains(t, out, "<p>Hi there</p>", "inner content is nested verbatim")
-	// The preheader is developer/tenant text dropped into markup — it must be
-	// escaped, never rendered as tags.
-	assert.Contains(t, out, "Acme &lt;b&gt;&amp; Co&lt;/b&gt;")
+	assert.Contains(t, out, "Acme &lt;b&gt;&amp; Co&lt;/b&gt;", "preheader is escaped")
 	assert.NotContains(t, out, "Acme <b>& Co</b>")
+	assert.Contains(t, out, "TEAM &lt;B&gt;INVITE&lt;/B&gt;", "pill badge label is escaped and uppercased")
+	assert.Contains(t, out, "You&#39;re invited to join", "heading line 1 is escaped")
+	assert.Contains(t, out, "Acme &lt;b&gt;Co&lt;/b&gt;", "heading line 2 is escaped")
+	assert.Contains(t, out, "<svg", "carries the illustrated banner icon (inline SVG, not a hosted image)")
 }
 
-func TestEmailCTA_LinkOnlyInHref(t *testing.T) {
+func TestBannerIconSVG_HasGlowAndSparkles(t *testing.T) {
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.Contains(t, out, `filter="url(#`, "glow behind the checkmark badge")
+	assert.GreaterOrEqual(t, strings.Count(out, `fill="#a3e635"`), 3, "sparkle accents around the illustration")
+}
+
+func TestEmailSocialRow_UsesInstagramIconNotLinkedIn(t *testing.T) {
+	withTestEmailBrand(t)
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.NotContains(t, out, ">in<", "LinkedIn text glyph removed")
+	assert.Contains(t, out, `cx="12" cy="12" r="4"`, "Instagram icon: camera lens circle")
+}
+
+func TestBrandHeaderStrip_ContainsStoneSuiteLogoMark(t *testing.T) {
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.Contains(t, out, `aria-label="StoneSuite"`, "logo mark is inline SVG, not a hosted <img>")
+	assert.Contains(t, out, ">STONE<", "wordmark line one")
+	assert.Contains(t, out, ">SUITE<", "wordmark line two")
+	assert.Equal(t, 4, strings.Count(out, `rx="4" fill="none" stroke="#84cc16"`), "four rounded outline squares in the 2x2 grid mark")
+}
+
+func TestWrapEmailHTMLWithBanner_IncludesSupportSocialAndPreferencesFooter(t *testing.T) {
+	withTestEmailBrand(t)
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.Contains(t, out, "support@stonesuite.app", "support contact line")
+	assert.Contains(t, out, `href="mailto:support@stonesuite.app"`)
+	assert.Contains(t, out, "https://x.com/stonesuite", "social row: X link")
+	assert.Contains(t, out, "https://instagram.com/stonesuite", "social row: Instagram link")
+	assert.Contains(t, out, `href="https://app.stonesuite.io/settings/notifications"`, "manage-preferences footer link")
+	assert.Contains(t, out, "Manage email preferences")
+}
+
+func TestWrapEmailHTMLWithBanner_HasOutlookFixedWidthFallback(t *testing.T) {
+	// Outlook desktop (Word rendering engine) ignores CSS max-width, so a
+	// width="100%" table without an MSO-conditional fixed-width fallback
+	// stretches to the full reading-pane width instead of staying a 480px
+	// card.
+	withTestEmailBrand(t)
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.Contains(t, out, "<!--[if mso]>", "MSO-conditional fixed-width wrapper")
+	assert.Contains(t, out, "width=\"480\"")
+}
+
+func TestWrapEmailHTMLWithBanner_GradientBannerHasBgcolorFallback(t *testing.T) {
+	// CSS gradients silently fail in Outlook (Word engine) — without a solid
+	// bgcolor fallback, the banner renders with no background at all, making
+	// the white heading text invisible against a white card.
+	withTestEmailBrand(t)
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.Contains(t, out, `bgcolor="#0f172a"`)
+	assert.Contains(t, out, "linear-gradient(135deg,#0f172a,#134e4a)")
+}
+
+func TestEmailCTAAccent_LinkOnlyInHref(t *testing.T) {
 	const link = "https://app.example/accept-invite?token=secret"
-	out := emailCTA(link, "Accept invitation")
+	out := emailCTAAccent(link, "Accept invitation")
 
 	assert.Contains(t, out, `href="`+link+`"`, "the destination lives in the anchor href")
 	assert.NotContains(t, out, ">"+link+"<", "and never as visible link text")
 	assert.Contains(t, out, "Accept invitation")
-	assert.Contains(t, out, "Use this link instead", "keeps a button-less fallback")
+	assert.Contains(t, out, "#84cc16", "uses the lime accent color")
+}
+
+func TestEmailAttachmentChip_EscapesFileName(t *testing.T) {
+	out := EmailAttachmentChip(`INV<1>.pdf`)
+	assert.Contains(t, out, "INV&lt;1&gt;.pdf")
+}
+
+func TestEmailMessageBox_WrapsInnerInLightGrayBox(t *testing.T) {
+	out := EmailMessageBox(`<p>hi</p>`)
+	assert.Contains(t, out, "background:#f4f4f5")
+	assert.Contains(t, out, "border-radius:8px")
+	assert.Contains(t, out, "<p>hi</p>")
+}
+
+func TestWrapEmailHTMLWithBanner_HasDividerBeforeFooterChrome(t *testing.T) {
+	withTestEmailBrand(t)
+	out := WrapEmailHTMLWithBanner("preheader", "Badge", "Line one", "", "<p>inner</p>")
+
+	assert.Contains(t, out, "border-top:1px solid #e4e4e7", "divider between content and footer chrome")
 }
 
 func TestSendUserInviteEmailWithResult_ParsesIDsAndSetsActor(t *testing.T) {

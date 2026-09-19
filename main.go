@@ -570,6 +570,8 @@ func main() {
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
+		// No permission gate (unlike ListUsers below) -- see ListAssignableUsers.
+		mux.Handle("GET /api/tenant/users/assignable", tenantChain(userOps.ListAssignableUsers))
 		mux.Handle("GET /api/tenant/users", tenantChain(userOps.ListUsers))
 		mux.Handle("POST /api/tenant/users/invite", tenantChain(userOps.InviteUser))
 		mux.Handle("GET /api/tenant/users/{id}", tenantChain(userOps.GetUser))

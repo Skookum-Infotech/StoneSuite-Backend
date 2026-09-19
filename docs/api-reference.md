@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-523 endpoints across 7 surfaces, read from `main.go`.
+524 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 442 |
+| staff token + tenant | 443 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 17 |
@@ -311,7 +311,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 441 endpoints
+## `tenant` — 442 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -867,6 +867,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 |---|---|---|---|
 | `GET` | `/api/tenant/users` | staff token + tenant | `userOps.ListUsers` |
 | `ANY` | `/api/tenant/users/` | staff token + tenant | `rbac.UserRoles` |
+| `GET` | `/api/tenant/users/assignable` | staff token + tenant | `userOps.ListAssignableUsers` |
 | `POST` | `/api/tenant/users/invite` | staff token + tenant | `userOps.InviteUser` |
 | `GET` | `/api/tenant/users/me/permissions` | staff token + tenant | `rbac.MyPermissions` |
 | `DELETE` | `/api/tenant/users/{id}` | staff token + tenant | `userOps.DeactivateUser` |

@@ -450,5 +450,8 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Estimate, error
 		return nil, err
 	}
 	e.Items = items
+	if err := fillNextStatusCodes(ctx, pool, e); err != nil {
+		return nil, err
+	}
 	return e, nil
 }

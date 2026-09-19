@@ -106,8 +106,7 @@ func estimateFail(w http.ResponseWriter, err error, serverMsg string) {
 		fail(w, http.StatusNotFound, "Estimate not found.")
 	case errors.Is(err, estimate.ErrInvalidTransition),
 		errors.Is(err, estimate.ErrApprovalRequired),
-		errors.Is(err, estimate.ErrApprovalNotRequired),
-		errors.Is(err, estimate.ErrAttachmentRequired):
+		errors.Is(err, estimate.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, estimate.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())

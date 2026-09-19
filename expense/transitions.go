@@ -1,6 +1,9 @@
 package expense
 
-import "errors"
+import (
+	"errors"
+	"sort"
+)
 
 // ErrInvalidTransition is returned when a status change is not permitted.
 var ErrInvalidTransition = errors.New("invalid expense status transition")
@@ -21,6 +24,17 @@ var allowedTransitions = map[string]map[string]bool{
 // CanTransition reports whether moving fromCode->toCode is allowed.
 func CanTransition(fromCode, toCode string) bool {
 	return allowedTransitions[fromCode][toCode]
+}
+
+// NextStatuses lists the codes reachable from fromCode in the static map,
+// sorted -- the shape approvalchain.NextStatusCodes consumes.
+func NextStatuses(fromCode string) []string {
+	out := make([]string, 0, len(allowedTransitions[fromCode]))
+	for code := range allowedTransitions[fromCode] {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ValidateTransition returns ErrInvalidTransition when the move is not allowed.

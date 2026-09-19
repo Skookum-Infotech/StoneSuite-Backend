@@ -187,6 +187,9 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Order, error) {
 		return nil, err
 	}
 	o.Items = items
+	if err := fillNextStatusCodes(ctx, pool, o); err != nil {
+		return nil, err
+	}
 	return o, nil
 }
 

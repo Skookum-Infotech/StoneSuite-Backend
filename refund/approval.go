@@ -59,3 +59,26 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 	}
 	return info, err
 }
+
+// Reject vetoes a refund that is awaiting approval on behalf of one of
+// its configured approvers (or a super admin) via the shared approvalchain
+// engine, keeping who rejected it and why. A refund's approval gate sits on its
+// very first status, so there is nothing earlier to send it back to: it keeps
+// its status with its approval flagged rejected, and editing it reopens
+// approval (see Update). Unlike Approve it is a veto, not a vote: no quorum is
+// needed. The reason / already-rejected errors pass through unchanged for the
+// controller to map.
+func Reject(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int, callerIsSuperAdmin bool, reason string) (*Refund, error) {
+	_, err := approvalchain.Reject(ctx, pool, moduleConfig(), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
+	switch {
+	case errors.Is(err, approvalchain.ErrNotFound):
+		return nil, ErrNotFound
+	case errors.Is(err, approvalchain.ErrNotApprover):
+		return nil, ErrNotApprover
+	case errors.Is(err, approvalchain.ErrApprovalNotRequired):
+		return nil, ErrApprovalNotRequired
+	case err != nil:
+		return nil, err
+	}
+	return Get(ctx, pool, uuid)
+}

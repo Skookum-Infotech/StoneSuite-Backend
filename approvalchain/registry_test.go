@@ -183,3 +183,53 @@ func TestModuleConfig_HasGate(t *testing.T) {
 		t.Error("expected HasGate(SUBM) = false for estimate")
 	}
 }
+
+// TestRegistry_RejectModes pins how every module's gate answers a Reject:
+//   - the eight modules that gate on Pending Approval (Draft sits right before
+//     it) send the record back to Draft;
+//   - the four whose gate is their very first status (Credit Memo and Vendor
+//     Credit gate on Draft, Payment and Refund on Pending -- nothing earlier
+//     to return to) keep their status and flag the approval rejected in place;
+//   - Expense (its own dedicated Reject -> RJCT) and Fabrication Job (mid-
+//     production gates whose "reject" means rework) take no part.
+//
+// A module added to the registry must be classified here on purpose rather
+// than silently getting the wrong (or no) Reject behavior.
+func TestRegistry_RejectModes(t *testing.T) {
+	want := map[string]RejectMode{
+		"estimate": RejectToStatus, "quote": RejectToStatus, "sales_order": RejectToStatus,
+		"invoice": RejectToStatus, "purchase_order": RejectToStatus, "requisition": RejectToStatus,
+		"vendor_bill": RejectToStatus, "vendor_payment": RejectToStatus,
+		"credit_memo": RejectInPlace, "vendor_credit": RejectInPlace,
+		"payment": RejectInPlace, "refund": RejectInPlace,
+		"expense": RejectUnsupported, "installation": RejectUnsupported,
+	}
+	for key := range registry {
+		if _, ok := want[key]; !ok {
+			t.Errorf("registry module %q has no expected Reject mode -- classify it in this test", key)
+		}
+	}
+	for key, mode := range want {
+		t.Run(key, func(t *testing.T) {
+			cfg, ok := ForWorkflowKey(key)
+			if !ok {
+				t.Fatalf("%q is not registered", key)
+			}
+			for _, g := range cfg.Gates {
+				if g.Reject != mode {
+					t.Errorf("gate %s: Reject = %v, want %v", g.StatusCode, g.Reject, mode)
+				}
+				switch mode {
+				case RejectToStatus:
+					if g.RejectStatusCode != "DRFT" {
+						t.Errorf("gate %s: RejectStatusCode = %q, want DRFT", g.StatusCode, g.RejectStatusCode)
+					}
+				default:
+					if g.RejectStatusCode != "" {
+						t.Errorf("gate %s: RejectStatusCode = %q, want empty for this mode", g.StatusCode, g.RejectStatusCode)
+					}
+				}
+			}
+		})
+	}
+}

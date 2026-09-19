@@ -59,3 +59,20 @@ func TestContactsToRecipients_Empty(t *testing.T) {
 		t.Errorf("contactsToRecipients(nil) = %v, want empty", got)
 	}
 }
+
+// TestRejectedNotificationBody: the "sent back" notification says why when an
+// approver gave a reason (Reject), and keeps its generic wording for the
+// escapes that don't carry one (a plain void/cancel out of a gate).
+func TestRejectedNotificationBody(t *testing.T) {
+	tests := []struct{ name, detail, want string }{
+		{"no reason", "", "Sent back for changes."},
+		{"with reason", "Wrong amount", "Sent back for changes: Wrong amount"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rejectedNotificationBody(tt.detail); got != tt.want {
+				t.Errorf("rejectedNotificationBody(%q) = %q, want %q", tt.detail, got, tt.want)
+			}
+		})
+	}
+}

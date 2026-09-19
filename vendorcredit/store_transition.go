@@ -142,6 +142,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		internalID, fromStatusID, toStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert vendor credit transition history: %w", err)
 	}
+	// Any move takes the credit out of the state a Reject left it in.
+	if err := approvalchain.ClearRejection(ctx, tx, recordTypeID, internalID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)

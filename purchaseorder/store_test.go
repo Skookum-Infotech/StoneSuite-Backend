@@ -212,8 +212,11 @@ func TestTransition_RejectsIllegalMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := Transition(context.Background(), pool, created.ID, "SENT", 1); !errors.Is(err, ErrInvalidTransition) {
-		t.Fatalf("Transition DRFT->SENT = %v, want ErrInvalidTransition", err)
+	// DRFT->SENT is legal when nobody is configured to approve (it passes
+	// through the unconfigured PAPV checkpoint), so use a move nothing can
+	// collapse into: receiving is two hops past Approved.
+	if _, err := Transition(context.Background(), pool, created.ID, "RCVD", 1); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Transition DRFT->RCVD = %v, want ErrInvalidTransition", err)
 	}
 }
 

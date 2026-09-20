@@ -174,6 +174,9 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Invoice, error) {
 		return nil, err
 	}
 	inv.Items = lines
+	if err := fillNextStatusCodes(ctx, pool, inv); err != nil {
+		return nil, err
+	}
 	return inv, nil
 }
 

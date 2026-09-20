@@ -65,6 +65,26 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	if targetApprovers > 0 {
 		newApprovalStatus = approvalchain.StatusPending
 	}
+	// A move onto an approval checkpoint with zero approvers configured
+	// skips straight to the gate's approved target instead of parking the
+	// refund on a status literally labeled "Pending Approval" that nothing
+	// is actually pending on -- mirrors engine.finalize's own floor
+	// (StatusApproved) for landing on that target.
+	if gate, gated := moduleConfig().GateFor(toStatusCode); gated && targetApprovers == 0 {
+		toStatusCode = gate.TargetStatusCode
+		toStatusID, err = statusIDByCode(ctx, pool, typeID, toStatusCode)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s status: %w", toStatusCode, err)
+		}
+		targetApprovers, err = approvalchain.ActiveApproverCount(ctx, tx, approverTable, typeID, toStatusID)
+		if err != nil {
+			return nil, err
+		}
+		newApprovalStatus = approvalchain.StatusApproved
+		if targetApprovers > 0 {
+			newApprovalStatus = approvalchain.StatusPending
+		}
+	}
 
 	if toStatusCode == "VOID" {
 		type liveApp struct {

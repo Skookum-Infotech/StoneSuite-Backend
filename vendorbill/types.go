@@ -112,6 +112,10 @@ type VendorBill struct {
 	StatusCode     string `json:"statusCode"`
 	StatusName     string `json:"status"`
 	ApprovalStatus string `json:"approvalStatus"` // none | pending | approved
+	// NextStatusCodes are the statuses a manual transition may move the
+	// bill to right now, with an approval checkpoint nobody is configured
+	// to approve collapsed out of the path (approvalchain.NextStatusCodes).
+	NextStatusCodes []string `json:"nextStatusCodes"`
 
 	Vendor        VendorRef         `json:"vendor"`
 	PurchaseOrder *PurchaseOrderRef `json:"purchaseOrder,omitempty"` // nullable lineage (AD-8)

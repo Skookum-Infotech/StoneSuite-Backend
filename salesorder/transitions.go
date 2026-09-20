@@ -1,14 +1,12 @@
 package salesorder
 
-import "errors"
+import (
+	"errors"
+	"sort"
+)
 
 // ErrInvalidTransition is returned when a status change is not permitted.
 var ErrInvalidTransition = errors.New("invalid sales order status transition")
-
-// ErrAttachmentRequired is returned when a record has no attachments and is
-// being submitted for approval (DRFT -> PAPV) — every sales order must carry
-// at least one supporting file before review.
-var ErrAttachmentRequired = errors.New("at least one attachment is required before submitting for approval")
 
 // allowedTransitions maps a status code to the set of codes reachable from it
 // (spec §8). Terminal states (FILL, CANC) map to an empty set.
@@ -33,4 +31,15 @@ func ValidateTransition(fromCode, toCode string) error {
 		return ErrInvalidTransition
 	}
 	return nil
+}
+
+// NextStatuses lists the codes reachable from fromCode in the static map,
+// sorted -- the shape approvalchain.NextStatusCodes consumes.
+func NextStatuses(fromCode string) []string {
+	out := make([]string, 0, len(allowedTransitions[fromCode]))
+	for code := range allowedTransitions[fromCode] {
+		out = append(out, code)
+	}
+	sort.Strings(out)
+	return out
 }

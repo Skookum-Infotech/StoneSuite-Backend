@@ -3678,6 +3678,66 @@
         ]
       }
     },
+    "/api/tenant/company-profile/logo": {
+      "delete": {
+        "operationId": "delete_tenant_company_profile_logo",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "companyProfileOps.DeleteLogo",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "put": {
+        "operationId": "put_tenant_company_profile_logo",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "companyProfileOps.UploadLogo",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/config/approvers": {
       "get": {
         "operationId": "get_tenant_config_approvers",
@@ -17570,6 +17630,37 @@
           }
         ],
         "summary": "rbac.UserRoles",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/users/assignable": {
+      "get": {
+        "operationId": "get_tenant_users_assignable",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "userOps.ListAssignableUsers",
         "tags": [
           "tenant"
         ]

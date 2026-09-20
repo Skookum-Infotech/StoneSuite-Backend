@@ -151,5 +151,8 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*VendorBill, error
 		return nil, err
 	}
 	b.Payments = payments
+	if err := fillNextStatusCodes(ctx, pool, b); err != nil {
+		return nil, err
+	}
 	return b, nil
 }

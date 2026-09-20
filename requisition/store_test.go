@@ -211,8 +211,55 @@ func TestTransition_RejectsIllegalMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := Transition(context.Background(), pool, created.ID, "APPV", 1); !errors.Is(err, ErrInvalidTransition) {
-		t.Fatalf("Transition DRFT->APPV = %v, want ErrInvalidTransition", err)
+	// DRFT->APPV is legal when nobody is configured to approve (Approved is
+	// a requisition's resting state, offered in one step past the
+	// unconfigured PAPV checkpoint), so use a move nothing can collapse into.
+	if _, err := Transition(context.Background(), pool, created.ID, "DRFT", 1); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Transition DRFT->DRFT = %v, want ErrInvalidTransition", err)
+	}
+}
+
+func TestTransition_DraftStraightToApproved_WhenNoApprovers(t *testing.T) {
+	pool := testPool(t)
+	_, itemUUID := seedVendorAndItem(t, pool)
+	ctx := context.Background()
+
+	// Config-level approver rows leak between tests -- clear PAPV's so
+	// "nobody configured to approve" holds regardless of what ran before.
+	var recordTypeID, papvStatusID int
+	if err := pool.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'REQN'`).Scan(&recordTypeID); err != nil {
+		t.Fatalf("resolve REQN record type: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'PAPV'`, recordTypeID).Scan(&papvStatusID); err != nil {
+		t.Fatalf("resolve PAPV status: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM requisition_approver WHERE record_type_id = $1 AND record_status_id = $2`, recordTypeID, papvStatusID); err != nil {
+		t.Fatalf("clear requisition_approver: %v", err)
+	}
+
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
+	}}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Approved is a requisition's resting state (it waits there to become a
+	// PO), so the unconfigured checkpoint collapses to Approved itself -- one
+	// click -- rather than past it (the gate's SkipTargetWhenUngated is off).
+	if got := fmt.Sprint(created.NextStatusCodes); got != "[APPV CANC]" {
+		t.Fatalf("NextStatusCodes at DRFT = %s, want [APPV CANC]", got)
+	}
+	approved, err := Transition(ctx, pool, created.ID, "APPV", 1)
+	if err != nil {
+		t.Fatalf("Transition DRFT->APPV: %v", err)
+	}
+	if approved.StatusCode != "APPV" {
+		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
+	}
+	// Same outcome as submitting into the auto-skipped checkpoint, so it
+	// reads as approved, not "none".
+	if approved.ApprovalStatus != "approved" {
+		t.Errorf("ApprovalStatus = %q, want approved", approved.ApprovalStatus)
 	}
 }
 

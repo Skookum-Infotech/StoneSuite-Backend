@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
@@ -53,20 +54,41 @@ func notifyCustomerApproved(ctx context.Context, cp *tenancy.ControlPlane, actor
 		slog.ErrorContext(ctx, "customer notify: resolve identity failed", "resource", resource, "recordId", recordUUID, "error", err)
 		return
 	}
-	err = services.SendNotification(ctx, services.NotificationRequest{
-		TenantID:    tenant.ID,
-		Recipients:  []services.RecipientTarget{{UserID: identity.ID, Email: identity.Email}},
+	err = services.SendNotification(ctx, buildCustomerApprovedNotification(tenant.ID, actorIdentityID,
+		services.RecipientTarget{UserID: identity.ID, Email: identity.Email}, resource, displayName, number, recordUUID))
+	if err != nil {
+		slog.ErrorContext(ctx, "customer notify: send notification failed", "resource", resource, "recordId", recordUUID, "error", err)
+	}
+}
+
+// buildCustomerApprovedNotification builds the Notify request telling a
+// customer their document was approved. The email body is built here, through
+// the shared StoneSuite shell, rather than left to stonesuite-notify's bare
+// generic template — which is unescaped and only knows the relative in-app route.
+func buildCustomerApprovedNotification(tenantID, actorIdentityID string, recipient services.RecipientTarget, resource, displayName, number, recordUUID string) services.NotificationRequest {
+	const verb = "has been approved"
+	link := fmt.Sprintf("/sales/%s/%s", resource, recordUUID)
+	subject := fmt.Sprintf("Your %s %s", displayName, number)
+	kind := strings.ToLower(displayName)
+	return services.NotificationRequest{
+		TenantID:    tenantID,
+		Recipients:  []services.RecipientTarget{recipient},
 		ActorUserID: actorIdentityID,
 		EventType:   resource + ".customer_approved",
 		Resource:    resource,
 		ResourceID:  recordUUID,
-		Title:       fmt.Sprintf("Your %s %s has been approved", displayName, number),
+		Title:       subject + " " + verb,
 		Body:        "Approved.",
-		Link:        fmt.Sprintf("/sales/%s/%s", resource, recordUUID),
+		Link:        link,
 		Channels:    []string{"email"},
-	})
-	if err != nil {
-		slog.ErrorContext(ctx, "customer notify: send notification failed", "resource", resource, "recordId", recordUUID, "error", err)
+		EmailBodyHTML: services.BuildRecordEmailHTML(services.RecordEmail{
+			Badge:   "Approved",
+			Subject: subject,
+			Verb:    verb,
+			Message: fmt.Sprintf("Your %s %s has been approved. You can view it any time in your customer portal.", kind, number),
+			Path:    link,
+			CTA:     "View " + kind,
+		}),
 	}
 }
 

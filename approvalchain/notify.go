@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,9 +78,8 @@ func NotifyApprovalRequested(ctx context.Context, pool *pgxpool.Pool, ec EventCo
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for approval-requested notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource, ec.Resource+".approval_requested",
-		fmt.Sprintf("%s %s needs your approval", ec.DisplayName, number), "Submitted for approval.",
-		ec.RecordUUID, resolveActorUserID(ctx, pool, ec.ActorEmployeeID), contacts)
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".approval_requested", number,
+		resolveActorUserID(ctx, pool, ec.ActorEmployeeID), ec, noteApprovalRequested, contacts)
 }
 
 // NotifyRemainingApprovers best-effort-notifies the approvers who have not
@@ -108,16 +108,15 @@ func NotifyRemainingApprovers(ctx context.Context, pool *pgxpool.Pool, ec EventC
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for approval reminder failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource, ec.Resource+".approval_requested",
-		fmt.Sprintf("%s %s still needs your approval", ec.DisplayName, number), "Still awaiting your sign-off.",
-		ec.RecordUUID, resolveActorUserID(ctx, pool, ec.ActorEmployeeID), contacts)
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".approval_requested", number,
+		resolveActorUserID(ctx, pool, ec.ActorEmployeeID), ec, noteApprovalReminder, contacts)
 }
 
 // NotifyApproved best-effort-notifies a record's owner that it has been
 // approved (quorum met or a super-admin override). Same no-op/failure
 // semantics as NotifyApprovalRequested.
 func NotifyApproved(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
-	notifyOwner(ctx, pool, ec, ec.Resource+".approved", "%s %s was approved", "Approved.")
+	notifyOwner(ctx, pool, ec, ec.Resource+".approved", noteApproved)
 }
 
 // NotifyApprovalRejected best-effort-notifies a record's owner that it left
@@ -125,7 +124,7 @@ func NotifyApproved(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 // instead of clearing approval. Same no-op/failure semantics as
 // NotifyApprovalRequested.
 func NotifyApprovalRejected(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
-	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", "%s %s was sent back", "Sent back for changes.")
+	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", noteSentBack)
 }
 
 // NotifyCreated best-effort-notifies the actor who created a new record
@@ -154,12 +153,11 @@ func NotifyCreated(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for created notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource, ec.Resource+".created",
-		fmt.Sprintf("%s %s was created", ec.DisplayName, number), "Created.",
-		ec.RecordUUID, actor.UserID, []contact{actor})
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".created", number,
+		actor.UserID, ec, noteCreated, []contact{actor})
 }
 
-func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, eventType, titleFormat, body string) {
+func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, eventType string, note approvalNote) {
 	if ec.DisplayName == "" {
 		return
 	}
@@ -181,26 +179,61 @@ func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, event
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for owner notification failed", "eventType", eventType, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource, eventType,
-		fmt.Sprintf(titleFormat, ec.DisplayName, number), body,
-		ec.RecordUUID, resolveActorUserID(ctx, pool, ec.ActorEmployeeID), []contact{owner})
+	sendApprovalNotification(ctx, tenant.ID, eventType, number,
+		resolveActorUserID(ctx, pool, ec.ActorEmployeeID), ec, note, []contact{owner})
 }
 
-func sendApprovalNotification(ctx context.Context, tenantID, resource, eventType, title, body, recordUUID, actorUserID string, contacts []contact) {
-	err := services.SendNotification(ctx, services.NotificationRequest{
+// approvalNote is the wording of one approval-chain notification, shared by
+// the in-app row (title, body) and its email (banner, message, button). The
+// notes below are read-only.
+type approvalNote struct {
+	Badge   string // banner pill, e.g. "Approval Needed"
+	Verb    string // what happened: title tail and banner heading line 2
+	Body    string // notification body, also the email's message
+	CTAVerb string // button verb, joined with the module name: "Review" -> "Review invoice"
+}
+
+var (
+	noteApprovalRequested = approvalNote{Badge: "Approval Needed", Verb: "needs your approval", Body: "Submitted for approval.", CTAVerb: "Review"}
+	noteApprovalReminder  = approvalNote{Badge: "Approval Reminder", Verb: "still needs your approval", Body: "Still awaiting your sign-off.", CTAVerb: "Review"}
+	noteApproved          = approvalNote{Badge: "Approved", Verb: "was approved", Body: "Approved.", CTAVerb: "View"}
+	noteSentBack          = approvalNote{Badge: "Sent Back", Verb: "was sent back", Body: "Sent back for changes.", CTAVerb: "View"}
+	noteCreated           = approvalNote{Badge: "Created", Verb: "was created", Body: "Created.", CTAVerb: "View"}
+)
+
+// buildApprovalNotification builds the Notify request for one approval-chain
+// event. The email body is built here, through the shared StoneSuite shell,
+// rather than left to stonesuite-notify's bare generic template — which is
+// unescaped and only knows the relative in-app route, useless as an email link.
+func buildApprovalNotification(tenantID, eventType, number, actorUserID string, ec EventContext, note approvalNote, contacts []contact) services.NotificationRequest {
+	subject := fmt.Sprintf("%s %s", ec.DisplayName, number)
+	link := resourceRoute(ec.Resource, ec.RecordUUID)
+	return services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  contactsToRecipients(contacts),
 		ActorUserID: actorUserID,
 		EventType:   eventType,
-		Resource:    resource,
-		ResourceID:  recordUUID,
-		Title:       title,
-		Body:        body,
-		Link:        resourceRoute(resource, recordUUID),
+		Resource:    ec.Resource,
+		ResourceID:  ec.RecordUUID,
+		Title:       subject + " " + note.Verb,
+		Body:        note.Body,
+		Link:        link,
 		Channels:    []string{"email"},
-	})
+		EmailBodyHTML: services.BuildRecordEmailHTML(services.RecordEmail{
+			Badge:   note.Badge,
+			Subject: subject,
+			Verb:    note.Verb,
+			Message: note.Body,
+			Path:    link,
+			CTA:     note.CTAVerb + " " + strings.ToLower(ec.DisplayName),
+		}),
+	}
+}
+
+func sendApprovalNotification(ctx context.Context, tenantID, eventType, number, actorUserID string, ec EventContext, note approvalNote, contacts []contact) {
+	err := services.SendNotification(ctx, buildApprovalNotification(tenantID, eventType, number, actorUserID, ec, note, contacts))
 	if err != nil {
-		slog.ErrorContext(ctx, "approvalchain: send approval notification failed", "eventType", eventType, "resourceId", recordUUID, "error", err)
+		slog.ErrorContext(ctx, "approvalchain: send approval notification failed", "eventType", eventType, "resourceId", ec.RecordUUID, "error", err)
 	}
 }
 

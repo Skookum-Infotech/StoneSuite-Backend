@@ -17,12 +17,11 @@ func greeting(name string) string {
 // onboarding invite email.
 func buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink string) NotificationRequest {
 	subject := "Your StoneSuite Onboarding Invitation"
-	inner := emailHeading("You're invited to join StoneSuite") +
-		greeting(recipientName) +
-		emailParagraph("You've been invited to complete an onboarding experience with StoneSuite. Use the button below to begin.") +
-		emailCTA(inviteLink, "Start onboarding") +
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("You've been invited to complete an onboarding experience with StoneSuite. Use the button below to begin.")) +
+		emailCTAAccent(inviteLink, "Start onboarding") +
 		emailFinePrint("This invitation link is time-limited for security.")
-	body := WrapEmailHTML("Complete your StoneSuite onboarding.", inner)
+	body := WrapEmailHTMLWithBanner("Complete your StoneSuite onboarding.", "Onboarding Invite", "You're invited to join", "StoneSuite", inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
@@ -45,12 +44,11 @@ func SendOnboardingInviteEmail(ctx context.Context, tenantID, inviteID, recipien
 // post-approval "set your password" email.
 func buildPasswordSetupNotification(tenantID, identityID, recipientEmail, recipientName, setupLink string) NotificationRequest {
 	subject := "Set up your StoneSuite account"
-	inner := emailHeading("Your StoneSuite workspace is ready") +
-		greeting(recipientName) +
-		emailParagraph("Your onboarding has been approved and your workspace is being set up. Set your password to finish activating your account.") +
-		emailCTA(setupLink, "Set your password") +
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("Your onboarding has been approved and your workspace is being set up. Set your password to finish activating your account.")) +
+		emailCTAAccent(setupLink, "Set your password") +
 		emailFinePrint("This link is time-limited for security.")
-	body := WrapEmailHTML("Set your password to activate your StoneSuite account.", inner)
+	body := WrapEmailHTMLWithBanner("Set your password to activate your StoneSuite account.", "Account Setup", "Your workspace", "is ready to go.", inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
@@ -75,12 +73,11 @@ func SendPasswordSetupEmail(ctx context.Context, tenantID, identityID, recipient
 func buildUserInviteNotification(tenantID, inviteID, actorUserID, recipientEmail, recipientName, workspaceName, inviteLink string) NotificationRequest {
 	subject := "You've been invited to " + workspaceName
 	ws := html.EscapeString(workspaceName)
-	inner := emailHeading("You're invited to join "+ws) +
-		greeting(recipientName) +
-		emailParagraph("A colleague has invited you to join the <strong>"+ws+"</strong> workspace on StoneSuite. Use the button below to accept and set your password.") +
-		emailCTA(inviteLink, "Accept invitation") +
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("A colleague has invited you to join the <strong>"+ws+"</strong> workspace on StoneSuite. Use the button below to accept and set your password.")) +
+		emailCTAAccent(inviteLink, "Accept invitation") +
 		emailFinePrint("This invitation expires in 48 hours. If you weren't expecting it, you can ignore this email.")
-	body := WrapEmailHTML("You've been invited to join "+workspaceName+" on StoneSuite.", inner)
+	body := WrapEmailHTMLWithBanner("You've been invited to join "+workspaceName+" on StoneSuite.", "Workspace Invite", "You're invited to join", workspaceName, inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
@@ -116,12 +113,11 @@ func SendUserInviteEmail(ctx context.Context, tenantID, inviteID, actorUserID, r
 // forgot-password reset-link email.
 func buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipientName, resetLink string) NotificationRequest {
 	subject := "Reset your StoneSuite password"
-	inner := emailHeading("Reset your password") +
-		greeting(recipientName) +
-		emailParagraph("We received a request to reset the password for your StoneSuite account. Use the button below to choose a new one — the link expires in 1 hour.") +
-		emailCTA(resetLink, "Reset password") +
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("We received a request to reset the password for your StoneSuite account. Use the button below to choose a new one — the link expires in 1 hour.")) +
+		emailCTAAccent(resetLink, "Reset password") +
 		emailFinePrint("If you didn't request a password reset, ignore this email — your password won't change.")
-	body := WrapEmailHTML("Reset your StoneSuite password.", inner)
+	body := WrapEmailHTMLWithBanner("Reset your StoneSuite password.", "Password Reset", "Reset your", "password.", inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
@@ -145,12 +141,11 @@ func SendPasswordResetEmail(ctx context.Context, tenantID, identityID, recipient
 func buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) NotificationRequest {
 	subject := workspaceName + " — set up your customer portal access"
 	ws := html.EscapeString(workspaceName)
-	inner := emailHeading("Your "+ws+" customer portal") +
-		greeting(recipientName) +
-		emailParagraph("<strong>"+ws+"</strong> has given you access to their customer portal, where you can view your sales orders, invoices, payments and refunds at any time.") +
-		emailCTA(setupLink, "Set up access") +
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("<strong>"+ws+"</strong> has given you access to their customer portal, where you can view your sales orders, invoices, payments and refunds at any time.")) +
+		emailCTAAccent(setupLink, "Set up access") +
 		emailFinePrint(fmt.Sprintf("This link expires in %d hours. If you weren't expecting this email, you can ignore it.", expiryHours))
-	body := WrapEmailHTML(workspaceName+" gave you customer portal access.", inner)
+	body := WrapEmailHTMLWithBanner(workspaceName+" gave you customer portal access.", "Portal Access", "Your customer", "portal is ready.", inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
@@ -176,12 +171,11 @@ func SendPortalInviteEmail(ctx context.Context, tenantID, inviteID, recipientEma
 func buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) NotificationRequest {
 	subject := "You've been invited to the " + tenantDisplayName + " customer portal"
 	td := html.EscapeString(tenantDisplayName)
-	inner := emailHeading("You're invited to the "+td+" customer portal") +
-		greeting(recipientName) +
-		emailParagraph("<strong>"+td+"</strong> has invited you to their customer portal, where you can submit notes and questions directly to their team.") +
-		emailCTA(setupLink, "Set your password") +
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("<strong>"+td+"</strong> has invited you to their customer portal, where you can submit notes and questions directly to their team.")) +
+		emailCTAAccent(setupLink, "Set your password") +
 		emailFinePrint("This invitation link is time-limited for security.")
-	body := WrapEmailHTML(tenantDisplayName+" invited you to their customer portal.", inner)
+	body := WrapEmailHTMLWithBanner(tenantDisplayName+" invited you to their customer portal.", "Portal Invite", "You're invited to the", "customer portal.", inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},
@@ -206,10 +200,9 @@ func SendCustomerPortalInviteEmail(ctx context.Context, tenantID, resourceID, re
 func buildCustomerNoteConfirmationNotification(tenantID, noteID, recipientEmail, recipientName, tenantDisplayName string) NotificationRequest {
 	subject := "Your note to " + tenantDisplayName + " was sent"
 	td := html.EscapeString(tenantDisplayName)
-	inner := emailHeading("Your note was sent") +
-		greeting(recipientName) +
-		emailParagraph("Your note has been delivered to <strong>"+td+"</strong>. Their team will follow up with you as needed.")
-	body := WrapEmailHTML("Your note to "+tenantDisplayName+" was delivered.", inner)
+	inner := greeting(recipientName) +
+		EmailMessageBox(emailParagraph("Your note has been delivered to <strong>"+td+"</strong>. Their team will follow up with you as needed."))
+	body := WrapEmailHTMLWithBanner("Your note to "+tenantDisplayName+" was delivered.", "Receipt Confirmed", "Your note was", "delivered.", inner)
 	return NotificationRequest{
 		TenantID:      tenantID,
 		Recipients:    []RecipientTarget{{Email: recipientEmail}},

@@ -403,6 +403,7 @@ func notifyOwnerOfSend(
 	if ownerIdentityID == "" {
 		return
 	}
+	link := recordLink(workflowKey, recordID)
 	err := notify(ctx, services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  []services.RecipientTarget{{UserID: ownerIdentityID, Email: ownerUserEmail}},
@@ -412,8 +413,17 @@ func notifyOwnerOfSend(
 		ResourceID:  recordID,
 		Title:       doc.Kind + " " + number + " sent",
 		Body:        "Sent to " + strings.Join(sentTo, ", "),
-		Link:        recordLink(workflowKey, recordID),
+		Link:        link,
 		Channels:    []string{"email"},
+		EmailBodyHTML: services.BuildRecordEmailHTML(services.RecordEmail{
+			Badge:      "Document Sent",
+			Subject:    doc.Kind + " " + number,
+			Verb:       "was sent",
+			Message:    "Sent to " + strings.Join(sentTo, ", ") + ".",
+			Path:       link,
+			CTA:        "View " + strings.ToLower(doc.Kind),
+			Attachment: fileName,
+		}),
 		Attachments: []services.NotifyAttachment{
 			{FileName: fileName, ContentType: "application/pdf", Content: pdf},
 		},

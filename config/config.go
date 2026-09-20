@@ -151,6 +151,11 @@ type Config struct {
 	EmailPreferencesURL     string
 	EmailSocialXURL         string
 	EmailSocialInstagramURL string
+	// EmailViewInBrowserURL is the destination of the "View in browser" link in
+	// every email header. There is no hosted copy of a sent email yet, so it
+	// defaults to the frontend origin; point it at a real web-view route once
+	// one exists (never at a page that would expose a tokenized email).
+	EmailViewInBrowserURL string
 }
 
 var AppConfig Config
@@ -231,11 +236,12 @@ func Load() {
 		AIRerankBaseURL:    getEnv("AI_RERANK_BASE_URL", ""),
 		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),
 		// Email branding/contact placeholders (see Config field doc comment)
-		EmailBrandName:         getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
-		SupportEmail:           getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
-		EmailPreferencesURL:    getEnv("EMAIL_PREFERENCES_URL", "https://app.stonesuite.io/settings/notifications"),
-		EmailSocialXURL:        getEnv("EMAIL_SOCIAL_X_URL", "https://x.com/stonesuite"),
+		EmailBrandName:          getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
+		SupportEmail:            getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
+		EmailPreferencesURL:     getEnv("EMAIL_PREFERENCES_URL", "https://app.stonesuite.io/settings/notifications"),
+		EmailSocialXURL:         getEnv("EMAIL_SOCIAL_X_URL", "https://x.com/stonesuite"),
 		EmailSocialInstagramURL: getEnv("EMAIL_SOCIAL_INSTAGRAM_URL", "https://instagram.com/stonesuite"),
+		EmailViewInBrowserURL:   getEnv("EMAIL_VIEW_IN_BROWSER_URL", getEnv("FRONTEND_URL", "http://localhost:5173")),
 	}
 }
 

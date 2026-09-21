@@ -306,7 +306,7 @@ func customerSendRequest(
 		ResourceID:    recordID,
 		Title:         subject,
 		Body:          "Document sent.",
-		EmailBodyHTML: documentEmailHTML(doc, message),
+		EmailBodyHTML: documentEmailHTML(doc, message, fileName),
 		Channels:      []string{"email"},
 		Attachments:   []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
 	}
@@ -366,21 +366,30 @@ func hasHeaderInjection(s string) bool {
 }
 
 // documentEmailHTML is the transactional email body wrapping an optional
-// sender message. It goes through services.WrapEmailHTML for a well-formed
-// document (DOCTYPE/head/charset) — a bare fragment plus the old remote logo
-// <img> (broken for most recipients, and a tracking signal) both hurt inbox
-// placement. The sender message and seller name are HTML-escaped: they are
-// free text, not markup.
-func documentEmailHTML(d docpdf.PrintableDoc, message string) string {
+// sender message. It goes through services.WrapEmailHTMLWithBanner — the one
+// shared shell every StoneSuite email uses, including this tenant-context
+// one (StoneSuite is the platform sending it; the seller/tenant's identity
+// appears in the message and signature text below, not as a swapped header
+// logo — there is no tenant-logo asset store today, see
+// docpdf.Seller.LogoPNG's doc comment). A bare fragment plus the old remote
+// logo <img> (broken for most recipients, and a tracking signal) both hurt
+// inbox placement. The sender message and seller name are HTML-escaped: they
+// are free text, not markup.
+func documentEmailHTML(d docpdf.PrintableDoc, message, fileName string) string {
 	msg := "Please find your " + strings.ToLower(d.Kind) + " " + d.Number + " attached."
 	if message != "" {
 		msg = message
 	}
 	seller := html.EscapeString(d.Seller.Name)
-	return services.WrapEmailHTML(
+	inner := services.EmailMessageBox(`<p style="margin:0 0 14px;">`+html.EscapeString(msg)+`</p>`+
+		services.EmailAttachmentChip(fileName)) +
+		`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>` + seller + `</p>`
+	return services.WrapEmailHTMLWithBanner(
 		d.Kind+" "+d.Number+" from "+d.Seller.Name,
-		`<p style="margin:0 0 14px;">`+html.EscapeString(msg)+`</p>`+
-			`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>`+seller+`</p>`,
+		"Document Sent",
+		d.Kind+" "+d.Number,
+		"is on its way.",
+		inner,
 	)
 }
 
@@ -422,6 +431,7 @@ func notifyOwnerOfSend(
 	if ownerIdentityID == "" {
 		return
 	}
+	link := recordLink(workflowKey, recordID)
 	err := notify(ctx, services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  []services.RecipientTarget{{UserID: ownerIdentityID, Email: ownerUserEmail}},
@@ -431,8 +441,17 @@ func notifyOwnerOfSend(
 		ResourceID:  recordID,
 		Title:       doc.Kind + " " + number + " sent",
 		Body:        "Sent to " + strings.Join(sentTo, ", "),
-		Link:        recordLink(workflowKey, recordID),
+		Link:        link,
 		Channels:    []string{"email"},
+		EmailBodyHTML: services.BuildRecordEmailHTML(services.RecordEmail{
+			Badge:      "Document Sent",
+			Subject:    doc.Kind + " " + number,
+			Verb:       "was sent",
+			Message:    "Sent to " + strings.Join(sentTo, ", ") + ".",
+			Path:       link,
+			CTA:        "View " + strings.ToLower(doc.Kind),
+			Attachment: fileName,
+		}),
 		Attachments: []services.NotifyAttachment{
 			{FileName: fileName, ContentType: "application/pdf", Content: pdf},
 		},

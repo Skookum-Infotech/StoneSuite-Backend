@@ -4,11 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"stonesuite-backend/config"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/services"
 )
@@ -26,6 +28,26 @@ func TestDocumentOps_RequiresAuth(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, rr.Code)
 		})
 	}
+}
+
+func TestDocumentEmailHTML_UsesSharedShellWithAttachmentChip(t *testing.T) {
+	doc := docpdf.PrintableDoc{Kind: "Invoice", Number: "INV-000123", Seller: docpdf.Seller{Name: "Elevation Stone"}}
+	out := documentEmailHTML(doc, "", "INV-000123.pdf")
+
+	assert.True(t, strings.HasPrefix(out, "<!DOCTYPE html>"))
+	assert.Contains(t, out, "linear-gradient(135deg,#001219 0%,#005f73 15%,#0a2943 52%,#050d1a 100%)", "uses the one shared banner shell, not a separate co-branded one")
+	assert.Contains(t, out, "DOCUMENT SENT", "pill badge")
+	assert.Contains(t, out, "INV-000123.pdf", "attachment chip shows the file name")
+	assert.Contains(t, out, "Please find your invoice INV-000123 attached.")
+	assert.Contains(t, out, "Regards,<br>Elevation Stone", "tenant identity appears in the signature, not a swapped header logo")
+}
+
+func TestDocumentEmailHTML_CustomMessageOverridesDefault(t *testing.T) {
+	doc := docpdf.PrintableDoc{Kind: "Estimate", Number: "EST-1", Seller: docpdf.Seller{Name: "Acme"}}
+	out := documentEmailHTML(doc, "Here's your custom note.", "EST-1.pdf")
+
+	assert.Contains(t, out, "Here&#39;s your custom note.")
+	assert.NotContains(t, out, "Please find your estimate")
 }
 
 func TestSellerFromTenant_UsesDisplayName(t *testing.T) {
@@ -196,4 +218,28 @@ func TestNotifyOwnerOfSend_NotifyErrors_DoesNotPanicOrReturnError(t *testing.T) 
 	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1", "actor-1",
 		docpdf.PrintableDoc{Kind: "INVOICE"}, "INV-1", "invoice", "rec-1",
 		[]string{"bob@buyer.example"}, []byte("%PDF-1.4"), "INV-1.pdf")
+}
+
+func TestNotifyOwnerOfSend_EmailUsesSharedShellWithAttachmentChip(t *testing.T) {
+	prev := config.AppConfig
+	config.AppConfig.FrontendURL = "https://app.example.com"
+	t.Cleanup(func() { config.AppConfig = prev })
+	var gotReq services.NotificationRequest
+	notify := func(_ context.Context, req services.NotificationRequest) error {
+		gotReq = req
+		return nil
+	}
+
+	notifyOwnerOfSend(context.Background(), notify, "owner@example.com", "tenant-1", "owner-1", "actor-1",
+		docpdf.PrintableDoc{Kind: "Invoice", Seller: docpdf.Seller{Name: "Acme"}},
+		"INV-1", "invoice", "rec-1", []string{"bob@buyer.example", "amy@buyer.example"},
+		[]byte("%PDF-1.4"), "INV-1.pdf")
+
+	assert.Contains(t, gotReq.EmailBodyHTML, "<!DOCTYPE html>")
+	assert.Contains(t, gotReq.EmailBodyHTML, ">DOCUMENT SENT<", "banner pill")
+	assert.Contains(t, gotReq.EmailBodyHTML, "Invoice INV-1<br>", "banner heading line 1")
+	assert.Contains(t, gotReq.EmailBodyHTML, "was sent.", "banner heading line 2")
+	assert.Contains(t, gotReq.EmailBodyHTML, "Sent to bob@buyer.example, amy@buyer.example.", "message box")
+	assert.Contains(t, gotReq.EmailBodyHTML, "INV-1.pdf", "attachment chip")
+	assert.Contains(t, gotReq.EmailBodyHTML, `href="https://app.example.com/sales/invoice/rec-1"`)
 }

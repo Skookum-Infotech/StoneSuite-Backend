@@ -27,6 +27,8 @@ type EventContext struct {
 	RecordTypeID, StatusID, InternalID         int
 	ActorEmployeeID                            int
 	Resource, DisplayName, RecordUUID          string
+	// Detail is the approver's reason, read only by NotifyApprovalRejected.
+	Detail string
 }
 
 // contact is one resolved notification recipient: a StoneSuite user reached
@@ -124,7 +126,19 @@ func NotifyApproved(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 // instead of clearing approval. Same no-op/failure semantics as
 // NotifyApprovalRequested.
 func NotifyApprovalRejected(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
-	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", noteSentBack)
+	note := noteSentBack
+	note.Body = rejectedNotificationBody(ec.Detail)
+	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", note)
+}
+
+// rejectedNotificationBody words the "sent back" notification: it says why
+// when an approver gave a reason (Reject), and stays generic for the escapes
+// that carry none (a plain void/cancel out of a gate).
+func rejectedNotificationBody(detail string) string {
+	if detail == "" {
+		return noteSentBack.Body
+	}
+	return "Sent back for changes: " + detail
 }
 
 // NotifyCreated best-effort-notifies the actor who created a new record

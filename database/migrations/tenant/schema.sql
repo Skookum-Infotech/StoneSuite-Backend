@@ -8331,3 +8331,71 @@ CREATE TABLE IF NOT EXISTS company_location (
 -- At most one live default location at a time.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_location_default
     ON company_location (is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
+
+
+-- =====================================================================
+-- APPROVAL REJECTION (Sales / Purchases)
+--
+-- A configured approver can reject a record that is awaiting approval
+-- (approvalchain.Reject). A gate with an earlier status to return to sends the
+-- record back to Draft; a gate on a record's very first status (Credit Memo,
+-- Vendor Credit, Payment, Refund) keeps the status and flags the approval
+-- rejected in place until the record is edited. Either way WHO rejected it,
+-- WHEN and WHY lives in this one shared table rather than three columns on
+-- every module's header -- the engine reads it generically off
+-- approvalchain's ModuleConfig, and a record has at most one current
+-- rejection.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS approval_rejection (
+    approval_rejection_id   SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),
+    record_id                INTEGER     NOT NULL,  -- the row's internal id in the module's own table; polymorphic on record_type_id, so no FK
+    record_status_id         INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- the status the record was left in
+    rejected_by              INTEGER         NULL REFERENCES employee(employee_id),
+    rejected_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reason                   TEXT        NOT NULL,
+    CONSTRAINT uq_approval_rejection UNIQUE (record_type_id, record_id)
+);
+
+-- Widen the history action CHECKs so a rejected record's history row can say
+-- 'reject' (widening-only; existing rows stay valid). purchase_order,
+-- vendor_bill, vendor_payment and vendor_credit history have no action CHECK,
+-- and expense_history already allows 'reject'.
+--
+-- estimate_history, quote_history and sales_order_history are also widened to
+-- allow 'approve_override': those three keep their own approval.go, whose
+-- super-admin override has always written that action, but their CHECK never
+-- listed it -- the swallowed INSERT error aborted the transaction, so an
+-- override approval on any of them failed at commit.
+ALTER TABLE estimate_history DROP CONSTRAINT IF EXISTS chk_estimate_history_action;
+ALTER TABLE estimate_history ADD CONSTRAINT chk_estimate_history_action
+    CHECK (action IN ('create','transition','convert','update','approve','approve_override','reject'));
+
+ALTER TABLE quote_history DROP CONSTRAINT IF EXISTS chk_quote_history_action;
+ALTER TABLE quote_history ADD CONSTRAINT chk_quote_history_action
+    CHECK (action IN ('create','transition','convert','update','approve','approve_override','reject'));
+
+ALTER TABLE sales_order_history DROP CONSTRAINT IF EXISTS chk_sales_order_history_action;
+ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
+    CHECK (action IN ('create','transition','cancel','update','approve','approve_override','convert','reject'));
+
+ALTER TABLE invoice_history DROP CONSTRAINT IF EXISTS chk_invoice_history_action;
+ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
+    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert','approve','approve_override','reject'));
+
+ALTER TABLE payment_history DROP CONSTRAINT IF EXISTS chk_payment_history_action;
+ALTER TABLE payment_history ADD CONSTRAINT chk_payment_history_action
+    CHECK (action IN ('create','apply','unapply','transition','approve','approve_override','reject'));
+
+ALTER TABLE credit_memo_history DROP CONSTRAINT IF EXISTS chk_credit_memo_history_action;
+ALTER TABLE credit_memo_history ADD CONSTRAINT chk_credit_memo_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override','reject'));
+
+ALTER TABLE refund_history DROP CONSTRAINT IF EXISTS chk_refund_history_action;
+ALTER TABLE refund_history ADD CONSTRAINT chk_refund_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override','reject'));
+
+ALTER TABLE requisition_history DROP CONSTRAINT IF EXISTS chk_reqn_history_action;
+ALTER TABLE requisition_history ADD CONSTRAINT chk_reqn_history_action
+    CHECK (action IN ('create','transition','update','approve','convert','reject'));

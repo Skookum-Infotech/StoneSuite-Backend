@@ -126,3 +126,37 @@ func TestBuildApprovalNotification_UnmappedResourceHasNoLinkOrButton(t *testing.
 	assert.NotContains(t, req.EmailBodyHTML, "View widget", "no route means no button")
 	assert.Contains(t, req.EmailBodyHTML, "<!DOCTYPE html>", "still a branded email")
 }
+
+// TestRejectedNotificationBody: the "sent back" notification says why when an
+// approver gave a reason (Reject), and keeps its generic wording for the
+// escapes that don't carry one (a plain void/cancel out of a gate).
+func TestRejectedNotificationBody(t *testing.T) {
+	tests := []struct{ name, detail, want string }{
+		{"no reason", "", "Sent back for changes."},
+		{"with reason", "Wrong amount", "Sent back for changes: Wrong amount"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, rejectedNotificationBody(tt.detail))
+		})
+	}
+}
+
+// TestBuildApprovalNotification_RejectionReasonIsEscaped guards the seam between
+// the reason-aware "sent back" wording and the branded email shell: the reason
+// is approver-typed free text, so it must reach the in-app body verbatim and
+// the email HTML-escaped.
+func TestBuildApprovalNotification_RejectionReasonIsEscaped(t *testing.T) {
+	withFrontendURL(t, "https://app.example.com")
+	ec := EventContext{Resource: "invoice", DisplayName: "Invoice", RecordUUID: "rec-1", Detail: "<b>Wrong</b> amount"}
+	note := noteSentBack
+	note.Body = rejectedNotificationBody(ec.Detail)
+
+	req := buildApprovalNotification("tenant-1", "invoice.approval_rejected", "INV-000123", "actor-1", ec, note, []contact{{UserID: "u1", Email: "a@example.com"}})
+
+	assert.Equal(t, "Sent back for changes: <b>Wrong</b> amount", req.Body)
+	assert.Contains(t, req.EmailBodyHTML, "Sent back for changes: &lt;b&gt;Wrong&lt;/b&gt; amount")
+	assert.NotContains(t, req.EmailBodyHTML, "<b>Wrong</b>")
+	// The shared sent-back note must stay untouched by the per-call override.
+	assert.Equal(t, "Sent back for changes.", noteSentBack.Body)
+}

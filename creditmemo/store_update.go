@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // editableMoneyStatuses are the statuses in which lines and money may still be
@@ -190,10 +192,16 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 		internalID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert credit memo update history: %w", err)
 	}
+	// Saving an edit is how a rejected credit memo goes back to its approvers.
+	resubmitted, err := approvalchain.ResubmitAfterEdit(ctx, tx, moduleConfig(), internalID)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update credit memo: %w", err)
 	}
+	resubmitted.Notify(ctx, pool, id, actorEmployeeID)
 	return Get(ctx, pool, id)
 }
 

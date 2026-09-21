@@ -4213,6 +4213,47 @@
         ]
       }
     },
+    "/api/tenant/credit-memos/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_credit_memos_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cmOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/credit-memos/{uuid}/transition": {
       "post": {
         "operationId": "post_tenant_credit_memos_uuid_transition",
@@ -6388,6 +6429,47 @@
           }
         ],
         "summary": "est.Convert",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/estimates/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_estimates_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "est.Reject",
         "tags": [
           "tenant"
         ]
@@ -13213,6 +13295,47 @@
         ]
       }
     },
+    "/api/tenant/invoices/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_invoices_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/invoices/{uuid}/transition": {
       "post": {
         "operationId": "post_tenant_invoices_uuid_transition",
@@ -14142,6 +14265,47 @@
         ]
       }
     },
+    "/api/tenant/payments/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_payments_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "payOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/payments/{uuid}/transition": {
       "post": {
         "operationId": "post_tenant_payments_uuid_transition",
@@ -14689,6 +14853,47 @@
         ]
       }
     },
+    "/api/tenant/purchase-orders/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_purchase_orders_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "poOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/purchase-orders/{uuid}/transition": {
       "post": {
         "operationId": "post_tenant_purchase_orders_uuid_transition",
@@ -15058,6 +15263,47 @@
           }
         ],
         "summary": "quo.Convert",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/quotes/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_quotes_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "quo.Reject",
         "tags": [
           "tenant"
         ]
@@ -16052,6 +16298,47 @@
         ]
       }
     },
+    "/api/tenant/refunds/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_refunds_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "rfndOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/refunds/{uuid}/transition": {
       "post": {
         "operationId": "post_tenant_refunds_uuid_transition",
@@ -16462,6 +16749,47 @@
           }
         ],
         "summary": "reqnOps.Convert",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/requisitions/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_requisitions_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reqnOps.Reject",
         "tags": [
           "tenant"
         ]
@@ -17118,6 +17446,47 @@
           }
         ],
         "summary": "portalMessageOps.MessagesFor",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_sales_orders_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "so.Reject",
         "tags": [
           "tenant"
         ]
@@ -18270,6 +18639,47 @@
         ]
       }
     },
+    "/api/tenant/vendor-bills/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_vendor_bills_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vbOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/vendor-bills/{uuid}/transition": {
       "post": {
         "operationId": "post_tenant_vendor_bills_uuid_transition",
@@ -18639,6 +19049,47 @@
           }
         ],
         "summary": "vcOps.Audit",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/vendor-credits/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_vendor_credits_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vcOps.Reject",
         "tags": [
           "tenant"
         ]
@@ -19054,6 +19505,47 @@
           }
         ],
         "summary": "vpOps.Audit",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/vendor-payments/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_vendor_payments_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vpOps.Reject",
         "tags": [
           "tenant"
         ]

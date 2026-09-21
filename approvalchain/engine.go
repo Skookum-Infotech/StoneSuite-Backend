@@ -35,6 +35,10 @@ const (
 	StatusNone     = "none"
 	StatusPending  = "pending"
 	StatusApproved = "approved"
+	// StatusRejected marks a record an approver rejected in place (see
+	// RejectInPlace): it keeps its status but is neither pending nor approved
+	// until it is edited and resubmitted.
+	StatusRejected = "rejected"
 )
 
 // AlwaysAllowedExitCodes are target status codes a manual transition may
@@ -113,10 +117,11 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID, curStatusID int
+	var approvalStatus string
 	err = tx.QueryRow(ctx, fmt.Sprintf(
-		`SELECT %s, %s FROM %s WHERE %s = $1 AND %s IS NULL FOR UPDATE`,
-		rec.IDColumn, rec.StatusColumn, rec.Table, rec.UUIDColumn, rec.DeletedAtColumn,
-	), uuid).Scan(&internalID, &curStatusID)
+		`SELECT %s, %s, %s FROM %s WHERE %s = $1 AND %s IS NULL FOR UPDATE`,
+		rec.IDColumn, rec.StatusColumn, rec.ApprovalStatusColumn, rec.Table, rec.UUIDColumn, rec.DeletedAtColumn,
+	), uuid).Scan(&internalID, &curStatusID, &approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ApproveOutcome{}, ErrNotFound
 	}
@@ -143,6 +148,11 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	}
 	if required == 0 {
 		return ApproveOutcome{}, ErrApprovalNotRequired
+	}
+	// A rejected record has to be edited and resubmitted before anyone can
+	// approve it -- a super admin's override included.
+	if approvalStatus == StatusRejected {
+		return ApproveOutcome{}, ErrAlreadyRejected
 	}
 
 	isApprover, err := isConfiguredApprover(ctx, tx, cfg.ApproverTable, recordTypeID, curStatusID, approverEmployeeID)
@@ -255,7 +265,11 @@ func finalize(ctx context.Context, tx pgx.Tx, cfg ModuleConfig, recordTypeID, in
 	), internalID, toStatusID, newApprovalStatus, nullIntOrNil(approverEmployeeID)); err != nil {
 		return fmt.Errorf("finalize approve %s: %w", rec.Table, err)
 	}
-	return writeGenericHistory(ctx, tx, rec, internalID, historyAction, &curStatusID, &toStatusID, approverEmployeeID)
+	if err := writeGenericHistory(ctx, tx, rec, internalID, historyAction, &curStatusID, &toStatusID, approverEmployeeID); err != nil {
+		return err
+	}
+	// The round is over; a rejection from an earlier one must not linger.
+	return ClearRejection(ctx, tx, recordTypeID, internalID)
 }
 
 // ApproverInfo names one configured approver for display and whether
@@ -289,6 +303,15 @@ type ApprovalInfo struct {
 	// who has already signed off this round -- quorum may still need others,
 	// but the caller's own part is done.
 	CallerAlreadyApproved bool `json:"callerAlreadyApproved"`
+	// CanReject is true while the record awaits approval and the caller is a
+	// configured approver or a super admin -- one rejection is enough, no
+	// quorum (see Reject).
+	CanReject bool `json:"canReject"`
+	// Rejection is the latest rejection, present only while the record still
+	// sits in the status the rejection left it in -- whether or not it is
+	// Gated (a record sent back to Draft is no longer gated, yet the page still
+	// shows why).
+	Rejection *RejectionInfo `json:"rejection,omitempty"`
 }
 
 // GetInfo resolves ApprovalInfo for a record. Returns Gated: false without
@@ -317,8 +340,15 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
-	if _, gated := cfg.GateFor(curStatusCode); !gated {
-		return ApprovalInfo{Gated: false}, nil
+	// Loaded before the gated checks: a record sent back to Draft is no longer
+	// gated, yet its page still has to say why.
+	rejection, err := CurrentRejection(ctx, pool, recordTypeID, internalID, curStatusID)
+	if err != nil {
+		return ApprovalInfo{}, err
+	}
+	gate, gated := cfg.GateFor(curStatusCode)
+	if !gated {
+		return ApprovalInfo{Gated: false, Rejection: rejection}, nil
 	}
 
 	required, err := activeApproverCount(ctx, pool, cfg.ApproverTable, recordTypeID, curStatusID)
@@ -326,7 +356,7 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		return ApprovalInfo{}, err
 	}
 	if required == 0 || approvalStatus == StatusApproved {
-		return ApprovalInfo{Gated: false}, nil
+		return ApprovalInfo{Gated: false, Rejection: rejection}, nil
 	}
 
 	rows, err := pool.Query(ctx, fmt.Sprintf(`
@@ -369,14 +399,19 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
+	// A rejected record stays gated (its transitions stay blocked) but takes no
+	// further Approve or Reject until it is edited and resubmitted.
+	open := approvalStatus != StatusRejected
 	return ApprovalInfo{
 		Gated:                 true,
 		Approvers:             approvers,
 		RequiredApprovals:     required,
 		ApprovedCount:         approvedCount,
-		CanApprove:            isApprover || callerIsSuperAdmin,
-		IsOverride:            !isApprover && callerIsSuperAdmin,
+		CanApprove:            open && (isApprover || callerIsSuperAdmin),
+		IsOverride:            open && !isApprover && callerIsSuperAdmin,
 		CallerAlreadyApproved: callerAlreadyApproved,
+		CanReject:             open && gate.Reject != RejectUnsupported && (isApprover || callerIsSuperAdmin),
+		Rejection:             rejection,
 	}, nil
 }
 

@@ -75,3 +75,13 @@ func notifyRemainingApprovers(ctx context.Context, pool *pgxpool.Pool, uuid stri
 		ActorEmployeeID: actorEmployeeID, Resource: salesOrderResource, DisplayName: salesOrderDisplayName, RecordUUID: uuid,
 	})
 }
+
+// notifyRejected best-effort-notifies a sales order's owner that an approver rejected it and
+// sent it back to Draft, with the approver's reason.
+func notifyRejected(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int, reason string) {
+	approvalchain.NotifyApprovalRejected(ctx, pool, approvalchain.EventContext{
+		Table: salesOrderTable, IDColumn: salesOrderIDColumn, NumberColumn: salesOrderNumberColumn, OwnerColumn: salesOrderOwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: salesOrderResource, DisplayName: salesOrderDisplayName, RecordUUID: uuid, Detail: reason,
+	})
+}

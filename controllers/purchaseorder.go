@@ -101,6 +101,10 @@ func (h *PurchaseOrderOps) authPOByUUID(w http.ResponseWriter, r *http.Request, 
 
 // poFail maps a store error to an HTTP response.
 func poFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, purchaseorder.ErrNotFound):
 		fail(w, http.StatusNotFound, "Purchase order not found.")
@@ -291,4 +295,39 @@ func (h *PurchaseOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	auditPO(r, pool, identityID, "approve", uuid, nil, po)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": po})
+}
+
+// Reject POST /api/tenant/purchase-orders/{uuid}/reject  body {"reason":"..."}
+// Rejects the purchase order named by {uuid}, which must be awaiting approval: it is sent back to Draft, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *PurchaseOrderOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authPOByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		poFail(w, err, "Failed to reject purchase order.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := purchaseorder.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, purchaseorder.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		poFail(w, err, "Failed to reject purchase order.")
+		return
+	}
+	auditPO(r, pool, identityID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": rec})
 }

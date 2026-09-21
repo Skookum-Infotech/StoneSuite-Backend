@@ -124,6 +124,10 @@ func (h *CreditMemoOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.R
 }
 
 func creditMemoFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, creditmemo.ErrNotFound):
 		fail(w, http.StatusNotFound, "Credit memo not found.")
@@ -314,4 +318,39 @@ func (h *CreditMemoOps) Search(w http.ResponseWriter, r *http.Request) {
 		"success": true, "scope": scope, "records": page.Records,
 		"nextCursor": page.NextCursor, "hasMore": page.HasMore,
 	})
+}
+
+// Reject POST /api/tenant/credit-memos/{uuid}/reject  body {"reason":"..."}
+// Rejects the credit memo named by {uuid}, which must be awaiting approval: it is flagged rejected in place until it is edited, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *CreditMemoOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authCreditMemoByUUID(w, r, uuid, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		creditMemoFail(w, err, "Failed to reject credit memo.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := creditmemo.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, creditmemo.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		creditMemoFail(w, err, "Failed to reject credit memo.")
+		return
+	}
+	auditCreditMemo(r, pool, empID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": rec})
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // Update edits a vendor credit header. There is no non-monetary/monetary
@@ -86,10 +88,16 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorC
 		internalID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert vendor credit update history: %w", err)
 	}
+	// Saving an edit is how a rejected vendor credit goes back to its approvers.
+	resubmitted, err := approvalchain.ResubmitAfterEdit(ctx, tx, moduleConfig(), internalID)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update vendor credit: %w", err)
 	}
+	resubmitted.Notify(ctx, pool, id, actorEmployeeID)
 	return Get(ctx, pool, id)
 }
 

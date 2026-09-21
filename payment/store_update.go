@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 func internalIDByUUID(ctx context.Context, pool *pgxpool.Pool, id string) (int, error) {
@@ -39,7 +41,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePayment
 	if err := validateCustom(ctx, pool, custom); err != nil {
 		return nil, err
 	}
-	_, err = pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update payment: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
 		UPDATE payment SET
 			payment_method = $1, payment_reference_number = $2, payment_date = COALESCE($3, payment_date),
 			payment_currency = $4, payment_owner_id = COALESCE($5, payment_owner_id),
@@ -47,10 +55,19 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePayment
 			payment_updated_at = NOW(), payment_updated_by = $9, payment_record_version = payment_record_version + 1
 		WHERE payment_id = $10`,
 		in.MethodID, in.ReferenceNumber, in.PaymentDate, in.CurrencyID, in.OwnerEmployeeID,
-		in.Memo, in.InternalNotes, custom, nullableInt(actorEmployeeID), internalID)
-	if err != nil {
+		in.Memo, in.InternalNotes, custom, nullableInt(actorEmployeeID), internalID); err != nil {
 		return nil, fmt.Errorf("update payment: %w", err)
 	}
+	// Saving an edit is how a rejected payment goes back to its approvers.
+	resubmitted, err := approvalchain.ResubmitAfterEdit(ctx, tx, moduleConfig(), internalID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update payment: %w", err)
+	}
+	resubmitted.Notify(ctx, pool, id, actorEmployeeID)
 	return Get(ctx, pool, id)
 }
 

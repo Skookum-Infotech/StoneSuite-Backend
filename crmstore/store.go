@@ -51,13 +51,14 @@ func IsClientError(err error) bool {
 	return errors.As(err, &ce) || errors.Is(err, ErrNotApprover)
 }
 
-// CreateInput carries the fields needed to create a CRM record. Owner/team and
-// the chosen initial status are optional; stores fall back to sensible defaults.
+// CreateInput carries the fields needed to create a CRM record. Owner and team
+// are optional; stores fall back to sensible defaults. There is no status: a
+// new record always starts in its stage's initial status (Lead New, Prospect
+// New, Customer Draft).
 type CreateInput struct {
 	ActorIdentityID string         // control-plane identity of the caller
 	OwnerUserID     string         // tenant user UUID (optional; defaults to caller)
 	TeamID          string         // optional
-	CrmStatusID     string         // optional chosen status at creation (v2)
 	CoreFields      map[string]any // typed/built-in fields
 	CustomFields    map[string]any // admin-defined dynamic fields (<=15)
 }
@@ -68,8 +69,9 @@ type Store interface {
 	// AllStatuses returns every CRM status across lead+prospect+customer
 	// (for a combined filter dropdown).
 	AllStatuses(ctx context.Context, pool *pgxpool.Pool) ([]workflow.StatusInfo, error)
-	// Statuses returns the statuses shown on the CREATE form for key — the
-	// key's own-stage statuses (e.g. lead -> Lead Qualified/Unqualified).
+	// Statuses returns key's own-stage statuses, the stage's initial status
+	// first and flagged IsInitial (e.g. lead -> New, Qualified, Unqualified).
+	// The Add form shows only the initial one — a new record starts there.
 	Statuses(ctx context.Context, pool *pgxpool.Pool, key string) ([]workflow.StatusInfo, error)
 	// KeyForRecord returns the CRM workflow key (lead|prospect|customer) of a
 	// record, for RBAC resolution by record id.
@@ -100,7 +102,7 @@ type Store interface {
 	// and keyset pagination, all composed onto the caller's RBAC scope (a filter
 	// can only narrow the scoped set, never widen it). Returns one page + cursor.
 	SearchRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, req query.Request) (workflow.Page, error)
-	// CreateRecord creates a record in key's stage.
+	// CreateRecord creates a record in key's stage, in that stage's initial status.
 	CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error)
 	// GetRecord loads a single record by its external id.
 	GetRecord(ctx context.Context, pool *pgxpool.Pool, id string) (*workflow.Record, error)
@@ -108,16 +110,21 @@ type Store interface {
 	UpdateRecord(ctx context.Context, pool *pgxpool.Pool, id string, core, custom map[string]any) error
 	// DeleteRecord removes a record.
 	DeleteRecord(ctx context.Context, pool *pgxpool.Pool, id string) error
-	// AvailableTransitions returns the statuses shown on the EDIT form — the
-	// forward-stage statuses a record may advance to (lead -> prospect/customer,
-	// prospect -> customer, customer -> own statuses).
+	// AvailableTransitions returns the statuses the record may move to from its
+	// current one — what the status dropdown offers. A Lead follows a fixed flow
+	// (New -> Qualified | Unqualified, both final); a Prospect or Customer may
+	// take any non-initial status of its own or a later stage.
 	AvailableTransitions(ctx context.Context, pool *pgxpool.Pool, id string) ([]workflow.StatusInfo, error)
 	// TransitionRecord moves a record to toStatusID, advancing its stage if the
-	// chosen status belongs to a later type. Forward-only.
+	// chosen status belongs to a later type. Forward-only, and only along the
+	// moves AvailableTransitions offers; anything else is a client error.
 	TransitionRecord(ctx context.Context, pool *pgxpool.Pool, id, toStatusID, actorIdentityID string) (*workflow.Record, error)
-	// ConvertRecord creates a new record in targetKey's stage linked to the
-	// source via parent lineage (lead -> prospect -> customer).
-	ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (newRec *workflow.Record, sourceID string, err error)
+	// ConvertRecord creates a new record in targetKey's stage — in that stage's
+	// initial status — linked to the source via parent lineage (lead -> prospect
+	// -> customer). A Lead must be Qualified first. created is false when the
+	// source had already been converted: newRec is then the record made from it
+	// and nothing was written.
+	ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (newRec *workflow.Record, sourceID string, created bool, err error)
 	// Approve records callerIdentityID's sign-off on a record pending
 	// approval. callerIsSuperAdmin lets a super admin approve a stage they
 	// aren't personally configured on, skipping quorum entirely (logged

@@ -126,3 +126,38 @@ func (h *VendorPaymentOps) Unapply(w http.ResponseWriter, r *http.Request) {
 	auditVendorPayment(r, pool, empID, "unapply", id, nil, vp)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp})
 }
+
+// Reject POST /api/tenant/vendor-payments/{uuid}/reject  body {"reason":"..."}
+// Rejects the vendor payment named by {uuid}, which must be awaiting approval: it is sent back to Draft, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *VendorPaymentOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authVendorPaymentByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vendorPaymentFail(w, err, "Failed to reject vendor payment.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := vendorpayment.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, vendorpayment.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		vendorPaymentFail(w, err, "Failed to reject vendor payment.")
+		return
+	}
+	auditVendorPayment(r, pool, empID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": rec})
+}

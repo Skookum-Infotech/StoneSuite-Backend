@@ -34,10 +34,31 @@ allowed).
 ## Customers
 
 A customer is a closed-won deal. Every customer starts in Draft — whether it
-was added directly or converted from a prospect — and is set to Closed Won once
-the deal is done. The customer pipeline is: Draft → Closed Won → Renewal, with
-Closed Lost as the exit point (e.g. churn). Customers can cycle back into
-Renewal repeatedly as their relationship continues.
+was added directly or converted from a prospect — and a Draft customer cannot
+be used on other records yet. A customer has four statuses: Draft, Active,
+Inactive and Credit Hold. Only an Active customer can be picked on, or used to
+create, an Estimate, Quote, Sales Order, Invoice, Payment, Refund or Credit
+Memo. Records that already exist for the customer are not affected.
+
+A customer's status is changed with the buttons in the Quick Actions card, not
+from a dropdown. A Draft customer is made Active with Make Active. An Active
+customer can be put on Credit Hold (Credit Hold button) or made Inactive (Make
+Inactive button), and a customer on Credit Hold is released back to Active with
+Release Hold or made Inactive. An Inactive customer is made Active again with
+Make Active. A customer can be made Active and Inactive as often as needed.
+
+Editing a customer sends it back to Draft, whatever status it was in, so it
+cannot be used on other records again until it is made Active. Only a real
+change counts: saving the form without changing anything leaves the status as
+it is.
+
+If approvers are configured for customers, a new customer waits for approval
+in Draft and cannot be edited or have its status changed until then. When the
+approvers approve it, it moves to Active. If an approver rejects it, it goes
+back to Draft with the rejection reason shown, and editing it sends it for
+approval again. An edit to an approved customer also sends it for approval
+again, so it becomes Active only when its approvers approve it. If no
+approvers are configured, Make Active is used instead.
 
 ## Custom fields
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -312,8 +313,9 @@ func (s *relationalStore) Statuses(ctx context.Context, pool *pgxpool.Pool, key 
 // AvailableTransitions lists the statuses the record may pick from its status
 // dropdown: every candidate in its own or a later stage, narrowed by
 // crmTransitionAllowed -- the same predicate TransitionRecord enforces -- and
-// minus the action-only statuses (Pending Conversion), which a header button
-// sets instead. TransitionRecord still accepts those.
+// minus the action-only statuses (Pending Conversion, and a customer's Active,
+// Inactive and Credit Hold), which a button sets instead. TransitionRecord still
+// accepts those, so a customer's list is always empty.
 func (s *relationalStore) AvailableTransitions(ctx context.Context, pool *pgxpool.Pool, id string) ([]workflow.StatusInfo, error) {
 	_, typeCode, statusID, _, err := s.recordKeyInfo(ctx, pool, id)
 	if err != nil {
@@ -558,7 +560,7 @@ func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool
 // requireContactEmailForCustomer enforces that a record newly entering CUST
 // stage carries a contact email, regardless of which of the three paths gets
 // it there (direct create, explicit convert, or a status transition whose
-// target status is itself CUST-typed — e.g. "Closed Won"). The customer
+// target status is itself CUST-typed). The customer
 // portal's auto-invite (controllers/crm.go's ApproveRecord) sends to exactly
 // this field the moment the record is approved; a CUST record without one
 // would approve successfully and simply never invite anyone, silently.
@@ -641,6 +643,11 @@ func (s *relationalStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, 
 			return ErrLockedPendingApproval
 		}
 	}
+	// The stored values, copied before the merges below: rec.CoreFields and
+	// rec.CustomFields are the very maps the update is merged into, so without a
+	// copy there would be nothing left to tell whether the edit changed anything.
+	beforeCore := maps.Clone(rec.CoreFields)
+	beforeCustom := maps.Clone(rec.CustomFields)
 	key := rec.WorkflowID // record_type key (lead/prospect/customer)
 	merged := rec.CustomFields
 	if merged == nil {
@@ -663,41 +670,66 @@ func (s *relationalStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, 
 		sets = append(sets, fmt.Sprintf("%s = %s", f.col, placeholder(len(args)+1, f.kind)))
 		args = append(args, writeArg(f, c))
 	}
-	sets = append(sets, fmt.Sprintf("customer_custom_fields = $%d", len(args)+1))
-	args = append(args, merged)
+	// An edit puts a customer back in Draft (see crmEditedStatusCode), so it stops
+	// being usable on other records until it is made Active again. Only a real
+	// change counts: saving an untouched form leaves the status alone. A blank
+	// resetTo keeps the record's current status (settledStatusSQL's fallback).
+	internalID, typeCode, statusID, _, err := s.recordKeyInfo(ctx, pool, id)
+	if err != nil {
+		return err
+	}
+	curStatusCode, err := s.statusCodeByID(ctx, pool, statusID)
+	if err != nil {
+		return err
+	}
+	resetTo := editedStatusReset(typeCode, curStatusCode, crmFieldsChanged(beforeCore, c, beforeCustom, merged))
+	sets = append(sets, "customer_crm_status = "+settledStatusSQL(fmt.Sprintf("$%d", len(args)+1)))
+	args = append(args, resetTo)
+
+	// Resubmission for approval: a REJECTED record that is edited goes back in
+	// front of approvers, and so does a record an edit just sent back to Draft --
+	// otherwise it could be made Active by hand without them. Re-derives the
+	// approval status (rather than hardcoding "pending") so a stage whose
+	// approvers were removed comes back "approved", not stuck forever.
+	resubmit := priorApprovalStatus == StatusRejected || resetTo != ""
+	newApprovalStatus := ""
+	if resubmit {
+		if newApprovalStatus, err = s.entryApprovalStatus(ctx, pool, crmKeyToCode[key]); err != nil {
+			return err
+		}
+	}
+
+	// One transaction, so an edit can never leave a customer in Draft with its old
+	// approval standing.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin update customer record: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	q := `UPDATE customer SET ` + strings.Join(sets, ", ") + `,
 		customer_updated_at = NOW(),
 		customer_record_version = customer_record_version + 1
 		WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`
-	if _, err = pool.Exec(ctx, q, args...); err != nil {
+	if _, err = tx.Exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("update customer record: %w", err)
 	}
 
-	if priorApprovalStatus == StatusRejected {
-		// Resubmission: put the record back in front of approvers for a fresh
-		// round. Re-derives the status (rather than hardcoding "pending") so a
-		// stage whose approvers were removed while this record sat rejected
-		// comes back "approved", not stuck forever.
-		recordTypeCode := crmKeyToCode[key]
-		newStatus, err := s.entryApprovalStatus(ctx, pool, recordTypeCode)
-		if err != nil {
-			return err
-		}
-		if _, err := pool.Exec(ctx, `
+	if resubmit {
+		if _, err := tx.Exec(ctx, `
 			UPDATE customer SET
 				customer_approval_status = $2, customer_is_approved = ($2::varchar = 'approved'),
+				customer_approved_by = NULL, customer_approved_at = NULL,
 				customer_rejected_by = NULL, customer_rejected_at = NULL, customer_rejection_reason = ''
-			WHERE customer_uuid = $1`, id, newStatus); err != nil {
-			return fmt.Errorf("reset rejected record for resubmission: %w", err)
+			WHERE customer_uuid = $1`, id, newApprovalStatus); err != nil {
+			return fmt.Errorf("reset record for resubmission: %w", err)
 		}
-		internalID, _, _, _, kerr := s.recordKeyInfo(ctx, pool, id)
-		if kerr != nil {
-			return fmt.Errorf("resolve record for resubmission: %w", kerr)
-		}
-		if _, err := pool.Exec(ctx, `DELETE FROM customer_approval WHERE customer_id = $1`, internalID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM customer_approval WHERE customer_id = $1`, internalID); err != nil {
 			return fmt.Errorf("clear stale approvals: %w", err)
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit update customer record: %w", err)
 	}
 	return nil
 }

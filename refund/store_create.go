@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/workflow"
 )
 
 func resolveCustomer(ctx context.Context, pool *pgxpool.Pool, customerUUID string) (int, error) {
@@ -116,6 +117,14 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 	if in.Amount <= 0 {
 		return nil, ClientError{Msg: "amount must be positive."}
 	}
+	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
+	if err != nil {
+		return nil, err
+	}
+	if msg != "" {
+		return nil, ClientError{Msg: msg}
+	}
+
 	custID, err := resolveCustomer(ctx, pool, in.CustomerUUID)
 	if err != nil {
 		return nil, err

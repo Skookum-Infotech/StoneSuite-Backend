@@ -60,10 +60,11 @@ var (
 
 // crmAlwaysAllowedExitCodes are CRM status codes a gated record may still
 // move to without approval -- marking a dead deal dead is a way OUT of the
-// approval process, not a way past it. One per stage: Lead Unqualified,
-// Prospect Lost, Customer Closed Lost. Mirrors
+// approval process, not a way past it. Lead Unqualified and Prospect Lost. A
+// customer has none: while it awaits approval it is a Draft, and the only ways
+// on are its approvers approving or rejecting it. Mirrors
 // approvalchain.AlwaysAllowedExitCodes.
-var crmAlwaysAllowedExitCodes = map[string]bool{"LUNQ": true, "PCLL": true, "CCLL": true}
+var crmAlwaysAllowedExitCodes = map[string]bool{"LUNQ": true, "PCLL": true}
 
 // checkTransitionGate enforces the CRM approval gate at a transition or
 // conversion. required must come from a live count (activeApproverCount),
@@ -238,9 +239,9 @@ func approvalDecision(status string, required int, callerIsApprover, callerIsSup
 
 // Approve records callerIdentityID's sign-off on a record pending approval
 // and, once every configured approver has signed off (or a super admin
-// overrides), finalizes it -- the gate clears but the record stays at its
-// current status (see package doc: unlike Sales/Purchases, CRM approval does
-// not auto-advance to a new status).
+// overrides), finalizes it -- the gate clears. A lead or prospect stays at its
+// current status; a customer moves from Draft to Active
+// (crmApprovedStatusCode), which is what makes it usable on other records.
 func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string, callerIsSuperAdmin bool) (*workflow.Record, error) {
 	rec, err := s.GetRecord(ctx, pool, id)
 	if err != nil {
@@ -302,9 +303,10 @@ func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, a
 				customer_is_approved = TRUE, customer_approval_status = 'approved',
 				customer_approved_by = $2, customer_approved_at = NOW(),
 				customer_rejected_by = NULL, customer_rejected_at = NULL, customer_rejection_reason = '',
+				customer_crm_status = `+settledStatusSQL("$3")+`,
 				customer_updated_at = NOW(),
 				customer_record_version = customer_record_version + 1
-			WHERE customer_uuid = $1`, id, nullableInt(empID)); err != nil {
+			WHERE customer_uuid = $1`, id, nullableInt(empID), crmApprovedStatusCode[crmKeyToCode[rec.WorkflowID]]); err != nil {
 			return nil, fmt.Errorf("approve customer record: %w", err)
 		}
 	}
@@ -315,8 +317,9 @@ func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, a
 // Reject records callerIdentityID's rejection of a record pending approval,
 // with a reason. Unlike Approve, this is a veto, not a vote -- any single
 // configured approver (or a super admin, logged the same as an override) may
-// reject without waiting on quorum. The record stays at its current status;
-// editing it is how the owner resubmits (see UpdateRecord).
+// reject without waiting on quorum. A lead or prospect stays at its current
+// status; a customer goes back to Draft (crmRejectedStatusCode). Editing the
+// record is how the owner resubmits it (see UpdateRecord).
 func (s *relationalStore) Reject(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID, reason string, callerIsSuperAdmin bool) (*workflow.Record, error) {
 	rec, err := s.GetRecord(ctx, pool, id)
 	if err != nil {
@@ -344,9 +347,10 @@ func (s *relationalStore) Reject(ctx context.Context, pool *pgxpool.Pool, id, ap
 		UPDATE customer SET
 			customer_approval_status = 'rejected', customer_is_approved = FALSE,
 			customer_rejected_by = $2, customer_rejected_at = NOW(), customer_rejection_reason = $3,
+			customer_crm_status = `+settledStatusSQL("$4")+`,
 			customer_updated_at = NOW(),
 			customer_record_version = customer_record_version + 1
-		WHERE customer_uuid = $1`, id, nullableInt(empID), reason); err != nil {
+		WHERE customer_uuid = $1`, id, nullableInt(empID), reason, crmRejectedStatusCode[crmKeyToCode[rec.WorkflowID]]); err != nil {
 		return nil, fmt.Errorf("reject customer record: %w", err)
 	}
 	s.writeHistory(ctx, pool, id, "reject", empID)

@@ -713,7 +713,8 @@ func welcomeEmailHTML(tenantName, customerName string) string {
 // ---- approval ---------------------------------------------------------------
 
 // ApproveRecord POST /api/tenant/crm/records/{id}/approve
-// Approves a Closed-Won customer if the caller is a configured approver. Only
+// Approves a record awaiting approval if the caller is a configured approver (a
+// customer then becomes Active). Only
 // supported on the v2 design; v1 returns 400 (not supported).
 func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

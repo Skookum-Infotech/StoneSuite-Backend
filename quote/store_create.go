@@ -151,6 +151,14 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	msg, err := workflow.CustomerNotUsableByUUID(ctx, tx, in.CustomerUUID)
+	if err != nil {
+		return nil, err
+	}
+	if msg != "" {
+		return nil, ClientError{Msg: msg}
+	}
+
 	custInternalID, custName, defBilling, defShipping, err := customerSnapshot(ctx, tx, in.CustomerUUID)
 	if err != nil {
 		return nil, err

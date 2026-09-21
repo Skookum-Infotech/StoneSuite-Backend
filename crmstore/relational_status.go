@@ -6,26 +6,33 @@
 //   - The status a record STARTS in for each stage -- Lead New, Prospect New,
 //     Customer Draft -- resolved by code, never by "lowest id": tenants that
 //     predate these statuses were seeded with them at the highest ids.
-//   - Which status moves are legal. Lead and Prospect each have a fixed flow
-//     (crmStageFlows). A lead goes New -> Qualified | Unqualified, both final. A
-//     prospect moves freely between its working statuses, and from them to Lost or
-//     Pending Conversion. Customer keeps the original free-form rule: any status
-//     of its own stage except the current one and the entry status.
+//   - Which status moves are legal. Every stage has a fixed flow (crmStageFlows).
+//     A lead goes New -> Qualified | Unqualified, both final. A prospect moves
+//     freely between its working statuses, and from them to Lost or Pending
+//     Conversion. A customer starts in Draft, becomes Active (by approval, or by
+//     hand when nobody has to approve it), and is then put on Credit Hold or made
+//     Inactive and back -- only an Active customer can be used on other records
+//     (workflow/customer_usable.go).
 //   - Which status a record must be in before it may be converted onward
 //     (crmConvertRules): a Qualified lead, a Pending Conversion prospect.
+//   - Which status approving or rejecting a record settles it in
+//     (crmApprovedStatusCode, crmRejectedStatusCode): a customer becomes Active
+//     when approved and goes back to Draft when rejected.
 //
 // Every rule is a pure function over status codes, so it is unit-testable
 // without a database, and AvailableTransitions and TransitionRecord share ONE
 // predicate (crmTransitionAllowed) -- the dropdown can never offer a move the
 // API would refuse. The one deliberate gap runs the other way: an action-only
 // status (crmActionOnlyStatuses) is accepted by the API but never listed. The
-// approval gate (relational_approval.go) is a separate concern layered on top
-// and is unchanged. The frontend mirrors crmConvertRules and the prospect's
-// working statuses in src/lib/crmStatusFlow.ts -- keep them in sync.
+// approval gate (relational_approval.go) is a separate concern layered on top.
+// The frontend mirrors crmConvertRules, the prospect's working statuses and the
+// customer's buttons in src/lib/crmStatusFlow.ts -- keep them in sync.
 package crmstore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -53,7 +60,10 @@ const (
 	statusProspectLost              = "PCLL"
 	statusProspectPendingConversion = "PPCV"
 
-	statusCustomerDraft = "CDRF"
+	statusCustomerDraft      = "CDRF"
+	statusCustomerActive     = workflow.CustomerStatusActive
+	statusCustomerInactive   = "CINA"
+	statusCustomerCreditHold = "CCHD"
 )
 
 // The 400s shown when a record that is not in its stage's convert-from status
@@ -72,12 +82,17 @@ var crmInitialStatusCode = map[string]string{
 	"CUST": statusCustomerDraft,
 }
 
-// crmStageFlows holds the status graph of each stage that has a fixed one,
-// keyed by record type code. A stage with no entry keeps the free-form rule
-// (see crmTransitionAllowed). Lead's Qualified and Unqualified are deliberately
-// final: a lead's outcome is settled once, and the way forward from Qualified
-// is converting it into a prospect. A prospect's way forward is the same: it is
-// marked Pending Conversion and then converted into a customer.
+// crmStageFlows holds the status graph of each stage, keyed by record type code.
+// Lead's Qualified and Unqualified are deliberately final: a lead's outcome is
+// settled once, and the way forward from Qualified is converting it into a
+// prospect. A prospect's way forward is the same: it is marked Pending
+// Conversion and then converted into a customer.
+//
+// A customer has no way forward -- it is the end of the pipeline -- so its flow
+// is about whether it may be used: Draft leaves only by being made Active, an
+// Active customer can be put on Credit Hold or made Inactive, and either of those
+// can be made Active again. Nothing goes back to Draft except a rejection
+// (crmRejectedStatusCode), which is not a transition.
 var crmStageFlows = map[string]docflow.Machine{
 	"LEAD": {
 		statusLeadNew:         {statusLeadQualified: true, statusLeadUnqualified: true},
@@ -85,7 +100,23 @@ var crmStageFlows = map[string]docflow.Machine{
 		statusLeadUnqualified: {},
 	},
 	"PROS": prospectFlow(),
+	"CUST": {
+		statusCustomerDraft:      {statusCustomerActive: true},
+		statusCustomerActive:     {statusCustomerCreditHold: true, statusCustomerInactive: true},
+		statusCustomerCreditHold: {statusCustomerActive: true, statusCustomerInactive: true},
+		statusCustomerInactive:   {statusCustomerActive: true},
+	},
 }
+
+// crmApprovedStatusCode and crmRejectedStatusCode are the status a record is
+// settled in when its stage's approvers approve or reject it, keyed by record
+// type code. A stage with no entry keeps whatever status the record has. Only a
+// customer has one: approved, it is Active and usable; rejected, it returns to
+// Draft (the rejection banner and reason stay, and editing it resubmits).
+var (
+	crmApprovedStatusCode = map[string]string{"CUST": statusCustomerActive}
+	crmRejectedStatusCode = map[string]string{"CUST": statusCustomerDraft}
+)
 
 // prospectWorking are the statuses a prospect is worked through. It moves
 // freely between them, and a prospect in any of them may be marked Pending
@@ -131,11 +162,62 @@ func targetSet(codes ...string) map[string]bool {
 	return set
 }
 
+// crmEditedStatusCode is the status a record is put back in when someone edits
+// it, keyed by record type code. A stage with no entry keeps its status through
+// an edit. Only a customer has one: its status decides whether it can be used on
+// other records, so an edit sends it back to Draft (unusable) until it is made
+// Active again -- by its approvers, when the stage has any, else by hand.
+var crmEditedStatusCode = map[string]string{"CUST": statusCustomerDraft}
+
+// editedStatusReset returns the status an edit puts a record back in, or "" when
+// it stays where it is: nothing was actually changed (saving an untouched form is
+// not an edit), the stage has no such status, or the record is already in it.
+// curStatusCode may be "" for a record with no status, which is put in it too.
+func editedStatusReset(typeCode, curStatusCode string, changed bool) string {
+	target := crmEditedStatusCode[typeCode]
+	if !changed || target == "" || curStatusCode == target {
+		return ""
+	}
+	return target
+}
+
+// crmFieldsChanged reports whether an update changes any stored field of a
+// record: a registered core column, compared the way it is written to the
+// database (writeArg) so that "" and a missing value, or 5 and "5", are not
+// changes, or any custom field.
+func crmFieldsChanged(beforeCore, afterCore, beforeCustom, afterCustom map[string]any) bool {
+	for _, f := range customerFields {
+		if writeArg(f, beforeCore) != writeArg(f, afterCore) {
+			return true
+		}
+	}
+	return !sameJSON(beforeCustom, afterCustom)
+}
+
+// sameJSON reports whether two maps serialise to the same JSON. encoding/json
+// sorts map keys, so this is a deep comparison that ignores ordering, and it
+// treats a nil map and an empty one as equal.
+func sameJSON(a, b map[string]any) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
+}
+
 // crmActionOnlyStatuses are statuses a record reaches through a dedicated action
-// (a header button) rather than by picking them from the status dropdown. They
+// (a button) rather than by picking them from the status dropdown: Pending
+// Conversion, and the customer's Active, Inactive and Credit Hold (the Quick
+// Action buttons Make Active, Make Inactive, Credit Hold and Release Hold). They
 // stay legal targets for TransitionRecord -- the button goes through it -- but
-// filterCRMTargets never lists them.
-var crmActionOnlyStatuses = map[string]bool{statusProspectPendingConversion: true}
+// filterCRMTargets never lists them, so a customer's status shows as a plain pill.
+var crmActionOnlyStatuses = map[string]bool{
+	statusProspectPendingConversion: true,
+	statusCustomerActive:            true,
+	statusCustomerInactive:          true,
+	statusCustomerCreditHold:        true,
+}
 
 // crmConvertRule says what a record must be in before it can be converted to a
 // later stage, and what to tell the caller when it is not.
@@ -166,26 +248,19 @@ func crmInitialStatusCodes() []string {
 // record with no status); a stage with a flow then treats it as the stage's
 // initial status.
 //
-// A stage with a flow (Lead, Prospect) follows it exactly and never crosses
-// into another stage: leaving the stage is what converting is for. Every other
-// stage (Customer) keeps the original rule -- any status of the same or a later
-// stage, except the record's current status and the entry-only initial
-// statuses, so a record moves sideways but never back to "Draft".
+// Every stage follows its flow exactly and never crosses into another stage:
+// leaving the stage is what converting is for. A stage with no flow allows
+// nothing.
 func crmTransitionAllowed(curType, curStatus, targetType, targetStatus string) bool {
-	if crmCodeRank[targetType] < crmCodeRank[curType] {
-		return false // forward-only across stages
-	}
-	if flow, ok := crmStageFlows[curType]; ok {
-		from := curStatus
-		if from == "" {
-			from = crmInitialStatusCode[curType]
-		}
-		return targetType == curType && flow.Can(from, targetStatus)
-	}
-	if targetType == curType && targetStatus == curStatus {
+	flow, ok := crmStageFlows[curType]
+	if !ok || targetType != curType {
 		return false
 	}
-	return targetStatus != crmInitialStatusCode[targetType]
+	from := curStatus
+	if from == "" {
+		from = crmInitialStatusCode[curType]
+	}
+	return flow.Can(from, targetStatus)
 }
 
 // filterCRMTargets narrows candidate statuses to the moves crmTransitionAllowed
@@ -258,6 +333,19 @@ func (s *relationalStore) initialStatusID(ctx context.Context, pool *pgxpool.Poo
 		return 0, fmt.Errorf("initial status %q for record type %q: %w", code, typeCode, err)
 	}
 	return id, nil
+}
+
+// settledStatusSQL is the SQL expression for customer.customer_crm_status in the
+// UPDATE that approves or rejects a record: the status of the record's own stage
+// whose code is bound to codeParam ("$3"), or the record's current status when
+// that code is "" -- a stage approval does not move, or one whose status row is
+// missing. Doing it in the same statement keeps the approval decision and the
+// status change atomic.
+func settledStatusSQL(codeParam string) string {
+	return `COALESCE((SELECT cs.crm_status_id FROM lkp_crm_status cs
+			WHERE cs.crm_status_record_type = customer.record_type
+			  AND cs.crm_status_code = ` + codeParam + `
+			  AND cs.crm_status_is_active AND cs.crm_status_deleted_at IS NULL), customer_crm_status)`
 }
 
 // statusCodeByID returns the code of a status, or "" for statusID 0 (a record

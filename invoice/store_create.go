@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // customerSnapshot is the subset of customer columns needed to default the
@@ -94,6 +96,14 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
 		return nil, ClientError{Msg: "salesTaxPercent must be between 0 and 100."}
 	}
+	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
+	if err != nil {
+		return nil, err
+	}
+	if msg != "" {
+		return nil, ClientError{Msg: msg}
+	}
+
 	custID, cust, err := loadCustomerSnapshot(ctx, pool, in.CustomerUUID)
 	if err != nil {
 		return nil, err

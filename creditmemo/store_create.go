@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // customerSnapshot is the subset of customer columns needed to default the
@@ -120,6 +122,14 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 	}
 	if len(in.Lines) == 0 {
 		return nil, ClientError{Msg: "a credit memo needs at least one line."}
+	}
+
+	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
+	if err != nil {
+		return nil, err
+	}
+	if msg != "" {
+		return nil, ClientError{Msg: msg}
 	}
 
 	custID, cust, err := loadCustomerSnapshot(ctx, pool, in.CustomerUUID)

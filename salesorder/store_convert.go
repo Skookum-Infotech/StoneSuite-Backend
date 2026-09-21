@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // ErrQuoteNotFound is returned when the source quote uuid matches no live
@@ -221,6 +223,16 @@ func ConvertFromQuote(ctx context.Context, pool *pgxpool.Pool, quoteUUID string,
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, fmt.Errorf("check existing conversion: %w", err)
+	}
+
+	// Checked after the replay above, so repeating a conversion still returns the
+	// order it already made even if the customer has since gone on hold.
+	msg, err := workflow.CustomerNotUsableByID(ctx, tx, src.customerInternalID)
+	if err != nil {
+		return nil, false, err
+	}
+	if msg != "" {
+		return nil, false, ClientError{Msg: msg}
 	}
 
 	lines, err := loadQuoteSourceLines(ctx, tx, src.internalID)

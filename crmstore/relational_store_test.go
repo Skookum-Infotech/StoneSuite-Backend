@@ -75,7 +75,7 @@ func TestMarkInitialStatuses(t *testing.T) {
 		{StateID: "13", StateKey: "PNEW", WorkflowKey: "prospect"},
 		{StateID: "3", StateKey: "PDIS", WorkflowKey: "prospect"},
 		{StateID: "14", StateKey: "CDRF", WorkflowKey: "customer"},
-		{StateID: "9", StateKey: "CCLW", WorkflowKey: "customer"},
+		{StateID: "9", StateKey: "CACT", WorkflowKey: "customer"},
 	}
 	out := markInitialStatuses(in)
 	want := map[string]bool{"12": true, "1": false, "13": true, "3": false, "14": true, "9": false}

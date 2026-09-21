@@ -794,9 +794,9 @@ INSERT INTO lkp_crm_status (crm_status_code, crm_status_name, crm_status_record_
     ('PIDM', 'Decision Pending',                     2, TRUE, TRUE, 1),
     ('PPUR', 'Contacted',                            2, TRUE, TRUE, 1),
     ('PCLL', 'Lost',                                 2, TRUE, TRUE, 1),
-    ('CCLW', 'Customer Closed Won',                  3, TRUE, TRUE, 1),
-    ('CCLL', 'Customer Closed Lost',                 3, TRUE, TRUE, 1),
-    ('CREN', 'Customer Renewal',                     3, TRUE, TRUE, 1),
+    -- The customer statuses Closed Won, Closed Lost and Renewal are retired (see the
+    -- migration below), so they are no longer seeded. A customer is Draft, Active,
+    -- Inactive or on Credit Hold.
     -- Entry statuses: what a record starts in when it is created or converted
     -- into a stage (Lead New, Prospect New, Customer Draft). Resolved by CODE in
     -- crmstore/relational_status.go (crmInitialStatusCode), never by lowest id --
@@ -808,8 +808,15 @@ INSERT INTO lkp_crm_status (crm_status_code, crm_status_name, crm_status_record_
     -- never picked from the status dropdown (crmActionOnlyStatuses). It is the only
     -- status a prospect can be converted to a customer from (crmConvertRules).
     -- Appended last for the same reason as the entry statuses above.
-    ('PPCV', 'Pending Conversion',                   2, TRUE, TRUE, 1)
-ON CONFLICT (crm_status_code, crm_status_record_type) DO NOTHING;
+    ('PPCV', 'Pending Conversion',                   2, TRUE, TRUE, 1),
+    -- Customer statuses: Active is the only one a customer can be used on other
+    -- records in (workflow/customer_usable.go). Draft, Inactive and Credit Hold are
+    -- not. Reached by the customer Quick Action buttons and by approval, never from
+    -- the status dropdown (crmActionOnlyStatuses). Appended last as above.
+    ('CACT', 'Active',                               3, TRUE, TRUE, 1),
+    ('CINA', 'Inactive',                             3, TRUE, TRUE, 1),
+    ('CCHD', 'Credit Hold',                          3, TRUE, TRUE, 1)
+ON CONFLICT DO NOTHING;
 
 -- Prospect statuses were renamed to drop the "Prospect " prefix and shorten them.
 -- The seed above never overwrites an existing row, so a tenant created before the
@@ -833,6 +840,40 @@ UPDATE lkp_crm_status AS cs
    AND NOT EXISTS (SELECT 1 FROM lkp_crm_status x
                     WHERE x.crm_status_record_type = cs.crm_status_record_type
                       AND x.crm_status_name = r.new_name);
+
+-- Customer statuses were reworked: Closed Won, Renewal and Closed Lost are retired
+-- in favour of Draft, Active, Inactive and Credit Hold. First move every customer
+-- off the retired statuses. Won and Renewal customers were the usable ones, so
+-- they become Active. Closed Lost becomes Inactive. A customer still waiting on
+-- (or rejected from) approval becomes Draft instead, whatever it was in, because
+-- approval is what makes a customer Active. Nothing is touched once no customer is
+-- left in a retired status, and a target status that is missing leaves the
+-- customer where it is rather than clearing its status.
+UPDATE customer AS c
+   SET customer_crm_status = t.target_id
+  FROM (SELECT cu.customer_id,
+               (SELECT ns.crm_status_id FROM lkp_crm_status ns
+                 WHERE ns.crm_status_record_type = rs.crm_status_record_type
+                   AND ns.crm_status_code = CASE
+                         WHEN cu.customer_approval_status IN ('pending', 'rejected') THEN 'CDRF'
+                         WHEN rs.crm_status_code = 'CCLL' THEN 'CINA'
+                         ELSE 'CACT' END) AS target_id
+          FROM customer cu
+          JOIN lkp_crm_status rs ON rs.crm_status_id = cu.customer_crm_status
+         WHERE rs.crm_status_code IN ('CCLW', 'CREN', 'CCLL')
+           AND rs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'CUST')) AS t
+ WHERE c.customer_id = t.customer_id
+   AND t.target_id IS NOT NULL;
+
+-- Then retire the three statuses themselves. They are soft-deleted rather than
+-- dropped, since the status history still points at them, and only once no customer
+-- is left in one.
+UPDATE lkp_crm_status AS cs
+   SET crm_status_is_active = FALSE, crm_status_deleted_at = NOW()
+ WHERE cs.crm_status_code IN ('CCLW', 'CREN', 'CCLL')
+   AND cs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'CUST')
+   AND cs.crm_status_deleted_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM customer c WHERE c.customer_crm_status = cs.crm_status_id);
 
 -- 7. lkp_customer_type ------------------------------------------------
 CREATE TABLE IF NOT EXISTS lkp_customer_type (

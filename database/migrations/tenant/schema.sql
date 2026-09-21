@@ -796,7 +796,14 @@ INSERT INTO lkp_crm_status (crm_status_code, crm_status_name, crm_status_record_
     ('PCLL', 'Prospect Closed Lost',                 2, TRUE, TRUE, 1),
     ('CCLW', 'Customer Closed Won',                  3, TRUE, TRUE, 1),
     ('CCLL', 'Customer Closed Lost',                 3, TRUE, TRUE, 1),
-    ('CREN', 'Customer Renewal',                     3, TRUE, TRUE, 1)
+    ('CREN', 'Customer Renewal',                     3, TRUE, TRUE, 1),
+    -- Entry statuses: what a record starts in when it is created or converted
+    -- into a stage (Lead New, Prospect New, Customer Draft). Resolved by CODE in
+    -- crmstore/relational_status.go (crmInitialStatusCode), never by lowest id --
+    -- appended last so a fresh tenant and one that predates them number alike.
+    ('LNEW', 'New',                                  1, TRUE, TRUE, 1),
+    ('PNEW', 'New',                                  2, TRUE, TRUE, 1),
+    ('CDRF', 'Draft',                                3, TRUE, TRUE, 1)
 ON CONFLICT (crm_status_code, crm_status_record_type) DO NOTHING;
 
 -- 7. lkp_customer_type ------------------------------------------------

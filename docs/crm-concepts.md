@@ -7,22 +7,27 @@ converting — it is never re-classified backward.
 ## Leads
 
 A lead is an inbound contact that hasn't been qualified as a real sales
-opportunity yet. The lead pipeline is: New → In Progress → Qualified →
-Converted, with Unqualified and Dead as exit points at any stage once it's
-clear the lead won't go further. A qualified lead converts into a prospect.
+opportunity yet. Every lead starts in New. From New it is marked either
+Qualified or Unqualified, and that decision is final — the status can't be
+changed afterwards. A Qualified lead is converted into a prospect with the
+Convert to Prospect action, which creates a new prospect (starting in New)
+from the lead's details and leaves the lead as it is. Converting the same lead
+again opens the prospect that was already created rather than making another.
 
 ## Prospects
 
 A prospect is a qualified lead now being actively worked as a sales
-opportunity. The prospect pipeline is: In Discussion → Identified Decision
-Makers → Qualified → Proposal → In Negotiation → Purchasing, with Closed Lost
-as the exit point if the deal falls through at any stage. A prospect that
-completes purchasing converts into a customer.
+opportunity. Every prospect starts in New. The prospect pipeline is: In
+Discussion → Identified Decision Makers → Qualified → Proposal → In
+Negotiation → Purchasing, with Closed Lost as the exit point if the deal falls
+through at any stage. A prospect that completes purchasing converts into a
+customer.
 
 ## Customers
 
-A customer is a closed-won deal. The customer pipeline is: Closed Won →
-Renewal, with Closed Lost as the exit point (e.g. churn). Customers can cycle
+A customer is a closed-won deal. Every customer starts in Draft and is set to
+Closed Won once the deal is done. The customer pipeline is: Draft → Closed Won
+→ Renewal, with Closed Lost as the exit point (e.g. churn). Customers can cycle
 back into Renewal repeatedly as their relationship continues.
 
 ## Custom fields

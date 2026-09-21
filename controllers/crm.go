@@ -376,13 +376,14 @@ func (h *CRMOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
 type crmCreateRequest struct {
 	OwnerUserID  string         `json:"ownerUserId"`
 	TeamID       string         `json:"teamId"`
-	CrmStatusID  string         `json:"crmStatusId"` // optional chosen status (v2)
 	CoreFields   map[string]any `json:"coreFields"`
 	CustomFields map[string]any `json:"customFields"`
 }
 
 // CreateRecord POST /api/tenant/crm/{workflowKey}/records
 // A prospect or customer may be created directly without a prior lead/prospect.
+// The record starts in its stage's initial status (Lead New, Prospect New,
+// Customer Draft) — the request cannot choose one.
 func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("workflowKey")
 	st, pool, identityID, _, ok := h.authCRM(w, r, key, authz.ActionCreate)
@@ -398,7 +399,6 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 		ActorIdentityID: identityID,
 		OwnerUserID:     req.OwnerUserID,
 		TeamID:          req.TeamID,
-		CrmStatusID:     req.CrmStatusID,
 		CoreFields:      req.CoreFields,
 		CustomFields:    req.CustomFields,
 	})
@@ -566,8 +566,15 @@ type convertRequest struct {
 }
 
 // ConvertRecord POST /api/tenant/crm/records/{id}/convert
+//
+// Creates a record in a later stage as a copy of the source (a Qualified Lead
+// becomes a Prospect in its initial status). Idempotent: converting a source
+// that was already converted returns the record made from it with 200 and
+// "created": false instead of a duplicate — but only if the caller could read
+// that record anyway; otherwise 409, which says the conversion happened
+// without saying which record it produced.
 func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, identityID, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionCreate)
+	st, pool, sourceKey, identityID, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionCreate)
 	if !ok {
 		return
 	}
@@ -594,10 +601,39 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 			"You do not have permission to create "+req.TargetWorkflowKey+".")
 		return
 	}
-	newRec, sourceID, err := st.ConvertRecord(r.Context(), pool, r.PathValue("id"),
+	newRec, sourceID, created, err := st.ConvertRecord(r.Context(), pool, r.PathValue("id"),
 		req.TargetWorkflowKey, req.CoreFields, req.CustomFields, identityID)
 	if err != nil {
 		crmFail(w, err, "Failed to convert record.")
+		return
+	}
+	if !created {
+		// Replay: newRec is the record an earlier conversion made, possibly
+		// owned by someone else. Hand it back only if the caller holds read on
+		// its resource and, when that grant is scoped, it is in scope.
+		readDecision, err := authz.Check(r.Context(), pool, identityID, resourceForKey(newRec.WorkflowID), authz.ActionRead)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			return
+		}
+		visible := readDecision.Allowed
+		if visible && readDecision.Scope != authz.ScopeAll {
+			visible, err = recordInScope(r.Context(), pool, readDecision.Scope, identityID, newRec.OwnerUserID)
+			if err != nil {
+				fail(w, http.StatusInternalServerError, "Permission check failed.")
+				return
+			}
+		}
+		if !visible {
+			fail(w, http.StatusConflict, "This "+sourceKey+" has already been converted.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":        true,
+			"record":         newRec,
+			"sourceRecordId": sourceID,
+			"created":        false,
+		})
 		return
 	}
 	auditCRM(r, pool, identityID, "convert", req.TargetWorkflowKey, newRec.ID, nil, newRec)
@@ -608,6 +644,7 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 		"success":        true,
 		"record":         newRec,
 		"sourceRecordId": sourceID,
+		"created":        true,
 	})
 }
 

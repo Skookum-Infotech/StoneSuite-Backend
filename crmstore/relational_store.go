@@ -309,12 +309,23 @@ func (s *relationalStore) Statuses(ctx context.Context, pool *pgxpool.Pool, key 
 	return s.statusesForTypeCodes(ctx, pool, []string{code})
 }
 
+// AvailableTransitions lists the statuses the record may move to from its
+// current one: every candidate in its own or a later stage, narrowed by
+// crmTransitionAllowed -- the same predicate TransitionRecord enforces.
 func (s *relationalStore) AvailableTransitions(ctx context.Context, pool *pgxpool.Pool, id string) ([]workflow.StatusInfo, error) {
-	_, typeCode, _, _, err := s.recordKeyInfo(ctx, pool, id)
+	_, typeCode, statusID, _, err := s.recordKeyInfo(ctx, pool, id)
 	if err != nil {
 		return nil, err
 	}
-	return s.statusesForTypeCodes(ctx, pool, reachableCRMCodes(crmCodeRank[typeCode]))
+	statusCode, err := s.statusCodeByID(ctx, pool, statusID)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := s.statusesForTypeCodes(ctx, pool, reachableCRMCodes(crmCodeRank[typeCode]))
+	if err != nil {
+		return nil, err
+	}
+	return filterCRMTargets(typeCode, statusCode, candidates), nil
 }
 
 // reachableCRMCodes returns the record-type codes a record at the given rank
@@ -330,7 +341,8 @@ func reachableCRMCodes(rank int) []string {
 	return codes
 }
 
-// statusesForTypeCodes loads lkp_crm_status rows for the given record-type codes.
+// statusesForTypeCodes loads lkp_crm_status rows for the given record-type
+// codes, each stage's initial status first, then by id.
 func (s *relationalStore) statusesForTypeCodes(ctx context.Context, pool *pgxpool.Pool, codes []string) ([]workflow.StatusInfo, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT cs.crm_status_id, cs.crm_status_code, cs.crm_status_name,
@@ -338,7 +350,8 @@ func (s *relationalStore) statusesForTypeCodes(ctx context.Context, pool *pgxpoo
 		FROM lkp_crm_status cs
 		JOIN lkp_record_type rt ON rt.record_type_id = cs.crm_status_record_type
 		WHERE rt.record_type_code = ANY($1) AND cs.crm_status_deleted_at IS NULL AND cs.crm_status_is_active
-		ORDER BY cs.crm_status_record_type, cs.crm_status_id`, codes)
+		ORDER BY cs.crm_status_record_type, (cs.crm_status_code = ANY($2)) DESC, cs.crm_status_id`,
+		codes, crmInitialStatusCodes())
 	if err != nil {
 		return nil, fmt.Errorf("list crm statuses: %w", err)
 	}
@@ -358,25 +371,11 @@ func (s *relationalStore) statusesForTypeCodes(ctx context.Context, pool *pgxpoo
 			StatusLabel:  name,
 			WorkflowKey:  crmCodeToKey[tCode],
 			WorkflowName: tName,
-			IsTerminal:   strings.Contains(strings.ToLower(name), "closed"),
+			IsTerminal:   crmStatusIsTerminal(tCode, code, name),
 			SortOrder:    id,
 		})
 	}
 	return markInitialStatuses(out), rows.Err()
-}
-
-// markInitialStatuses flags the first status per WorkflowKey as initial. It
-// relies on the caller having ordered rows by (record type, status id), the
-// same "lowest id wins" rule resolveCreateStatus uses to pick a stage's
-// default status — lkp_crm_status has no dedicated is-initial column.
-func markInitialStatuses(statuses []workflow.StatusInfo) []workflow.StatusInfo {
-	seen := map[string]bool{}
-	for i := range statuses {
-		key := statuses[i].WorkflowKey
-		statuses[i].IsInitial = !seen[key]
-		seen[key] = true
-	}
-	return statuses
 }
 
 // ----- record reads ----------------------------------------------------------
@@ -588,7 +587,9 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if err != nil {
 		return nil, err
 	}
-	statusID, err := s.resolveCreateStatus(ctx, pool, typeID, in.CrmStatusID)
+	// A new record always starts in its stage's initial status (Lead New /
+	// Prospect New / Customer Draft); the caller does not choose it.
+	statusID, err := s.initialStatusID(ctx, pool, typeID, code)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +715,7 @@ func (s *relationalStore) DeleteRecord(ctx context.Context, pool *pgxpool.Pool, 
 }
 
 func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Pool, id, toStatusID, actorIdentityID string) (*workflow.Record, error) {
-	internalID, curTypeCode, _, curApprovalStatus, err := s.recordKeyInfo(ctx, pool, id)
+	internalID, curTypeCode, curStatusID, curApprovalStatus, err := s.recordKeyInfo(ctx, pool, id)
 	if err != nil {
 		return nil, err
 	}
@@ -728,6 +729,17 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	}
 	if crmCodeRank[targetTypeCode] < crmCodeRank[curTypeCode] {
 		return nil, ClientError{Msg: "CRM records can only move forward (lead → prospect → customer), not backward."}
+	}
+	// The stage's own status rules (see crmTransitionAllowed) -- the same
+	// predicate AvailableTransitions filters by, so anything the dropdown
+	// never offered is refused here too. Checked before the approval gate: a
+	// move that is never legal should not surface as "needs approval".
+	curStatusCode, err := s.statusCodeByID(ctx, pool, curStatusID)
+	if err != nil {
+		return nil, err
+	}
+	if !crmTransitionAllowed(curTypeCode, curStatusCode, targetTypeCode, targetStatusCode) {
+		return nil, ClientError{Msg: "That status change isn't allowed from this record's current status."}
 	}
 	targetTypeID, err := s.typeIDByCode(ctx, pool, targetTypeCode)
 	if err != nil {
@@ -828,17 +840,47 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 	return s.GetRecord(ctx, pool, id)
 }
 
-func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (*workflow.Record, string, error) {
+// ConvertRecord creates a record in a later stage as a copy of the source
+// (Lead → Prospect, Prospect → Customer), starting in that stage's initial
+// status and carrying the source as its parent. created is false when the
+// source had already been converted: the record made from it is returned
+// instead of a duplicate.
+func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (*workflow.Record, string, bool, error) {
 	source, err := s.GetRecord(ctx, pool, id)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	code, ok := crmKeyToCode[targetKey]
 	if !ok {
-		return nil, "", ClientError{Msg: "Unknown target workflow: " + targetKey}
+		return nil, "", false, ClientError{Msg: "Unknown target workflow: " + targetKey}
 	}
 	if crmCodeRank[code] <= crmCodeRank[crmKeyToCode[source.WorkflowID]] {
-		return nil, "", ClientError{Msg: "Conversion must move forward to a later stage."}
+		return nil, "", false, ClientError{Msg: "Conversion must move forward to a later stage."}
+	}
+	// The source's internal id: the lineage FK for the new record, and the key
+	// for the already-converted lookup below.
+	parentInternalID, sourceTypeCode, _, _, err := s.recordKeyInfo(ctx, pool, id)
+	if err != nil {
+		return nil, "", false, err
+	}
+	// Idempotent: a source that already has a live descendant at (or past) the
+	// target stage hands that record back rather than minting a duplicate. Runs
+	// before the qualification and approval checks, so a lead converted long ago
+	// still resolves to its prospect whatever state it is in now.
+	existingID, found, err := s.findConvertedChild(ctx, pool, parentInternalID, code)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if found {
+		existing, getErr := s.GetRecord(ctx, pool, existingID)
+		if getErr != nil {
+			return nil, "", false, getErr
+		}
+		return existing, id, false, nil
+	}
+	sourceStatusCode, _ := source.CoreFields["crm_status_code"].(string)
+	if err := checkConvertFrom(sourceTypeCode, sourceStatusCode); err != nil {
+		return nil, "", false, err
 	}
 	// Converting always crosses to a strictly later stage (checked above), so
 	// there is no CRM "lost" exit code that can apply here — gate every
@@ -847,22 +889,22 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	sourceApprovalStatus, _ := source.CoreFields["approval_status"].(string)
 	sourceRequired, err := s.activeApproverCount(ctx, pool, id)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if err := checkTransitionGate(sourceRequired, sourceApprovalStatus, ""); err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	typeID, err := s.typeIDByCode(ctx, pool, code)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
-	statusID, err := s.resolveCreateStatus(ctx, pool, typeID, "")
+	statusID, err := s.initialStatusID(ctx, pool, typeID, code)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	wf, err := workflow.GetWorkflowByKey(ctx, pool, targetKey)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve workflow for numbering: %w", err)
+		return nil, "", false, fmt.Errorf("resolve workflow for numbering: %w", err)
 	}
 	// Seed core/custom from source where the caller did not override.
 	if core == nil {
@@ -882,28 +924,23 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 		}
 	}
 	if err := requireContactEmailForCustomer(code, getStr(core, "customer_contact_email")); err != nil {
-		return nil, "", err
-	}
-	// Resolve the source's internal id for the lineage FK.
-	parentInternalID, _, _, _, err := s.recordKeyInfo(ctx, pool, id)
-	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	ownerEmp := s.employeeIDOrZero(ctx, pool, actorIdentityID)
 	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	newUUID, err := s.insertCustomer(ctx, pool, typeID, statusID, ownerEmp, approvalStatus, code, wf.ID, &parentInternalID, core, custom)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	s.writeHistory(ctx, pool, newUUID, "convert", ownerEmp)
 	newRec, err := s.GetRecord(ctx, pool, newUUID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
-	return newRec, id, nil
+	return newRec, id, true, nil
 }
 
 // Approve, Reject, GetApprovalInfo, PendingApprovals, entryApprovalStatus and
@@ -947,34 +984,6 @@ func (s *relationalStore) typeIDByCode(ctx context.Context, pool *pgxpool.Pool, 
 		return 0, fmt.Errorf("record type %q: %w", code, err)
 	}
 	return id, nil
-}
-
-// resolveCreateStatus validates a chosen status belongs to typeID, or defaults
-// to the first status of that stage.
-func (s *relationalStore) resolveCreateStatus(ctx context.Context, pool *pgxpool.Pool, typeID int, chosen string) (int, error) {
-	if chosen != "" {
-		sid, err := strconv.Atoi(chosen)
-		if err != nil {
-			return 0, ClientError{Msg: "Invalid status id."}
-		}
-		var rt int
-		if err := pool.QueryRow(ctx,
-			`SELECT crm_status_record_type FROM lkp_crm_status WHERE crm_status_id = $1`, sid).Scan(&rt); err != nil {
-			return 0, ClientError{Msg: "Unknown status."}
-		}
-		if rt != typeID {
-			return 0, ClientError{Msg: "The selected status does not belong to this stage."}
-		}
-		return sid, nil
-	}
-	var sid int
-	if err := pool.QueryRow(ctx, `
-		SELECT crm_status_id FROM lkp_crm_status
-		WHERE crm_status_record_type = $1 AND crm_status_is_active AND crm_status_deleted_at IS NULL
-		ORDER BY crm_status_id LIMIT 1`, typeID).Scan(&sid); err != nil {
-		return 0, fmt.Errorf("default status for type %d: %w", typeID, err)
-	}
-	return sid, nil
 }
 
 func (s *relationalStore) statusTypeAndCode(ctx context.Context, pool *pgxpool.Pool, statusID int) (string, string, error) {

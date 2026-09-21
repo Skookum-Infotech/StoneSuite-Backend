@@ -64,22 +64,23 @@ func TestForwardOnlyRule(t *testing.T) {
 	}
 }
 
-// TestMarkInitialStatuses checks that only the first status per stage (i.e.
-// the one statusesForTypeCodes' SQL ORDER BY placed first for that
-// WorkflowKey — its lowest crm_status_id) is flagged initial, matching
-// resolveCreateStatus's own "lowest id wins" default-selection rule.
+// TestMarkInitialStatuses checks that each stage's initial status is flagged
+// by CODE (LNEW/PNEW/CDRF), not by position. The entry statuses were seeded
+// after the originals, so on an existing tenant they carry the HIGHEST ids --
+// the old "lowest id wins" rule would have flagged the wrong row.
 func TestMarkInitialStatuses(t *testing.T) {
 	in := []workflow.StatusInfo{
-		{StateID: "1", WorkflowKey: "lead"},
-		{StateID: "2", WorkflowKey: "lead"},
-		{StateID: "3", WorkflowKey: "prospect"},
-		{StateID: "4", WorkflowKey: "prospect"},
-		{StateID: "5", WorkflowKey: "customer"},
+		{StateID: "12", StateKey: "LNEW", WorkflowKey: "lead"},
+		{StateID: "1", StateKey: "LQUA", WorkflowKey: "lead"},
+		{StateID: "13", StateKey: "PNEW", WorkflowKey: "prospect"},
+		{StateID: "3", StateKey: "PDIS", WorkflowKey: "prospect"},
+		{StateID: "14", StateKey: "CDRF", WorkflowKey: "customer"},
+		{StateID: "9", StateKey: "CCLW", WorkflowKey: "customer"},
 	}
 	out := markInitialStatuses(in)
-	want := map[string]bool{"1": true, "2": false, "3": true, "4": false, "5": true}
+	want := map[string]bool{"12": true, "1": false, "13": true, "3": false, "14": true, "9": false}
 	for _, s := range out {
-		assert.Equalf(t, want[s.StateID], s.IsInitial, "status %s (%s)", s.StateID, s.WorkflowKey)
+		assert.Equalf(t, want[s.StateID], s.IsInitial, "status %s (%s)", s.StateID, s.StateKey)
 	}
 }
 

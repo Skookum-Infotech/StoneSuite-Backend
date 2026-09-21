@@ -76,14 +76,16 @@ func (s *IndexingStore) DeleteRecord(ctx context.Context, pool *pgxpool.Pool, id
 }
 
 // ConvertRecord converts a record to the next stage, then enqueues both the
-// new record and the (still-existing) source record for re-indexing.
-func (s *IndexingStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (*workflow.Record, string, error) {
-	newRec, srcID, err := s.Store.ConvertRecord(ctx, pool, id, targetKey, core, custom, actorIdentityID)
-	if err == nil {
+// new record and the (still-existing) source record for re-indexing. When the
+// source had already been converted (created is false) nothing was written, so
+// nothing is re-indexed.
+func (s *IndexingStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (*workflow.Record, string, bool, error) {
+	newRec, srcID, created, err := s.Store.ConvertRecord(ctx, pool, id, targetKey, core, custom, actorIdentityID)
+	if err == nil && created {
 		if newRec != nil {
 			s.index(ctx, newRec.ID, "upsert")
 		}
 		s.index(ctx, srcID, "upsert")
 	}
-	return newRec, srcID, err
+	return newRec, srcID, created, err
 }

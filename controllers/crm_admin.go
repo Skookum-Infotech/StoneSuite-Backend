@@ -150,7 +150,7 @@ func (h *CRMAdminOps) ListApprovers(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateApprover POST /api/tenant/config/approvers
-// body {"recordTypeCode":"CUST","crmStatusCode":"CCLW","approverEmployeeId":2}
+// body {"recordTypeCode":"CUST","approverEmployeeId":2}
 func (h *CRMAdminOps) CreateApprover(w http.ResponseWriter, r *http.Request) {
 	_, identityID, ok := h.requireConfig(w, r)
 	if !ok {

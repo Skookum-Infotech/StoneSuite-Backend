@@ -13,8 +13,9 @@ import (
 )
 
 // TestCRMTransitionAllowed is the full status-move matrix: the Lead flow (New ->
-// Qualified | Unqualified, both final) and the free-form Prospect/Customer rule
-// (own or later stage, never back to an entry status, never to the current one).
+// Qualified | Unqualified, both final), the Prospect flow (free between its
+// working statuses, Pending Conversion only from them) and the free-form
+// Customer rule (any own-stage status except the current one and Draft).
 func TestCRMTransitionAllowed(t *testing.T) {
 	tests := []struct {
 		name                     string
@@ -33,13 +34,29 @@ func TestCRMTransitionAllowed(t *testing.T) {
 		{"new lead cannot skip to a prospect status", "LEAD", "LNEW", "PROS", "PDIS", false},
 		{"qualified lead cannot jump to a customer status", "LEAD", "LQUA", "CUST", "CCLW", false},
 
-		// Prospect: own or later stage, minus its current status and entry statuses.
+		// Prospect: New -> a working status or Lost. Working statuses move freely
+		// and reach Lost or Pending Conversion. Lost reopens to a working status.
+		// Pending Conversion goes back to a working status or Lost. Nothing returns
+		// to New and nothing leaves the stage.
 		{"new prospect -> in discussion", "PROS", "PNEW", "PROS", "PDIS", true},
-		{"prospect sideways within its stage", "PROS", "PDIS", "PROS", "PNEG", true},
-		{"prospect -> closed lost", "PROS", "PDIS", "PROS", "PCLL", true},
-		{"prospect cannot return to new", "PROS", "PDIS", "PROS", "PNEW", false},
-		{"prospect -> its own current status", "PROS", "PDIS", "PROS", "PDIS", false},
-		{"prospect advances into a customer status", "PROS", "PPUR", "CUST", "CCLW", true},
+		{"new prospect -> contacted", "PROS", "PNEW", "PROS", "PPUR", true},
+		{"new prospect -> lost", "PROS", "PNEW", "PROS", "PCLL", true},
+		{"new prospect cannot skip to pending conversion", "PROS", "PNEW", "PROS", "PPCV", false},
+		{"prospect with no status is treated as new", "PROS", "", "PROS", "PDIS", true},
+		{"prospect with no status cannot skip to pending conversion", "PROS", "", "PROS", "PPCV", false},
+		{"working status -> another working status", "PROS", "PDIS", "PROS", "PNEG", true},
+		{"working status can move backwards too", "PROS", "PIDM", "PROS", "PPRP", true},
+		{"working status -> lost", "PROS", "PNEG", "PROS", "PCLL", true},
+		{"working status -> pending conversion", "PROS", "PPRP", "PROS", "PPCV", true},
+		{"working status -> its own current status", "PROS", "PDIS", "PROS", "PDIS", false},
+		{"working status cannot return to new", "PROS", "PDIS", "PROS", "PNEW", false},
+		{"lost is reopened to a working status", "PROS", "PCLL", "PROS", "PDIS", true},
+		{"lost cannot go straight to pending conversion", "PROS", "PCLL", "PROS", "PPCV", false},
+		{"pending conversion goes back to a working status", "PROS", "PPCV", "PROS", "PNEG", true},
+		{"pending conversion -> lost", "PROS", "PPCV", "PROS", "PCLL", true},
+		{"pending conversion cannot return to new", "PROS", "PPCV", "PROS", "PNEW", false},
+		{"pending conversion -> itself", "PROS", "PPCV", "PROS", "PPCV", false},
+		{"prospect cannot be moved into a customer status", "PROS", "PPCV", "CUST", "CCLW", false},
 		{"prospect cannot enter customer at draft", "PROS", "PDIS", "CUST", "CDRF", false},
 		{"prospect cannot fall back to a lead status", "PROS", "PDIS", "LEAD", "LQUA", false},
 
@@ -59,8 +76,27 @@ func TestCRMTransitionAllowed(t *testing.T) {
 	}
 }
 
-// TestFilterCRMTargets checks what the status dropdown is handed: it must be
-// exactly the moves crmTransitionAllowed permits, and never nil.
+// TestProspectWorkingStatusesMoveFreely pins the requirement itself, so a change
+// to the flow table cannot quietly break it: every working status reaches every
+// other one, Lost and Pending Conversion, and none goes back to New.
+func TestProspectWorkingStatusesMoveFreely(t *testing.T) {
+	require.NotEmpty(t, prospectWorking)
+	for _, from := range prospectWorking {
+		for _, to := range prospectWorking {
+			assert.Equalf(t, from != to, crmTransitionAllowed("PROS", from, "PROS", to), "%s -> %s", from, to)
+		}
+		for _, to := range []string{statusProspectLost, statusProspectPendingConversion} {
+			assert.Truef(t, crmTransitionAllowed("PROS", from, "PROS", to), "%s -> %s", from, to)
+		}
+		assert.Falsef(t, crmTransitionAllowed("PROS", from, "PROS", statusProspectNew), "%s -> New", from)
+	}
+}
+
+// TestFilterCRMTargets checks what the status dropdown is handed: exactly the
+// moves crmTransitionAllowed permits, minus the action-only statuses, and never
+// nil. The candidate list mirrors what AvailableTransitions passes in -- the
+// record's own stage AND every later one -- so it also proves a prospect is
+// never offered a customer status.
 func TestFilterCRMTargets(t *testing.T) {
 	all := []workflow.StatusInfo{
 		{StateID: "12", StateKey: "LNEW", WorkflowKey: "lead"},
@@ -68,7 +104,9 @@ func TestFilterCRMTargets(t *testing.T) {
 		{StateID: "2", StateKey: "LUNQ", WorkflowKey: "lead"},
 		{StateID: "13", StateKey: "PNEW", WorkflowKey: "prospect"},
 		{StateID: "3", StateKey: "PDIS", WorkflowKey: "prospect"},
+		{StateID: "4", StateKey: "PNEG", WorkflowKey: "prospect"},
 		{StateID: "8", StateKey: "PCLL", WorkflowKey: "prospect"},
+		{StateID: "15", StateKey: "PPCV", WorkflowKey: "prospect"},
 		{StateID: "14", StateKey: "CDRF", WorkflowKey: "customer"},
 		{StateID: "9", StateKey: "CCLW", WorkflowKey: "customer"},
 	}
@@ -87,8 +125,10 @@ func TestFilterCRMTargets(t *testing.T) {
 		{"new lead offers only qualified and unqualified", "LEAD", "LNEW", []string{"LQUA", "LUNQ"}},
 		{"qualified lead offers nothing", "LEAD", "LQUA", []string{}},
 		{"unqualified lead offers nothing", "LEAD", "LUNQ", []string{}},
-		{"new prospect offers every working status", "PROS", "PNEW", []string{"PDIS", "PCLL", "CCLW"}},
-		{"prospect skips its own status and entry statuses", "PROS", "PDIS", []string{"PCLL", "CCLW"}},
+		{"new prospect offers the working statuses and lost, not pending conversion", "PROS", "PNEW", []string{"PDIS", "PNEG", "PCLL"}},
+		{"a working prospect offers the others and lost, not pending conversion", "PROS", "PDIS", []string{"PNEG", "PCLL"}},
+		{"pending conversion can be undone from the dropdown", "PROS", "PPCV", []string{"PDIS", "PNEG", "PCLL"}},
+		{"a lost prospect can be reopened", "PROS", "PCLL", []string{"PDIS", "PNEG"}},
 		{"customer offers nothing when only entry and current remain", "CUST", "CCLW", []string{}},
 	}
 	for _, tc := range tests {
@@ -100,8 +140,23 @@ func TestFilterCRMTargets(t *testing.T) {
 	}
 }
 
+// TestActionOnlyStatusesAreAcceptedButNeverListed: the header button goes
+// through TransitionRecord, so an action-only status has to pass the predicate,
+// yet the status dropdown must never list it.
+func TestActionOnlyStatusesAreAcceptedButNeverListed(t *testing.T) {
+	require.NotEmpty(t, crmActionOnlyStatuses)
+	for code := range crmActionOnlyStatuses {
+		t.Run(code, func(t *testing.T) {
+			candidate := []workflow.StatusInfo{{StateID: "1", StateKey: code, WorkflowKey: "prospect"}}
+			assert.Empty(t, filterCRMTargets("PROS", statusProspectInDiscussion, candidate), "must not be listed")
+			assert.True(t, crmTransitionAllowed("PROS", statusProspectInDiscussion, "PROS", code), "must stay a legal target")
+		})
+	}
+}
+
 // TestCRMStatusIsTerminal covers the pill's confirm-click rule: the original
-// "Closed ..." name rule plus any status a stage flow gives no way out of.
+// "Closed ..." name rule, a lost prospect by code, plus any status a stage flow
+// gives no way out of.
 func TestCRMStatusIsTerminal(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -113,9 +168,12 @@ func TestCRMStatusIsTerminal(t *testing.T) {
 		{"lead qualified is final", "LEAD", "LQUA", "Lead Qualified", true},
 		{"lead unqualified is final", "LEAD", "LUNQ", "Lead Unqualified", true},
 		{"lead new has moves", "LEAD", "LNEW", "New", false},
-		{"closed lost by name", "PROS", "PCLL", "Prospect Closed Lost", true},
+		{"a lost prospect is terminal by code, whatever it is called", "PROS", "PCLL", "Lost", true},
 		{"closed won by name", "CUST", "CCLW", "Customer Closed Won", true},
-		{"prospect in discussion has moves", "PROS", "PDIS", "Prospect In Discussion", false},
+		{"customer closed lost by name", "CUST", "CCLL", "Customer Closed Lost", true},
+		{"prospect in discussion has moves", "PROS", "PDIS", "In Discussion", false},
+		{"pending conversion is not an end point", "PROS", "PPCV", "Pending Conversion", false},
+		{"new prospect has moves", "PROS", "PNEW", "New", false},
 		{"customer renewal has moves", "CUST", "CREN", "Customer Renewal", false},
 		{"customer draft has moves", "CUST", "CDRF", "Draft", false},
 		{"a code the lead flow does not know is not terminal", "LEAD", "XXXX", "Something", false},
@@ -127,32 +185,36 @@ func TestCRMStatusIsTerminal(t *testing.T) {
 	}
 }
 
-// TestCheckConvertFrom: only a Qualified lead may be converted; stages with no
-// requirement convert from any status.
+// TestCheckConvertFrom: only a Qualified lead and a Pending Conversion prospect
+// may be converted; a stage with no requirement converts from any status.
 func TestCheckConvertFrom(t *testing.T) {
 	tests := []struct {
 		name       string
 		typeCode   string
 		statusCode string
-		wantErr    bool
+		wantMsg    string // "" means the conversion is allowed
 	}{
-		{"qualified lead may convert", "LEAD", "LQUA", false},
-		{"new lead may not", "LEAD", "LNEW", true},
-		{"unqualified lead may not", "LEAD", "LUNQ", true},
-		{"lead with no status may not", "LEAD", "", true},
-		{"prospect converts from any status", "PROS", "PDIS", false},
-		{"prospect with no status still converts", "PROS", "", false},
+		{"qualified lead may convert", "LEAD", "LQUA", ""},
+		{"new lead may not", "LEAD", "LNEW", msgConvertNeedsQualified},
+		{"unqualified lead may not", "LEAD", "LUNQ", msgConvertNeedsQualified},
+		{"lead with no status may not", "LEAD", "", msgConvertNeedsQualified},
+		{"pending conversion prospect may convert", "PROS", "PPCV", ""},
+		{"working prospect may not", "PROS", "PDIS", msgConvertNeedsPendingConversion},
+		{"new prospect may not", "PROS", "PNEW", msgConvertNeedsPendingConversion},
+		{"lost prospect may not", "PROS", "PCLL", msgConvertNeedsPendingConversion},
+		{"prospect with no status may not", "PROS", "", msgConvertNeedsPendingConversion},
+		{"a stage with no rule converts from any status", "CUST", "CCLW", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkConvertFrom(tc.typeCode, tc.statusCode)
-			if !tc.wantErr {
+			if tc.wantMsg == "" {
 				assert.NoError(t, err)
 				return
 			}
 			var ce ClientError
 			require.ErrorAs(t, err, &ce)
-			assert.Equal(t, msgConvertNeedsQualified, ce.Msg)
+			assert.Equal(t, tc.wantMsg, ce.Msg)
 			assert.True(t, IsClientError(err), "must surface as a 400")
 		})
 	}
@@ -174,10 +236,14 @@ func TestCRMStatusRuleTablesAreConsistent(t *testing.T) {
 			assert.Falsef(t, targets[initial], "stage %s: %s -> %s targets the entry-only initial status", stage, from, initial)
 		}
 	}
-	for stage, required := range crmConvertFromStatus {
+	for stage, rule := range crmConvertRules {
+		assert.NotEmptyf(t, rule.msg, "stage %s: a convert rule needs the message it shows", stage)
 		if flow, ok := crmStageFlows[stage]; ok {
-			assert.Truef(t, flow.Known(required), "stage %s: convert-from status %s is not in its flow", stage, required)
+			assert.Truef(t, flow.Known(rule.from), "stage %s: convert-from status %s is not in its flow", stage, rule.from)
 		}
+	}
+	for code := range crmActionOnlyStatuses {
+		assert.NotContainsf(t, crmInitialStatusCodes(), code, "%s is entry-only, so it cannot also be an action-only target", code)
 	}
 }
 
@@ -207,12 +273,44 @@ func TestCRMStatusRulesAreSeeded(t *testing.T) {
 			}
 		}
 	}
-	for stage, code := range crmConvertFromStatus {
-		needed = append(needed, codeInStage{code, stage})
+	for stage, rule := range crmConvertRules {
+		needed = append(needed, codeInStage{rule.from, stage})
 	}
 
 	for _, n := range needed {
 		pattern := fmt.Sprintf(`\('%s',\s*'[^']+',\s*%d,`, n.code, stageTypeID[n.stage])
 		assert.Regexpf(t, pattern, block, "status %s is not seeded under stage %s", n.code, n.stage)
 	}
+}
+
+// TestProspectStatusRename guards the prospect rename from both sides: the seed
+// carries the new names (a fresh tenant) and a guarded UPDATE renames the old
+// ones (a tenant seeded before the rename). If the two ever disagree, fresh and
+// existing tenants end up with different labels.
+func TestProspectStatusRename(t *testing.T) {
+	raw, err := os.ReadFile("../database/migrations/tenant/schema.sql")
+	require.NoError(t, err)
+	schema := string(raw)
+	seed := regexp.MustCompile(`(?s)INSERT INTO lkp_crm_status\b.*?ON CONFLICT`).FindString(schema)
+	require.NotEmpty(t, seed, "the lkp_crm_status seed block was not found in schema.sql")
+
+	renames := []struct{ code, oldName, newName string }{
+		{"PDIS", "Prospect In Discussion", "In Discussion"},
+		{"PNEG", "Prospect In Negotiation", "In Negotiation"},
+		{"PPRP", "Prospect Proposal", "Proposal Sent"},
+		{"PIDM", "Prospect Identified Decision Makers", "Decision Pending"},
+		{"PPUR", "Prospect Purchasing", "Contacted"},
+		{"PCLL", "Prospect Closed Lost", "Lost"},
+	}
+	for _, r := range renames {
+		t.Run(r.code, func(t *testing.T) {
+			seeded := fmt.Sprintf(`\('%s',\s*'%s',\s*2,`, r.code, regexp.QuoteMeta(r.newName))
+			assert.Regexp(t, seeded, seed, "the seed must carry the new name")
+			assert.NotContains(t, seed, "'"+r.oldName+"'", "the seed must not carry the old name")
+			renamed := fmt.Sprintf(`\('%s',\s*'%s',\s*'%s'\)`, r.code, regexp.QuoteMeta(r.oldName), regexp.QuoteMeta(r.newName))
+			assert.Regexp(t, renamed, schema, "the UPDATE must rename old -> new")
+		})
+	}
+	assert.Contains(t, schema, "AND cs.crm_status_name = r.old_name",
+		"the rename must match on the old name so it runs once and never overwrites a later rename")
 }

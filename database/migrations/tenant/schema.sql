@@ -788,12 +788,12 @@ CREATE TABLE IF NOT EXISTS lkp_crm_status (
 INSERT INTO lkp_crm_status (crm_status_code, crm_status_name, crm_status_record_type, crm_status_is_active, crm_status_is_system, crm_status_created_by) VALUES
     ('LQUA', 'Lead Qualified',                       1, TRUE, TRUE, 1),
     ('LUNQ', 'Lead Unqualified',                     1, TRUE, TRUE, 1),
-    ('PDIS', 'Prospect In Discussion',               2, TRUE, TRUE, 1),
-    ('PNEG', 'Prospect In Negotiation',              2, TRUE, TRUE, 1),
-    ('PPRP', 'Prospect Proposal',                    2, TRUE, TRUE, 1),
-    ('PIDM', 'Prospect Identified Decision Makers',  2, TRUE, TRUE, 1),
-    ('PPUR', 'Prospect Purchasing',                  2, TRUE, TRUE, 1),
-    ('PCLL', 'Prospect Closed Lost',                 2, TRUE, TRUE, 1),
+    ('PDIS', 'In Discussion',                        2, TRUE, TRUE, 1),
+    ('PNEG', 'In Negotiation',                       2, TRUE, TRUE, 1),
+    ('PPRP', 'Proposal Sent',                        2, TRUE, TRUE, 1),
+    ('PIDM', 'Decision Pending',                     2, TRUE, TRUE, 1),
+    ('PPUR', 'Contacted',                            2, TRUE, TRUE, 1),
+    ('PCLL', 'Lost',                                 2, TRUE, TRUE, 1),
     ('CCLW', 'Customer Closed Won',                  3, TRUE, TRUE, 1),
     ('CCLL', 'Customer Closed Lost',                 3, TRUE, TRUE, 1),
     ('CREN', 'Customer Renewal',                     3, TRUE, TRUE, 1),
@@ -803,8 +803,36 @@ INSERT INTO lkp_crm_status (crm_status_code, crm_status_name, crm_status_record_
     -- appended last so a fresh tenant and one that predates them number alike.
     ('LNEW', 'New',                                  1, TRUE, TRUE, 1),
     ('PNEW', 'New',                                  2, TRUE, TRUE, 1),
-    ('CDRF', 'Draft',                                3, TRUE, TRUE, 1)
+    ('CDRF', 'Draft',                                3, TRUE, TRUE, 1),
+    -- Prospect Pending Conversion: set by the Pending Conversion header button and
+    -- never picked from the status dropdown (crmActionOnlyStatuses). It is the only
+    -- status a prospect can be converted to a customer from (crmConvertRules).
+    -- Appended last for the same reason as the entry statuses above.
+    ('PPCV', 'Pending Conversion',                   2, TRUE, TRUE, 1)
 ON CONFLICT (crm_status_code, crm_status_record_type) DO NOTHING;
+
+-- Prospect statuses were renamed to drop the "Prospect " prefix and shorten them.
+-- The seed above never overwrites an existing row, so a tenant created before the
+-- rename still carries the old names. Each row is matched on its OLD name, so it is
+-- renamed exactly once and a name someone sets later is never overwritten. A row
+-- whose new name is already taken is skipped, since names are unique per record
+-- type and a clash must not abort the migration for the whole tenant.
+UPDATE lkp_crm_status AS cs
+   SET crm_status_name = r.new_name
+  FROM (VALUES
+        ('PDIS', 'Prospect In Discussion',              'In Discussion'),
+        ('PNEG', 'Prospect In Negotiation',             'In Negotiation'),
+        ('PPRP', 'Prospect Proposal',                   'Proposal Sent'),
+        ('PIDM', 'Prospect Identified Decision Makers', 'Decision Pending'),
+        ('PPUR', 'Prospect Purchasing',                 'Contacted'),
+        ('PCLL', 'Prospect Closed Lost',                'Lost')
+  ) AS r(code, old_name, new_name)
+ WHERE cs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'PROS')
+   AND cs.crm_status_code = r.code
+   AND cs.crm_status_name = r.old_name
+   AND NOT EXISTS (SELECT 1 FROM lkp_crm_status x
+                    WHERE x.crm_status_record_type = cs.crm_status_record_type
+                      AND x.crm_status_name = r.new_name);
 
 -- 7. lkp_customer_type ------------------------------------------------
 CREATE TABLE IF NOT EXISTS lkp_customer_type (

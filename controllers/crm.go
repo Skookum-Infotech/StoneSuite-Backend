@@ -567,8 +567,9 @@ type convertRequest struct {
 
 // ConvertRecord POST /api/tenant/crm/records/{id}/convert
 //
-// Creates a record in a later stage as a copy of the source (a Qualified Lead
-// becomes a Prospect in its initial status). Idempotent: converting a source
+// Creates a record in a later stage as a copy of the source, in that stage's
+// initial status: a Qualified Lead becomes a Prospect (New) and a Prospect in
+// Pending Conversion becomes a Customer (Draft). Idempotent: converting a source
 // that was already converted returns the record made from it with 200 and
 // "created": false instead of a duplicate — but only if the caller could read
 // that record anyway; otherwise 409, which says the conversion happened

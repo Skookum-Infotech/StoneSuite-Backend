@@ -309,9 +309,11 @@ func (s *relationalStore) Statuses(ctx context.Context, pool *pgxpool.Pool, key 
 	return s.statusesForTypeCodes(ctx, pool, []string{code})
 }
 
-// AvailableTransitions lists the statuses the record may move to from its
-// current one: every candidate in its own or a later stage, narrowed by
-// crmTransitionAllowed -- the same predicate TransitionRecord enforces.
+// AvailableTransitions lists the statuses the record may pick from its status
+// dropdown: every candidate in its own or a later stage, narrowed by
+// crmTransitionAllowed -- the same predicate TransitionRecord enforces -- and
+// minus the action-only statuses (Pending Conversion), which a header button
+// sets instead. TransitionRecord still accepts those.
 func (s *relationalStore) AvailableTransitions(ctx context.Context, pool *pgxpool.Pool, id string) ([]workflow.StatusInfo, error) {
 	_, typeCode, statusID, _, err := s.recordKeyInfo(ctx, pool, id)
 	if err != nil {

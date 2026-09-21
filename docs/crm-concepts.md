@@ -17,18 +17,27 @@ again opens the prospect that was already created rather than making another.
 ## Prospects
 
 A prospect is a qualified lead now being actively worked as a sales
-opportunity. Every prospect starts in New. The prospect pipeline is: In
-Discussion → Identified Decision Makers → Qualified → Proposal → In
-Negotiation → Purchasing, with Closed Lost as the exit point if the deal falls
-through at any stage. A prospect that completes purchasing converts into a
-customer.
+opportunity. Every prospect starts in New. From New it is moved into one of the
+working statuses — In Discussion, In Negotiation, Proposal Sent, Decision
+Pending or Contacted — or straight to Lost if the deal falls through. The
+working statuses can be changed freely, in any order, and a Lost prospect can
+be reopened. When the deal is ready to become a customer, the prospect is
+marked Pending Conversion, using the Pending Conversion button on the prospect
+page. A prospect in Pending Conversion is converted with the Convert to
+Customer action, which creates a new customer (starting in Draft) from the
+prospect's details and leaves the prospect as it is. Converting the same
+prospect again opens the customer that was already created rather than making
+another. If approvers are configured for prospects, a new prospect waits for
+approval before it can be edited or moved to another status (Lost is always
+allowed).
 
 ## Customers
 
-A customer is a closed-won deal. Every customer starts in Draft and is set to
-Closed Won once the deal is done. The customer pipeline is: Draft → Closed Won
-→ Renewal, with Closed Lost as the exit point (e.g. churn). Customers can cycle
-back into Renewal repeatedly as their relationship continues.
+A customer is a closed-won deal. Every customer starts in Draft — whether it
+was added directly or converted from a prospect — and is set to Closed Won once
+the deal is done. The customer pipeline is: Draft → Closed Won → Renewal, with
+Closed Lost as the exit point (e.g. churn). Customers can cycle back into
+Renewal repeatedly as their relationship continues.
 
 ## Custom fields
 

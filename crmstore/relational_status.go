@@ -6,24 +6,29 @@
 //   - The status a record STARTS in for each stage -- Lead New, Prospect New,
 //     Customer Draft -- resolved by code, never by "lowest id": tenants that
 //     predate these statuses were seeded with them at the highest ids.
-//   - Which status moves are legal. Only the Lead stage has a fixed flow (New ->
-//     Qualified | Unqualified, both final); Prospect and Customer keep the
-//     original free-form rule: any status of the record's own stage or a later
-//     one.
-//   - Which status a record must be in before it may be converted onward.
+//   - Which status moves are legal. Lead and Prospect each have a fixed flow
+//     (crmStageFlows). A lead goes New -> Qualified | Unqualified, both final. A
+//     prospect moves freely between its working statuses, and from them to Lost or
+//     Pending Conversion. Customer keeps the original free-form rule: any status
+//     of its own stage except the current one and the entry status.
+//   - Which status a record must be in before it may be converted onward
+//     (crmConvertRules): a Qualified lead, a Pending Conversion prospect.
 //
 // Every rule is a pure function over status codes, so it is unit-testable
 // without a database, and AvailableTransitions and TransitionRecord share ONE
 // predicate (crmTransitionAllowed) -- the dropdown can never offer a move the
-// API would refuse. The approval gate (relational_approval.go) is a separate
-// concern layered on top and is unchanged. The frontend mirrors
-// crmConvertFromStatus in src/lib/crmStatusFlow.ts -- keep the two in sync.
+// API would refuse. The one deliberate gap runs the other way: an action-only
+// status (crmActionOnlyStatuses) is accepted by the API but never listed. The
+// approval gate (relational_approval.go) is a separate concern layered on top
+// and is unchanged. The frontend mirrors crmConvertRules and the prospect's
+// working statuses in src/lib/crmStatusFlow.ts -- keep them in sync.
 package crmstore
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -38,13 +43,25 @@ const (
 	statusLeadNew         = "LNEW"
 	statusLeadQualified   = "LQUA"
 	statusLeadUnqualified = "LUNQ"
-	statusProspectNew     = "PNEW"
-	statusCustomerDraft   = "CDRF"
+
+	statusProspectNew               = "PNEW"
+	statusProspectInDiscussion      = "PDIS"
+	statusProspectInNegotiation     = "PNEG"
+	statusProspectProposalSent      = "PPRP"
+	statusProspectDecisionPending   = "PIDM"
+	statusProspectContacted         = "PPUR"
+	statusProspectLost              = "PCLL"
+	statusProspectPendingConversion = "PPCV"
+
+	statusCustomerDraft = "CDRF"
 )
 
-// msgConvertNeedsQualified is the 400 shown when a lead that is not Qualified
+// The 400s shown when a record that is not in its stage's convert-from status
 // is converted.
-const msgConvertNeedsQualified = "Only a Qualified lead can be converted."
+const (
+	msgConvertNeedsQualified         = "Only a Qualified lead can be converted."
+	msgConvertNeedsPendingConversion = "Only a prospect in Pending Conversion can be converted."
+)
 
 // crmInitialStatusCode is the status a record takes on entering each stage
 // (keyed by record type code), on create and on convert. It is entry-only: no
@@ -59,18 +76,80 @@ var crmInitialStatusCode = map[string]string{
 // keyed by record type code. A stage with no entry keeps the free-form rule
 // (see crmTransitionAllowed). Lead's Qualified and Unqualified are deliberately
 // final: a lead's outcome is settled once, and the way forward from Qualified
-// is converting it into a prospect.
+// is converting it into a prospect. A prospect's way forward is the same: it is
+// marked Pending Conversion and then converted into a customer.
 var crmStageFlows = map[string]docflow.Machine{
 	"LEAD": {
 		statusLeadNew:         {statusLeadQualified: true, statusLeadUnqualified: true},
 		statusLeadQualified:   {},
 		statusLeadUnqualified: {},
 	},
+	"PROS": prospectFlow(),
 }
 
-// crmConvertFromStatus names the status a record must be in before it can be
-// converted to a later stage. A stage with no entry converts from any status.
-var crmConvertFromStatus = map[string]string{"LEAD": statusLeadQualified}
+// prospectWorking are the statuses a prospect is worked through. It moves
+// freely between them, and a prospect in any of them may be marked Pending
+// Conversion. The frontend mirrors this list (CRM_PENDING_CONVERSION_FROM in
+// src/lib/crmStatusFlow.ts) to know when to offer that button.
+var prospectWorking = []string{
+	statusProspectInDiscussion, statusProspectInNegotiation, statusProspectProposalSent,
+	statusProspectDecisionPending, statusProspectContacted,
+}
+
+// prospectFlow builds the Prospect stage's status graph:
+//
+//   - New goes to any working status, or straight to Lost;
+//   - a working status goes to any other working status, to Lost, or to Pending
+//     Conversion;
+//   - Lost goes back to any working status (a lost deal can be reopened) but never
+//     to Pending Conversion -- a deal is worked before it is converted;
+//   - Pending Conversion goes back to any working status or to Lost, so marking
+//     one by mistake can be undone.
+//
+// Nothing goes back to New, and nothing leaves the stage: a customer is made by
+// converting, not by moving the prospect itself.
+func prospectFlow() docflow.Machine {
+	lost := []string{statusProspectLost}
+	flow := docflow.Machine{
+		statusProspectNew:               targetSet(slices.Concat(prospectWorking, lost)...),
+		statusProspectLost:              targetSet(prospectWorking...),
+		statusProspectPendingConversion: targetSet(slices.Concat(prospectWorking, lost)...),
+	}
+	for _, from := range prospectWorking {
+		others := slices.DeleteFunc(slices.Clone(prospectWorking), func(code string) bool { return code == from })
+		flow[from] = targetSet(slices.Concat(others, lost, []string{statusProspectPendingConversion})...)
+	}
+	return flow
+}
+
+// targetSet turns a list of status codes into a docflow.Machine target set.
+func targetSet(codes ...string) map[string]bool {
+	set := make(map[string]bool, len(codes))
+	for _, code := range codes {
+		set[code] = true
+	}
+	return set
+}
+
+// crmActionOnlyStatuses are statuses a record reaches through a dedicated action
+// (a header button) rather than by picking them from the status dropdown. They
+// stay legal targets for TransitionRecord -- the button goes through it -- but
+// filterCRMTargets never lists them.
+var crmActionOnlyStatuses = map[string]bool{statusProspectPendingConversion: true}
+
+// crmConvertRule says what a record must be in before it can be converted to a
+// later stage, and what to tell the caller when it is not.
+type crmConvertRule struct {
+	from string // the status the record must be in
+	msg  string // the 400 shown otherwise
+}
+
+// crmConvertRules is keyed by record type code. A stage with no entry converts
+// from any status.
+var crmConvertRules = map[string]crmConvertRule{
+	"LEAD": {from: statusLeadQualified, msg: msgConvertNeedsQualified},
+	"PROS": {from: statusProspectPendingConversion, msg: msgConvertNeedsPendingConversion},
+}
 
 // crmInitialStatusCodes lists every stage's initial status code, for queries
 // that need to sort or flag them.
@@ -87,11 +166,11 @@ func crmInitialStatusCodes() []string {
 // record with no status); a stage with a flow then treats it as the stage's
 // initial status.
 //
-// A stage with a flow follows it exactly and never crosses into another stage:
-// leaving the stage is what converting is for. Every other stage keeps the
-// original rule -- any status of the same or a later stage, except the
-// record's current status and the entry-only initial statuses, so a record
-// moves forward or sideways but never back to "New" or "Draft".
+// A stage with a flow (Lead, Prospect) follows it exactly and never crosses
+// into another stage: leaving the stage is what converting is for. Every other
+// stage (Customer) keeps the original rule -- any status of the same or a later
+// stage, except the record's current status and the entry-only initial
+// statuses, so a record moves sideways but never back to "Draft".
 func crmTransitionAllowed(curType, curStatus, targetType, targetStatus string) bool {
 	if crmCodeRank[targetType] < crmCodeRank[curType] {
 		return false // forward-only across stages
@@ -110,11 +189,15 @@ func crmTransitionAllowed(curType, curStatus, targetType, targetStatus string) b
 }
 
 // filterCRMTargets narrows candidate statuses to the moves crmTransitionAllowed
-// permits from the record's current stage and status. Never returns nil, so it
-// serialises as [] rather than null.
+// permits from the record's current stage and status, minus the action-only
+// statuses (crmActionOnlyStatuses), which the dropdown never lists. Never
+// returns nil, so it serialises as [] rather than null.
 func filterCRMTargets(curType, curStatus string, candidates []workflow.StatusInfo) []workflow.StatusInfo {
 	out := make([]workflow.StatusInfo, 0, len(candidates))
 	for _, c := range candidates {
+		if crmActionOnlyStatuses[c.StateKey] {
+			continue
+		}
 		if crmTransitionAllowed(curType, curStatus, crmKeyToCode[c.WorkflowKey], c.StateKey) {
 			out = append(out, c)
 		}
@@ -124,9 +207,11 @@ func filterCRMTargets(curType, curStatus string, candidates []workflow.StatusInf
 
 // crmStatusIsTerminal reports whether a status is an end point the UI should
 // confirm before applying: a "Closed ..." status (the original name-based
-// rule) or one its stage's flow gives no way out of.
+// rule), a lost prospect (Lost no longer says "closed" in its name, and unlike
+// the rest it is not a dead end in its flow, since it can be reopened), or one
+// its stage's flow gives no way out of.
 func crmStatusIsTerminal(typeCode, statusCode, statusName string) bool {
-	if strings.Contains(strings.ToLower(statusName), "closed") {
+	if statusCode == statusProspectLost || strings.Contains(strings.ToLower(statusName), "closed") {
 		return true
 	}
 	flow, ok := crmStageFlows[typeCode]
@@ -143,15 +228,16 @@ func markInitialStatuses(statuses []workflow.StatusInfo) []workflow.StatusInfo {
 	return statuses
 }
 
-// checkConvertFrom enforces crmConvertFromStatus: a record whose stage requires
-// a particular status before converting (a Lead must be Qualified) is refused
-// with a 400 otherwise. statusCode may be "" for a record with no status.
+// checkConvertFrom enforces crmConvertRules: a record whose stage requires a
+// particular status before converting (a Lead must be Qualified, a Prospect
+// Pending Conversion) is refused with a 400 otherwise. statusCode may be "" for
+// a record with no status.
 func checkConvertFrom(typeCode, statusCode string) error {
-	required, constrained := crmConvertFromStatus[typeCode]
-	if !constrained || statusCode == required {
+	rule, constrained := crmConvertRules[typeCode]
+	if !constrained || statusCode == rule.from {
 		return nil
 	}
-	return ClientError{Msg: msgConvertNeedsQualified}
+	return ClientError{Msg: rule.msg}
 }
 
 // initialStatusID resolves the initial status of the stage whose record type id

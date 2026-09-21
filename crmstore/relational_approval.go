@@ -61,7 +61,7 @@ var (
 // crmAlwaysAllowedExitCodes are CRM status codes a gated record may still
 // move to without approval -- marking a dead deal dead is a way OUT of the
 // approval process, not a way past it. One per stage: Lead Unqualified,
-// Prospect Closed Lost, Customer Closed Lost. Mirrors
+// Prospect Lost, Customer Closed Lost. Mirrors
 // approvalchain.AlwaysAllowedExitCodes.
 var crmAlwaysAllowedExitCodes = map[string]bool{"LUNQ": true, "PCLL": true, "CCLL": true}
 

@@ -298,15 +298,21 @@ func (s *relationalStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, a
 	}
 
 	if finalize {
+		typeCode := crmKeyToCode[rec.WorkflowID]
+		// curStatusCode is passed "" here, never "CCHD": a customer is only
+		// ever pending approval while it is Draft (see this file's package
+		// doc), so creditLockRedirectSQL's Release Hold exemption can never
+		// actually apply to an approval -- there is nothing to exempt it from.
+		statusSQL := creditLockRedirectSQL(typeCode, "", crmApprovedStatusCode[typeCode], settledStatusSQL("$3"))
 		if _, err := pool.Exec(ctx, `
 			UPDATE customer SET
 				customer_is_approved = TRUE, customer_approval_status = 'approved',
 				customer_approved_by = $2, customer_approved_at = NOW(),
 				customer_rejected_by = NULL, customer_rejected_at = NULL, customer_rejection_reason = '',
-				customer_crm_status = `+settledStatusSQL("$3")+`,
+				customer_crm_status = `+statusSQL+`,
 				customer_updated_at = NOW(),
 				customer_record_version = customer_record_version + 1
-			WHERE customer_uuid = $1`, id, nullableInt(empID), crmApprovedStatusCode[crmKeyToCode[rec.WorkflowID]]); err != nil {
+			WHERE customer_uuid = $1`, id, nullableInt(empID), crmApprovedStatusCode[typeCode]); err != nil {
 			return nil, fmt.Errorf("approve customer record: %w", err)
 		}
 	}

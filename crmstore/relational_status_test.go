@@ -456,6 +456,60 @@ func TestEditedStatusReset(t *testing.T) {
 	}
 }
 
+func TestCreditLockSQLSet(t *testing.T) {
+	tests := []struct {
+		name              string
+		typeCode          string
+		curStatus, target string
+		want              string
+	}{
+		{"active customer put on credit hold locks it", "CUST", "CACT", "CCHD", ", customer_is_credit_lock = TRUE"},
+		{"credit-hold customer released to active unlocks it", "CUST", "CCHD", "CACT", ", customer_is_credit_lock = FALSE"},
+		{"credit-hold customer made inactive still unlocks it", "CUST", "CCHD", "CINA", ", customer_is_credit_lock = FALSE"},
+		{"draft customer made active is untouched", "CUST", "CDRF", "CACT", ""},
+		{"active customer made inactive is untouched", "CUST", "CACT", "CINA", ""},
+		{"inactive customer made active is untouched", "CUST", "CINA", "CACT", ""},
+		{"a lead's own transitions are never touched", "LEAD", "LNEW", "LQUA", ""},
+		{"a prospect's own transitions are never touched", "PROS", "PDIS", "PNEG", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, creditLockSQLSet(tc.typeCode, tc.curStatus, tc.target))
+		})
+	}
+}
+
+func TestCreditLockRedirectSQL(t *testing.T) {
+	const placeholder = "$2"
+	tests := []struct {
+		name              string
+		typeCode          string
+		curStatus, target string
+		wrapped           bool // true: redirected to Credit Hold when locked; false: placeholder passes through untouched
+	}{
+		{"draft customer made active is wrapped", "CUST", "CDRF", "CACT", true},
+		{"inactive customer made active is wrapped", "CUST", "CINA", "CACT", true},
+		{"credit-hold customer released to active is NOT wrapped -- Release Hold must actually reach Active", "CUST", "CCHD", "CACT", false},
+		{"active customer made inactive is untouched regardless of target", "CUST", "CACT", "CINA", false},
+		{"credit-hold customer made inactive is untouched", "CUST", "CCHD", "CINA", false},
+		{"draft customer put on credit hold directly is untouched (not a legal move anyway)", "CUST", "CDRF", "CCHD", false},
+		{"a lead's own transitions are never wrapped", "LEAD", "LNEW", "LQUA", false},
+		{"a prospect's own transitions are never wrapped", "PROS", "PDIS", "PNEG", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := creditLockRedirectSQL(tc.typeCode, tc.curStatus, tc.target, placeholder)
+			if !tc.wrapped {
+				assert.Equal(t, placeholder, got)
+				return
+			}
+			assert.Contains(t, got, "CASE WHEN customer.customer_is_credit_lock THEN")
+			assert.Contains(t, got, "crm_status_code = 'CCHD'")
+			assert.Contains(t, got, "ELSE ("+placeholder+") END")
+		})
+	}
+}
+
 // TestEditedStatusIsWhereApprovalStarts: the status an edit sends a customer to
 // is the one it is created in, and from it approval (or Make Active) can make it
 // usable again -- an edit must never strand a customer.

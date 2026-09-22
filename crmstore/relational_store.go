@@ -837,13 +837,13 @@ func (s *relationalStore) TransitionRecord(ctx context.Context, pool *pgxpool.Po
 			return nil, fmt.Errorf("clear stale approvals: %w", err)
 		}
 	} else {
-		_, err = pool.Exec(ctx, `
-			UPDATE customer SET
-				customer_crm_status = $2,
+		q := `UPDATE customer SET
+				customer_crm_status = ` + creditLockRedirectSQL(targetTypeCode, curStatusCode, targetStatusCode, "$2") + `,
 				customer_updated_at = NOW(),
-				customer_record_version = customer_record_version + 1
-			WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`,
-			id, statusID)
+				customer_record_version = customer_record_version + 1` +
+			creditLockSQLSet(targetTypeCode, curStatusCode, targetStatusCode) + `
+			WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`
+		_, err = pool.Exec(ctx, q, id, statusID)
 		if err != nil {
 			return nil, fmt.Errorf("transition customer record: %w", err)
 		}

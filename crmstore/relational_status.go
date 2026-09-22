@@ -219,6 +219,58 @@ var crmActionOnlyStatuses = map[string]bool{
 	statusCustomerCreditHold:        true,
 }
 
+// creditLockSQLSet returns the extra `, customer_is_credit_lock = ...` SQL
+// fragment a same-stage TransitionRecord update should append, so the field
+// defaults to matching whichever status the Credit Hold / Release Hold
+// button just set: entering Credit Hold locks it, leaving it unlocks it.
+// Empty for every other move, including every non-customer stage. This is a
+// default, not an enforced lock: customer_is_credit_lock stays an ordinary,
+// independently editable field on the Edit form afterward -- nothing stops
+// it drifting from the status again from there. Mirrors the frontend's
+// customer_is_credit_lock field (src/lib/crmFields.ts) and the buttons that
+// set CCHD/CACT (CustomerStatusActions.tsx).
+func creditLockSQLSet(typeCode, curStatusCode, targetStatusCode string) string {
+	if typeCode != "CUST" {
+		return ""
+	}
+	switch {
+	case targetStatusCode == statusCustomerCreditHold:
+		return `, customer_is_credit_lock = TRUE`
+	case curStatusCode == statusCustomerCreditHold:
+		return `, customer_is_credit_lock = FALSE`
+	default:
+		return ""
+	}
+}
+
+// creditHoldStatusIDSQL resolves Credit Hold's status id for whichever
+// customer row it is embedded next to -- the id creditLockRedirectSQL
+// redirects a locked customer into instead of Active.
+const creditHoldStatusIDSQL = `(SELECT cs.crm_status_id FROM lkp_crm_status cs
+	WHERE cs.crm_status_record_type = customer.record_type
+	  AND cs.crm_status_code = 'CCHD' AND cs.crm_status_is_active AND cs.crm_status_deleted_at IS NULL)`
+
+// creditLockRedirectSQL wraps targetSQL -- a SQL expression that resolves to
+// the status id a customer transition or approval is about to write -- so
+// that landing on Active while customer_is_credit_lock is currently set
+// redirects to Credit Hold instead. A customer created (or later edited)
+// with the checkbox ticked can otherwise only ever reach Draft, since
+// nothing stops it entering CUST there; without this, Make Active or an
+// approval settling it would carry it straight into Active still flagged
+// locked, contradicting the pill the moment it lands. Only a move that
+// would land on Active is ever wrapped -- every other target (Make
+// Inactive included) passes targetSQL through untouched regardless of the
+// lock -- and curStatusCode excludes Release Hold itself (Credit Hold ->
+// Active): that move clears the lock in the very same statement (see
+// creditLockSQLSet), so wrapping it here would trap a customer on Credit
+// Hold forever.
+func creditLockRedirectSQL(typeCode, curStatusCode, targetStatusCode, targetSQL string) string {
+	if typeCode != "CUST" || targetStatusCode != statusCustomerActive || curStatusCode == statusCustomerCreditHold {
+		return targetSQL
+	}
+	return `CASE WHEN customer.customer_is_credit_lock THEN ` + creditHoldStatusIDSQL + ` ELSE (` + targetSQL + `) END`
+}
+
 // crmConvertRule says what a record must be in before it can be converted to a
 // later stage, and what to tell the caller when it is not.
 type crmConvertRule struct {

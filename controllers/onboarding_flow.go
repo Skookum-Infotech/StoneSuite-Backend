@@ -121,19 +121,28 @@ func (h *TenantOps) reviewOnboarding(w http.ResponseWriter, r *http.Request, adm
 
 // ---- owner Customer workflow helpers ---------------------------------------
 
+// ownerPool resolves the platform-owner tenant and its DB pool -- the shared
+// first step for any public onboarding endpoint that needs read-only owner
+// data (workflow definitions, reference lookups) with no caller tenant/JWT
+// to resolve one from.
+func (h *TenantOps) ownerPool(ctx context.Context) (*tenancy.Tenant, *pgxpool.Pool, error) {
+	owner, err := h.CP.PlatformOwnerTenant(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !owner.Servable() {
+		return owner, nil, errors.New("owner workspace not provisioned")
+	}
+	pool, err := h.Router.PoolFor(ctx, owner)
+	return owner, pool, err
+}
+
 // ownerCustomerDef resolves the platform-owner tenant, its DB pool, and its
 // "customer" workflow definition.
 func (h *TenantOps) ownerCustomerDef(ctx context.Context) (*workflow.Definition, *tenancy.Tenant, *pgxpool.Pool, error) {
-	owner, err := h.CP.PlatformOwnerTenant(ctx)
+	owner, pool, err := h.ownerPool(ctx)
 	if err != nil {
-		return nil, nil, nil, err
-	}
-	if !owner.Servable() {
-		return nil, owner, nil, errors.New("owner workspace not provisioned")
-	}
-	pool, err := h.Router.PoolFor(ctx, owner)
-	if err != nil {
-		return nil, owner, nil, err
+		return nil, owner, pool, err
 	}
 	wfs, err := workflow.ListWorkflows(ctx, pool)
 	if err != nil {
@@ -197,6 +206,40 @@ func (h *TenantOps) FormSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": def.Fields})
+}
+
+// OnboardingLookups returns the read-only country + currency reference
+// lists from the owner workspace's own lkp_country/lkp_currency tables --
+// the same seed data every tenant's Company Profile country/currency
+// dropdowns are built from (see CRMLookups.GetLookups) -- so the public
+// onboarding form's Country/Currency fields can render real dropdowns
+// sourced from the lookup table instead of hardcoded guesses that can
+// silently drift from it. No auth: this is static reference data, not
+// tenant- or applicant-specific.
+// Path: GET /api/onboarding/lookups
+func (h *TenantOps) OnboardingLookups(w http.ResponseWriter, r *http.Request) {
+	_, pool, err := h.ownerPool(r.Context())
+	if err != nil {
+		// Degrade gracefully, same as FormSchema: empty lists let the form
+		// fall back to its own static defaults rather than failing.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": true, "countries": []LookupItem{}, "currencies": []CurrencyLookupItem{},
+		})
+		return
+	}
+	countries, err := queryLookupItems(r.Context(), pool,
+		`SELECT country_id, country_code2, country_name FROM lkp_country
+		 WHERE country_is_active AND country_deleted_at IS NULL ORDER BY country_name`)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load countries.")
+		return
+	}
+	currencies, err := queryCurrencyLookupItems(r.Context(), pool)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load currencies.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "countries": countries, "currencies": currencies})
 }
 
 // GetApply returns invite validity + any prefilled data for the public form.

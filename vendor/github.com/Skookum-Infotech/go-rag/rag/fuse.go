@@ -33,6 +33,9 @@ func fuseRRF(limit int, lists ...[]Citation) []Citation {
 				ordered = append(ordered, a)
 			}
 			a.score += 1.0 / float64(rrfK+rank+1) // rank+1 => 1-based
+			if c.Lexical || !c.DistanceValid {
+				a.c.Lexical = true
+			}
 		}
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {

@@ -3254,6 +3254,37 @@
         ]
       }
     },
+    "/api/tenant/ai/ask/stream": {
+      "post": {
+        "operationId": "post_tenant_ai_ask_stream",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "aiOps.AskStream",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/ai/conversations": {
       "get": {
         "operationId": "get_tenant_ai_conversations",

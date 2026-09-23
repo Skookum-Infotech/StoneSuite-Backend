@@ -25,6 +25,12 @@ func NewRAGRecordLoader(store Store, pool *pgxpool.Pool) *RAGRecordLoader {
 	return &RAGRecordLoader{store: store, pool: pool}
 }
 
+// ragPriorityFields render first in a record's indexed text, ahead of the
+// alphabetical rest: retrieval hands the model a byte-capped slice of each
+// record, and these are what a question most often names. Keys absent from a
+// record are skipped (the v1 and v2 stores name fields differently).
+var ragPriorityFields = []string{"record_number", "customer_name", "name", "company_name", "crm_status_name"}
+
 // Load resolves the record's workflow key + current state label into an
 // rag.RecordDoc, alongside the scope columns (workflow id, owner, team) RAG
 // retrieval will later AND the RBAC scope onto.
@@ -37,12 +43,17 @@ func (l *RAGRecordLoader) Load(ctx context.Context, sourceID string) (rag.Record
 	if err != nil {
 		return rag.RecordDoc{}, "", "", "", fmt.Errorf("resolve workflow key for %s: %w", sourceID, err)
 	}
+	core := withLookupLabels(ctx, l.pool, rec.CoreFields)
+	if rec.RecordNumber != "" {
+		core["record_number"] = rec.RecordNumber
+	}
 	doc := rag.RecordDoc{
 		WorkflowKey: key,
 		StateName:   l.stateName(ctx, rec.CurrentStateID),
-		Core:        rec.CoreFields,
+		Core:        core,
 		Custom:      rec.CustomFields,
 		FieldLabels: l.fieldLabels(ctx, key),
+		Priority:    ragPriorityFields,
 	}
 	return doc, workflowUUIDOrEmpty(rec.WorkflowID), rec.OwnerUserID, rec.TeamID, nil
 }

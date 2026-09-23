@@ -41,8 +41,12 @@ func main() {
 	}
 
 	var docsFS fs.FS = docs.FS
+	// Pruning is only correct against the complete corpus: a directory
+	// argument may be a subset, so docs outside it are left alone.
+	prune := true
 	if len(os.Args) > 1 {
 		docsFS = os.DirFS(os.Args[1])
+		prune = false
 	}
 
 	ctx := context.Background()
@@ -53,11 +57,18 @@ func main() {
 	defer pool.Close()
 
 	embedder := ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
-	store := ai.NewCPHelpStore(pool)
+	store := ai.NewCPHelpStore(pool, ai.EmbedFingerprint(embedder))
 
 	res, err := ingest.IngestFS(ctx, embedder, store, docsFS, ingest.DefaultChunkOpts)
 	if err != nil {
 		log.Fatalf("ingest: %v", err)
+	}
+	if prune {
+		n, err := ingest.PruneMissing(ctx, store, docsFS)
+		if err != nil {
+			log.Fatalf("prune: %v", err)
+		}
+		log.Printf("pruned %d chunks from docs no longer in the corpus", n)
 	}
 	for _, key := range res.Ingested {
 		log.Printf("OK %s", key)

@@ -20,6 +20,11 @@ import (
 // long-lived conversation's prompt growing forever.
 const historyLimit = 20
 
+// maxTranscriptMessages caps Messages (the transcript shown when a user
+// reopens a conversation) to the most recent messages, so a very long
+// conversation can't produce an unbounded response.
+const maxTranscriptMessages = 200
+
 // Conversation is one AI assistant chat thread, owned by exactly one user.
 type Conversation struct {
 	ID          string    `json:"id"`
@@ -144,19 +149,6 @@ func (s *ConversationStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// SetTitleIfEmpty sets a conversation's title the first time one is needed
-// (typically its first question, truncated by the caller) — a no-op if a
-// title is already set, so a caller can call this unconditionally on every
-// turn without overwriting an existing title.
-func (s *ConversationStore) SetTitleIfEmpty(ctx context.Context, id, title string) error {
-	if _, err := s.pool.Exec(ctx, `
-		UPDATE ai_conversations SET title = $2 WHERE id = $1 AND title = ''`,
-		id, title); err != nil {
-		return fmt.Errorf("set conversation title: %w", err)
-	}
-	return nil
-}
-
 // AppendMessage records one turn (role is "user" or "assistant", matching the
 // table's CHECK constraint) and bumps the conversation's updated_at in the
 // same round trip, so ListByOwner's "most recently active first" order stays
@@ -182,8 +174,10 @@ func (s *ConversationStore) AppendMessage(ctx context.Context, conversationID, r
 // which is bounded and timestamp-free for feeding straight to the LLM.
 func (s *ConversationStore) Messages(ctx context.Context, conversationID string) ([]Message, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT role, content, created_at FROM ai_messages
-		WHERE conversation_id = $1 ORDER BY created_at ASC`, conversationID)
+		SELECT role, content, created_at FROM (
+			SELECT role, content, created_at FROM ai_messages
+			WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2
+		) recent ORDER BY created_at ASC`, conversationID, maxTranscriptMessages)
 	if err != nil {
 		return nil, fmt.Errorf("list conversation messages: %w", err)
 	}
@@ -199,28 +193,90 @@ func (s *ConversationStore) Messages(ctx context.Context, conversationID string)
 	return out, rows.Err()
 }
 
-// History returns up to historyLimit of a conversation's most recent
-// messages, oldest first, as rag.Message — ready for
-// Assistant.Ask/rag.AskRequest.History. Bounded so a long-lived
-// conversation's prompt doesn't grow unboundedly (see historyLimit).
+// historyCharBudget caps how much prior conversation is replayed into the
+// prompt (~4 chars per token, so ~2000 tokens). historyLimit alone let 20
+// messages of up to 2000 bytes each reach a 4096-token context window, where
+// Ollama silently drops the oldest tokens — the system prompt first.
+const historyCharBudget = 8000
+
+// History returns the most recent turns of a conversation, oldest first, as
+// model messages: at most historyLimit messages and at most historyCharBudget
+// characters, dropping the oldest first. Always ends on a whole turn boundary
+// it can keep — a single message larger than the whole budget is dropped
+// rather than truncated mid-sentence.
 func (s *ConversationStore) History(ctx context.Context, conversationID string) ([]rag.Message, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT role, content FROM (
-			SELECT role, content, created_at FROM ai_messages
-			WHERE conversation_id = $1
-			ORDER BY created_at DESC LIMIT $2
-		) recent ORDER BY created_at ASC`, conversationID, historyLimit)
+		SELECT role, content FROM ai_messages
+		WHERE conversation_id = $1
+		ORDER BY created_at DESC LIMIT $2`, conversationID, historyLimit)
 	if err != nil {
 		return nil, fmt.Errorf("load conversation history: %w", err)
 	}
 	defer rows.Close()
-	out := []rag.Message{}
+	var newestFirst []rag.Message
+	used := 0
 	for rows.Next() {
 		var m rag.Message
 		if err := rows.Scan(&m.Role, &m.Content); err != nil {
 			return nil, fmt.Errorf("scan ai message: %w", err)
 		}
-		out = append(out, m)
+		if used+len(m.Content) > historyCharBudget {
+			break
+		}
+		used += len(m.Content)
+		newestFirst = append(newestFirst, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load conversation history: %w", err)
+	}
+	out := make([]rag.Message, len(newestFirst))
+	for i, m := range newestFirst {
+		out[len(newestFirst)-1-i] = m
+	}
+	return out, nil
+}
+
+// AppendTurn records one completed question/answer pair and sets the
+// conversation's title from title if it has none — all in one transaction, so
+// a conversation never holds a question without its answer (which the next
+// turn would replay as an unanswered question). clock_timestamp(), not NOW():
+// NOW() is fixed for the whole transaction, which would tie the two rows'
+// created_at and make their order undefined.
+func (s *ConversationStore) AppendTurn(ctx context.Context, conversationID, question, answer, title string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("append turn: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, m := range []struct{ role, content string }{{"user", question}, {"assistant", answer}} {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ai_messages (conversation_id, role, content, created_at)
+			VALUES ($1, $2, $3, clock_timestamp())`, conversationID, m.role, m.content); err != nil {
+			return fmt.Errorf("append turn: insert %s message: %w", m.role, err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ai_conversations
+		SET updated_at = NOW(), title = CASE WHEN title = '' THEN $2 ELSE title END
+		WHERE id = $1`, conversationID, title); err != nil {
+		return fmt.Errorf("append turn: touch conversation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("append turn: commit: %w", err)
+	}
+	return nil
+}
+
+// DeleteIdle removes conversations (and, by cascade, their messages) with no
+// activity for longer than maxIdle, returning how many were removed. Chat
+// history can quote record data the caller has since lost access to, so it is
+// not kept forever.
+func (s *ConversationStore) DeleteIdle(ctx context.Context, maxIdle time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM ai_conversations WHERE updated_at < NOW() - make_interval(secs => $1)`, maxIdle.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("delete idle conversations: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

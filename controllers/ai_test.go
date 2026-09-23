@@ -4,68 +4,41 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
-	"stonesuite-backend/authz"
+	"stonesuite-backend/ai"
 	"stonesuite-backend/middleware"
 )
 
-func TestNarrowestScope_PicksMostRestrictiveAmongGranted(t *testing.T) {
-	tests := []struct {
-		name      string
-		decisions []authz.Decision
-		wantScope authz.Scope
-		wantOK    bool
-	}{
-		{
-			name:      "no grants at all -> denied",
-			decisions: []authz.Decision{{Allowed: false}, {Allowed: false}, {Allowed: false}},
-			wantOK:    false,
-		},
-		{
-			name: "single grant wins",
-			decisions: []authz.Decision{
-				{Allowed: true, Scope: authz.ScopeAll},
-				{Allowed: false},
-				{Allowed: false},
-			},
-			wantScope: authz.ScopeAll,
-			wantOK:    true,
-		},
-		{
-			name: "own beats all -- most restrictive wins",
-			decisions: []authz.Decision{
-				{Allowed: true, Scope: authz.ScopeAll},
-				{Allowed: true, Scope: authz.ScopeOwn},
-			},
-			wantScope: authz.ScopeOwn,
-			wantOK:    true,
-		},
-		{
-			name: "ungranted resource is excluded, not treated as deny-all",
-			decisions: []authz.Decision{
-				{Allowed: true, Scope: authz.ScopeAll},
-				{Allowed: false}, // caller has zero access to this resource
-			},
-			wantScope: authz.ScopeAll,
-			wantOK:    true,
-		},
-		{
-			name:      "empty input -> denied",
-			decisions: nil,
-			wantOK:    false,
-		},
+func TestSplitGranted(t *testing.T) {
+	grants := ai.Grants{"lead": ai.ScopeAll, "customer": ai.ScopeOwn, "prospect": "team"}
+	granted, denied := splitGranted(grants, []string{"customer", "lead", "prospect"})
+	if strings.Join(granted, ",") != "customer,lead" || strings.Join(denied, ",") != "prospect" {
+		t.Fatalf("granted=%v denied=%v (a retired scope must not count as a grant)", granted, denied)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scope, ok := narrowestScope(tt.decisions)
-			if ok != tt.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
-			}
-			if ok && scope != tt.wantScope {
-				t.Fatalf("scope = %q, want %q", scope, tt.wantScope)
-			}
-		})
+}
+
+func TestNoAccessSentence(t *testing.T) {
+	tests := map[string][]string{
+		"":                                       nil,
+		"You don't have access to lead records.": {"lead"},
+		"You don't have access to lead or customer records.":            {"lead", "customer"},
+		"You don't have access to lead, prospect, or customer records.": {"lead", "prospect", "customer"},
+	}
+	for want, denied := range tests {
+		if got := noAccessSentence(denied); got != want {
+			t.Errorf("noAccessSentence(%v) = %q, want %q", denied, got, want)
+		}
+	}
+}
+
+func TestConversationTitleIsRuneSafe(t *testing.T) {
+	q := strings.Repeat("é", maxConversationTitleLength+5)
+	got := conversationTitleFromQuestion(q)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "...") {
+		t.Fatalf("title must cut on a character boundary: %q", got)
 	}
 }
 

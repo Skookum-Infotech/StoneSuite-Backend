@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"stonesuite-backend/ai"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
@@ -21,6 +23,31 @@ type ConversationOps struct{}
 // resolves its own tenant pool from request context.
 func NewConversationOps() *ConversationOps { return &ConversationOps{} }
 
+// callerUserID resolves the caller's internal user id — the value every
+// conversation is owned by — and writes a 500 if it cannot be determined.
+//
+// Not discardable, and not defaultable to "": ownership here is an equality
+// check against owner_user_id, so an empty id silently matches nothing and
+// turns every request into a permanent 404 that looks exactly like "someone
+// else's conversation". Failing loudly makes a broken identity mapping
+// diagnosable instead of presenting as missing data.
+func callerUserID(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (string, bool) {
+	payload, err := middleware.GetUserFromContext(r.Context())
+	if err != nil || payload.ID == "" {
+		fail(w, http.StatusUnauthorized, "Authentication required.")
+		return "", false
+	}
+	id, err := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+	if err != nil || id == "" {
+		slog.Error("ai conversation: could not resolve caller user id",
+			"request_id", middleware.RequestIDFromContext(r.Context()),
+			"identity", payload.ID, "err", err)
+		fail(w, http.StatusInternalServerError, "Could not resolve your user account.")
+		return "", false
+	}
+	return id, true
+}
+
 // Create handles POST /api/tenant/ai/conversations: starts a new, empty,
 // untitled conversation owned by the caller. AIOps.Ask sets its title from
 // the first question asked into it.
@@ -36,8 +63,11 @@ func (h *ConversationOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
-	conv, err := ai.NewConversationStore(pool).Create(r.Context(), callerUserID)
+	ownerUserID, ok := callerUserID(w, r, pool)
+	if !ok {
+		return
+	}
+	conv, err := ai.NewConversationStore(pool).Create(r.Context(), ownerUserID)
 	if err != nil {
 		slog.Error("ai conversation create failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to start a new conversation.")
@@ -61,8 +91,11 @@ func (h *ConversationOps) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
-	convs, err := ai.NewConversationStore(pool).ListByOwner(r.Context(), callerUserID)
+	ownerUserID, ok := callerUserID(w, r, pool)
+	if !ok {
+		return
+	}
+	convs, err := ai.NewConversationStore(pool).ListByOwner(r.Context(), ownerUserID)
 	if err != nil {
 		slog.Error("ai conversation list failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to list conversations.")
@@ -87,7 +120,10 @@ func (h *ConversationOps) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+	ownerUserID, ok := callerUserID(w, r, pool)
+	if !ok {
+		return
+	}
 	store := ai.NewConversationStore(pool)
 	conv, found, err := store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -95,7 +131,7 @@ func (h *ConversationOps) Get(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load conversation.")
 		return
 	}
-	if !found || conv.OwnerUserID != callerUserID {
+	if !found || conv.OwnerUserID != ownerUserID {
 		logSecurityEvent(r, "idor_denied", "identity", payload.ID, "conversation", r.PathValue("id"))
 		fail(w, http.StatusNotFound, "Conversation not found.")
 		return
@@ -127,7 +163,10 @@ func (h *ConversationOps) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+	ownerUserID, ok := callerUserID(w, r, pool)
+	if !ok {
+		return
+	}
 	store := ai.NewConversationStore(pool)
 	conv, found, err := store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -135,7 +174,7 @@ func (h *ConversationOps) Delete(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load conversation.")
 		return
 	}
-	if !found || conv.OwnerUserID != callerUserID {
+	if !found || conv.OwnerUserID != ownerUserID {
 		logSecurityEvent(r, "idor_denied", "identity", payload.ID, "conversation", r.PathValue("id"))
 		fail(w, http.StatusNotFound, "Conversation not found.")
 		return

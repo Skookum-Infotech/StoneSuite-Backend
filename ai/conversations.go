@@ -2,10 +2,12 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Skookum-Infotech/go-rag/rag"
@@ -73,16 +75,33 @@ func (s *ConversationStore) Create(ctx context.Context, ownerUserID string) (Con
 	return c, nil
 }
 
-// Get loads one conversation by id. found is false if it doesn't exist.
-// Callers MUST check OwnerUserID before trusting the result — see the
-// package doc.
+// notFound reports whether err means "this conversation isn't there", covering
+// both a genuinely absent row and an id that isn't a well-formed uuid.
+//
+// The 22P02 case matters: ai_conversations.id is a uuid column, so a client
+// sending garbage in the path makes Postgres reject the literal rather than
+// return zero rows. Rendering that as a 500 both leaks that the id was
+// malformed (a 404 for a real-looking id vs a 500 for garbage is an oracle)
+// and pages us for ordinary client noise. Same convention, and same reasoning,
+// as inventoryadjustment/store.go's isInvalidTextRepresentation.
+func notFound(err error) bool {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "22P02"
+}
+
+// Get loads one conversation by id. found is false if it doesn't exist or the
+// id is not a well-formed uuid. Callers MUST check OwnerUserID before trusting
+// the result — see the package doc.
 func (s *ConversationStore) Get(ctx context.Context, id string) (c Conversation, found bool, err error) {
 	err = s.pool.QueryRow(ctx, `
 		SELECT id, owner_user_id, title, created_at, updated_at
 		FROM ai_conversations WHERE id = $1`, id,
 	).Scan(&c.ID, &c.OwnerUserID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if notFound(err) {
 			return Conversation{}, false, nil
 		}
 		return Conversation{}, false, fmt.Errorf("get conversation: %w", err)
@@ -117,6 +136,9 @@ func (s *ConversationStore) ListByOwner(ctx context.Context, ownerUserID string)
 // enforce ownership before calling this — see the package doc.
 func (s *ConversationStore) Delete(ctx context.Context, id string) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM ai_conversations WHERE id = $1`, id); err != nil {
+		if notFound(err) {
+			return nil
+		}
 		return fmt.Errorf("delete conversation: %w", err)
 	}
 	return nil

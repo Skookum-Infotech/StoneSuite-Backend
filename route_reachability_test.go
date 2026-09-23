@@ -161,7 +161,7 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 
 		// Public tenant onboarding and workspace-user invitations.
 		"ANY /api/onboarding/form-schema": true, "ANY /api/onboarding/lookups": true,
-		"ANY /api/onboarding/apply": true,
+		"ANY /api/onboarding/apply":  true,
 		"ANY /api/onboarding/apply/": true, "ANY /api/onboarding/set-password": true,
 		"ANY /api/onboarding/set-password/":       true,
 		"POST /api/onboarding/user-invite/accept": true,

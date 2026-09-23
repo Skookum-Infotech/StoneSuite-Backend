@@ -1398,6 +1398,9 @@ func main() {
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
+		if ollamaLifecycle != nil {
+			aiOps = aiOps.WithOllamaWaker(services.NewOllamaWaker(ollamaLifecycle, config.AppConfig.OllamaBaseURL))
+		}
 		// Reranking is off unless a TEI deployment is actually configured —
 		// see config.AppConfig.AIRerankBaseURL.
 		if config.AppConfig.AIRerankBaseURL != "" {

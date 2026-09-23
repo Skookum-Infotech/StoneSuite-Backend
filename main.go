@@ -316,6 +316,7 @@ func main() {
 
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
+		mux.HandleFunc("/api/onboarding/lookups", tenantOps.OnboardingLookups)
 		mux.HandleFunc("/api/onboarding/apply/", tenantOps.GetApply) // GET /{token}
 		mux.HandleFunc("/api/onboarding/apply", tenantOps.SubmitApply)
 		mux.HandleFunc("/api/onboarding/set-password/", tenantOps.GetSetPassword) // GET /{token}

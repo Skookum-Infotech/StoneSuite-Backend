@@ -118,7 +118,8 @@ func TestGlobalSearchOps_Search_DB(t *testing.T) {
 
 	t.Run("customer, quote and vendor all appear together once granted", func(t *testing.T) {
 		identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
-		roleID, err := authz.CreateRole(context.Background(), pool, fmt.Sprintf("gs-all-three-%d", time.Now().UnixNano()), "gs-all-three", "", []authz.Grant{
+		gsAllThreeName := fmt.Sprintf("gs-all-three-%d", time.Now().UnixNano())
+		roleID, err := authz.CreateRole(context.Background(), pool, gsAllThreeName, gsAllThreeName, "", []authz.Grant{
 			{Resource: authz.ResourceQuote, Action: authz.ActionRead, Scope: authz.ScopeAll},
 			{Resource: authz.ResourceVendor, Action: authz.ActionRead, Scope: authz.ScopeAll},
 			{Resource: authz.ResourceCustomer, Action: authz.ActionRead, Scope: authz.ScopeAll},

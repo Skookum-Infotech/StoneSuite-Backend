@@ -900,6 +900,56 @@
         ]
       }
     },
+    "/api/onboarding/lookups": {
+      "get": {
+        "operationId": "get_onboarding_lookups",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "tenantOps.OnboardingLookups",
+        "tags": [
+          "onboarding"
+        ]
+      },
+      "post": {
+        "operationId": "post_onboarding_lookups",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "tenantOps.OnboardingLookups",
+        "tags": [
+          "onboarding"
+        ]
+      }
+    },
     "/api/onboarding/set-password": {
       "get": {
         "operationId": "get_onboarding_set_password",

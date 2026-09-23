@@ -15,8 +15,11 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/russellhaering/gosaml2 v0.12.0
 	github.com/russellhaering/goxmldsig v1.6.1
+	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
+	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/image v0.45.0
 	golang.org/x/sync v0.22.0
 )
 

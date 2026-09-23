@@ -78,6 +78,51 @@ func TestClassifyCountQuestion(t *testing.T) {
 			question: "how many customers closed this month",
 			wantOK:   false,
 		},
+		{
+			name:     "two count clauses -> union of both types",
+			question: "How many customers and how many leads?",
+			wantKeys: []string{"customer", "lead"},
+			wantOK:   true,
+		},
+		{
+			name:     "two count clauses, different phrasing",
+			question: "number of leads, and how many prospects do we have",
+			wantKeys: []string{"lead", "prospect"},
+			wantOK:   true,
+		},
+		{
+			name:     "repeated type across clauses is counted once",
+			question: "how many leads and how many leads",
+			wantKeys: []string{"lead"},
+			wantOK:   true,
+		},
+		{
+			name:     "trailing 'in total' is not a second clause",
+			question: "how many customers in total",
+			wantKeys: []string{"customer"},
+			wantOK:   true,
+		},
+		{
+			name:     "second clause we cannot answer -> whole question falls through",
+			question: "how many customers and how many emails did they send",
+			wantOK:   false,
+		},
+		{
+			name:     "weak phrase directly before a strong one is one clause",
+			question: "What is the total number of leads?",
+			wantKeys: []string{"lead"},
+			wantOK:   true,
+		},
+		{
+			name:     "count phrases with no object at all -> fall through",
+			question: "how many, how many",
+			wantOK:   false,
+		},
+		{
+			name:     "filter word in either clause -> fall through",
+			question: "how many customers and how many leads won last week",
+			wantOK:   false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -540,11 +540,6 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flusher, canFlush := w.(http.Flusher)
-	if !canFlush {
-		fail(w, http.StatusInternalServerError, "Streaming is not supported by this server.")
-		return
-	}
 	if !h.acquireStream() {
 		fail(w, http.StatusTooManyRequests, "The assistant is handling too many conversations right now — please try again in a moment.")
 		return
@@ -558,16 +553,32 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), streamMaxDuration)
 	defer cancel()
 
+	// http.ResponseController, not a w.(http.Flusher) type assertion, is the
+	// only mechanism that reaches Flush/SetWriteDeadline through the global
+	// RequestLogger(Recover(...)) chain: RequestLogger hands every handler a
+	// *statusRecorder (middleware/logging.go) that embeds the
+	// http.ResponseWriter interface — promoting only Header/Write/WriteHeader
+	// — rather than implementing Flush itself, so a direct type assertion
+	// against w always fails here even though the underlying connection
+	// supports it. ResponseController instead walks the chain via each
+	// wrapper's Unwrap() method, which statusRecorder provides.
+	rc := http.NewResponseController(w)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	rc := http.NewResponseController(w)
 	armDeadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(streamWriteDeadline)) }
 	armDeadline()
-	flusher.Flush()
+	if err := rc.Flush(); err != nil {
+		// Headers are already on the wire, so this can only be logged, not
+		// turned into a 5xx: there is no client that still understands a
+		// status-code response at this point.
+		slog.Error("ai ask stream: initial flush unsupported", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", pa.tenant.ID, "err", err)
+		return
+	}
 
 	store := crmstore.For(pa.tenant.DesignVersion)
 	events := make(chan sseEvent, 4)
@@ -608,7 +619,7 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 				if out.err != nil {
 					slog.Error("ai ask stream failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", pa.tenant.ID, "route", out.route, "err", out.err)
 					_ = writeSSE(w, "error", map[string]any{"success": false, "message": "The assistant is temporarily unavailable."})
-					flusher.Flush()
+					_ = rc.Flush()
 					return
 				}
 				metrics.ObserveAIQueryRoute(out.route)
@@ -619,7 +630,7 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 					data["conversation_id"] = pa.conv.ID
 				}
 				_ = writeSSE(w, "done", data)
-				flusher.Flush()
+				_ = rc.Flush()
 				return
 			}
 			if err := writeSSE(w, ev.event, ev.data); err != nil {
@@ -630,14 +641,14 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			armDeadline()
-			flusher.Flush()
+			_ = rc.Flush()
 
 		case <-heartbeat.C:
 			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
 				return
 			}
 			armDeadline()
-			flusher.Flush()
+			_ = rc.Flush()
 
 		case <-ctx.Done():
 			// Absolute cap hit, or the client disconnected (r.Context()
@@ -646,7 +657,7 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 			// persisted: recordTurn is reachable only from the events-closed
 			// success branch above.
 			_ = writeSSE(w, "error", map[string]any{"success": false, "message": "The assistant took too long to respond."})
-			flusher.Flush()
+			_ = rc.Flush()
 			return
 		}
 	}

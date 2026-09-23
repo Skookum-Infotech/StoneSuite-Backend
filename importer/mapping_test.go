@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
 )
 
@@ -81,9 +82,10 @@ func TestValidateMapping(t *testing.T) {
 	defs := []workflow.FieldDefinition{{Key: "budget"}, {Key: "priority"}}
 
 	tests := []struct {
-		name    string
-		mapping map[string]string
-		wantErr bool
+		name          string
+		mapping       map[string]string
+		designVersion string
+		wantErr       bool
 	}{
 		{
 			name:    "empty target is fine",
@@ -91,9 +93,30 @@ func TestValidateMapping(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "core prefix always accepted",
+			name:    "core prefix accepted on v1 (no fixed schema)",
 			mapping: map[string]string{"col": "core:anything"},
 			wantErr: false,
+		},
+		{
+			name:          "core prefix accepted on v1 even with a design version string that isn't v2",
+			mapping:       map[string]string{"col": "core:anything"},
+			designVersion: "bogus",
+			wantErr:       false,
+		},
+		{
+			name:          "known core field accepted on v2",
+			mapping:       map[string]string{"col": "core:customer_contact_email"},
+			designVersion: tenancy.DesignV2,
+			wantErr:       false,
+		},
+		{
+			name: "unrecognized core field rejected on v2 -- this is the exact " +
+				"footgun: mapping email to core:email instead of " +
+				"core:customer_contact_email used to stage and commit clean, " +
+				"silently dropping the value",
+			mapping:       map[string]string{"col": "core:email"},
+			designVersion: tenancy.DesignV2,
+			wantErr:       true,
 		},
 		{
 			name:    "known custom field accepted",
@@ -113,7 +136,7 @@ func TestValidateMapping(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateMapping(tc.mapping, defs)
+			err := ValidateMapping(tc.mapping, defs, tc.designVersion)
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {

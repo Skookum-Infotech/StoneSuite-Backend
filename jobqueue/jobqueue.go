@@ -166,15 +166,27 @@ func (q *Queue) UpdateProgress(ctx context.Context, id string, progress any) err
 }
 
 // RequeueStale resets jobs stuck in 'running' (e.g. due to a worker crash)
-// back to 'pending' if they haven't been updated within staleAfter. Returns
-// the number of jobs requeued.
-func (q *Queue) RequeueStale(ctx context.Context, staleAfter time.Duration) (int64, error) {
+// back to 'pending' if they haven't been updated within staleAfter, scoped to
+// jobTypes. Returns the number of jobs requeued.
+//
+// jobTypes is required, not optional: ClaimNext is already scoped this way
+// (see its own job_type = ANY($1) — the whole reason two worker pools can
+// share one table without starving each other), but until this signature
+// existed RequeueStale swept the ENTIRE table. Each caller's own staleAfter
+// is sized against its OWN job type's expected run time (e.g. importer's
+// jobTimeout), so an unscoped call let one worker pool's reaper requeue the
+// OTHER pool's still-legitimately-running job out from under it, right as it
+// was about to finish — a real cross-package race, not a hypothetical one
+// (importer/worker.go's runImport for a large file vs.
+// provisioning/provisioner.go's 5-minute reaper ticking on its own,
+// unrelated schedule).
+func (q *Queue) RequeueStale(ctx context.Context, jobTypes []string, staleAfter time.Duration) (int64, error) {
 	threshold := time.Now().Add(-staleAfter)
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
 		SET status = $2, updated_at = NOW()
-		WHERE status = $3 AND updated_at < $1`,
-		threshold, StatusPending, StatusRunning)
+		WHERE status = $3 AND updated_at < $1 AND job_type = ANY($4)`,
+		threshold, StatusPending, StatusRunning, jobTypes)
 	if err != nil {
 		return 0, fmt.Errorf("requeue stale jobs: %w", err)
 	}

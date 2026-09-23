@@ -318,6 +318,7 @@ func main() {
 
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
+		mux.HandleFunc("/api/onboarding/lookups", tenantOps.OnboardingLookups)
 		mux.HandleFunc("/api/onboarding/apply/", tenantOps.GetApply) // GET /{token}
 		mux.HandleFunc("/api/onboarding/apply", tenantOps.SubmitApply)
 		mux.HandleFunc("/api/onboarding/set-password/", tenantOps.GetSetPassword) // GET /{token}
@@ -1484,15 +1485,24 @@ func main() {
 		Handler: globalHandler,
 		// WriteTimeout must exceed the slowest legitimate handler, not just the
 		// common case: POST /api/tenant/ai/ask runs a synchronous self-hosted
-		// LLM completion (ai.OllamaLLMClient, 60s inner client timeout) on top
-		// of embedding + retrieval. A too-short WriteTimeout forcibly closes
-		// the TCP connection once it elapses — even when the handler is about
-		// to finish with a correct answer — which looks identical to a proxy
-		// timeout from the client (silent "Network Error", no JSON body) but
-		// is actually us, not Fly's edge, hanging up on our own slow success.
-		// Set comfortably above OllamaLLMClient's timeout so that timeout
-		// fires first and the client gets a clean error response instead.
-		WriteTimeout: 90 * time.Second,
+		// LLM completion on top of embedding + retrieval. A too-short
+		// WriteTimeout forcibly closes the TCP connection once it elapses —
+		// even when the handler is about to finish with a correct answer —
+		// which looks identical to a proxy timeout from the client (silent
+		// "Network Error", no JSON body) but is actually us, not Fly's edge,
+		// hanging up on our own slow success.
+		//
+		// Must stay ABOVE the go-rag Ollama chat client's own timeout (100s,
+		// provider/ollama/ollama_llm.go) so that one fires first and the caller
+		// gets a clean JSON error instead of a dropped connection. It was 90s —
+		// i.e. below the client timeout — which inverted exactly the ordering
+		// this comment describes. Bump both together, never one alone.
+		//
+		// Streaming handlers (SSE) override this per-request with a rolling
+		// deadline via http.ResponseController; this value is the ceiling for
+		// ordinary buffered responses, so it stays finite to keep slowloris
+		// protection on every other route.
+		WriteTimeout: 120 * time.Second,
 		ReadTimeout:  15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}

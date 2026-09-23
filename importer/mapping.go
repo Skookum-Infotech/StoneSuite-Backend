@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"stonesuite-backend/crmstore"
+	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
 )
 
@@ -67,17 +69,33 @@ func coerceCustomValue(def workflow.FieldDefinition, raw string) any {
 	return raw
 }
 
-// ValidateMapping checks that every non-empty mapping target names either
-// the core-field prefix or a custom field key that actually exists on the
-// workflow (defs) — catching a typo'd cf: key once, at job-creation time,
-// rather than as a confusing per-row error later. Core field keys have no
-// fixed schema this package can check against (crmstore.CreateInput.CoreFields
-// is a plain map); an unknown core key is instead rejected per-row by
-// CreateRecord's own validation at commit time.
-func ValidateMapping(mapping map[string]string, defs []workflow.FieldDefinition) error {
-	known := make(map[string]bool, len(defs))
+// ValidateMapping checks that every non-empty mapping target names either a
+// recognized core field or a custom field key that actually exists on the
+// workflow (defs) — catching a typo'd key once, at job-creation time, rather
+// than as a confusing per-row error later, or (for core: on DesignV2 — see
+// below) not at all.
+//
+// designVersion selects how strictly core: targets are checked:
+//   - DesignV2 (tenancy.DesignV2): CoreFields has a fixed schema
+//     (crmstore.KnownCoreFieldKeys, the customerFields registry). A key
+//     outside it is accepted by ApplyColumnMapping and then silently never
+//     written by relationalStore.insertCustomer — the row still stages and
+//     commits "successfully" with that column simply empty. This was
+//     previously undetected: mapping "Email" to core:email instead of
+//     core:customer_contact_email produced a green commit summary with the
+//     email quietly missing from every created record.
+//   - Anything else (DesignV1 and its zero value): core_fields is
+//     unrestricted JSONB with no fixed schema (see crmstore's package doc) —
+//     validating core: here would invent a restriction that doesn't exist on
+//     the write path, so every core: target is accepted as before.
+func ValidateMapping(mapping map[string]string, defs []workflow.FieldDefinition, designVersion string) error {
+	knownCustom := make(map[string]bool, len(defs))
 	for _, d := range defs {
-		known[d.Key] = true
+		knownCustom[d.Key] = true
+	}
+	var knownCore map[string]bool
+	if designVersion == tenancy.DesignV2 {
+		knownCore = crmstore.KnownCoreFieldKeys()
 	}
 	for col, target := range mapping {
 		if target == "" {
@@ -85,10 +103,13 @@ func ValidateMapping(mapping map[string]string, defs []workflow.FieldDefinition)
 		}
 		switch {
 		case strings.HasPrefix(target, corePrefix):
-			// see doc comment: intentionally not validated here.
+			key := strings.TrimPrefix(target, corePrefix)
+			if knownCore != nil && !knownCore[key] {
+				return fmt.Errorf("column %q maps to unrecognized core field %q", col, key)
+			}
 		case strings.HasPrefix(target, cfPrefix):
 			key := strings.TrimPrefix(target, cfPrefix)
-			if !known[key] {
+			if !knownCustom[key] {
 				return fmt.Errorf("column %q maps to unknown custom field %q", col, key)
 			}
 		default:

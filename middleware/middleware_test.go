@@ -93,6 +93,50 @@ func TestStatusRecorder_DefaultsTo200(t *testing.T) {
 	assert.Equal(t, 2, rec.bytes)
 }
 
+// deadlineRecorder is an httptest.ResponseRecorder that also satisfies the
+// Flush and SetWriteDeadline optional interfaces http.ResponseController looks
+// for. The stdlib recorder implements Flush but not SetWriteDeadline, so
+// without this the deadline assertion below could not distinguish "the wrapper
+// swallowed it" from "the recorder never supported it".
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlineSet bool
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(time.Time) error {
+	d.deadlineSet = true
+	return nil
+}
+
+// Streaming responses (SSE) need Flush and SetWriteDeadline to reach the real
+// connection through the global RequestLogger(Recover(...)) chain.
+// http.ResponseController finds them only by calling Unwrap() on each wrapper —
+// embedding the ResponseWriter interface is not enough, since that promotes
+// only Header/Write/WriteHeader. If statusRecorder ever loses its Unwrap, both
+// calls below start returning http.ErrNotSupported and SSE silently buffers
+// until the handler returns.
+func TestResponseController_ReachesThroughGlobalChain(t *testing.T) {
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	var flushErr, deadlineErr error
+	handler := RequestLogger(Recover(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		rc := http.NewResponseController(w)
+		deadlineErr = rc.SetWriteDeadline(time.Now().Add(time.Minute))
+		flushErr = rc.Flush()
+	})))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	require.NoError(t, flushErr, "Flush must reach the underlying ResponseWriter")
+	require.NoError(t, deadlineErr, "SetWriteDeadline must reach the underlying ResponseWriter")
+	assert.True(t, rec.deadlineSet, "the real writer should have received the deadline")
+}
+
+func TestStatusRecorder_UnwrapReturnsUnderlyingWriter(t *testing.T) {
+	inner := httptest.NewRecorder()
+	rec := &statusRecorder{ResponseWriter: inner}
+	assert.Same(t, inner, rec.Unwrap())
+}
+
 func TestPerIP_ThrottlesAfterBurst(t *testing.T) {
 	// rate 0 so the bucket never refills during the test; burst 3 means exactly
 	// 3 requests succeed, the 4th is rejected with 429.

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -185,7 +186,18 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	callerUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+	// Not discardable: callerUserID is the scope key. An empty value under
+	// "own" scope makes the retrieval filter compare owner_user_id = '' —
+	// Postgres rejects that against a uuid column, surfacing as an opaque 502
+	// on a request that looked valid. Fail closed and loudly instead.
+	callerUserID, err := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+	if err != nil || callerUserID == "" {
+		slog.Error("ai ask: could not resolve caller user id",
+			"request_id", middleware.RequestIDFromContext(r.Context()),
+			"tenant_id", tenant.ID, "identity", payload.ID, "err", err)
+		fail(w, http.StatusInternalServerError, "Could not resolve your user account.")
+		return
+	}
 
 	// Conversation resolution: 404 (never 403) on any owner mismatch or
 	// missing id, the same IDOR-safe convention as recordInScope elsewhere —
@@ -219,18 +231,30 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	// if any — a no-op otherwise. Best-effort: a logging failure here must
 	// not fail an ask that already succeeded, so errors are logged, not
 	// returned to the caller.
+	//
+	// Deliberately NOT r.Context(): this runs after a slow completion, and a
+	// caller who navigated away (or whose browser gave up) has already had
+	// their request context cancelled. Persisting on that context fails every
+	// write, so the turn the user waited a minute for silently never reaches
+	// their history. WithoutCancel keeps the pool and values, drops only the
+	// cancellation; the short timeout stops a wedged write outliving the
+	// request by more than a moment.
 	recordTurn := func(answer string) {
 		if conv == nil {
 			return
 		}
-		if err := convStore.AppendMessage(r.Context(), conv.ID, "user", body.Question); err != nil {
-			slog.Error("failed to record ai conversation message", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+		defer cancel()
+
+		reqID := middleware.RequestIDFromContext(ctx)
+		if err := convStore.AppendMessage(ctx, conv.ID, "user", body.Question); err != nil {
+			slog.Error("failed to record ai conversation message", "request_id", reqID, "tenant_id", tenant.ID, "err", err)
 		}
-		if err := convStore.AppendMessage(r.Context(), conv.ID, "assistant", answer); err != nil {
-			slog.Error("failed to record ai conversation message", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		if err := convStore.AppendMessage(ctx, conv.ID, "assistant", answer); err != nil {
+			slog.Error("failed to record ai conversation message", "request_id", reqID, "tenant_id", tenant.ID, "err", err)
 		}
-		if err := convStore.SetTitleIfEmpty(r.Context(), conv.ID, conversationTitleFromQuestion(body.Question)); err != nil {
-			slog.Error("failed to set ai conversation title", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		if err := convStore.SetTitleIfEmpty(ctx, conv.ID, conversationTitleFromQuestion(body.Question)); err != nil {
+			slog.Error("failed to set ai conversation title", "request_id", reqID, "tenant_id", tenant.ID, "err", err)
 		}
 	}
 

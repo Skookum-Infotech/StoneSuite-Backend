@@ -6,14 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	_ "image/gif"  // register GIF decoder
 	_ "image/jpeg" // register JPEG decoder
 	"image/png"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
+	_ "golang.org/x/image/webp" // register WEBP decoder
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/companyprofile"
@@ -126,7 +131,8 @@ func (h *CompanyProfileOps) UpdateProfile(w http.ResponseWriter, r *http.Request
 }
 
 // UploadLogo PUT /api/tenant/company-profile/logo. Body is the raw image
-// bytes (PNG or JPEG); returns 503 when R2 isn't configured for this tenant.
+// bytes (PNG, JPEG, GIF, WEBP, or SVG); returns 503 when R2 isn't configured
+// for this tenant.
 func (h *CompanyProfileOps) UploadLogo(w http.ResponseWriter, r *http.Request) {
 	pool, tenant, ok := h.authorize(w, r, authz.ActionConfigure)
 	if !ok {
@@ -177,9 +183,9 @@ func (h *CompanyProfileOps) DeleteLogo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
-// decodeLogoAsPNG validates body as a decodable PNG or JPEG under
-// maxLogoSizeBytes and re-encodes it as PNG. Re-encoding (rather than
-// storing the original bytes) means the stored object is always at the
+// decodeLogoAsPNG validates body as a decodable PNG, JPEG, GIF, WEBP, or SVG
+// image under maxLogoSizeBytes and re-encodes it as PNG. Re-encoding (rather
+// than storing the original bytes) means the stored object is always at the
 // same fixed .png key regardless of what format was uploaded.
 func decodeLogoAsPNG(body []byte) ([]byte, error) {
 	if len(body) == 0 {
@@ -188,15 +194,91 @@ func decodeLogoAsPNG(body []byte) ([]byte, error) {
 	if len(body) > maxLogoSizeBytes {
 		return nil, fmt.Errorf("logo exceeds the %d MB limit", maxLogoSizeBytes/1024/1024)
 	}
-	img, format, err := image.Decode(bytes.NewReader(body))
-	if err != nil || (format != "png" && format != "jpeg") {
-		return nil, errors.New("logo must be a valid PNG or JPEG image")
+
+	img, _, err := image.Decode(bytes.NewReader(body))
+	if err != nil {
+		// SVG is vector, not a registered image.Decode raster format -- it
+		// needs its own sniff-and-rasterize path rather than a trusted
+		// Content-Type header (the request body is what's authoritative).
+		if !looksLikeSVG(body) {
+			return nil, errors.New("logo must be a valid PNG, JPEG, GIF, WEBP, or SVG image")
+		}
+		img, err = rasterizeSVG(body)
+		if err != nil {
+			return nil, fmt.Errorf("logo SVG could not be processed: %w", err)
+		}
 	}
+
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, cropToContent(img)); err != nil {
 		return nil, errors.New("failed to process logo image")
 	}
 	return buf.Bytes(), nil
+}
+
+// looksLikeSVG sniffs the body for an SVG document. SVG isn't in
+// image.Decode's registered-format table (it's XML text, not a raster
+// codec), so it needs content sniffing rather than format dispatch --
+// checked only after image.Decode has already rejected the body, so this
+// never overrides a real raster decode.
+func looksLikeSVG(body []byte) bool {
+	head := bytes.TrimLeft(body, "\xef\xbb\xbf \t\r\n")
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	lower := bytes.ToLower(head)
+	if bytes.HasPrefix(lower, []byte("<svg")) {
+		return true
+	}
+	// Allow a leading XML prolog/doctype before the <svg> root element.
+	return bytes.HasPrefix(lower, []byte("<?xml")) && bytes.Contains(lower, []byte("<svg"))
+}
+
+// svgRasterMaxPx bounds the rasterized SVG's longer edge. An untrusted SVG
+// can declare an arbitrarily large viewBox; rendering that at face value
+// would let a small upload demand a runaway amount of memory for what is
+// ultimately a small header/PDF logo.
+const svgRasterMaxPx = 1024
+
+// rasterizeSVG parses and rasterizes an SVG document into a raster
+// image.Image, scaled (preserving aspect ratio) to fit within
+// svgRasterMaxPx. oksvg/rasterx parse attacker-controlled markup, so a
+// panic from malformed input is recovered into a normal error instead of
+// crashing the request.
+func rasterizeSVG(data []byte) (img image.Image, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			img, err = nil, fmt.Errorf("invalid SVG: %v", r)
+		}
+	}()
+
+	icon, parseErr := oksvg.ReadIconStream(bytes.NewReader(data))
+	if parseErr != nil {
+		return nil, parseErr
+	}
+
+	w, h := icon.ViewBox.W, icon.ViewBox.H
+	if w <= 0 || h <= 0 {
+		w, h = svgRasterMaxPx, svgRasterMaxPx
+	}
+	scale := 1.0
+	if longer := math.Max(w, h); longer > svgRasterMaxPx {
+		scale = svgRasterMaxPx / longer
+	}
+	outW, outH := int(w*scale), int(h*scale)
+	if outW < 1 {
+		outW = 1
+	}
+	if outH < 1 {
+		outH = 1
+	}
+
+	icon.SetTarget(0, 0, float64(outW), float64(outH))
+	rgba := image.NewRGBA(image.Rect(0, 0, outW, outH))
+	scanner := rasterx.NewScannerGV(outW, outH, rgba, rgba.Bounds())
+	raster := rasterx.NewDasher(outW, outH, scanner)
+	icon.Draw(raster, 1.0)
+	return rgba, nil
 }
 
 // cropToContent returns the smallest sub-image containing every non-blank

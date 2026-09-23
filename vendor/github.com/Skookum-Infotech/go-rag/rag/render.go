@@ -3,9 +3,11 @@ package rag
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // RecordDoc is the store-agnostic view of a workflow record that RenderRecord
@@ -21,6 +23,11 @@ type RecordDoc struct {
 	// workflow_field_definitions. Optional: a key with no entry renders under
 	// its raw key (see humanizeKey) rather than being dropped.
 	FieldLabels map[string]string
+	// Priority lists field keys (from Core or Custom) rendered first, in this
+	// order, before the alphabetical rest — e.g. record number, name, status.
+	// Retrieval truncates grounding text to a byte budget, so what comes
+	// first is what the model reliably sees. Keys not present are skipped.
+	Priority []string
 }
 
 // RenderRecord flattens a record into a stable, human-readable text block for
@@ -33,26 +40,70 @@ func RenderRecord(d RecordDoc) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Workflow: %s\n", d.WorkflowKey)
 	fmt.Fprintf(&b, "State: %s\n", d.StateName)
-	writeFields(&b, d.Core, nil)
-	writeFields(&b, d.Custom, d.FieldLabels)
+	done := map[string]bool{}
+	for _, k := range d.Priority {
+		if done[k] {
+			continue
+		}
+		if v, ok := d.Core[k]; ok {
+			writeField(&b, k, v, nil)
+			done[k] = true
+		} else if v, ok := d.Custom[k]; ok {
+			writeField(&b, k, v, d.FieldLabels)
+			done[k] = true
+		}
+	}
+	writeFields(&b, d.Core, nil, done)
+	writeFields(&b, d.Custom, d.FieldLabels, done)
 	return b.String()
 }
 
-// writeFields appends "Label: value" lines in sorted key order. labels may be
-// nil; a key absent from it (or when labels itself is nil) falls back to
+// writeFields appends "Label: value" lines in sorted key order, skipping keys
+// already rendered. labels may be nil; a key absent from it falls back to
 // humanizeKey.
-func writeFields(b *strings.Builder, fields map[string]any, labels map[string]string) {
+func writeFields(b *strings.Builder, fields map[string]any, labels map[string]string, skip map[string]bool) {
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
-		keys = append(keys, k)
+		if !skip[k] {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		label, ok := labels[k]
-		if !ok {
-			label = humanizeKey(k)
+		writeField(b, k, fields[k], labels)
+	}
+}
+
+// writeField appends one "Label: value" line. Empty values (nil, "") are
+// omitted: "Phone: <nil>" is noise that costs grounding budget and can read to
+// a small model as a literal value. Nested maps/slices render as JSON rather
+// than Go's map[...] syntax.
+func writeField(b *strings.Builder, key string, v any, labels map[string]string) {
+	text, ok := formatValue(v)
+	if !ok {
+		return
+	}
+	label, found := labels[key]
+	if !found {
+		label = humanizeKey(key)
+	}
+	fmt.Fprintf(b, "%s: %s\n", label, text)
+}
+
+func formatValue(v any) (string, bool) {
+	switch x := v.(type) {
+	case nil:
+		return "", false
+	case string:
+		return x, strings.TrimSpace(x) != ""
+	case map[string]any, []any:
+		raw, err := json.Marshal(x)
+		if err != nil {
+			return fmt.Sprintf("%v", x), true
 		}
-		fmt.Fprintf(b, "%s: %v\n", label, fields[k])
+		return string(raw), true
+	default:
+		return fmt.Sprintf("%v", x), true
 	}
 }
 
@@ -71,8 +122,9 @@ func humanizeKey(k string) string {
 	}
 	words := strings.Fields(spaced.String())
 	for i, w := range words {
-		lower := strings.ToLower(w)
-		words[i] = strings.ToUpper(lower[:1]) + lower[1:]
+		r := []rune(strings.ToLower(w))
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
 	}
 	return strings.Join(words, " ")
 }

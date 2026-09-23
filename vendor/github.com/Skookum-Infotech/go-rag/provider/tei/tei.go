@@ -69,7 +69,7 @@ func (c *client) postJSON(ctx context.Context, path string, body, out any) error
 			return ctx.Err()
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)

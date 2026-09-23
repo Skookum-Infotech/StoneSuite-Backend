@@ -6,8 +6,11 @@ package pgvector
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgv "github.com/pgvector/pgvector-go"
 
@@ -44,6 +47,13 @@ type Options struct {
 	// GroundingLimit caps how much of a chunk is handed to the model as
 	// context. Defaults to DefaultGroundingLimit.
 	GroundingLimit int
+
+	// EFSearch sets hnsw.ef_search for the vector query (transaction-local).
+	// HNSW applies WHERE clauses AFTER the index scan, so a narrow scope (a
+	// user who owns a few rows of a large table) can come back with fewer
+	// than k rows — or none — at the default of 40. Raising it widens the
+	// candidate set the filter runs over. 0 leaves the server default.
+	EFSearch int
 }
 
 // Defaults tuned for a small self-hosted chat model on a CPU-bound box: a long
@@ -51,7 +61,7 @@ type Options struct {
 // DefaultGroundingLimit only alongside more chat-model compute.
 const (
 	DefaultSnippetLimit   = 240
-	DefaultGroundingLimit = 700
+	DefaultGroundingLimit = 1200
 	DefaultIDColumn       = "source_id"
 )
 
@@ -66,6 +76,7 @@ type Corpus struct {
 	scope    rag.ScopeFilter
 	snippet  int
 	grounded int
+	efSearch int
 }
 
 // Compile-time proof Corpus satisfies the interface the orchestrator wants.
@@ -82,6 +93,7 @@ func New(pool *pgxpool.Pool, opts Options) *Corpus {
 		scope:    opts.Scope,
 		snippet:  opts.SnippetLimit,
 		grounded: opts.GroundingLimit,
+		efSearch: opts.EFSearch,
 	}
 	if c.snippet <= 0 {
 		c.snippet = DefaultSnippetLimit
@@ -107,13 +119,14 @@ func (c *Corpus) Name() string { return c.name }
 func (c *Corpus) buildVectorSearch(k int) (string, []any) {
 	where, scopeArgs := c.scope.Clause(2)
 	sql := fmt.Sprintf(
-		`SELECT %s, content, embedding <=> $1 AS distance FROM %s WHERE %s ORDER BY distance LIMIT %d`,
+		`SELECT %s, content, embedding <=> $1 AS distance FROM %s WHERE (%s) ORDER BY distance LIMIT %d`,
 		c.idCol, c.table, where, k)
 	return sql, append([]any{nil}, scopeArgs...)
 }
 
 // buildLexicalSearch returns the parameterized full-text query. $1 is always
-// the raw query text; the scope filter numbers its own parameters from $2.
+// the cleaned query text (see LexicalQuery); the scope filter numbers its own
+// parameters from $2.
 //
 // 'simple' rather than 'english': no stemming, so identifiers like
 // INC-2023-Q4-011 survive tokenisation intact — precisely the rare tokens a
@@ -121,7 +134,7 @@ func (c *Corpus) buildVectorSearch(k int) (string, []any) {
 func (c *Corpus) buildLexicalSearch(k int) (string, []any) {
 	where, scopeArgs := c.scope.Clause(2)
 	sql := fmt.Sprintf(
-		`SELECT %s, content FROM %s WHERE %s AND content_tsv @@ websearch_to_tsquery('simple', $1) `+
+		`SELECT %s, content FROM %s WHERE (%s) AND content_tsv @@ websearch_to_tsquery('simple', $1) `+
 			`ORDER BY ts_rank_cd(content_tsv, websearch_to_tsquery('simple', $1)) DESC LIMIT %d`,
 		c.idCol, c.table, where, k)
 	return sql, append([]any{nil}, scopeArgs...)
@@ -133,7 +146,21 @@ func (c *Corpus) SearchVector(ctx context.Context, vec []float32, k int) ([]rag.
 	sql, args := c.buildVectorSearch(k)
 	args[0] = pgv.NewVector(vec)
 
-	rows, err := c.pool.Query(ctx, sql, args...)
+	var q querier = c.pool
+	if c.efSearch > 0 {
+		tx, err := c.pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s vector search: begin: %w", c.name, err)
+		}
+		// Read-only, so rollback is the correct end state either way.
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, `SELECT set_config('hnsw.ef_search', $1, true)`, strconv.Itoa(c.efSearch)); err != nil {
+			return nil, fmt.Errorf("%s vector search: set ef_search: %w", c.name, err)
+		}
+		q = tx
+	}
+
+	rows, err := q.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s vector search: %w", c.name, err)
 	}
@@ -151,11 +178,22 @@ func (c *Corpus) SearchVector(ctx context.Context, vec []float32, k int) ([]rag.
 	return out, rows.Err()
 }
 
+// querier is the one method SearchVector needs from either the pool or a tx.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // SearchLexical returns up to k full-text matches the caller may see. Distance
-// is left invalid: a literal term match needs no similarity floor.
+// is left invalid and Lexical set: a literal term match needs no similarity
+// floor. A question with no content words left after LexicalQuery searches
+// nothing rather than matching arbitrary rows.
 func (c *Corpus) SearchLexical(ctx context.Context, query string, k int) ([]rag.Citation, error) {
+	cleaned := LexicalQuery(query)
+	if cleaned == "" {
+		return nil, nil
+	}
 	sql, args := c.buildLexicalSearch(k)
-	args[0] = query
+	args[0] = cleaned
 
 	rows, err := c.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -169,7 +207,9 @@ func (c *Corpus) SearchLexical(ctx context.Context, query string, k int) ([]rag.
 		if err := rows.Scan(&sourceID, &content); err != nil {
 			return nil, fmt.Errorf("%s scan: %w", c.name, err)
 		}
-		out = append(out, c.citation(sourceID, content, 0, false))
+		cite := c.citation(sourceID, content, 0, false)
+		cite.Lexical = true
+		out = append(out, cite)
 	}
 	return out, rows.Err()
 }
@@ -193,11 +233,16 @@ func truncateLine(s string, limit int) string {
 	return truncate(strings.ReplaceAll(s, "\n", " "), limit)
 }
 
-// truncate caps s at limit runes' worth of bytes, preserving structure
-// (newlines, markdown tables) that truncateLine intentionally discards.
+// truncate caps s at limit bytes, preserving structure (newlines, markdown
+// tables) that truncateLine intentionally discards. The cut backs up to a rune
+// boundary so a multi-byte character is never split into invalid UTF-8.
 func truncate(s string, limit int) string {
-	if len(s) > limit {
-		return s[:limit] + "…"
+	if len(s) <= limit {
+		return s
 	}
-	return s
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }

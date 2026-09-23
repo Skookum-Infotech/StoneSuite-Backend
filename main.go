@@ -24,11 +24,8 @@ import (
 	"github.com/Skookum-Infotech/go-rag/provider/tei"
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
-	"stonesuite-backend/ai"
-	"stonesuite-backend/ai/index"
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
-	"stonesuite-backend/crmstore"
 	"stonesuite-backend/database"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/estimate"
@@ -229,7 +226,7 @@ func main() {
 					// warmup just means the first real request pays that
 					// latency itself, same as before this existed.
 					warmupEmb := ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
-					warmupLLM := ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
+					warmupLLM := newChatClient()
 					if err := ragcore.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
 						log.Printf("ollama-lifecycle: warmup failed: %v", err)
 					}
@@ -241,6 +238,7 @@ func main() {
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
 			go startRAGIndexing(shutdownCtx, cp, tenantRouter)
+			go checkHelpCorpusFingerprint(shutdownCtx, cp.Pool())
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -695,7 +693,7 @@ func main() {
 		// rag.StructuredLLMClient — see ai/ollama_llm.go); import still works
 		// for CSV/XLSX without it, since tabular staging never calls the LLM.
 		importWorker = importer.NewWorker(cp, tenantRouter, jobQueue, r2Client,
-			ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel))
+			newChatClient())
 		importWorker.Start(2)
 		log.Println("Import worker started (2 workers, durable queue).")
 
@@ -1396,7 +1394,7 @@ func main() {
 		aiOps := controllers.NewAIOps(
 			cpPool,
 			ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
-			ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
+			newChatClient(),
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
@@ -1406,6 +1404,7 @@ func main() {
 			aiOps = aiOps.WithReranker(tei.NewReranker(config.AppConfig.AIRerankBaseURL), config.AppConfig.AIRerankCandidates)
 		}
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
+		mux.Handle("POST /api/tenant/ai/ask/stream", aiChain(aiOps.AskStream))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
 
@@ -1594,123 +1593,6 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
 		} else if len(empty) > 0 {
 			log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
-		}
-	}
-}
-
-// startRAGIndexing starts one index-drain loop and one reconciliation loop per
-// active tenant. Runs once at boot (mirroring migrateAllTenants); tenants
-// provisioned after this process started are picked up on the next restart —
-// acceptable given the scale-to-zero deploy model restarts frequently.
-func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
-	tenants, err := cp.ListTenants(ctx)
-	if err != nil {
-		log.Printf("rag-index: failed to list tenants: %v", err)
-		return
-	}
-	for _, t := range tenants {
-		if !t.Servable() {
-			continue
-		}
-		pool, err := router.PoolFor(ctx, &t)
-		if err != nil {
-			log.Printf("rag-index: tenant %s: pool error: %v", t.Slug, err)
-			continue
-		}
-		store := crmstore.For(t.DesignVersion)
-		q := index.NewQueue(pool)
-		w := index.NewWorker(
-			q,
-			crmstore.NewRAGRecordLoader(store, pool),
-			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
-			ai.NewRagStore(pool),
-		)
-		go runTenantIndexWorker(ctx, t.Slug, w, q)
-		go runTenantReconciliation(ctx, t.Slug, store, pool, q)
-	}
-}
-
-// runTenantIndexWorker drains one tenant's rag_index_queue every 3s until ctx
-// is cancelled (the goroutine's explicit exit strategy). Also publishes the
-// tenant's queue-depth/oldest-pending-age metrics each tick — piggybacking on
-// the existing cadence rather than adding a separate ticker.
-func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker, q *index.Queue) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := w.DrainOnce(ctx); err != nil {
-				log.Printf("rag-index: tenant %s: drain error: %v", slug, err)
-			}
-			if pending, age, err := q.Stats(ctx); err != nil {
-				log.Printf("rag-index: tenant %s: stats error: %v", slug, err)
-			} else {
-				metrics.SetRAGIndexQueueStats(slug, pending, age)
-			}
-		}
-	}
-}
-
-// runTenantReconciliation runs reconcileTenantIndex immediately and then every
-// 10 minutes until ctx is cancelled (the goroutine's explicit exit strategy).
-// It is the backstop for the small write->enqueue crash window in
-// crmstore.IndexingStore (see its doc comment).
-func runTenantReconciliation(ctx context.Context, slug string, store crmstore.Store, pool *pgxpool.Pool, q *index.Queue) {
-	reconcileTenantIndex(ctx, slug, store, pool, q)
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			reconcileTenantIndex(ctx, slug, store, pool, q)
-		}
-	}
-}
-
-// reconcileTenantIndex enqueues an upsert for every CRM record whose
-// updated_at is newer than its rag_chunks vector (or has no chunk at all),
-// closing the gap between a write committing and its enqueue job landing.
-func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store, pool *pgxpool.Pool, q *index.Queue) {
-	rows, err := pool.Query(ctx, `SELECT source_id, updated_at FROM rag_chunks`)
-	if err != nil {
-		log.Printf("rag-reconcile: tenant %s: read rag_chunks failed: %v", slug, err)
-		return
-	}
-	indexedAt := map[string]time.Time{}
-	for rows.Next() {
-		var id string
-		var at time.Time
-		if err := rows.Scan(&id, &at); err != nil {
-			rows.Close()
-			log.Printf("rag-reconcile: tenant %s: scan failed: %v", slug, err)
-			return
-		}
-		indexedAt[id] = at
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		log.Printf("rag-reconcile: tenant %s: rows error: %v", slug, err)
-		return
-	}
-
-	for _, key := range crmstore.CRMWorkflowKeys() {
-		recs, err := store.ListRecords(ctx, pool, key, "all", "")
-		if err != nil {
-			log.Printf("rag-reconcile: tenant %s: list %s failed: %v", slug, key, err)
-			continue
-		}
-		for _, rec := range recs {
-			if at, ok := indexedAt[rec.ID]; ok && !rec.UpdatedAt.After(at) {
-				continue // vector already current
-			}
-			if err := q.Enqueue(ctx, rec.ID, "upsert"); err != nil {
-				log.Printf("rag-reconcile: tenant %s: enqueue %s failed: %v", slug, rec.ID, err)
-			}
 		}
 	}
 }

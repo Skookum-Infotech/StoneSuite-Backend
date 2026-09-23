@@ -107,9 +107,17 @@ type Config struct {
 	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
 	// the same Ollama box — no third-party LLM account, API key, or quota.
 	// All optional; the assistant no-ops when unconfigured.
-	AIEmbedProvider string // "ollama" (the only implementation today)
-	OllamaBaseURL   string // e.g. http://embedder:11434
-	AIChatModel     string // Ollama model tag, e.g. llama3.2:3b
+	OllamaBaseURL string // e.g. http://embedder:11434
+	AIChatModel   string // Ollama model tag, e.g. llama3.2:3b
+	// AIKeepAlive is Ollama's keep_alive for chat requests (e.g. "30m"): how
+	// long the model stays loaded after a request. Empty uses Ollama's own
+	// default (5m); on the scale-to-zero box a longer value only matters while
+	// the Machine is up anyway.
+	AIKeepAlive string
+	// AIConversationRetentionDays deletes assistant conversations idle for
+	// longer than this (0 disables). Chat history can quote record data the
+	// user has since lost access to, so it is not kept forever.
+	AIConversationRetentionDays int
 	// AIEmbedModel must name a model the Ollama box actually pulled (see
 	// ollama/entrypoint.sh) AND have an entry in ai.modelPrefixes — an
 	// unregistered model silently loses its task prefixes and degrades recall.
@@ -222,9 +230,10 @@ func Load() {
 		AxiomToken:   getEnv("AXIOM_TOKEN", ""),
 		AxiomDataset: getEnv("AXIOM_DATASET", ""),
 		// AI / RAG assistant (ADR-001)
-		AIEmbedProvider: getEnv("AI_EMBED_PROVIDER", "ollama"),
-		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-		AIChatModel:     getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
+		OllamaBaseURL:               getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		AIChatModel:                 getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
+		AIKeepAlive:                 getEnv("AI_KEEP_ALIVE", ""),
+		AIConversationRetentionDays: getEnvInt("AI_CONVERSATION_RETENTION_DAYS", 90),
 		// Must match ollama/entrypoint.sh's default pull and ollama/fly.toml —
 		// a default that names a model the box never pulled fails every embed.
 		AIEmbedModel: getEnv("AI_EMBED_MODEL", "snowflake-arctic-embed:m"),

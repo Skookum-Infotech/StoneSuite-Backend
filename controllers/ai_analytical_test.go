@@ -3,12 +3,14 @@ package controllers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
+	"stonesuite-backend/ai"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/query"
 )
@@ -169,11 +171,20 @@ type fakeCountStore struct {
 	err           error
 	errOnly       string // if set, only this key errors; other keys still return counts
 	calls         []string
+	scopes        []string // "key:scope" per CountRecords call
 	filteredCalls []filteredCall
 }
 
-func (f *fakeCountStore) CountRecords(_ context.Context, _ *pgxpool.Pool, key, _, _ string) (int, error) {
+// allGrants / ownGrants read every CRM type at one scope — the shape every
+// caller had before grants became per type.
+var (
+	allGrants = ai.Grants{"lead": ai.ScopeAll, "prospect": ai.ScopeAll, "customer": ai.ScopeAll}
+	ownGrants = ai.Grants{"lead": ai.ScopeOwn, "prospect": ai.ScopeOwn, "customer": ai.ScopeOwn}
+)
+
+func (f *fakeCountStore) CountRecords(_ context.Context, _ *pgxpool.Pool, key, scope, _ string) (int, error) {
 	f.calls = append(f.calls, key)
+	f.scopes = append(f.scopes, key+":"+scope)
 	if f.err != nil && (f.errOnly == "" || f.errOnly == key) {
 		return 0, f.err
 	}
@@ -201,7 +212,7 @@ func (f *fakeCountStore) CountRecordsFiltered(_ context.Context, _ *pgxpool.Pool
 func TestCountCRMRecords_SumsAcrossKeysAndFormatsAnswer(t *testing.T) {
 	t.Run("single key", func(t *testing.T) {
 		store := &fakeCountStore{counts: map[string]int{"customer": 7}}
-		res, err := countCRMRecords(context.Background(), store, nil, "all", "identity-1", []string{"customer"})
+		res, err := countCRMRecords(context.Background(), store, nil, allGrants, "identity-1", []string{"customer"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -215,7 +226,7 @@ func TestCountCRMRecords_SumsAcrossKeysAndFormatsAnswer(t *testing.T) {
 
 	t.Run("multiple keys", func(t *testing.T) {
 		store := &fakeCountStore{counts: map[string]int{"customer": 2, "lead": 3, "prospect": 1}}
-		res, err := countCRMRecords(context.Background(), store, nil, "own", "identity-1",
+		res, err := countCRMRecords(context.Background(), store, nil, ownGrants, "identity-1",
 			[]string{"customer", "lead", "prospect"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -235,9 +246,66 @@ func TestCountCRMRecords_SumsAcrossKeysAndFormatsAnswer(t *testing.T) {
 
 func TestCountCRMRecords_PropagatesStoreError(t *testing.T) {
 	store := &fakeCountStore{err: errBoomAnalytical}
-	_, err := countCRMRecords(context.Background(), store, nil, "all", "identity-1", []string{"customer"})
+	_, err := countCRMRecords(context.Background(), store, nil, allGrants, "identity-1", []string{"customer"})
 	if err == nil {
 		t.Fatal("expected error to propagate")
+	}
+}
+
+// TestCountCRMRecords_PerTypeGrants is the count half of the per-type scope
+// fix: each type is counted under its OWN scope, ungranted types are never
+// counted (not even as zero), and the answer names what was left out.
+func TestCountCRMRecords_PerTypeGrants(t *testing.T) {
+	counts := map[string]int{"customer": 9, "lead": 3, "prospect": 1}
+
+	t.Run("each type under its own scope", func(t *testing.T) {
+		store := &fakeCountStore{counts: counts}
+		grants := ai.Grants{"lead": ai.ScopeAll, "customer": ai.ScopeOwn}
+		if _, err := countCRMRecords(context.Background(), store, nil, grants, "identity-1", []string{"customer", "lead"}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(store.scopes, ",") != "customer:own,lead:all" {
+			t.Fatalf("scopes = %v", store.scopes)
+		}
+	})
+
+	t.Run("only an ungranted type: no number, no store call", func(t *testing.T) {
+		store := &fakeCountStore{counts: counts}
+		res, err := countCRMRecords(context.Background(), store, nil, ai.Grants{"lead": ai.ScopeAll}, "identity-1", []string{"customer"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Answer != "You don't have access to customer records." || len(store.calls) != 0 {
+			t.Fatalf("answer %q after calls %v", res.Answer, store.calls)
+		}
+	})
+
+	t.Run("mixed: counts the granted, names the rest", func(t *testing.T) {
+		store := &fakeCountStore{counts: counts}
+		res, err := countCRMRecords(context.Background(), store, nil, ai.Grants{"lead": ai.ScopeAll}, "identity-1", []string{"customer", "lead", "prospect"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "You have 3 leads. You don't have access to customer or prospect records."
+		if res.Answer != want || strings.Join(store.calls, ",") != "lead" {
+			t.Fatalf("answer %q (want %q) after calls %v", res.Answer, want, store.calls)
+		}
+	})
+
+	t.Run("unknown scope value is not a grant", func(t *testing.T) {
+		store := &fakeCountStore{counts: counts}
+		res, _ := countCRMRecords(context.Background(), store, nil, ai.Grants{"lead": "team"}, "identity-1", []string{"lead"})
+		if len(store.calls) != 0 || !strings.Contains(res.Answer, "don't have access") {
+			t.Fatalf("a retired/unknown scope must fail closed: %q after %v", res.Answer, store.calls)
+		}
+	})
+}
+
+func TestResolveRoutedFilteredCount_NoGrantsSkipsModelCall(t *testing.T) {
+	llm := &fakeStructuredLLM{err: errors.New("must not be called")}
+	store := &fakeCountStore{}
+	if _, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ai.Grants{}, "identity-1", "how many leads closed last week", nil); ok {
+		t.Fatal("no grants must fall back without routing")
 	}
 }
 
@@ -275,6 +343,8 @@ func TestHasFilterHintCountIntent(t *testing.T) {
 		{"filtered count with the generic record word", "how many records were qualified this week", true},
 		{"no count intent at all", "tell me about Acme Corp", false},
 		{"count intent but unrelated to CRM records", "how many angels dance on a pin last week", false},
+		{"filter adjective before the type still routes", "how many qualified leads do we have", true},
+		{"type word that isn't the counted object", "how many emails did the lead send last week", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -288,7 +358,7 @@ func TestHasFilterHintCountIntent(t *testing.T) {
 func TestResolveRoutedFilteredCount_UnsupportedLLMFallsBack(t *testing.T) {
 	llm := &ragcore.FakeLLM{Reply: "unused"} // implements Chat only, not ChatJSON
 	store := &fakeCountStore{}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads closed last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "how many leads closed last week", nil)
 	if ok {
 		t.Fatal("expected fallback (ok=false) for an LLM without structured output support")
 	}
@@ -306,7 +376,7 @@ func TestResolveRoutedFilteredCount_HappyPath(t *testing.T) {
 	}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 4}}
 
-	res, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads are qualified this week", nil)
+	res, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "how many leads are qualified this week", nil)
 	if !ok {
 		t.Fatal("expected the routed count path to succeed")
 	}
@@ -329,7 +399,7 @@ func TestResolveRoutedFilteredCount_NoWorkflowKeysCountsAll(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": [], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1, "prospect": 2, "customer": 3}}
 
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many records were touched last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, allGrants, "identity-1", "how many records were touched last week", nil)
 	if !ok {
 		t.Fatal("expected success")
 	}
@@ -341,7 +411,7 @@ func TestResolveRoutedFilteredCount_NoWorkflowKeysCountsAll(t *testing.T) {
 func TestResolveRoutedFilteredCount_NonCountIntentFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "search", "workflow_keys": [], "filters": [], "search_text": "x"}`}
 	store := &fakeCountStore{}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "tell me about last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "tell me about last week", nil)
 	if ok {
 		t.Fatal("expected fallback for a non-count intent")
 	}
@@ -350,7 +420,7 @@ func TestResolveRoutedFilteredCount_NonCountIntentFallsBack(t *testing.T) {
 func TestResolveRoutedFilteredCount_MalformedModelOutputFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `not json`}
 	store := &fakeCountStore{}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "how many leads last week", nil)
 	if ok {
 		t.Fatal("expected fallback for malformed model output")
 	}
@@ -362,7 +432,7 @@ func TestResolveRoutedFilteredCount_MalformedModelOutputFallsBack(t *testing.T) 
 func TestResolveRoutedFilteredCount_UnknownWorkflowKeyFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": ["invoice"], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1}}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many invoices last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "how many invoices last week", nil)
 	if ok {
 		t.Fatal("expected fallback for a workflow key that is not a real CRM key")
 	}
@@ -388,7 +458,7 @@ func TestResolveRoutedFilteredCount_DisallowedFieldFallsBack(t *testing.T) {
 				"search_text": ""
 			}`}
 			store := &fakeCountStore{counts: map[string]int{"lead": 1}}
-			_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many leads last week", nil)
+			_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, allGrants, "identity-1", "how many leads last week", nil)
 			if ok {
 				t.Fatalf("expected fallback for filter field %q outside the whitelist", field)
 			}
@@ -407,7 +477,7 @@ func TestResolveRoutedFilteredCount_DisallowedOperatorFallsBack(t *testing.T) {
 		"search_text": ""
 	}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1}}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "all", "identity-1", "how many leads last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, allGrants, "identity-1", "how many leads last week", nil)
 	if ok {
 		t.Fatal("expected fallback for an operator outside routeOperatorSet (OpIn needs multi-value input this path doesn't offer)")
 	}
@@ -419,7 +489,7 @@ func TestResolveRoutedFilteredCount_DisallowedOperatorFallsBack(t *testing.T) {
 func TestResolveRoutedFilteredCount_StoreErrorFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": ["lead"], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{err: errBoomAnalytical}
-	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, "own", "identity-1", "how many leads last week", nil)
+	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "how many leads last week", nil)
 	if ok {
 		t.Fatal("expected fallback when the store call itself fails")
 	}

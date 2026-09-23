@@ -6,7 +6,11 @@ package rag
 // to import ai/index and risk a cycle.
 type Chunk struct {
 	SourceID, WorkflowID, OwnerUserID, TeamID, Content, ContentHash string
-	Embedding                                                       []float32
+	// Kind is a caller-defined classification of the source (e.g. a CRM
+	// record type) stored beside the text so a ScopeFilter can grant access
+	// per kind. Like the other scope columns it is not part of ContentHash.
+	Kind      string
+	Embedding []float32
 }
 
 // ChunkMeta is the stored bookkeeping for one indexed source: what its text
@@ -24,4 +28,5 @@ type ChunkMeta struct {
 	WorkflowID  string
 	OwnerUserID string
 	TeamID      string
+	Kind        string
 }

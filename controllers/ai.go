@@ -47,6 +47,9 @@ type AIOps struct {
 	// slotWait is how long a request queues for a slot (aiSlotWait; a field
 	// so tests don't wait out the real value).
 	slotWait time.Duration
+	// waker starts the self-hosted Ollama box when a request finds it down.
+	// Nil when the Fly lifecycle isn't configured (local dev, always-on box).
+	waker ollamaWaker
 }
 
 // NewAIOps constructs the handler group. queryEmbed MUST be a query embedder
@@ -67,6 +70,13 @@ func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ragcore.Embedder, llm ragcore.LLM
 func (h *AIOps) WithReranker(r ragcore.Reranker, candidateK int) *AIOps {
 	h.reranker = r
 	h.rerankCandidates = candidateK
+	return h
+}
+
+// WithOllamaWaker wires the on-demand Ollama start (see withOllamaWake) and
+// returns the receiver for chaining at construction in main.go.
+func (h *AIOps) WithOllamaWaker(w ollamaWaker) *AIOps {
+	h.waker = w
 	return h
 }
 

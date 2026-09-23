@@ -90,20 +90,81 @@ var filterHintSet = func() map[string]bool {
 // countWordRe splits a question into lowercase words for countObject.
 var countWordRe = regexp.MustCompile(`[a-z]+`)
 
+// countStrongPhraseRe marks the start of an explicit count clause. A question
+// can hold several ("how many customers and how many leads"); the weaker
+// "total"/"count" only ever open the first clause, so "how many customers in
+// total" is still one clause.
+var countStrongPhraseRe = regexp.MustCompile(`(?i)\b(?:how many|count of|number of)\b`)
+
 // countObject reports which CRM type(s) a count question is counting — the
-// OBJECT of its count phrase, not merely a type word somewhere in it. After
-// the count phrase it skips filler and filter words, then collects type words
-// joined by "and"/"or"; the first other word ends the object. So "how many
+// OBJECT of each count phrase, not merely a type word somewhere in it. After a
+// count phrase it skips filler and filter words, then collects type words
+// joined by "and"/"or"; the first other word ends that object. So "how many
 // qualified leads and customers" counts lead+customer, while "total balance
 // for customer Acme" (object "balance") and "how many emails did customer X
 // send" (object "emails") are not CRM counts at all. "records" with no type
 // word means every type.
+//
+// Further explicit count phrases ("how many customers and how many leads")
+// each contribute their own object, and every one must name a CRM type: a
+// clause we can't answer ("... and how many emails") sends the whole question
+// to RAG rather than answering only the half we understood.
 func countObject(question string) ([]string, bool) {
-	loc := countIntentRe.FindStringIndex(question)
-	if loc == nil {
+	first := countIntentRe.FindStringIndex(question)
+	if first == nil {
 		return nil, false
 	}
-	words := countWordRe.FindAllString(strings.ToLower(question[loc[1]:]), -1)
+	starts := []int{first[1]}
+	for _, loc := range countStrongPhraseRe.FindAllStringIndex(question, -1) {
+		if loc[0] >= first[1] {
+			starts = append(starts, loc[1])
+		}
+	}
+	seen := map[string]bool{}
+	var keys []string
+	for i, from := range starts {
+		to := len(question)
+		if i+1 < len(starts) {
+			to = nextClauseStart(question, starts[i+1])
+		}
+		text := question[from:to]
+		if len(starts) > 1 && len(countWordRe.FindAllString(strings.ToLower(text), -1)) == 0 {
+			continue
+		}
+		clauseKeys, ok := countClauseObject(text)
+		if !ok {
+			return nil, false
+		}
+		for _, k := range clauseKeys {
+			if !seen[k] {
+				seen[k] = true
+				keys = append(keys, k)
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return nil, false
+	}
+	if len(starts) > 1 {
+		sort.Strings(keys) // deterministic order regardless of phrasing
+	}
+	return keys, true
+}
+
+// nextClauseStart returns where the count phrase ending at phraseEnd begins, so
+// the previous clause's text stops before it.
+func nextClauseStart(question string, phraseEnd int) int {
+	for _, loc := range countStrongPhraseRe.FindAllStringIndex(question, -1) {
+		if loc[1] == phraseEnd {
+			return loc[0]
+		}
+	}
+	return phraseEnd
+}
+
+// countClauseObject parses the text after ONE count phrase into CRM type keys.
+func countClauseObject(text string) ([]string, bool) {
+	words := countWordRe.FindAllString(strings.ToLower(text), -1)
 	if len(words) > countObjectMaxWords {
 		words = words[:countObjectMaxWords]
 	}

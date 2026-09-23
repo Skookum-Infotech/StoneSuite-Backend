@@ -43,8 +43,9 @@ func newInviteTestEnv(t *testing.T) *inviteTestEnv {
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
+	inviteAdminKey := fmt.Sprintf("invite-admin-%d", time.Now().UnixNano())
 	roleID, err := authz.CreateRole(context.Background(), pool,
-		fmt.Sprintf("invite-admin-%d", time.Now().UnixNano()), "Invite Admin", "",
+		inviteAdminKey, inviteAdminKey, "",
 		[]authz.Grant{
 			{Resource: authz.ResourceUser, Action: authz.ActionCreate, Scope: authz.ScopeAll},
 			{Resource: authz.ResourceRole, Action: authz.ActionUpdate, Scope: authz.ScopeAll},

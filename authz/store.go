@@ -24,6 +24,10 @@ type Querier interface {
 // ErrRoleNotFound is returned when a role lookup misses.
 var ErrRoleNotFound = errors.New("role not found")
 
+// ErrDuplicateRoleName is returned when a role name (trimmed,
+// case-insensitive) collides with an existing role's name.
+var ErrDuplicateRoleName = errors.New("a role with this name already exists")
+
 // Grant is a single permission line on a role.
 type Grant struct {
 	Resource Resource `json:"resource"`
@@ -242,8 +246,15 @@ func CreateRole(ctx context.Context, q Querier, key, name, description string, p
 }
 
 func createRoleInTx(ctx context.Context, q Querier, key, name, description string, perms []Grant) (string, error) {
+	taken, err := roleNameTaken(ctx, q, name, nil)
+	if err != nil {
+		return "", err
+	}
+	if taken {
+		return "", ErrDuplicateRoleName
+	}
 	var id string
-	err := q.QueryRow(ctx, `
+	err = q.QueryRow(ctx, `
 		INSERT INTO roles (key, name, description, is_system)
 		VALUES ($1, $2, $3, FALSE) RETURNING id`, key, name, description).Scan(&id)
 	if err != nil {
@@ -253,6 +264,29 @@ func createRoleInTx(ctx context.Context, q Querier, key, name, description strin
 		return "", err
 	}
 	return id, nil
+}
+
+// roleNameTaken reports whether some other role already has this name
+// (trimmed, case-insensitive). excludeID lets the role being edited keep its
+// own unchanged name; pass nil when creating a brand new role.
+//
+// This is a best-effort application-level check, not a DB constraint — the
+// canonical schema.sql is re-applied to every tenant DB on every boot, and a
+// blocking UNIQUE index added now could fail that re-apply for any tenant
+// that already happens to hold two same-named roles, breaking their boot.
+// A rare concurrent double-create can still slip past this check.
+func roleNameTaken(ctx context.Context, q Querier, name string, excludeID *string) (bool, error) {
+	var exists bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM roles
+			WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+			  AND ($2::uuid IS NULL OR id != $2::uuid)
+		)`, name, excludeID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check role name: %w", err)
+	}
+	return exists, nil
 }
 
 // UpdateRole updates a role's name/description and replaces its permissions.
@@ -285,6 +319,13 @@ func UpdateRole(ctx context.Context, q Querier, id, name, description string, pe
 }
 
 func updateRoleInTx(ctx context.Context, q Querier, id, name, description string, perms []Grant) error {
+	taken, err := roleNameTaken(ctx, q, name, &id)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrDuplicateRoleName
+	}
 	tag, err := q.Exec(ctx,
 		`UPDATE roles SET name = $2, description = $3, updated_at = NOW() WHERE id = $1`,
 		id, name, description)

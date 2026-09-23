@@ -116,6 +116,10 @@ func (h *RBACOps) Roles(w http.ResponseWriter, r *http.Request) {
 		}
 		id, err := authz.CreateRole(r.Context(), pool, req.Key, req.Name, req.Description, req.Permissions)
 		if err != nil {
+			if errors.Is(err, authz.ErrDuplicateRoleName) {
+				fail(w, http.StatusBadRequest, "A role with this name already exists.")
+				return
+			}
 			if isValidationErr(err) {
 				fail(w, http.StatusBadRequest, err.Error())
 				return
@@ -186,6 +190,10 @@ func (h *RBACOps) Role(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := authz.UpdateRole(r.Context(), pool, id, req.Name, req.Description, req.Permissions); err != nil {
+			if errors.Is(err, authz.ErrDuplicateRoleName) {
+				fail(w, http.StatusBadRequest, "A role with this name already exists.")
+				return
+			}
 			if isValidationErr(err) {
 				fail(w, http.StatusBadRequest, err.Error())
 				return

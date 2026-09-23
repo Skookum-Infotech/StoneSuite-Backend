@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-536 endpoints across 7 surfaces, read from `main.go`.
+537 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -13,7 +13,7 @@
 | staff token + tenant | 455 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
-| none | 17 |
+| none | 18 |
 | staff token | 13 |
 | portal token | 3 |
 | customer token | 2 |
@@ -46,6 +46,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `ANY` | `/api/onboarding/apply` | no rate limit |
 | `ANY` | `/api/onboarding/apply/` | no rate limit |
 | `ANY` | `/api/onboarding/form-schema` | no rate limit |
+| `ANY` | `/api/onboarding/lookups` | no rate limit |
 | `ANY` | `/api/onboarding/set-password` | no rate limit |
 | `ANY` | `/api/onboarding/set-password/` | no rate limit |
 | `POST` | `/api/onboarding/user-invite/accept` | no rate limit |
@@ -133,7 +134,7 @@ Staff sign-in, session rotation, password reset and SAML SSO.
 |---|---|---|---|
 | `ANY` | `/api/auth/tenant-login` | none (rate-limited) | `tenantOps.TenantLogin` |
 
-## `onboarding` — 7 endpoints
+## `onboarding` — 8 endpoints
 
 Public tenant onboarding and workspace-user invitations.
 
@@ -149,6 +150,12 @@ Public tenant onboarding and workspace-user invitations.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `ANY` | `/api/onboarding/form-schema` | none | `tenantOps.FormSchema` |
+
+### lookups
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `ANY` | `/api/onboarding/lookups` | none | `tenantOps.OnboardingLookups` |
 
 ### set-password
 

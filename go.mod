@@ -3,7 +3,7 @@ module stonesuite-backend
 go 1.25.12
 
 require (
-	github.com/Skookum-Infotech/go-rag v0.0.0-20260909021210-b0963552102d
+	github.com/Skookum-Infotech/go-rag v0.0.0-20260923021923-524287cf7f32
 	github.com/beevik/etree v1.7.0
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-pdf/fpdf v0.9.0
@@ -51,9 +51,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// TEMPORARY dev-time pin: builds against the local go-rag checkout's
-// feat/sse-streaming branch (Phase 2 SSE streaming work, not yet pushed).
-// Remove this replace and update the require above to a real pseudo-version
-// once that branch is pushed and reviewed.
-replace github.com/Skookum-Infotech/go-rag => /Users/prasannakumarnagaboyina/pkumardev/go-rag

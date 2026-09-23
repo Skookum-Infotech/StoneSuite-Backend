@@ -38,10 +38,15 @@ type LLMClient struct {
 // starts responding. 300 tokens is plenty for a grounded, cited answer.
 const maxPredictTokens = 300
 
-// chatTimeout bounds a non-streaming Chat/ChatJSON call. Must stay under the
-// caller's own write/proxy timeout with margin — StoneSuite-Backend's
-// main.go documents this client's timeout in its own comment and sizes its
-// http.Server.WriteTimeout (120s) to exceed it; change the two together.
+// chatTimeout bounds a non-streaming Chat/ChatJSON call. 100s, not 60s: on
+// the CPU-only iad box, prefill alone runs at ~20-25 tok/s, so a full 800+
+// token context (system prompt + top-K retrieved chunks + question) can burn
+// 30-40s before generation even starts — at 60s a legitimately in-progress
+// answer was hard-failing with a cancelled request instead of finishing a
+// few seconds later. Must stay under the caller's own write/proxy timeout
+// with margin — StoneSuite-Backend's main.go documents this client's
+// timeout in its own comment and sizes its http.Server.WriteTimeout (120s)
+// to exceed it; change the two together.
 const chatTimeout = 100 * time.Second
 
 // streamIdleTimeout bounds how long ChatStream waits for the *next* chunk

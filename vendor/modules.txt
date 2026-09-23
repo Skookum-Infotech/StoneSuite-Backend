@@ -1,4 +1,4 @@
-# github.com/Skookum-Infotech/go-rag v0.0.0-20260909021210-b0963552102d => /Users/prasannakumarnagaboyina/pkumardev/go-rag
+# github.com/Skookum-Infotech/go-rag v0.0.0-20260923021923-524287cf7f32
 ## explicit; go 1.25.0
 github.com/Skookum-Infotech/go-rag/chunk
 github.com/Skookum-Infotech/go-rag/eval
@@ -233,4 +233,3 @@ google.golang.org/protobuf/types/known/timestamppb
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# github.com/Skookum-Infotech/go-rag => /Users/prasannakumarnagaboyina/pkumardev/go-rag

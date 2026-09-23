@@ -31,12 +31,37 @@ import (
 // since the seeded tenant/CP databases have nothing indexed to retrieve.
 type fakeEmbedder struct{}
 
+// fakeVector is what fakeEmbedder returns for every text. Non-zero on
+// purpose: cosine distance to a zero vector is NaN, so nothing would ever
+// clear the relevance floor. A chunk seeded with this same vector sits at
+// distance 0 from every question.
+func fakeVector() []float32 {
+	v := make([]float32, 768)
+	for i := range v {
+		v[i] = 0.1
+	}
+	return v
+}
+
 func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
 	for i := range texts {
-		out[i] = make([]float32, 768)
+		out[i] = fakeVector()
 	}
 	return out, nil
+}
+
+// seedRAGChunk indexes one record chunk of recordType owned by ownerUserID,
+// at distance 0 from every fakeEmbedder question, and returns its source id.
+func seedRAGChunk(t *testing.T, pool *pgxpool.Pool, recordType, ownerUserID, content string) string {
+	t.Helper()
+	var id string
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT gen_random_uuid()::text`).Scan(&id))
+	require.NoError(t, ai.NewRagStore(pool).Upsert(context.Background(), rag.Chunk{
+		SourceID: id, OwnerUserID: ownerUserID, Kind: recordType,
+		Content: content, ContentHash: id, Embedding: fakeVector(),
+	}))
+	return id
 }
 
 // testCPPool connects to the control-plane test database (TEST_CP_DATABASE_URL)
@@ -274,6 +299,7 @@ func TestAIOpsAskStream_RealRagRouteEndToEnd(t *testing.T) {
 	roleID := seedRBACTestRole(t, pool, "ai-stream-rag-route", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleID))
 
+	seedRAGChunk(t, pool, "lead", user.ID, "Workflow: lead Name: Acme Status: Active")
 	llm := &rag.FakeStreamingLLM{Tokens: []string{"Acme ", "is ", "active."}}
 	h := NewAIOps(cpPool, fakeEmbedder{}, llm, nil, nil)
 
@@ -320,6 +346,7 @@ func TestAIOpsAskStream_LLMFailureEmitsErrorEvent(t *testing.T) {
 	roleID := seedRBACTestRole(t, pool, "ai-stream-llm-failure", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleID))
 
+	seedRAGChunk(t, pool, "lead", user.ID, "Workflow: lead Name: Acme Status: Active")
 	llm := &rag.FakeStreamingLLM{Err: assert.AnError}
 	h := NewAIOps(cpPool, fakeEmbedder{}, llm, nil, nil)
 
@@ -359,6 +386,7 @@ func TestAIOpsAskStream_CtxDoneEmitsErrorEvent(t *testing.T) {
 	// Blocks on ctx.Done() itself rather than a fixed sleep, so this test
 	// finishes as soon as the (short, test-supplied) context is cancelled
 	// instead of waiting out any fixed duration.
+	seedRAGChunk(t, pool, "lead", user.ID, "Workflow: lead Name: Acme Status: Active")
 	llm := &blockingStreamingLLM{}
 	h := NewAIOps(cpPool, fakeEmbedder{}, llm, nil, nil)
 

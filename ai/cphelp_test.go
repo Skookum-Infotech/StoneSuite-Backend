@@ -5,6 +5,7 @@ package ai
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,7 +38,7 @@ func newCPTestPool(t *testing.T) *pgxpool.Pool {
 
 func TestCPHelpStoreReplaceDocIsIdempotent(t *testing.T) {
 	pool := newCPTestPool(t)
-	s := NewCPHelpStore(pool)
+	s := NewCPHelpStore(pool, "test-embedder")
 	ctx := context.Background()
 
 	err := s.ReplaceDoc(ctx, "onboarding", []ingest.DocChunk{
@@ -79,7 +80,7 @@ func TestCPHelpStoreReplaceDocIsIdempotent(t *testing.T) {
 
 func TestCPHelpStoreReplaceDocDoesNotTouchOtherDocs(t *testing.T) {
 	pool := newCPTestPool(t)
-	s := NewCPHelpStore(pool)
+	s := NewCPHelpStore(pool, "test-embedder")
 	ctx := context.Background()
 
 	if err := s.ReplaceDoc(ctx, "doc-a", []ingest.DocChunk{{Section: "A", Content: "a", Embedding: nonZeroVec()}}); err != nil {
@@ -94,5 +95,37 @@ func TestCPHelpStoreReplaceDocDoesNotTouchOtherDocs(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("doc-a count = %d, want 1 (must survive doc-b's ReplaceDoc)", count)
+	}
+}
+
+func TestCPHelpStorePruneDocsAndFingerprints(t *testing.T) {
+	pool := newCPTestPool(t)
+	ctx := context.Background()
+	oldModel := NewCPHelpStore(pool, "old-model|")
+	newModel := NewCPHelpStore(pool, "new-model|")
+
+	if err := oldModel.ReplaceDoc(ctx, "prune-removed", []ingest.DocChunk{{Section: "A", Content: "a", Embedding: nonZeroVec()}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := newModel.ReplaceDoc(ctx, "prune-kept", []ingest.DocChunk{{Section: "B", Content: "b", Embedding: nonZeroVec()}}); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := newModel.StaleFingerprints(ctx, "new-model|")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(stale, "old-model|") {
+		t.Fatalf("a vector from another embedder must be reported stale, got %v", stale)
+	}
+
+	if _, err := newModel.PruneDocs(ctx, []string{"prune-kept"}); err != nil {
+		t.Fatal(err)
+	}
+	var removed, kept int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM cp_rag_chunks WHERE doc_key = 'prune-removed'`).Scan(&removed)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM cp_rag_chunks WHERE doc_key = 'prune-kept'`).Scan(&kept)
+	if removed != 0 || kept != 1 {
+		t.Fatalf("after prune: removed doc has %d chunks (want 0), kept doc has %d (want 1)", removed, kept)
 	}
 }

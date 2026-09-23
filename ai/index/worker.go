@@ -93,6 +93,7 @@ func (w *Worker) process(ctx context.Context, j Job) error {
 	}
 	next := rag.Chunk{
 		SourceID: j.SourceID, WorkflowID: wfID, OwnerUserID: owner, TeamID: team,
+		Kind:    doc.WorkflowKey,
 		Content: content, ContentHash: rag.VectorHash(w.fingerprint(), content),
 	}
 
@@ -120,15 +121,6 @@ func (w *Worker) fingerprint() string {
 	return ""
 }
 
-// sameScope reports whether the stored scope columns already match the record's
-// current ones. Deliberately compares every column rather than owner alone:
-// each one narrows retrieval, so any of them going stale is a scope bug.
-func sameScope(prev rag.ChunkMeta, next rag.Chunk) bool {
-	return prev.OwnerUserID == next.OwnerUserID &&
-		prev.TeamID == next.TeamID &&
-		prev.WorkflowID == next.WorkflowID
-}
-
 // reuseExisting decides whether an already-indexed record can avoid a re-embed.
 // It reports done=true when it has fully handled the job.
 //
@@ -152,9 +144,12 @@ func (w *Worker) reuseExisting(ctx context.Context, prev rag.ChunkMeta, next rag
 	if prev.ContentHash != next.ContentHash {
 		return false, nil // text or embedder changed — the stored vector is stale
 	}
-	if sameScope(prev, next) {
-		return true, nil // fully up to date; the common case on a reconciliation sweep
-	}
+	// Up to date or not, the row is touched: UpdateScope also bumps
+	// updated_at, which is what the reconciliation sweep compares against the
+	// record's own updated_at. Skipping the write when nothing changed left a
+	// record whose updated_at moved without changing its text (a no-op
+	// transition, an approval) looking stale forever, so the sweep re-queued
+	// it every cycle.
 	return true, w.sink.UpdateScope(ctx, next)
 }
 

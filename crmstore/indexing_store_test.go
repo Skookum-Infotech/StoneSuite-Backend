@@ -3,6 +3,7 @@ package crmstore
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,6 +23,15 @@ type fakeStore struct {
 	createID  string
 	createErr error
 	deleteErr error
+	decideErr error
+}
+
+func (f *fakeStore) Approve(_ context.Context, _ *pgxpool.Pool, id, _ string, _ bool) (*workflow.Record, error) {
+	return &workflow.Record{ID: id}, f.decideErr
+}
+
+func (f *fakeStore) Reject(_ context.Context, _ *pgxpool.Pool, id, _, _ string, _ bool) (*workflow.Record, error) {
+	return &workflow.Record{ID: id}, f.decideErr
 }
 
 func (f *fakeStore) CreateRecord(_ context.Context, _ *pgxpool.Pool, _ string, _ CreateInput) (*workflow.Record, error) {
@@ -81,5 +91,30 @@ func TestIndexingStoreDoesNotEnqueueOnCreateError(t *testing.T) {
 	}
 	if len(enq.calls) != 0 {
 		t.Fatalf("must not enqueue on a failed write, got %v", enq.calls)
+	}
+}
+
+// TestIndexingStoreReindexesOnApprovalDecisions: approval status is part of a
+// record's indexed text, so approve/reject must refresh its vector like any
+// other write — and a failed decision must not.
+func TestIndexingStoreReindexesOnApprovalDecisions(t *testing.T) {
+	enq := &fakeEnqueuer{}
+	st := NewIndexingStore(&fakeStore{}, enq)
+	if _, err := st.Approve(ctx(t), nil, "rec-1", "id-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Reject(ctx(t), nil, "rec-2", "id-1", "no", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(enq.calls, ","); got != "upsert:rec-1,upsert:rec-2" {
+		t.Fatalf("calls = %s", got)
+	}
+
+	failing := &fakeEnqueuer{}
+	st = NewIndexingStore(&fakeStore{decideErr: errBoom}, failing)
+	_, _ = st.Approve(ctx(t), nil, "rec-3", "id-1", false)
+	_, _ = st.Reject(ctx(t), nil, "rec-3", "id-1", "no", false)
+	if len(failing.calls) != 0 {
+		t.Fatalf("a failed decision must not enqueue: %v", failing.calls)
 	}
 }

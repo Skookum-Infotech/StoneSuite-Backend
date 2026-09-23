@@ -32,6 +32,11 @@ type Citation struct {
 	// never serialized (json:"-").
 	Distance      float64 `json:"-"`
 	DistanceValid bool    `json:"-"`
+	// Lexical is true when the lexical (full-text) arm matched this chunk,
+	// whether or not the vector arm also did. A literal term match is its own
+	// relevance signal, so the distance floor never drops a lexical match.
+	// Internal, never serialized.
+	Lexical bool `json:"-"`
 }
 
 // Embedder turns text into vectors. Implementations must return one vector per

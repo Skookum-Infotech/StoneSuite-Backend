@@ -535,3 +535,11 @@ CREATE TABLE IF NOT EXISTS platform_feedback_attachments (
 
 CREATE INDEX IF NOT EXISTS idx_platform_feedback_attachments_feedback
     ON platform_feedback_attachments(feedback_id);
+
+-- ── cp_rag_chunks.embed_fingerprint ───────────────────────────────────
+-- Which embedder (model + task prefix) produced each help vector. Vectors
+-- from different embedders are not comparable, and a model swap otherwise
+-- leaves the help corpus silently returning noise until someone remembers to
+-- reindex it; boot compares this against the running embedder and warns.
+-- NULL for rows written before this column existed (treated as unknown).
+ALTER TABLE cp_rag_chunks ADD COLUMN IF NOT EXISTS embed_fingerprint TEXT;

@@ -8529,3 +8529,23 @@ WHERE a.job_id = b.job_id
 
 CREATE UNIQUE INDEX IF NOT EXISTS import_rows_job_row_idx ON import_rows (job_id, row_index);
 DROP INDEX IF EXISTS idx_import_rows_job;
+
+-- -- 000044_rag_chunks_record_type ------------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 44: rag_chunks.record_type for per-type
+-- AI retrieval scope.
+--
+-- rag_chunks had no column saying whether a row is a lead, prospect or
+-- customer, so the assistant's retrieval scope was ONE clause over every
+-- row: a caller with lead:read "all" and no customer grant at all was
+-- scoped "all" and retrieved customer records. record_type lets the scope
+-- be built per granted type ((type = X AND scope_X) OR ...).
+--
+-- Existing rows keep NULL until the reconciliation sweep refreshes them
+-- (a scope-only UPDATE, no re-embed). A NULL row matches no per-type
+-- clause, so until then retrieval is fail-closed: fewer results, never
+-- extra ones.
+-- =====================================================================
+
+ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS record_type TEXT;
+CREATE INDEX IF NOT EXISTS rag_chunks_type_owner_idx ON rag_chunks (record_type, owner_user_id);

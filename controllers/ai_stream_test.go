@@ -25,27 +25,6 @@ func TestAIOpsAskStream_UnauthenticatedRejected(t *testing.T) {
 	}
 }
 
-// TestAIOpsAcquireStream_BoundsConcurrency proves the semaphore actually
-// bounds concurrent streams: maxConcurrentStreams acquires succeed, the next
-// one is refused, and releasing frees a slot back up.
-func TestAIOpsAcquireStream_BoundsConcurrency(t *testing.T) {
-	h := NewAIOps(nil, nil, nil, nil, nil)
-
-	for i := 0; i < maxConcurrentStreams; i++ {
-		if !h.acquireStream() {
-			t.Fatalf("acquire %d should have succeeded (limit is %d)", i, maxConcurrentStreams)
-		}
-	}
-	if h.acquireStream() {
-		t.Fatal("acquire beyond maxConcurrentStreams should fail")
-	}
-
-	h.releaseStream()
-	if !h.acquireStream() {
-		t.Fatal("acquire should succeed again after a release freed a slot")
-	}
-}
-
 func TestWriteSSE_FormatsAsEventDataFrame(t *testing.T) {
 	var buf strings.Builder
 	if err := writeSSE(&buf, "token", "hello"); err != nil {

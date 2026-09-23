@@ -89,3 +89,22 @@ func (s *IndexingStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, i
 	}
 	return newRec, srcID, created, err
 }
+
+// Approve records an approval, then enqueues the record for re-indexing — its
+// approval status is part of the indexed text.
+func (s *IndexingStore) Approve(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID string, callerIsSuperAdmin bool) (*workflow.Record, error) {
+	rec, err := s.Store.Approve(ctx, pool, id, approverIdentityID, callerIsSuperAdmin)
+	if err == nil {
+		s.index(ctx, id, "upsert")
+	}
+	return rec, err
+}
+
+// Reject records a rejection, then enqueues the record for re-indexing.
+func (s *IndexingStore) Reject(ctx context.Context, pool *pgxpool.Pool, id, approverIdentityID, reason string, callerIsSuperAdmin bool) (*workflow.Record, error) {
+	rec, err := s.Store.Reject(ctx, pool, id, approverIdentityID, reason, callerIsSuperAdmin)
+	if err == nil {
+		s.index(ctx, id, "upsert")
+	}
+	return rec, err
+}

@@ -9,7 +9,6 @@ package ai
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -49,39 +48,30 @@ const (
 const refusalPhrase = rag.DefaultRefusalPhrase
 
 const systemPrompt = `You are StoneSuite's assistant. Answer ONLY using the provided context.
-If the answer is not in the context, say "` + refusalPhrase + `" Cite sources by their [n] markers. Never invent data.`
+If the answer is not in the context, say "` + refusalPhrase + `" Cite sources by their [n] markers. Never invent data.
+Format answers in plain Markdown (short paragraphs, "-" bullet lists); no HTML.
+` + rag.SourceDataRule
 
-// ScopeFilter translates a StoneSuite RBAC scope into the SQL predicate that
-// narrows rag_chunks to what the caller may read.
-//
-// The two-level model is fail-closed by construction: only the scopes named
-// here widen anything, and everything else — an empty string, a typo, or the
-// retired "team" grant still sitting in a role_permissions row — falls to the
-// default and denies. That is deliberate. A scope this code does not recognise
-// is a scope it cannot reason about, and denying is the only safe response.
-//
-// callerUserID is bound as a query parameter, never interpolated.
-func ScopeFilter(scope, callerUserID string) rag.ScopeFilter {
-	switch scope {
-	case "own":
-		return func(firstArg int) (string, []any) {
-			return fmt.Sprintf("owner_user_id = $%d", firstArg), []any{callerUserID}
-		}
-	case "all":
-		return rag.AllowAll
-	default:
-		return rag.DenyAll
-	}
-}
+// recordsEFSearch widens the HNSW candidate set for the scoped records query.
+// HNSW filters AFTER the index scan, so a caller whose grants cover a small
+// slice of a large tenant (few "own" rows) can otherwise get fewer than K
+// results, or none, at pgvector's default of 40.
+const recordsEFSearch = 100
+
+// helpIDColumn makes a help citation's id "<doc> › <section>" rather than the
+// bare section title: two docs each with an "Overview" section otherwise share
+// one id, and fusion dedupes on id, silently dropping one of them.
+const helpIDColumn = `doc_key || ' › ' || section`
 
 // RecordsCorpus builds the tenant record corpus for one caller. The scope is
 // fixed here, at construction, so the returned corpus cannot be used to reach
-// another caller's records.
-func RecordsCorpus(tenantPool *pgxpool.Pool, scope, callerUserID string) *pgvector.Corpus {
+// another caller's records — or record types they hold no grant on.
+func RecordsCorpus(tenantPool *pgxpool.Pool, grants Grants, callerUserID string) *pgvector.Corpus {
 	return pgvector.New(tenantPool, pgvector.Options{
-		Table: recordsTable,
-		Name:  CorpusRecords,
-		Scope: ScopeFilter(scope, callerUserID),
+		Table:    recordsTable,
+		Name:     CorpusRecords,
+		Scope:    RecordScopeFilter(grants, callerUserID),
+		EFSearch: recordsEFSearch,
 	})
 }
 
@@ -95,7 +85,7 @@ func HelpCorpus(cpPool *pgxpool.Pool) *pgvector.Corpus {
 	return pgvector.New(cpPool, pgvector.Options{
 		Table:    helpTable,
 		Name:     CorpusHelp,
-		IDColumn: "section",
+		IDColumn: helpIDColumn,
 		Scope:    rag.AllowAll,
 	})
 }
@@ -104,8 +94,10 @@ func HelpCorpus(cpPool *pgxpool.Pool) *pgvector.Corpus {
 // The controller resolves scope from the RBAC enforcer; nothing downstream —
 // and in particular nothing the model produces — can influence it.
 type AskRequest struct {
-	Question     string
-	Scope        string
+	Question string
+	// Grants are the record types the caller may read and their scope for
+	// each. Empty means help-docs-only: the records corpus is not searched.
+	Grants       Grants
 	CallerUserID string
 	// History is prior turns of the caller's conversation, oldest first —
 	// see ConversationStore.History. Optional: nil behaves exactly as a
@@ -158,12 +150,15 @@ func (a *Assistant) WithReranker(r rag.Reranker, candidateK int) *Assistant {
 }
 
 // ForCaller assembles the orchestrator for one caller: their scoped records
-// plus shared help, in that order, so citation [1] is the first record hit.
-func (a *Assistant) ForCaller(scope, callerUserID string) *rag.Orchestrator {
-	corpora := []rag.CorpusConfig{
-		{Corpus: RecordsCorpus(a.tenantPool, scope, callerUserID), K: recordsK, FloorDistance: floorDist, RerankK: a.rerankCandidates},
-		{Corpus: HelpCorpus(a.cpPool), K: helpK, FloorDistance: floorDist, RerankK: a.rerankCandidates},
+// plus shared help, in that order, so citation [1] is the first record hit. A
+// caller with no readable record type gets help only — the records corpus is
+// left out entirely rather than searched under a deny-all filter.
+func (a *Assistant) ForCaller(grants Grants, callerUserID string) *rag.Orchestrator {
+	var corpora []rag.CorpusConfig
+	if len(grants.Types()) > 0 {
+		corpora = append(corpora, rag.CorpusConfig{Corpus: RecordsCorpus(a.tenantPool, grants, callerUserID), K: recordsK, FloorDistance: floorDist, RerankK: a.rerankCandidates})
 	}
+	corpora = append(corpora, rag.CorpusConfig{Corpus: HelpCorpus(a.cpPool), K: helpK, FloorDistance: floorDist, RerankK: a.rerankCandidates})
 	o := rag.NewOrchestrator(a.queryEmbed, a.llm, corpora).WithPrompt(systemPrompt, refusalPhrase)
 	if a.metrics != nil {
 		o = o.WithMetrics(a.metrics)
@@ -176,12 +171,12 @@ func (a *Assistant) ForCaller(scope, callerUserID string) *rag.Orchestrator {
 
 // Ask answers one question within the caller's scope.
 func (a *Assistant) Ask(ctx context.Context, req AskRequest) (rag.AskResult, error) {
-	return a.ForCaller(req.Scope, req.CallerUserID).Ask(ctx, rag.AskRequest{Question: req.Question, History: req.History})
+	return a.ForCaller(req.Grants, req.CallerUserID).Ask(ctx, rag.AskRequest{Question: req.Question, History: req.History})
 }
 
 // AskStream is Ask's streaming twin: identical scope/corpora/prompt, but the
 // reply is delivered to sink token-by-token as it's generated — see
 // rag.Orchestrator.AskStream.
 func (a *Assistant) AskStream(ctx context.Context, req AskRequest, sink rag.StreamSink) (rag.AskResult, error) {
-	return a.ForCaller(req.Scope, req.CallerUserID).AskStream(ctx, rag.AskRequest{Question: req.Question, History: req.History}, sink)
+	return a.ForCaller(req.Grants, req.CallerUserID).AskStream(ctx, rag.AskRequest{Question: req.Question, History: req.History}, sink)
 }

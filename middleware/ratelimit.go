@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +105,19 @@ func (rl *RateLimiter) allow(tenantID string) bool {
 	return true
 }
 
+// reject writes a 429 with a Retry-After of one token's refill time and the
+// rate_limited code, so a client can tell "slow down" from other 429s.
+func (rl *RateLimiter) reject(w http.ResponseWriter, msg string) {
+	retry := 1
+	if rl.rate > 0 {
+		retry = int(math.Ceil(1 / rl.rate))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", strconv.Itoa(retry))
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: msg, Code: models.CodeRateLimited})
+}
+
 // PerTenant returns middleware that rate-limits requests by the authenticated
 // request's tenant_id. It MUST run after RequireAuth (which populates the
 // tenant id from the JWT). Requests without a tenant_id (platform-admin or
@@ -116,12 +131,7 @@ func (rl *RateLimiter) PerTenant(next http.Handler) http.Handler {
 		}
 
 		if !rl.allow(payload.TenantID) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(models.APIResponse{
-				Success: false,
-				Message: "Too many requests for this workspace. Please slow down and try again shortly.",
-			})
+			rl.reject(w, "Too many requests for this workspace. Please slow down and try again shortly.")
 			return
 		}
 
@@ -148,12 +158,7 @@ func (rl *RateLimiter) PerUser(next http.Handler) http.Handler {
 		}
 
 		if !rl.allow(payload.ID) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(models.APIResponse{
-				Success: false,
-				Message: "Too many requests. Please slow down and try again shortly.",
-			})
+			rl.reject(w, "Too many requests. Please slow down and try again shortly.")
 			return
 		}
 
@@ -178,12 +183,7 @@ func (rl *RateLimiter) PerIP(next http.Handler) http.Handler {
 				slog.String("ip", ip),
 				slog.String("path", r.URL.Path),
 			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(models.APIResponse{
-				Success: false,
-				Message: "Too many attempts. Please wait a moment and try again.",
-			})
+			rl.reject(w, "Too many attempts. Please wait a moment and try again.")
 			return
 		}
 		next.ServeHTTP(w, r)

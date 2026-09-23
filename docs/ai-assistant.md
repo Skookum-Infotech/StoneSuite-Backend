@@ -204,11 +204,12 @@ nothing and behaves exactly as before this existed).
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `AI_EMBED_PROVIDER` | No | `ollama` | Pinned per ADR-001 — do not change without a re-index plan. |
 | `AI_EMBED_MODEL` | No | `snowflake-arctic-embed:m` | Must stay in sync with `AI_EMBED_DIM`. Changing this requires re-embedding every existing chunk — different models are different vector spaces even at the same dimension. |
 | `AI_EMBED_DIM` | No | `768` | Must match the `vector(N)` columns in schema.sql. |
 | `OLLAMA_BASE_URL` | Yes | `http://localhost:11434` | Points at the self-hosted box serving both embeddings and chat — `http://stonesuite-ollama.internal:11434` in prod (see below). |
 | `AI_CHAT_MODEL` | No | `llama3.2:3b` | An Ollama model tag — must already be pulled on the box (see `ollama/entrypoint.sh`). |
+| `AI_KEEP_ALIVE` | No | *(Ollama default, 5m)* | How long the chat model stays loaded after a request, e.g. `30m`. |
+| `AI_CONVERSATION_RETENTION_DAYS` | No | `90` | Assistant conversations idle longer than this are deleted. `0` keeps them forever. |
 | `FLY_OLLAMA_API_TOKEN` | Prod only | — | Deploy-scoped token for the Ollama app (see lifecycle section below). Unset = lifecycle control skipped entirely. |
 | `FLY_OLLAMA_APP_NAME` | No | `stonesuite-ollama` | Which Fly app the backend starts/stops. |
 

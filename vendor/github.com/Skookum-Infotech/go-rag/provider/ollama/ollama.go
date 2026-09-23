@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Skookum-Infotech/go-rag/rag"
 )
 
 // embedPrefixes are one model's task prefixes. Retrieval models are trained to
@@ -165,7 +169,10 @@ func (e *Embedder) embedBatch(ctx context.Context, texts []string) ([][]float32,
 const transportRetries = 5
 
 // postJSON marshals body, POSTs it, and decodes a 2xx JSON response into out.
-// Non-2xx responses become errors that include the status code.
+// Non-2xx responses become errors that include the status code, classified
+// via statusError. Connection-level failures are retried (see
+// transportRetries); a timeout is not — the request already spent its full
+// budget, and retrying it would multiply the caller's worst-case wait.
 func (e *Embedder) postJSON(ctx context.Context, url string, body, out any) error {
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -184,23 +191,50 @@ func (e *Embedder) postJSON(ctx context.Context, url string, body, out any) erro
 		if err == nil {
 			break
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("do request: %w", ctxErr)
+		}
+		if isTimeout(err) {
+			return fmt.Errorf("do request: %w", context.DeadlineExceeded)
+		}
 		if attempt >= transportRetries {
-			return fmt.Errorf("do request: %w", err)
+			return fmt.Errorf("do request: %w: %w", rag.ErrUnavailable, err)
 		}
 		if sleepErr := sleepOrDone(ctx, e.retryDelay); sleepErr != nil {
-			return fmt.Errorf("do request: %w", err)
+			return fmt.Errorf("do request: %w", sleepErr)
 		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		return statusError(resp.StatusCode, msg)
 	}
-	if err := json.Unmarshal(respBody, out); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decode: %w", err)
 	}
 	return nil
+}
+
+// statusError turns a non-2xx Ollama response into an error, wrapping the
+// rag sentinel a caller needs to tell "try again shortly" (502/503/504) and
+// "model not pulled" (404) apart from everything else.
+func statusError(code int, body []byte) error {
+	switch code {
+	case http.StatusNotFound:
+		return fmt.Errorf("status %d: %w: %s", code, rag.ErrModelNotFound, body)
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return fmt.Errorf("status %d: %w: %s", code, rag.ErrUnavailable, body)
+	default:
+		return fmt.Errorf("status %d: %s", code, body)
+	}
+}
+
+// isTimeout reports whether err is a client-side timeout (http.Client.Timeout
+// or a net deadline), as opposed to a refused/reset connection.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // sleepOrDone waits d unless ctx is cancelled first, in which case it returns

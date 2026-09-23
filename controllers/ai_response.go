@@ -95,4 +95,3 @@ func observeSuccess(route string, res ragcore.AskResult) {
 		metrics.ObserveAIUsage(res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.Truncated)
 	}
 }
-

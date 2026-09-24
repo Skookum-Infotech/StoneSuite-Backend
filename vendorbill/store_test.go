@@ -461,6 +461,67 @@ func TestConvertFromPurchaseOrder_RefusesWhatCannotBeBilled(t *testing.T) {
 	}
 }
 
+// A manually created bill can name one of its vendor's purchase orders as a
+// plain reference: the link round-trips on Get, but no lines are copied and no
+// billed quantity is recorded (only the convert path does that).
+func TestCreate_LinksAPurchaseOrderAsAReference(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, _ := seedPurchaseOrder(t, pool, "SENT", []poLineSeed{{10, 0, 25}})
+	var vendorUUID string
+	if err := pool.QueryRow(ctx, `
+		SELECT v.vendor_uuid::text FROM purchase_order po JOIN vendor v ON v.vendor_id = po.purchase_order_vendor_id
+		WHERE po.purchase_order_uuid = $1`, poUUID).Scan(&vendorUUID); err != nil {
+		t.Fatalf("load the order's vendor: %v", err)
+	}
+
+	in := CreateVendorBillInput{
+		VendorUUID:        vendorUUID,
+		PurchaseOrderUUID: poUUID,
+		vendorBillFields: vendorBillFields{
+			Items: []LineInput{{LineNumber: 1, Description: "Freight", Quantity: 1, UnitPrice: 40}},
+		},
+	}
+	bill, err := Create(ctx, pool, in, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if bill.PurchaseOrder == nil || bill.PurchaseOrder.ID != poUUID {
+		t.Fatalf("bill.PurchaseOrder = %+v, want ID %q", bill.PurchaseOrder, poUUID)
+	}
+	if len(bill.Items) != 1 || bill.Items[0].PurchaseOrderItemID != nil {
+		t.Errorf("items = %+v, want only the one submitted line with no PO-item lineage", bill.Items)
+	}
+	if got := billedOn(t, pool, poUUID); got[0] != 0 {
+		t.Errorf("qtyBilled = %v, want [0]: a reference link must not count as billing the goods", got)
+	}
+}
+
+func TestCreate_RefusesAnUnlinkablePurchaseOrder(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, _ := seedPurchaseOrder(t, pool, "SENT", []poLineSeed{{10, 0, 25}})
+	otherVendor := seedVendor(t, pool) // not the order's vendor
+
+	cases := []struct{ name, vendor, po string }{
+		{"a different vendor's order", otherVendor, poUUID},
+		{"an unknown order", otherVendor, "00000000-0000-0000-0000-000000000000"},
+		{"a malformed uuid", otherVendor, "not-a-uuid"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			in := CreateVendorBillInput{
+				VendorUUID:        tt.vendor,
+				PurchaseOrderUUID: tt.po,
+				vendorBillFields:  vendorBillFields{Items: []LineInput{{LineNumber: 1, Description: "Freight", Quantity: 1, UnitPrice: 40}}},
+			}
+			if _, err := Create(ctx, pool, in, 1); err == nil || !IsClientError(err) {
+				t.Fatalf("err = %v, want a ClientError (400)", err)
+			}
+		})
+	}
+}
+
 func equalQty(a, b []float64) bool {
 	if len(a) != len(b) {
 		return false

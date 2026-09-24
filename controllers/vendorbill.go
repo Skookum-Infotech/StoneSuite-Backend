@@ -183,6 +183,9 @@ func (h *VendorBillOps) Create(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
+	if !authLinkedPurchaseOrder(w, r, pool, identityID, in.PurchaseOrderUUID) {
+		return
+	}
 	bill, err := vendorbill.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		vbFail(w, err, "Failed to create vendor bill.")

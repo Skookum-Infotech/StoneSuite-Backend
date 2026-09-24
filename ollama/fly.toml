@@ -18,6 +18,12 @@ primary_region = "iad"
   # one to load the other on every request (Ollama's default swaps models
   # under memory pressure) — every /ai/ask call uses both back to back.
   OLLAMA_MAX_LOADED_MODELS = "2"
+  # Never evict a model for idleness while the Machine is up. Ollama's default
+  # (5m) unloads both models after a quiet spell, so the next question pays a
+  # full reload from the volume on this 1-CPU box even though the Machine never
+  # stopped. The backend owns the Machine's lifetime (it stops it on shutdown),
+  # so idle eviction saves nothing here. Applies to embed and chat alike.
+  OLLAMA_KEEP_ALIVE = "-1"
 
 [http_service]
   internal_port        = 11434

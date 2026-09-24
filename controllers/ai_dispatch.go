@@ -57,13 +57,58 @@ func runAskDispatch(ctx context.Context, h *AIOps, pa preparedAsk, store crmstor
 		assistant = assistant.WithReranker(h.reranker, h.rerankCandidates)
 	}
 	req := ai.AskRequest{Question: question, Grants: pa.grants, CallerUserID: pa.callerUserID, History: pa.history}
-	res, err := h.withOllamaWake(ctx, sink, func(s ragcore.StreamSink) (ragcore.AskResult, error) {
-		if s == nil {
-			return assistant.Ask(ctx, req)
-		}
+	// Both endpoints go through AskStream so the retrieved set is always
+	// observable (Ask only returns the cited subset); the non-streaming caller
+	// just discards the tokens and gets the assembled answer back.
+	collector := &retrievedCollector{next: sink}
+	res, err := h.withOllamaWake(ctx, collector, func(s ragcore.StreamSink) (ragcore.AskResult, error) {
 		return assistant.AskStream(ctx, req, s)
 	})
+	if err == nil {
+		res.Citations = withRetrievedFallback(res, collector.retrieved)
+	}
 	return res, routeRAG, err
+}
+
+// maxFallbackCitations bounds how many retrieved sources are attached to an
+// answer that cited none.
+const maxFallbackCitations = 3
+
+// withRetrievedFallback returns the citations to send. The library keeps only
+// sources the answer references by a [n] marker, and the small self-hosted
+// model often writes none — leaving a grounded answer with no sources at all.
+// In that case the top retrieved sources are attached instead. A refusal
+// (not grounded) never gets sources.
+func withRetrievedFallback(res ragcore.AskResult, retrieved []ragcore.Citation) []ragcore.Citation {
+	if !res.Grounded || len(res.Citations) > 0 || len(retrieved) == 0 {
+		return res.Citations
+	}
+	if len(retrieved) > maxFallbackCitations {
+		retrieved = retrieved[:maxFallbackCitations]
+	}
+	return retrieved
+}
+
+// retrievedCollector remembers the retrieved set and forwards to next when
+// there is one (nil for the non-streaming endpoint, where tokens are dropped).
+type retrievedCollector struct {
+	next      ragcore.StreamSink
+	retrieved []ragcore.Citation
+}
+
+func (c *retrievedCollector) OnRetrieved(cites []ragcore.Citation) error {
+	c.retrieved = cites
+	if c.next == nil {
+		return nil
+	}
+	return c.next.OnRetrieved(cites)
+}
+
+func (c *retrievedCollector) OnToken(tok string) error {
+	if c.next == nil {
+		return nil
+	}
+	return c.next.OnToken(tok)
 }
 
 // ollamaWaker is the point-of-use view of services.OllamaWaker.
@@ -75,7 +120,7 @@ type ollamaWaker interface {
 // (ragcore.ErrUnavailable), starts it and runs attempt once more. The provider
 // only reports ErrUnavailable before the first token, so a retry never repeats
 // text the client already has; the retry's "sources" event is swallowed for the
-// same reason. sink may be nil (non-streaming), in which case attempt gets nil.
+// same reason. sink may be nil, in which case attempt gets nil.
 func (h *AIOps) withOllamaWake(ctx context.Context, sink ragcore.StreamSink, attempt func(ragcore.StreamSink) (ragcore.AskResult, error)) (ragcore.AskResult, error) {
 	var guarded *retrySafeSink
 	var s ragcore.StreamSink

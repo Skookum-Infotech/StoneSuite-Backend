@@ -8583,3 +8583,40 @@ DROP INDEX IF EXISTS idx_import_rows_job;
 
 ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS record_type TEXT;
 CREATE INDEX IF NOT EXISTS rag_chunks_type_owner_idx ON rag_chunks (record_type, owner_user_id);
+
+-- =====================================================================
+-- Tenant-template schema -- Phase 45: per-tenant AI assistant on/off switch.
+--
+-- Singleton row (id always 1), same shape as accounting_settings/
+-- company_profile. The assistant is available to this tenant only when
+-- assistant_enabled is TRUE here AND the control plane's
+-- platform_ai_settings.enabled is TRUE (control_plane/schema.sql) -- see
+-- aisettings.Available. Defaults TRUE so applying this migration changes
+-- nothing until a tenant admin flips it off via PUT /api/tenant/ai/settings.
+-- updated_by is the acting user's email (TEXT, not a users(id) FK) --
+-- matching platform_ai_settings.updated_by's convention in the control
+-- plane, so a toggle stays attributable even if the user row is later
+-- removed.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS ai_settings (
+    id                  SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    assistant_enabled   BOOLEAN      NOT NULL DEFAULT TRUE,
+    updated_by          TEXT,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+INSERT INTO ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- =====================================================================
+-- Tenant-template schema -- Phase 46: rag_index_queue.claimed_at, so stuck
+-- 'inflight' jobs can be reclaimed.
+--
+-- ClaimPending moves a job to 'inflight' and, until now, recorded nothing
+-- about when. A worker that crashed (or was redeployed) between Claim and
+-- Complete/Fail/Release left that row 'inflight' forever -- there was no way
+-- to tell an abandoned claim from one still legitimately being processed.
+-- claimed_at lets ai/index.Queue.ReclaimStuck reset anything claimed more
+-- than reclaimStaleAfter ago back to 'pending'. NULL on rows claimed before
+-- this migration (and on every row until the next Claim); ReclaimStuck skips
+-- those, same as before this existed.
+-- =====================================================================
+ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;

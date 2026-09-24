@@ -4,17 +4,17 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-538 endpoints across 7 surfaces, read from `main.go`.
+543 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 456 |
+| staff token + tenant | 459 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 18 |
-| staff token | 13 |
+| staff token | 15 |
 | portal token | 3 |
 | customer token | 2 |
 
@@ -270,7 +270,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 14 endpoints
+## `platform` — 16 endpoints
 
 Platform-admin operations across tenants.
 
@@ -285,6 +285,8 @@ Platform-admin operations across tenants.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `POST` | `/api/platform/ai/reindex-help` | staff token | `aiOps.ReindexHelp` |
+| `GET` | `/api/platform/ai/settings` | staff token | `aiOps.GetPlatformSettings` |
+| `PUT` | `/api/platform/ai/settings` | staff token | `aiOps.UpdatePlatformSettings` |
 
 ### feedback
 
@@ -318,7 +320,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 455 endpoints
+## `tenant` — 458 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -340,6 +342,9 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `DELETE` | `/api/tenant/ai/conversations/{id}` | staff token + tenant | `convOps.Delete` |
 | `GET` | `/api/tenant/ai/conversations/{id}` | staff token + tenant | `convOps.Get` |
 | `POST` | `/api/tenant/ai/reindex` | staff token + tenant | `aiOps.Reindex` |
+| `PUT` | `/api/tenant/ai/settings` | staff token + tenant | `aiOps.UpdateSettings` |
+| `GET` | `/api/tenant/ai/status` | staff token + tenant | `aiOps.Status` |
+| `POST` | `/api/tenant/ai/warm` | staff token + tenant | `aiOps.Warm` |
 
 ### audit
 

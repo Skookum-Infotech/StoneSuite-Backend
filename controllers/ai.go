@@ -11,6 +11,7 @@ import (
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/ai/index"
+	"stonesuite-backend/aisettings"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/middleware"
@@ -47,6 +48,48 @@ type AIOps struct {
 	// waker starts the self-hosted Ollama box when a request finds it down.
 	// Nil when the Fly lifecycle isn't configured (local dev, always-on box).
 	waker ollamaWaker
+	// aiSettings resolves the platform+tenant on/off switches (30s TTL cache
+	// in front of platform_ai_settings/ai_settings), gating Ask/AskStream
+	// (via prepareAsk), Reindex, and Warm.
+	aiSettings *aisettings.Cache
+	// toggleListener is notified after a successful platform-level toggle
+	// write. Nil until a later step wires one (Ollama lifecycle, reindex
+	// queue pause) via WithPlatformToggleListener.
+	toggleListener PlatformToggleListener
+	// catchUpNotifier is nudged after a successful tenant-level toggle write
+	// that switches AI on, so that tenant's RAG index maintenance loop
+	// catches up immediately. Nil until wired via WithCatchUpNotifier.
+	catchUpNotifier tenantCatchUpNotifier
+	// warmer single-flights POST /api/tenant/ai/warm's detached warm-up.
+	warmer *assistantWarmer
+	// ollamaState reports the shared Ollama Machine's aggregated state for
+	// GetPlatformSettings's ollamaState field. Nil when no Fly lifecycle is
+	// configured (local dev) — that field then always reads "unknown".
+	ollamaState ollamaStater
+	// leaseHolders lists other environments' unexpired holders of the shared
+	// Ollama lease, best-effort, for GetPlatformSettings's leaseHolders
+	// field. Nil under the same conditions as ollamaState.
+	leaseHolders leaseHolderLister
+}
+
+// ollamaStater is the point-of-use view of *services.OllamaLifecycle.State.
+type ollamaStater interface {
+	State(ctx context.Context) (string, error)
+}
+
+// leaseHolderLister is the point-of-use view of *services.OllamaLease.OtherHolders.
+type leaseHolderLister interface {
+	OtherHolders(ctx context.Context) []string
+}
+
+// WithOllamaStatus wires the shared Ollama Machine's state summary and lease
+// holder list onto GetPlatformSettings and returns the receiver for chaining
+// at construction in main.go. Unset by default: ollamaState reads "unknown"
+// and leaseHolders reads empty, matching no Fly lifecycle configured.
+func (h *AIOps) WithOllamaStatus(state ollamaStater, holders leaseHolderLister) *AIOps {
+	h.ollamaState = state
+	h.leaseHolders = holders
+	return h
 }
 
 // NewAIOps constructs the handler group. queryEmbed MUST be a query embedder
@@ -57,6 +100,7 @@ func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ragcore.Embedder, llm ragcore.LLM
 	return &AIOps{
 		cpPool: cpPool, queryEmbed: queryEmbed, llm: llm, cp: cp, docEmbed: docEmbed,
 		slots: newAILimiter(aiGlobalSlots, aiPerTenantSlots), slotWait: aiSlotWait,
+		aiSettings: aisettings.NewCache(nil), warmer: newAssistantWarmer(nil),
 	}
 }
 
@@ -77,6 +121,17 @@ func (h *AIOps) WithOllamaWaker(w ollamaWaker) *AIOps {
 	return h
 }
 
+// WithSettingsCache replaces this AIOps's default aisettings.Cache with a
+// shared one and returns the receiver for chaining at construction in
+// main.go. main.go builds exactly one Cache and passes it both here and to
+// the RAG index maintenance loops (rag_indexing.go) — without this, a toggle
+// PUT (which invalidates the handler's own cache) would leave the index
+// loops reading a stale cached value for up to cacheTTL.
+func (h *AIOps) WithSettingsCache(c *aisettings.Cache) *AIOps {
+	h.aiSettings = c
+	return h
+}
+
 // Reindex handles POST /api/tenant/ai/reindex (admin only). Enqueues every
 // CRM record for re-embedding (used after an embedding-model change or backfill).
 func (h *AIOps) Reindex(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +148,17 @@ func (h *AIOps) Reindex(w http.ResponseWriter, r *http.Request) {
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
+		return
+	}
+
+	status, err := h.aiSettings.Status(r.Context(), h.cpPool, pool, tenant.ID)
+	if err != nil {
+		slog.Error("ai settings status check failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return
+	}
+	if !status.Available {
+		writeAssistantDisabled(w)
 		return
 	}
 

@@ -136,6 +136,10 @@ type Config struct {
 	// FlyOllamaAPIToken is unset (e.g. local dev, or an always-on embedder box).
 	FlyOllamaAPIToken string
 	FlyOllamaAppName  string
+	// AppName identifies this backend process as an Ollama-lease holder (see
+	// services/ollama_lease.go) — Fly sets FLY_APP_NAME automatically on every
+	// deployed Machine; "local" outside Fly (dev, tests).
+	AppName string
 
 	// AIRerankBaseURL points at a self-hosted TEI reranking deployment (see
 	// go-rag's provider/tei). Empty (default) disables reranking entirely:
@@ -241,6 +245,7 @@ func Load() {
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)
 		FlyOllamaAPIToken: getEnv("FLY_OLLAMA_API_TOKEN", ""),
 		FlyOllamaAppName:  getEnv("FLY_OLLAMA_APP_NAME", "stonesuite-ollama"),
+		AppName:           getEnv("FLY_APP_NAME", "local"),
 		// Reranking (see Config.AIRerankBaseURL doc) — off by default.
 		AIRerankBaseURL:    getEnv("AI_RERANK_BASE_URL", ""),
 		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),

@@ -126,12 +126,29 @@ func Post(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := postReceipt(ctx, tx, uuid, in, canApproveOverReceipt, actorEmployeeID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit post item receipt: %w", err)
+	}
+	return Get(ctx, pool, uuid)
+}
+
+// postReceipt is Post's work inside a caller-owned transaction, so CreateAndPost
+// can run it in the same transaction that inserted the receipt. It neither
+// begins nor commits.
+func postReceipt(
+	ctx context.Context, tx pgx.Tx,
+	uuid string, in PostInput, canApproveOverReceipt bool, actorEmployeeID int,
+) error {
 	// Lock the receipt, then its order, always in that order — every writer in
 	// this module takes the same sequence, so concurrent posts queue instead of
 	// deadlocking.
 	var irInternalID, curStatusID, poInternalID, warehouseID int
 	var curStatusCode string
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT ir.item_receipt_id, ir.item_receipt_status, rs.record_status_code,
 		       ir.purchase_order_id, ir.warehouse_id
 		FROM item_receipt ir
@@ -140,16 +157,16 @@ func Post(
 		FOR UPDATE OF ir`, uuid,
 	).Scan(&irInternalID, &curStatusID, &curStatusCode, &poInternalID, &warehouseID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load item receipt for posting: %w", err)
+		return fmt.Errorf("load item receipt for posting: %w", err)
 	}
 	if IsPosted(curStatusCode) {
-		return nil, ErrAlreadyPosted
+		return ErrAlreadyPosted
 	}
 	if curStatusCode != pendingStatusCode {
-		return nil, ErrInvalidTransition
+		return ErrInvalidTransition
 	}
 
 	var poStatusCode string
@@ -159,23 +176,23 @@ func Post(
 		JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 		WHERE po.purchase_order_id = $1 AND po.purchase_order_deleted_at IS NULL
 		FOR UPDATE OF po`, poInternalID).Scan(&poStatusCode); err != nil {
-		return nil, fmt.Errorf("lock purchase order for posting: %w", err)
+		return fmt.Errorf("lock purchase order for posting: %w", err)
 	}
 	if !receivableStatusCodes[poStatusCode] {
-		return nil, ErrPONotReceivable
+		return ErrPONotReceivable
 	}
 
 	lines, err := loadPostLines(ctx, tx, irInternalID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := checkTolerance(lines, canApproveOverReceipt, in.OverReceiptReason); err != nil {
-		return nil, err
+		return err
 	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, irctRecordTypeCode)
 	if err != nil {
-		return nil, fmt.Errorf("resolve IRCT record type: %w", err)
+		return fmt.Errorf("resolve IRCT record type: %w", err)
 	}
 
 	for _, l := range lines {
@@ -188,7 +205,7 @@ func Post(
 			    item_updated_at = NOW(),
 			    item_record_version = item_record_version + 1
 			WHERE purchase_order_item_id = $1`, l.poItemID, l.accepted); err != nil {
-			return nil, fmt.Errorf("advance ordered line received quantity: %w", err)
+			return fmt.Errorf("advance ordered line received quantity: %w", err)
 		}
 		// Free-text purchase order lines carry no catalog item, so there is no
 		// stock to move — the receipt still records their arrival.
@@ -198,17 +215,17 @@ func Post(
 		if err := ledgerAndStock(ctx, tx, *l.inventoryItemID, warehouseID,
 			ledgerEventReceived, l.accepted,
 			recordTypeID, irInternalID, l.lineID, actorEmployeeID); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	newCode := receiptStatusFor(lines)
 	if err := ValidateTransition(curStatusCode, newCode); err != nil {
-		return nil, err
+		return err
 	}
 	newStatusID, err := statusIDByCode(ctx, tx, recordTypeID, newCode)
 	if err != nil {
-		return nil, fmt.Errorf("resolve %q status: %w", newCode, err)
+		return fmt.Errorf("resolve %q status: %w", newCode, err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE item_receipt SET
@@ -221,16 +238,12 @@ func Post(
 			item_receipt_record_version = item_receipt_record_version + 1
 		WHERE item_receipt_id = $1`,
 		irInternalID, newStatusID, nullableInt(actorEmployeeID), in.OverReceiptReason); err != nil {
-		return nil, fmt.Errorf("post item receipt: %w", err)
+		return fmt.Errorf("post item receipt: %w", err)
 	}
 	writeHistory(ctx, tx, irInternalID, "post", &curStatusID, &newStatusID, actorEmployeeID)
 
 	if _, err := purchaseorder.ApplyReceiptRollup(ctx, tx, poInternalID, actorEmployeeID); err != nil {
-		return nil, fmt.Errorf("roll up purchase order status: %w", err)
+		return fmt.Errorf("roll up purchase order status: %w", err)
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit post item receipt: %w", err)
-	}
-	return Get(ctx, pool, uuid)
+	return nil
 }

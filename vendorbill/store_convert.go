@@ -7,8 +7,11 @@
 //
 // Unlike ConvertFromRequisition, a purchase order may convert MORE THAN ONCE
 // -- vendors routinely bill a single order in installments -- so there is no
-// idempotent-replay short-circuit here; every call creates a new bill. Only
-// a received purchase order (RCVD or CLSD) may convert.
+// idempotent-replay short-circuit here; every call creates a new bill. Each
+// call bills only what has been received and not yet billed (see billable.go),
+// so successive conversions follow successive deliveries instead of repeating
+// the whole order. Only an order that has received goods (PART, RCVD or CLSD)
+// may convert.
 package vendorbill
 
 import (
@@ -76,76 +79,21 @@ func loadPurchaseOrderSnapshot(ctx context.Context, tx pgx.Tx, poUUID string) (*
 	return &s, nil
 }
 
-// poSourceLine is one live purchase_order_item row's frozen values, copied
-// verbatim (not re-priced) into the new bill's lines.
-type poSourceLine struct {
-	uuid                string
-	lineNumber          int
-	inventoryItemID     *int
-	itemName, sku, desc string
-	unitID              *int
-	unitCode            string
-	quantity            float64
-	unitPrice           float64
-	discountPercent     float64
-	taxRateID           *int
-	taxPercent          float64
-}
-
-// loadPurchaseOrderSourceLines loads a live purchase order's lines by its
-// internal id.
-func loadPurchaseOrderSourceLines(ctx context.Context, tx pgx.Tx, poInternalID int) ([]poSourceLine, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT purchase_order_item_uuid, line_number, inventory_item_id,
-		       item_name, sku, description, unit_id, COALESCE(unit_code,''),
-		       quantity, unit_price, discount_percent, tax_rate_id, tax_percent
-		FROM purchase_order_item
-		WHERE purchase_order_id = $1 AND item_deleted_at IS NULL
-		ORDER BY line_number`, poInternalID)
-	if err != nil {
-		return nil, fmt.Errorf("load purchase order lines: %w", err)
-	}
-	defer rows.Close()
-	out := []poSourceLine{}
-	for rows.Next() {
-		var l poSourceLine
-		if err := rows.Scan(
-			&l.uuid, &l.lineNumber, &l.inventoryItemID,
-			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
-			&l.quantity, &l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
-		); err != nil {
-			return nil, fmt.Errorf("scan purchase order line: %w", err)
-		}
-		out = append(out, l)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, ClientError{Msg: "Purchase order has no line items to convert."}
-	}
-	return out, nil
-}
-
 // insertConvertedLines bulk-inserts PO-sourced lines as vendor_bill_item
-// rows, copied verbatim (never re-priced -- AD-8), each linked back to its
-// source purchase_order_item for traceability (AD-3). Returns the
-// {poItemUuid: billItemUuid} lineage map and the computed line money (for
-// the header recompute).
+// rows, each linked back to its source purchase_order_item for traceability
+// (AD-3). Price, discount and tax are copied verbatim (never re-priced --
+// AD-8); the quantity is the line's billQty, not its ordered quantity. Bill
+// lines are numbered 1..n: a line with nothing left to bill is skipped, and a
+// bill has no reason to inherit the gaps. Returns the {poItemUuid: billItemUuid}
+// lineage map and the computed line money (for the header recompute).
 func insertConvertedLines(ctx context.Context, tx pgx.Tx, vbInternalID int, lines []poSourceLine, actorEmployeeID int) (map[string]string, []LineMoney, error) {
 	lineMap := make(map[string]string, len(lines))
 	lineMoneys := make([]LineMoney, 0, len(lines))
-	for _, l := range lines {
+	for i, l := range lines {
 		money := ComputeLine(CalcLineInput{
-			Quantity: l.quantity, UnitPrice: l.unitPrice,
+			Quantity: l.billQty, UnitPrice: l.unitPrice,
 			DiscountPercent: l.discountPercent, TaxPercent: l.taxPercent,
 		})
-		var srcPOItemInternalID int
-		if err := tx.QueryRow(ctx,
-			`SELECT purchase_order_item_id FROM purchase_order_item WHERE purchase_order_item_uuid = $1`, l.uuid,
-		).Scan(&srcPOItemInternalID); err != nil {
-			return nil, nil, fmt.Errorf("resolve source purchase order item: %w", err)
-		}
 		var newLineUUID string
 		err := tx.QueryRow(ctx, `
 			INSERT INTO vendor_bill_item (
@@ -156,9 +104,9 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, vbInternalID int, line
 				item_created_by
 			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19)
 			RETURNING vendor_bill_item_uuid`,
-			vbInternalID, l.lineNumber, l.inventoryItemID, srcPOItemInternalID,
+			vbInternalID, i+1, l.inventoryItemID, l.internalID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
-			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
+			l.billQty, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			money.Subtotal, money.Discount, money.Tax, money.Total,
 			nullableInt(actorEmployeeID),
 		).Scan(&newLineUUID)
@@ -171,12 +119,16 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, vbInternalID int, line
 	return lineMap, lineMoneys, nil
 }
 
-// ConvertFromPurchaseOrder creates a new VendorBill as a snapshot copy of a
-// live purchase order's header + lines: every line item is copied verbatim
-// (not re-priced against current catalog data), header totals are
-// recomputed from the copied lines via vendorbill's own calc, and the
-// lineage is recorded in vendor_bill_conversion. Only a received purchase
-// order (RCVD or CLSD) may convert.
+// ConvertFromPurchaseOrder creates a new VendorBill from a live purchase
+// order's header + lines. Each line is copied at its PO price, discount and tax
+// (not re-priced against current catalog data) but at the quantity that has
+// been received and not yet billed, so a partly received order bills the first
+// delivery and a later conversion bills the next; lines with nothing left are
+// left off. Header totals are recomputed from the copied lines via
+// vendorbill's own calc, and the lineage -- including the quantity billed per
+// line, which is what "already billed" is later computed from -- is recorded
+// in vendor_bill_conversion(_line). Only an order that has received goods
+// (PART, RCVD or CLSD) may convert.
 func ConvertFromPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poUUID string, actorEmployeeID int) (*VendorBill, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -188,11 +140,15 @@ func ConvertFromPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poUUID st
 	if err != nil {
 		return nil, err
 	}
-	if src.statusCode != "RCVD" && src.statusCode != "CLSD" {
-		return nil, ClientError{Msg: "Only a received purchase order can be converted to a vendor bill."}
+	if !IsConvertibleStatus(src.statusCode) {
+		return nil, ClientError{Msg: "Only a purchase order that has received items can be converted to a vendor bill."}
 	}
 
-	lines, err := loadPurchaseOrderSourceLines(ctx, tx, src.internalID)
+	sourceLines, err := loadPurchaseOrderSourceLines(ctx, tx, src.internalID)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := planConversion(sourceLines)
 	if err != nil {
 		return nil, err
 	}
@@ -270,11 +226,20 @@ func ConvertFromPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poUUID st
 	if err != nil {
 		return nil, fmt.Errorf("marshal conversion snapshot: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	var conversionID int
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO vendor_bill_conversion (purchase_order_id, vendor_bill_id, converted_by, snapshot)
-		VALUES ($1, $2, $3, $4)`,
-		src.internalID, internalID, nullableInt(actorEmployeeID), snapshotJSON); err != nil {
+		VALUES ($1, $2, $3, $4)
+		RETURNING vendor_bill_conversion_id`,
+		src.internalID, internalID, nullableInt(actorEmployeeID), snapshotJSON).Scan(&conversionID); err != nil {
 		return nil, fmt.Errorf("insert vendor_bill_conversion: %w", err)
+	}
+	for _, l := range lines {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO vendor_bill_conversion_line (vendor_bill_conversion_id, purchase_order_item_id, quantity)
+			VALUES ($1, $2, $3)`, conversionID, l.internalID, l.billQty); err != nil {
+			return nil, fmt.Errorf("insert vendor_bill_conversion_line: %w", err)
+		}
 	}
 
 	// Mark the source purchase order's own history with the conversion.

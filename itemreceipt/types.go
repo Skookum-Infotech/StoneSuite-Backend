@@ -43,8 +43,15 @@ type itemReceiptFields struct {
 // accepted from the caller — it is inherited from the purchase order and
 // snapshotted, so a receipt can never name a different counterparty than the
 // order it settles.
+//
+// Post asks for the receipt to be posted in the same transaction that creates
+// it, so it is never left Pending; OverReceiptReason accompanies it exactly as
+// on /post. Neither is read by Create -- the controller checks the caller may
+// post and dispatches to CreateAndPost.
 type CreateItemReceiptInput struct {
 	PurchaseOrderUUID string `json:"purchaseOrderUuid"`
+	Post              bool   `json:"post"`
+	OverReceiptReason string `json:"overReceiptReason"`
 	itemReceiptFields
 }
 

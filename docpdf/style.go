@@ -22,7 +22,7 @@ const sectionGap = 6.0
 type colour uint32
 
 // Palette shared with the app's exported PDFs (pdfBranding.ts in the frontend)
-// and the branded emails (services/email_banner.go): the Tailwind "stone"
+// and the branded emails (services/templates/email.html): the Tailwind "stone"
 // neutrals plus the StoneSuite lime.
 const (
 	colInk      colour = 0x1c1917 // stone-900: masthead, table header, headline total

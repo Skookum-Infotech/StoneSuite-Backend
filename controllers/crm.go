@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"html"
 	"log"
 	"log/slog"
 	"net/http"
@@ -612,8 +611,8 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 }
 
 // notifyCustomerWelcome best-effort-emails a newly minted customer record's
-// contact a branded welcome message (with the company logo — see
-// welcomeEmailHTML). Fire-and-forget: the customer record has already been
+// contact a branded welcome message (see
+// welcomeEmail). Fire-and-forget: the customer record has already been
 // created by the time this runs, and a Notify outage must never undo that —
 // same reasoning as documents.go's notifyOwnerOfSend. No-ops silently if the
 // record has no contact email (CreateInput only requires one for a CUST
@@ -634,42 +633,48 @@ func notifyCustomerWelcome(
 		return
 	}
 	name, _ := rec.CoreFields["customer_name"].(string)
-	err = notify(ctx, services.NotificationRequest{
-		TenantID:      tenant.ID,
-		Recipients:    []services.RecipientTarget{{Email: email}},
-		EventType:     "customer.welcome",
-		Resource:      "customer",
-		ResourceID:    rec.ID,
-		Title:         "Welcome to " + tenant.DisplayName + "!",
-		Body:          "Welcome email sent to " + email + ".",
-		EmailBodyHTML: welcomeEmailHTML(tenant.DisplayName, name),
-		Channels:      []string{"email"},
-	})
+	err = notify(ctx, customerWelcomeRequest(tenant.ID, tenant.DisplayName, rec.ID, email, name))
 	if err != nil {
 		slog.WarnContext(ctx, "crm: welcome email for new customer failed", "record_id", rec.ID, "error", err)
 	}
 }
 
-// welcomeEmailHTML is the branded welcome message sent to a new customer's
-// contact — mirrors documents.go's documentEmailHTML: goes through
-// services.WrapEmailHTMLWithBanner, the one shared shell every StoneSuite
-// email uses, and HTML-escapes the caller-supplied names.
-func welcomeEmailHTML(tenantName, customerName string) string {
-	greeting := "Hello,"
-	if customerName != "" {
-		greeting = "Hello " + html.EscapeString(customerName) + ","
+// customerWelcomeRequest builds the Notify request for a new customer's
+// welcome email, addressed to the record's contact email.
+func customerWelcomeRequest(tenantID, tenantName, recordID, email, customerName string) services.NotificationRequest {
+	return services.NotificationRequest{
+		TenantID:   tenantID,
+		Recipients: []services.RecipientTarget{{Email: email}},
+		EventType:  "customer.welcome",
+		Resource:   "customer",
+		ResourceID: recordID,
+		Title:      "Welcome to " + tenantName + "!",
+		Body:       "Welcome email sent to " + email + ".",
+		Email:      welcomeEmail(tenantName, customerName),
+		Channels:   []string{"email"},
 	}
-	name := html.EscapeString(tenantName)
-	inner := `<p style="margin:0 0 14px;">` + greeting + `</p>` +
-		services.EmailMessageBox(`<p style="margin:0 0 14px;">Welcome to `+name+`! We're glad to have you as a customer.</p>`) +
-		`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>` + name + `</p>`
-	return services.WrapEmailHTMLWithBanner(
-		"Welcome to "+tenantName+".",
-		"Welcome",
-		"Welcome to",
-		tenantName,
-		inner,
-	)
+}
+
+// welcomeEmail is the content of the welcome message sent to a new customer's
+// contact; it renders through the shared template like every other email.
+func welcomeEmail(tenantName, customerName string) *services.Email {
+	return &services.Email{
+		Preheader:     "Welcome to " + tenantName + ".",
+		Badge:         "Welcome",
+		Icon:          services.IconWave,
+		Heading:       "Welcome to",
+		HeadingAccent: tenantName + ".",
+		Subtitle:      "We're glad to have you.",
+		Greet:         true,
+		RecipientName: customerName,
+		Paragraphs: []services.Paragraph{{
+			services.Text("Thank you for choosing "), services.Bold(tenantName),
+			services.Text(". Your customer portal is where you can view your sales orders, invoices, payments and refunds, and send notes to our team."),
+		}},
+		ActionURL:   services.PortalURL(),
+		ActionLabel: "Go to portal",
+		Reason:      "you're a customer of " + tenantName + ".",
+	}
 }
 
 // ---- approval ---------------------------------------------------------------

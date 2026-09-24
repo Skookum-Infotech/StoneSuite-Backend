@@ -3,8 +3,10 @@ package approvalchain
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"stonesuite-backend/config"
 	"stonesuite-backend/services"
@@ -77,22 +79,29 @@ func withFrontendURL(t *testing.T, url string) {
 func TestBuildApprovalNotification(t *testing.T) {
 	withFrontendURL(t, "https://app.example.com")
 	ec := EventContext{Resource: "invoice", DisplayName: "Invoice", RecordUUID: "rec-1"}
-	contacts := []contact{{UserID: "u1", Email: "a@example.com"}}
+	contacts := []contact{{UserID: "u1", Email: "a@example.com", Name: "Alex Approver"}}
+	facts := recordFacts{Number: "INV-000123", Amount: "$12,450.00", OccurredAt: time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)}
 
 	tests := []struct {
 		name                             string
 		note                             approvalNote
 		title, body, badge, heading, cta string
+		lead, dateRow, reason            string
 	}{
-		{"requested", noteApprovalRequested, "Invoice INV-000123 needs your approval", "Submitted for approval.", "APPROVAL NEEDED", "needs your approval.", "Review invoice"},
-		{"reminder", noteApprovalReminder, "Invoice INV-000123 still needs your approval", "Still awaiting your sign-off.", "APPROVAL REMINDER", "still needs your approval.", "Review invoice"},
-		{"approved", noteApproved, "Invoice INV-000123 was approved", "Approved.", "APPROVED", "was approved.", "View invoice"},
-		{"sent back", noteSentBack, "Invoice INV-000123 was sent back", "Sent back for changes.", "SENT BACK", "was sent back.", "View invoice"},
-		{"created", noteCreated, "Invoice INV-000123 was created", "Created.", "CREATED", "was created.", "View invoice"},
+		{"requested", noteApprovalRequested, "Invoice INV-000123 needs your approval", "Submitted for approval.", "APPROVAL NEEDED", "needs your approval.", "Review invoice",
+			"Invoice INV-000123 has been submitted for your approval. Review the details below, then approve or reject it.", ">Submitted On<", "you&#39;re an approver."},
+		{"reminder", noteApprovalReminder, "Invoice INV-000123 still needs your approval", "Still awaiting your sign-off.", "APPROVAL REMINDER", "still needs your approval.", "Review invoice",
+			"Invoice INV-000123 is still waiting for your approval.", "", "you&#39;re an approver."},
+		{"approved", noteApproved, "Invoice INV-000123 was approved", "Approved.", "APPROVED", "was approved.", "View invoice",
+			"Invoice INV-000123 has been approved.", ">Approved On<", "you&#39;re the record owner."},
+		{"sent back", noteSentBack, "Invoice INV-000123 was sent back", "Sent back for changes.", "SENT BACK", "was sent back.", "View invoice",
+			"Invoice INV-000123 was sent back for changes.", ">Sent Back On<", "you&#39;re the record owner."},
+		{"created", noteCreated, "Invoice INV-000123 was created", "Created.", "CREATED", "was created.", "View invoice",
+			"Invoice INV-000123 was created successfully.", ">Created On<", "you created this record."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := buildApprovalNotification("tenant-1", "invoice.event", "INV-000123", "actor-1", ec, tt.note, contacts)
+			req := buildApprovalNotification("tenant-1", "invoice.event", "actor-1", facts, ec, tt.note, contacts)
 
 			assert.Equal(t, "tenant-1", req.TenantID)
 			assert.Equal(t, "actor-1", req.ActorUserID)
@@ -103,26 +112,71 @@ func TestBuildApprovalNotification(t *testing.T) {
 			assert.Equal(t, tt.body, req.Body)
 			assert.Equal(t, "/sales/invoice/rec-1", req.Link)
 			assert.Equal(t, []string{"email"}, req.Channels)
-			assert.Equal(t, []services.RecipientTarget{{UserID: "u1", Email: "a@example.com"}}, req.Recipients)
+			assert.Equal(t, []services.RecipientTarget{{UserID: "u1", Email: "a@example.com", Name: "Alex Approver"}}, req.Recipients)
+			require.NotNil(t, req.Email)
+			assert.True(t, req.Email.Greet, "SendNotification greets each recipient by name")
 
-			assert.Contains(t, req.EmailBodyHTML, "<!DOCTYPE html>")
-			assert.Contains(t, req.EmailBodyHTML, ">"+tt.badge+"<", "banner pill")
-			assert.Contains(t, req.EmailBodyHTML, "Invoice INV-000123<br>", "banner heading line 1")
-			assert.Contains(t, req.EmailBodyHTML, tt.heading, "banner heading line 2")
-			assert.Contains(t, req.EmailBodyHTML, tt.body, "message box")
-			assert.Contains(t, req.EmailBodyHTML, tt.cta, "button label")
-			assert.Contains(t, req.EmailBodyHTML, `href="https://app.example.com/sales/invoice/rec-1"`, "absolute link, not the relative bell route")
+			e := *req.Email
+			e.RecipientName = "Alex Approver"
+			html, err := services.RenderEmail(e)
+			require.NoError(t, err)
+			assert.Contains(t, html, ">"+tt.badge+"<", "banner pill")
+			assert.Contains(t, html, "Invoice INV-000123<br>", "banner heading line 1")
+			assert.Contains(t, html, tt.heading, "banner heading line 2")
+			assert.Contains(t, html, ">Hello Alex Approver,<")
+			assert.Contains(t, html, tt.lead)
+			assert.Contains(t, html, ">Invoice Number<")
+			assert.Contains(t, html, ">$12,450.00<")
+			if tt.dateRow != "" {
+				assert.Contains(t, html, tt.dateRow)
+				assert.Contains(t, html, ">Sep 16, 2026<")
+			} else {
+				assert.NotContains(t, html, "Sep 16, 2026")
+			}
+			assert.Contains(t, html, tt.cta, "button label")
+			assert.Contains(t, html, `href="https://app.example.com/sales/invoice/rec-1"`, "absolute link, not the relative bell route")
+			assert.Contains(t, html, "You're receiving this because "+tt.reason)
 		})
 	}
+}
+
+func TestBuildApprovalNotification_NoAmountOmitsRow(t *testing.T) {
+	ec := EventContext{Resource: "requisition", DisplayName: "Requisition", RecordUUID: "rec-1"}
+
+	req := buildApprovalNotification("tenant-1", "requisition.approved", "actor-1", recordFacts{Number: "REQ-1"}, ec, noteApproved, []contact{{UserID: "u1", Email: "a@example.com"}})
+
+	assert.NotContains(t, mustEmailHTML(t, req), ">Amount<")
+	assert.Contains(t, mustEmailHTML(t, req), ">Requisition Number<")
 }
 
 func TestBuildApprovalNotification_UnmappedResourceHasNoLinkOrButton(t *testing.T) {
 	withFrontendURL(t, "https://app.example.com")
 	ec := EventContext{Resource: "widget", DisplayName: "Widget", RecordUUID: "rec-1"}
 
-	req := buildApprovalNotification("tenant-1", "widget.approved", "W-1", "actor-1", ec, noteApproved, []contact{{UserID: "u1", Email: "a@example.com"}})
+	req := buildApprovalNotification("tenant-1", "widget.approved", "actor-1", recordFacts{Number: "W-1"}, ec, noteApproved, []contact{{UserID: "u1", Email: "a@example.com"}})
 
 	assert.Empty(t, req.Link)
-	assert.NotContains(t, req.EmailBodyHTML, "View widget", "no route means no button")
-	assert.Contains(t, req.EmailBodyHTML, "<!DOCTYPE html>", "still a branded email")
+	assert.NotContains(t, mustEmailHTML(t, req), "View widget", "no route means no button")
+	assert.Contains(t, mustEmailHTML(t, req), "<!DOCTYPE html>", "still a branded email")
+}
+
+func TestAmountColumns_CoverEveryApprovalModuleWithATotal(t *testing.T) {
+	for key, cfg := range registry {
+		if cfg.DisplayName == "" {
+			continue
+		}
+		table := cfg.Record.Table
+		if table == "requisition" || table == "fabrication_job" {
+			continue // no total column
+		}
+		assert.Contains(t, amountColumns, table, "approval module %q has no amount column mapped", key)
+	}
+}
+
+// mustEmailHTML renders req's email body through the shared template.
+func mustEmailHTML(t *testing.T, req services.NotificationRequest) string {
+	t.Helper()
+	out, err := req.EmailHTML()
+	require.NoError(t, err)
+	return out
 }

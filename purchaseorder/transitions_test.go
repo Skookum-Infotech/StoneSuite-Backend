@@ -44,6 +44,32 @@ func TestCanTransition(t *testing.T) {
 	}
 }
 
+func TestNonAdminMayTransitionTo(t *testing.T) {
+	tests := []struct {
+		name string
+		to   string
+		want bool
+	}{
+		{"submit for approval", "PAPV", true},
+		{"send to vendor", "SENT", true},
+		{"approve is its own endpoint, not a manual move", "APPV", false},
+		{"recall or revise to draft", "DRFT", false},
+		{"cancel", "CANC", false},
+		{"mark partially received", "PART", false},
+		{"mark received", "RCVD", false},
+		{"short-close or close", "CLSD", false},
+		{"unknown status", "XXXX", false},
+		{"empty status", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NonAdminMayTransitionTo(tt.to); got != tt.want {
+				t.Fatalf("NonAdminMayTransitionTo(%q) = %v, want %v", tt.to, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateTransition(t *testing.T) {
 	if err := ValidateTransition("DRFT", "PAPV"); err != nil {
 		t.Fatalf("ValidateTransition(DRFT, PAPV) = %v, want nil", err)

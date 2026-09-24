@@ -207,8 +207,9 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 ### AI / RAG (`ai/`)
 1. **`ai/` is provider-agnostic and dependency-free of app packages** (Embedder + LLMClient interfaces, RAG orchestrator, record rendering) — same discipline as `query/`. Keep app types out of it.
 2. **LLM + embeddings are self-hosted via Ollama** (`ollama/` is its own Fly app), not a hosted API — chosen for data-residency/security. Don't swap in a hosted embeddings/LLM API without that trade-off being decided explicitly.
-3. **Help corpus is embedded** (`docs/embed.go`) and ingested with `go run ./cmd/rag-ingest-help`; reindex via `POST /api/platform/ai/reindex-help`.
+3. **Help corpus is embedded** (`docs/embed.go`, an explicit end-user-only manifest) and ingested with `go run ./cmd/rag-ingest-help`; reindex via `POST /api/platform/ai/reindex-help`.
 4. **Tenant RAG Q&A is `POST /api/tenant/ai/ask`** (auth + TenantResolver); `/api/embeddings` + `/api/chat` proxy the model.
+5. **Help corpus is end-user docs only** (`docs/embed.go` explicit list). A user-visible feature change must update the matching help doc; the corpus re-ingests itself on the next boot when doc content changes (`cp_help_corpus_state`). `TestHelpCorpusIsUserFacing` guards against engineering content.
 
 ### Custom Fields & JSONB (Data Integrity)
 1. **custom_fields JSONB must validate against `workflow_field_definitions` before save** (type, required, enum, regex).

@@ -26,6 +26,12 @@ const (
 // next one is not allowed yet.
 var ErrWakeCooldown = errors.New("ollama wake attempt failed recently")
 
+// ErrWakeDisabled is returned by EnsureRunning while the platform AI switch
+// is off (see SetEnabled) — the assistant is already gated on that switch
+// before any request reaches the waker, so this is a defense-in-depth
+// backstop, not the primary gate.
+var ErrWakeDisabled = errors.New("ollama waker disabled by platform switch")
+
 // machineStarter is the point-of-use view of OllamaLifecycle.
 type machineStarter interface {
 	StartAll(ctx context.Context) error
@@ -46,6 +52,7 @@ type OllamaWaker struct {
 	mu         sync.Mutex
 	inflight   *wakeAttempt
 	lastFailed time.Time
+	enabled    bool
 }
 
 type wakeAttempt struct {
@@ -62,7 +69,18 @@ func NewOllamaWaker(starter machineStarter, baseURL string) *OllamaWaker {
 		pollEvery: wakePollInterval,
 		maxWait:   wakeMaxWait,
 		cooldown:  wakeCooldown,
+		enabled:   true,
 	}
+}
+
+// SetEnabled turns the waker on or off, mirroring the platform AI switch:
+// disabled means EnsureRunning refuses immediately with ErrWakeDisabled
+// instead of ever calling StartAll. Safe to call concurrently with
+// EnsureRunning.
+func (w *OllamaWaker) SetEnabled(enabled bool) {
+	w.mu.Lock()
+	w.enabled = enabled
+	w.mu.Unlock()
 }
 
 // EnsureRunning starts Ollama and returns once it answers, or an error if that
@@ -70,6 +88,10 @@ func NewOllamaWaker(starter machineStarter, baseURL string) *OllamaWaker {
 // one; a caller's own cancellation stops its wait, not the shared attempt.
 func (w *OllamaWaker) EnsureRunning(ctx context.Context) error {
 	w.mu.Lock()
+	if !w.enabled {
+		w.mu.Unlock()
+		return ErrWakeDisabled
+	}
 	if a := w.inflight; a != nil {
 		w.mu.Unlock()
 		return a.wait(ctx)

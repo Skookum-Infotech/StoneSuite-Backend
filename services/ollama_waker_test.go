@@ -118,3 +118,17 @@ func TestOllamaWaker_CallerCancelDoesNotStopSharedAttempt(t *testing.T) {
 	require.NoError(t, w.EnsureRunning(context.Background()))
 	assert.EqualValues(t, 1, st.calls.Load())
 }
+
+func TestOllamaWaker_SetEnabledFalseRefusesWithoutStarting(t *testing.T) {
+	st := &fakeStarter{}
+	w, _ := newTestWaker(t, st, 0)
+
+	w.SetEnabled(false)
+	err := w.EnsureRunning(context.Background())
+	assert.ErrorIs(t, err, ErrWakeDisabled)
+	assert.EqualValues(t, 0, st.calls.Load(), "StartAll must not be called while disabled")
+
+	w.SetEnabled(true)
+	require.NoError(t, w.EnsureRunning(context.Background()))
+	assert.EqualValues(t, 1, st.calls.Load())
+}

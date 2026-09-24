@@ -40,8 +40,23 @@ func NewOllamaLifecycle(appName, token string) *OllamaLifecycle {
 func (o *OllamaLifecycle) IsConfigured() bool { return o.token != "" }
 
 type flyMachine struct {
-	ID string `json:"id"`
+	ID    string `json:"id"`
+	State string `json:"state"`
 }
+
+// Fly Machine states State() aggregates into a summary string — see State's
+// doc comment.
+const (
+	flyMachineStateStarted = "started"
+	flyMachineStateStopped = "stopped"
+
+	// OllamaStateUnknown is returned when no lifecycle is configured, the
+	// app has no Machines, or the Machines API call itself failed.
+	OllamaStateUnknown = "unknown"
+	// OllamaStateMixed is returned when the app's Machines don't agree —
+	// e.g. mid-start or mid-stop.
+	OllamaStateMixed = "mixed"
+)
 
 // StartAll starts every Machine in the app. Best-effort per machine: one
 // Machine's failure doesn't stop the others from starting.
@@ -52,6 +67,39 @@ func (o *OllamaLifecycle) StartAll(ctx context.Context) error {
 // StopAll stops every Machine in the app. Best-effort per machine.
 func (o *OllamaLifecycle) StopAll(ctx context.Context) error {
 	return o.forEachMachine(ctx, "stop")
+}
+
+// State summarizes every Machine's current state in the app: flyMachineStateStarted
+// if all are started, flyMachineStateStopped if all are stopped,
+// OllamaStateMixed if they disagree (e.g. mid-transition), or
+// OllamaStateUnknown if the app has no Machines or the Machines API call
+// itself failed. Used only for the platform-admin status view — never gates
+// behavior.
+func (o *OllamaLifecycle) State(ctx context.Context) (string, error) {
+	machines, err := o.listMachines(ctx)
+	if err != nil {
+		return OllamaStateUnknown, fmt.Errorf("list machines: %w", err)
+	}
+	if len(machines) == 0 {
+		return OllamaStateUnknown, nil
+	}
+	started, stopped := 0, 0
+	for _, m := range machines {
+		switch m.State {
+		case flyMachineStateStarted:
+			started++
+		case flyMachineStateStopped:
+			stopped++
+		}
+	}
+	switch {
+	case started == len(machines):
+		return flyMachineStateStarted, nil
+	case stopped == len(machines):
+		return flyMachineStateStopped, nil
+	default:
+		return OllamaStateMixed, nil
+	}
 }
 
 func (o *OllamaLifecycle) forEachMachine(ctx context.Context, action string) error {

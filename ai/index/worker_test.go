@@ -14,10 +14,11 @@ var errBoom = errors.New("boom")
 func ctxW(t *testing.T) context.Context { t.Helper(); return context.Background() }
 
 type fakeQueue struct {
-	pending []Job
-	claimed map[string]bool
-	failed  map[string]bool
-	done    map[string]bool
+	pending  []Job
+	claimed  map[string]bool
+	failed   map[string]bool
+	done     map[string]bool
+	released map[string]bool
 }
 
 func (q *fakeQueue) ClaimPending(_ context.Context, n int) ([]Job, error) {
@@ -46,6 +47,13 @@ func (q *fakeQueue) Fail(_ context.Context, id string) error {
 		q.failed = map[string]bool{}
 	}
 	q.failed[id] = true
+	return nil
+}
+func (q *fakeQueue) Release(_ context.Context, id string) error {
+	if q.released == nil {
+		q.released = map[string]bool{}
+	}
+	q.released[id] = true
 	return nil
 }
 
@@ -314,6 +322,39 @@ func TestWorkerReEnqueuesOnEmbedError(t *testing.T) {
 	}
 	if q.failed["1"] != true {
 		t.Fatal("failed job must be returned to the queue for retry")
+	}
+}
+
+// TestWorkerReleasesAndStopsBatchOnEmbedderUnavailable is the retry-burn fix:
+// when the embedder itself is unreachable, every other job in the batch would
+// fail the identical way within the same few seconds, so DrainOnce must not
+// burn an attempt on each one and must not keep trying the rest of the batch.
+func TestWorkerReleasesAndStopsBatchOnEmbedderUnavailable(t *testing.T) {
+	q := &fakeQueue{pending: []Job{
+		{ID: "1", SourceID: "rec-1", Op: "upsert"},
+		{ID: "2", SourceID: "rec-2", Op: "upsert"},
+	}}
+	emb := &rag.FakeEmbedder{Err: fmt.Errorf("dial: %w", rag.ErrUnavailable)}
+	w := NewWorker(q, &fakeLoader{}, emb, &fakeChunkSink{})
+
+	n, err := w.DrainOnce(ctxW(t))
+	if !errors.Is(err, rag.ErrUnavailable) {
+		t.Fatalf("DrainOnce err = %v, want rag.ErrUnavailable", err)
+	}
+	if n != 1 {
+		t.Fatalf("DrainOnce handled = %d, want 1 (batch stops after the first unavailable job)", n)
+	}
+	if !q.released["1"] {
+		t.Fatal("job 1 must be released (no attempt charged), not failed")
+	}
+	if q.failed["1"] {
+		t.Fatal("job 1 must not be charged a retry attempt while the embedder is unreachable")
+	}
+	if q.claimed["2"] == false {
+		t.Fatal("job 2 should have been claimed by ClaimPending")
+	}
+	if q.done["2"] || q.failed["2"] || q.released["2"] {
+		t.Fatal("job 2 must be left untouched — the batch stops at the first unavailable job")
 	}
 }
 

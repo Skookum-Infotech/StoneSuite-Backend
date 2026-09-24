@@ -17,7 +17,22 @@ import "embed"
 // belong in an end-user assistant's corpus.
 //
 // Add a file here only if a user might reasonably ask the assistant about it.
+// Embedded files must be end-user help — screens, menus, buttons, and
+// concepts a business user would ask about — never engineering docs (API
+// paths, table names, internal services, architecture). ai-assistant.md is an
+// engineering doc describing the assistant's own internals, so it stays in
+// the repo but is deliberately not embedded here.
 //
-//go:embed ai-assistant.md
 //go:embed crm-concepts.md
+//go:embed assistant.md
+//go:embed getting-started.md
+//go:embed sales-documents.md
+//go:embed purchasing.md
+//go:embed inventory.md
+//go:embed fabrication.md
+//go:embed accounting.md
+//go:embed import.md
+//go:embed customer-portal.md
+//go:embed administration.md
+//go:embed feedback.md
 var FS embed.FS

@@ -107,12 +107,18 @@ not up front.
     are the **frontend** route segments (`/{domain}/{module}/{id}`), not always the
     registry key. Skip only if the record has no detail page to navigate to.
 
-12. **DB-backed tests.** `<mod>/store_test.go` with `//go:build dbtest` on line
+12. **User help doc.** Add or extend the product area's user help doc in
+    `docs/` and list it in `docs/embed.go` — the module is invisible to the
+    in-app assistant otherwise. End-user content only (screens, menus,
+    buttons): no API paths, table names, internal services, or env vars —
+    `TestHelpCorpusIsUserFacing` enforces this.
+
+13. **DB-backed tests.** `<mod>/store_test.go` with `//go:build dbtest` on line
     1 **and** the `TEST_DATABASE_URL` skip guard — both layers, matching
     `payment/store_test.go`. These do not compile into `go test ./...`; CI runs
     them in the `schema-apply` job.
 
-13. **Verify.**
+14. **Verify.**
     ```bash
     go build ./... && go vet ./... && go test ./...
     ```
@@ -132,7 +138,7 @@ not up front.
     several dbtests assert on the absence of global config, so a shared
     database makes them order-dependent.
 
-14. **Review.** Run `module-drift-checker`, then `tenancy-security-reviewer`,
+15. **Review.** Run `module-drift-checker`, then `tenancy-security-reviewer`,
     then `migration-auditor` on the diff.
 
 ## Red flags (stop and fix)

@@ -22,8 +22,8 @@ import (
 
 	"github.com/Skookum-Infotech/go-rag/provider/ollama"
 	"github.com/Skookum-Infotech/go-rag/provider/tei"
-	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
+	"stonesuite-backend/aisettings"
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
@@ -125,6 +125,25 @@ func main() {
 	var cp *tenancy.ControlPlane     // control-plane handle; also used by AIOps for the reindex-help platform-admin check
 	var cipher *secret.Cipher        // field-level secret cipher; also used by SSOOps to encrypt client secrets
 	var ollamaLifecycle *services.OllamaLifecycle
+	// aiToggler implements controllers.PlatformToggleListener: it owns the
+	// shared Ollama Machine's start/stop + lease-renew lifecycle and the RAG
+	// index catch-up nudge on every platform AI-switch flip, including the
+	// one this boot sequence performs below. Always constructed (nil
+	// lifecycle/lease/waker when Ollama lifecycle control isn't configured)
+	// so aiOps.WithPlatformToggleListener always has a receiver.
+	var aiToggler *aiPlatformToggler
+	// aiSettingsCache is the single platform+tenant AI-toggle cache shared by
+	// every RAG index worker/maintenance loop (rag_indexing.go) — one 30s-TTL
+	// cache passed to every tenant's goroutines, not one per tenant and not a
+	// package-level global.
+	aiSettingsCache := aisettings.NewCache(nil)
+	// indexCoordinator lets a tenant's AI switch turning back on (or the
+	// platform switch, in a later step) nudge that tenant's RAG index
+	// maintenance loop to catch up immediately instead of waiting out
+	// ragMaintenanceInterval. Registered per tenant by startRAGIndexing;
+	// always constructed (even if RAG indexing itself never starts) so
+	// AIOps.WithCatchUpNotifier below always has a non-nil receiver.
+	indexCoordinator := NewIndexCoordinator()
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		var err error
 		cp, err = tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
@@ -212,33 +231,44 @@ func main() {
 			// Proxy's flycast autostart, which was verified unreliable for this
 			// deployment (see docs/ai-assistant.md). Stopped on graceful
 			// shutdown below. Skipped entirely if unconfigured (e.g. local dev).
+			//
+			// The platform AI switch gates whether Ollama starts at all: read
+			// once here (defaulting to enabled on a read failure, same as
+			// aisettings.PlatformEnabled's own missing-row default) and drive
+			// boot through the same aiPlatformToggler.OnPlatformToggle path a
+			// later runtime PUT /api/platform/ai/settings uses, so there is
+			// exactly one place that knows how to start vs. stop this box.
 			if config.AppConfig.FlyOllamaAPIToken != "" {
 				ollamaLifecycle = services.NewOllamaLifecycle(config.AppConfig.FlyOllamaAppName, config.AppConfig.FlyOllamaAPIToken)
-				go func() {
-					if err := ollamaLifecycle.StartAll(context.Background()); err != nil {
-						log.Printf("ollama-lifecycle: start failed: %v", err)
-						return
-					}
-					// Fire a throwaway embed+chat so the first REAL /ai/ask
-					// request isn't the one paying Ollama's model-load
-					// latency — StartAll only boots the Machine, models load
-					// lazily on first inference. Best-effort: a failed
-					// warmup just means the first real request pays that
-					// latency itself, same as before this existed.
-					warmupEmb := ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
-					warmupLLM := newChatClient()
-					if err := ragcore.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
-						log.Printf("ollama-lifecycle: warmup failed: %v", err)
-					}
-				}()
+				lease := services.NewOllamaLease(ollamaLifecycle, config.AppConfig.AppName)
+				waker := services.NewOllamaWaker(ollamaLifecycle, config.AppConfig.OllamaBaseURL)
+				aiToggler = newAIPlatformToggler(ollamaLifecycle, lease, waker, indexCoordinator, cp.Pool(), shutdownCtx)
+
+				platformAIEnabled, perr := aisettings.PlatformEnabled(context.Background(), cp.Pool())
+				if perr != nil {
+					log.Printf("ai-platform-toggle: failed to read platform AI switch at boot, defaulting to enabled: %v", perr)
+					platformAIEnabled = true
+				}
+				if platformAIEnabled {
+					go aiToggler.OnPlatformToggle(context.Background(), true)
+				} else {
+					waker.SetEnabled(false)
+					log.Println("AI assistant disabled by platform switch; Ollama not started")
+				}
+			} else {
+				// No Fly Ollama lifecycle configured (local dev, or an
+				// always-on embedder box) — there is no warmup step to hang
+				// this off, so sync at boot directly. Best-effort: a slow or
+				// unreachable local embedder must not block or crash boot.
+				go syncHelpCorpus(shutdownCtx, cp.Pool())
+				aiToggler = newAIPlatformToggler(nil, nil, nil, indexCoordinator, cp.Pool(), shutdownCtx)
 			}
 
 			// RAG index workers: one per active tenant, draining rag_index_queue
 			// on a ticker so record writes become fresh vectors within seconds
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
-			go startRAGIndexing(shutdownCtx, cp, tenantRouter)
-			go checkHelpCorpusFingerprint(shutdownCtx, cp.Pool())
+			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -1398,9 +1428,30 @@ func main() {
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
-		if ollamaLifecycle != nil {
-			aiOps = aiOps.WithOllamaWaker(services.NewOllamaWaker(ollamaLifecycle, config.AppConfig.OllamaBaseURL))
+		if aiToggler.waker != nil {
+			// Reuse aiToggler's own waker instance (not a second one) so
+			// SetEnabled toggled by the platform-toggle listener and the
+			// waker Ask/AskStream/Warm consult are the same object.
+			aiOps = aiOps.WithOllamaWaker(aiToggler.waker)
 		}
+		aiOps = aiOps.WithPlatformToggleListener(aiToggler)
+		if aiToggler.lifecycle != nil {
+			// Only wire when configured — assigning a nil *OllamaLifecycle
+			// into the ollamaStater interface would make it a non-nil,
+			// typed-nil interface, defeating AIOps's own nil check.
+			aiOps = aiOps.WithOllamaStatus(aiToggler.lifecycle, aiToggler.lease)
+		}
+		// Share the one process-wide AI-toggle cache with the RAG index
+		// maintenance loops (see aiSettingsCache doc above) — a toggle PUT
+		// must invalidate the same cache both read from, or the nudged loop
+		// would read a stale value for up to cacheTTL.
+		aiOps = aiOps.WithSettingsCache(aiSettingsCache)
+		// Tenant AI toggle -> immediate RAG index catch-up (revive + reconcile)
+		// instead of waiting out ragMaintenanceInterval. A tenant not yet
+		// registered with indexCoordinator (RAG indexing not started, e.g.
+		// PROVISION_ADMIN_DB_URL unset) is simply a no-op nudge — see
+		// IndexCoordinator.CatchUp.
+		aiOps = aiOps.WithCatchUpNotifier(indexCoordinator)
 		// Reranking is off unless a TEI deployment is actually configured —
 		// see config.AppConfig.AIRerankBaseURL.
 		if config.AppConfig.AIRerankBaseURL != "" {
@@ -1409,7 +1460,20 @@ func main() {
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/ask/stream", aiChain(aiOps.AskStream))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
+		mux.Handle("POST /api/tenant/ai/warm", aiChain(aiOps.Warm))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
+
+		// AI assistant on/off switches: a platform-admin master switch (per
+		// environment, control plane) AND a per-tenant switch (tenant DB) —
+		// the assistant is available only when both are on (aisettings.Available).
+		// Both default TRUE, so deploying this changes nothing until someone
+		// flips one off. The platform pair is gated exactly like
+		// reindex-help (RequireAuth only, no tenant chain — one row per
+		// environment, not per tenant).
+		mux.Handle("GET /api/tenant/ai/status", tenantChain(aiOps.Status))
+		mux.Handle("PUT /api/tenant/ai/settings", tenantChain(aiOps.UpdateSettings))
+		mux.Handle("GET /api/platform/ai/settings", middleware.RequireAuth(http.HandlerFunc(aiOps.GetPlatformSettings)))
+		mux.Handle("PUT /api/platform/ai/settings", middleware.RequireAuth(http.HandlerFunc(aiOps.UpdatePlatformSettings)))
 
 		// AI assistant conversation history — personal chat threads, owner-only
 		// (see ConversationOps), not RBAC-scoped CRM data. Cheap CRUD, so the
@@ -1532,11 +1596,15 @@ func main() {
 	if err := server.Shutdown(shutCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
 	}
-	// Stop the Ollama embedder box alongside this process — see the matching
-	// StartAll call above for why the backend, not Fly Proxy, owns this.
+	// Release this holder's Ollama lease and stop the shared embedder box
+	// alongside this process — but only if no other holder (the other
+	// environment sharing the Fly app) still holds an unexpired lease; see
+	// the matching OnPlatformToggle(true) call above for why the backend,
+	// not Fly Proxy, owns this. Falls back to a plain StopAll if the lease
+	// system itself is degraded or unconfigured.
 	if ollamaLifecycle != nil {
-		if err := ollamaLifecycle.StopAll(shutCtx); err != nil {
-			log.Printf("ollama-lifecycle: stop failed: %v", err)
+		if err := aiToggler.lease.ReleaseAndMaybeStop(shutCtx); err != nil {
+			log.Printf("ollama-lifecycle: release/stop failed: %v", err)
 		}
 	}
 	// Flush any buffered logs to Axiom before exit (worker already draining on

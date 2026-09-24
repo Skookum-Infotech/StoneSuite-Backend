@@ -90,14 +90,19 @@ type vendorBillFields struct {
 }
 
 // CreateVendorBillInput is the request payload for POST /api/tenant/vendor-bills.
-// Notice it doesn't take purchaseOrderUuid (that is only set via the convert endpoint).
+// PurchaseOrderUUID optionally links the bill to one of the same vendor's
+// purchase orders as a plain reference (see resolvePurchaseOrderLineage): it
+// copies no lines and records no billed quantity -- only the convert endpoint
+// does that (AD-8). Update deliberately has no such field, so the link is
+// fixed at creation like the vendor.
 type CreateVendorBillInput struct {
-	VendorUUID string `json:"vendorUuid"`
+	VendorUUID        string `json:"vendorUuid"`
+	PurchaseOrderUUID string `json:"purchaseOrderUuid,omitempty"`
 	vendorBillFields
 }
 
-// UpdateVendorBillInput mirrors CreateVendorBillInput minus the vendor
-// (a vendor bill's vendor is fixed after creation -- AD-2).
+// UpdateVendorBillInput mirrors CreateVendorBillInput minus the vendor and
+// purchase order (a vendor bill's vendor is fixed after creation -- AD-2).
 type UpdateVendorBillInput struct {
 	vendorBillFields
 }

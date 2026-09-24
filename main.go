@@ -850,6 +850,11 @@ func main() {
 		// order -- Export PDF stays available for it via docLoaders above.
 		docSendDisabled := map[string]bool{"purchase_order": true}
 		docOps := controllers.NewDocumentOps(docLoaders, docSendDisabled, r2Client)
+		if config.AppConfig.PDFDefaultClientLogo {
+			// Same client logo the app header shows, for tenants that have not
+			// uploaded their own (PDF_DEFAULT_CLIENT_LOGO=false turns it off).
+			docOps.WithDefaultLogo(controllers.ClientLogoPNG())
+		}
 		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))

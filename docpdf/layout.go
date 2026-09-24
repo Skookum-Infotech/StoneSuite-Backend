@@ -1,120 +1,54 @@
 package docpdf
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/go-pdf/fpdf"
 )
 
 const (
-	marginX     = 15.0
-	pageBottomY = 270.0 // A4 height 297mm minus footer zone
-	fontFace    = "Helvetica"
+	pageMarginTop   = 15.0
+	autoBreakMargin = 20.0
+	footerTextGap   = 1.5
+	footerTextH     = 5.0
+	hairlineW       = 0.2
 
-	logoMaxW   = 35.0 // mm
-	logoMaxH   = 18.0 // mm
-	logoGutter = 4.0  // mm gap between logo and seller name/address text
+	// footerPageSample is a typical single-digit page label; its width anchors
+	// the page count at the right margin (see setFooter).
+	footerPageSample = "Page 1 of 1"
 )
 
+// newDoc creates an A4 portrait document with the shared margins, page-break
+// behaviour and page-count alias, and starts its first page.
 func newDoc() *fpdf.Fpdf {
 	pdf := fpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(marginX, 15, marginX)
-	pdf.SetAutoPageBreak(true, 20)
-	pdf.AddPage()
-	pdf.SetFooterFunc(func() {
-		pdf.SetY(-15)
-		pdf.SetFont(fontFace, "I", 8)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.CellFormat(0, 10, fmt.Sprintf("Page %d of {nb}", pdf.PageNo()), "", 0, "C", false, 0, "")
-		pdf.SetTextColor(0, 0, 0)
-	})
+	pdf.SetMargins(marginX, pageMarginTop, marginX)
+	pdf.SetCellMargin(0) // all padding is explicit in the layout code
+	pdf.SetAutoPageBreak(true, autoBreakMargin)
 	pdf.AliasNbPages("{nb}")
+	setFooter(pdf, "")
+	pdf.AddPage()
 	return pdf
 }
 
-func drawHeader(pdf *fpdf.Fpdf, d PrintableDoc) {
-	startY := pdf.GetY()
-	titleRowH := 8.0
-
-	nameX, nameW := marginX, 100.0
-	logoBottom := startY
-	if len(d.Seller.LogoPNG) > 0 {
-		if w, h, ok := drawLogo(pdf, marginX, startY, d.Seller.LogoPNG); ok {
-			nameX = marginX + w + logoGutter
-			nameW = 100.0 - w - logoGutter
-			logoBottom = startY + h
-		}
-	}
-
-	pdf.SetXY(nameX, startY)
-	pdf.SetFont(fontFace, "B", 16)
-	pdf.Cell(nameW, titleRowH, d.Seller.Name)
-	pdf.SetFont(fontFace, "B", 20)
-	pdf.CellFormat(0, titleRowH, d.Kind, "", 1, "R", false, 0, "")
-
-	pdf.SetFont(fontFace, "", 9)
-	for _, ln := range []string{d.Seller.AddrLine1, d.Seller.AddrLine2, d.Seller.CityStateZip, d.Seller.Phone, d.Seller.Email} {
-		if ln == "" {
-			continue
-		}
-		pdf.SetX(nameX)
-		pdf.CellFormat(nameW, 4.5, ln, "", 2, "L", false, 0, "")
-	}
-	sellerEndY := pdf.GetY()
-
-	pdf.SetY(startY + titleRowH)
-	pdf.SetFont(fontFace, "", 10)
-	pdf.CellFormat(0, 5, "No: "+d.Number, "", 1, "R", false, 0, "")
-	pdf.CellFormat(0, 5, "Status: "+d.Status, "", 1, "R", false, 0, "")
-	pdf.CellFormat(0, 5, "Date: "+d.IssueDate, "", 1, "R", false, 0, "")
-	if d.DueDate != "" {
-		pdf.CellFormat(0, 5, "Due: "+d.DueDate, "", 1, "R", false, 0, "")
-	}
-	metaEndY := pdf.GetY()
-
-	pdf.SetY(maxF(maxF(sellerEndY, metaEndY), logoBottom))
-	pdf.Ln(4)
-}
-
-// drawLogo registers and draws logoPNG (always PNG bytes -- see
-// decodeLogoAsPNG in controllers/company_profile.go, the only writer of
-// Seller.LogoPNG) at (x, y), scaled to fit within logoMaxW x logoMaxH while
-// preserving aspect ratio. Returns the drawn width/height and whether the
-// image was valid and drawn; on any failure it clears fpdf's internal error
-// state (fpdf poisons every subsequent call once an error is set) so an
-// invalid logo degrades to the text-only header instead of breaking the
-// whole document.
-func drawLogo(pdf *fpdf.Fpdf, x, y float64, logoPNG []byte) (w, h float64, ok bool) {
-	info := pdf.RegisterImageOptionsReader("seller-logo", fpdf.ImageOptions{ImageType: "PNG"}, bytes.NewReader(logoPNG))
-	if pdf.Err() || info == nil {
-		pdf.ClearError()
-		return 0, 0, false
-	}
-	iw, ih := info.Extent()
-	if iw <= 0 || ih <= 0 {
-		return 0, 0, false
-	}
-	scale := logoMaxW / iw
-	if ih*scale > logoMaxH {
-		scale = logoMaxH / ih
-	}
-	w, h = iw*scale, ih*scale
-	pdf.ImageOptions("seller-logo", x, y, w, h, false, fpdf.ImageOptions{ImageType: "PNG"}, 0, "")
-	if pdf.Err() {
-		pdf.ClearError()
-		return 0, 0, false
-	}
-	return w, h, true
-}
-
-func drawParties(pdf *fpdf.Fpdf, d PrintableDoc) {
-	top := pdf.GetY()
-	drawAddress(pdf, marginX, top, "BILL TO", d.BillTo)
-	billToEndY := pdf.GetY()
-	drawAddress(pdf, 110, top, "SHIP TO", d.ShipTo)
-	shipToEndY := pdf.GetY()
-	pdf.SetY(maxF(billToEndY, shipToEndY) + 4)
+// setFooter installs the running footer drawn on every page: a hairline, the
+// document label at the left and "Page N of M" at the right.
+func setFooter(pdf *fpdf.Fpdf, label string) {
+	pdf.SetFooterFunc(func() {
+		setDraw(pdf, colHairline)
+		pdf.SetLineWidth(hairlineW)
+		pdf.Line(marginX, pageFooterY, pageW-marginX, pageFooterY)
+		pdf.SetFont(fontFace, "", 8)
+		setText(pdf, colSubtle)
+		pdf.SetXY(marginX, pageFooterY+footerTextGap)
+		pdf.CellFormat(contentW/2, footerTextH, label, "", 0, "L", false, 0, "")
+		// Left-aligned at a fixed x on purpose: fpdf swaps the {nb} alias for
+		// the real page count after layout, so right-aligning the alias would
+		// land the text short of the margin by the width difference.
+		pdf.SetX(pageW - marginX - pdf.GetStringWidth(footerPageSample))
+		pdf.CellFormat(0, footerTextH, fmt.Sprintf("Page %d of {nb}", pdf.PageNo()), "", 0, "L", false, 0, "")
+		setText(pdf, colInk)
+	})
 }
 
 // maxF returns the larger of a and b.
@@ -125,112 +59,17 @@ func maxF(a, b float64) float64 {
 	return b
 }
 
-func drawAddress(pdf *fpdf.Fpdf, x, y float64, label string, a Address) {
-	pdf.SetXY(x, y)
-	pdf.SetFont(fontFace, "B", 9)
-	pdf.CellFormat(85, 5, label, "", 2, "L", false, 0, "")
-	pdf.SetFont(fontFace, "", 9)
-	for _, ln := range []string{a.Name, a.Attention, a.Line1, a.Line2, a.CityStateZip, a.Phone, a.Email} {
-		if ln == "" {
-			continue
-		}
-		pdf.SetX(x)
-		pdf.MultiCell(85, 4.5, ln, "", "L", false)
+// sectionTop returns the y at which the next section, need mm tall, starts:
+// sectionGap below the cursor when it fits on the page, otherwise the top of a
+// fresh page (added here). Every break between sections goes through it, so the
+// gap under the line table is the same for one item or a hundred.
+func sectionTop(pdf *fpdf.Fpdf, need float64) float64 {
+	top := pdf.GetY() + sectionGap
+	if top+need > pageBottomY {
+		pdf.AddPage()
+		return pdf.GetY()
 	}
-}
-
-// column widths for the line table (sum ≈ 180mm printable width)
-var lineCols = struct{ item, qty, price, disc, tax, total float64 }{90, 15, 25, 15, 15, 20}
-
-func drawLineTableHeader(pdf *fpdf.Fpdf) {
-	pdf.SetFont(fontFace, "B", 9)
-	pdf.SetFillColor(235, 235, 235)
-	pdf.CellFormat(lineCols.item, 7, "Item", "1", 0, "L", true, 0, "")
-	pdf.CellFormat(lineCols.qty, 7, "Qty", "1", 0, "R", true, 0, "")
-	pdf.CellFormat(lineCols.price, 7, "Price", "1", 0, "R", true, 0, "")
-	pdf.CellFormat(lineCols.disc, 7, "Disc%", "1", 0, "R", true, 0, "")
-	pdf.CellFormat(lineCols.tax, 7, "Tax%", "1", 0, "R", true, 0, "")
-	pdf.CellFormat(lineCols.total, 7, "Total", "1", 1, "R", true, 0, "")
-}
-
-func drawLineTable(pdf *fpdf.Fpdf, d PrintableDoc) {
-	drawLineTableHeader(pdf)
-	pdf.SetFont(fontFace, "", 9)
-	for _, ln := range d.Lines {
-		if pdf.GetY() > pageBottomY {
-			pdf.AddPage()
-			drawLineTableHeader(pdf)
-			pdf.SetFont(fontFace, "", 9)
-		}
-		name := ln.Name
-		if ln.SKU != "" {
-			name = ln.SKU + " — " + name
-		}
-		if ln.Description != "" {
-			name = name + "\n" + ln.Description
-		}
-		x, y := pdf.GetX(), pdf.GetY()
-		pdf.MultiCell(lineCols.item, 5, name, "1", "L", false)
-		rowH := pdf.GetY() - y
-		pdf.SetXY(x+lineCols.item, y)
-		pdf.CellFormat(lineCols.qty, rowH, trimNum(ln.Quantity), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(lineCols.price, rowH, money(d.CurrencySymbol, ln.UnitPrice), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(lineCols.disc, rowH, trimNum(ln.DiscountPercent), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(lineCols.tax, rowH, trimNum(ln.TaxPercent), "1", 0, "R", false, 0, "")
-		pdf.CellFormat(lineCols.total, rowH, money(d.CurrencySymbol, ln.LineTotal), "1", 1, "R", false, 0, "")
-	}
-	pdf.Ln(3)
-}
-
-func drawTotals(pdf *fpdf.Fpdf, d PrintableDoc) {
-	type row struct {
-		label string
-		val   float64
-		show  bool
-		bold  bool
-	}
-	rows := []row{
-		{"Subtotal", d.Subtotal, true, false},
-		{"Discount", -d.DiscountTotal, d.DiscountTotal != 0, false},
-		{"Tax", d.TaxTotal, d.TaxTotal != 0, false},
-		{"Shipping", d.ShippingCharge, d.ShippingCharge != 0, false},
-		{"Adjustment", d.Adjustment, d.Adjustment != 0, false},
-		{"Grand Total", d.GrandTotal, true, true},
-		{"Amount Paid", -d.AmountPaid, d.ShowBalance, false},
-		{"Balance Due", d.BalanceDue, d.ShowBalance, true},
-	}
-	labelW, valW := 40.0, 30.0
-	x := 210 - marginX - labelW - valW
-	for _, r := range rows {
-		if !r.show {
-			continue
-		}
-		style := ""
-		if r.bold {
-			style = "B"
-		}
-		pdf.SetX(x)
-		pdf.SetFont(fontFace, style, 10)
-		pdf.CellFormat(labelW, 6, r.label, "", 0, "R", false, 0, "")
-		pdf.CellFormat(valW, 6, money(d.CurrencySymbol, r.val), "", 1, "R", false, 0, "")
-	}
-}
-
-func drawFooter(pdf *fpdf.Fpdf, d PrintableDoc) {
-	pdf.Ln(6)
-	block := func(label, body string) {
-		if body == "" {
-			return
-		}
-		pdf.SetFont(fontFace, "B", 9)
-		pdf.CellFormat(0, 5, label, "", 1, "L", false, 0, "")
-		pdf.SetFont(fontFace, "", 9)
-		pdf.MultiCell(0, 4.5, body, "", "L", false)
-		pdf.Ln(2)
-	}
-	block("Terms & Conditions", d.Terms)
-	block("Notes", d.Notes)
-	block("Memo", d.Memo)
+	return top
 }
 
 // trimNum formats a float without trailing zeros (e.g. 3, 3.5, 8.25).

@@ -48,6 +48,17 @@ func TestValidate(t *testing.T) {
 		{"billing address zip too long", func(p *Profile) { p.BillingAddress.Zip = tooLong }, true},
 		{"shipping address line1 too long", func(p *Profile) { p.ShippingAddress.Line1 = tooLong }, true},
 		{"return address line1 too long", func(p *Profile) { p.ReturnAddress.Line1 = tooLong }, true},
+
+		{"valid payment details", func(p *Profile) {
+			p.PaymentDetails = &PaymentDetails{BankName: "Chase Bank", AccountNumber: "000123456789", RoutingNumber: "021000021"}
+		}, false},
+		{"payment details omitted", func(p *Profile) { p.PaymentDetails = nil }, false},
+		{"payment details at max length", func(p *Profile) {
+			p.PaymentDetails = &PaymentDetails{BankName: atMax, AccountNumber: atMax, RoutingNumber: atMax}
+		}, false},
+		{"bank name too long", func(p *Profile) { p.PaymentDetails = &PaymentDetails{BankName: tooLong} }, true},
+		{"account number too long", func(p *Profile) { p.PaymentDetails = &PaymentDetails{AccountNumber: tooLong} }, true},
+		{"routing number too long", func(p *Profile) { p.PaymentDetails = &PaymentDetails{RoutingNumber: tooLong} }, true},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +68,38 @@ func TestValidate(t *testing.T) {
 			err := Validate(p)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate(%+v) error = %v, wantErr %v", p, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPaymentArgs(t *testing.T) {
+	str := func(s string) *string { return &s }
+	tests := []struct {
+		name                            string
+		in                              *PaymentDetails
+		wantBank, wantAcct, wantRouting *string
+	}{
+		{"omitted means keep what is stored (NULL)", nil, nil, nil, nil},
+		{"values are passed through", &PaymentDetails{BankName: "Chase", AccountNumber: "123", RoutingNumber: "021"}, str("Chase"), str("123"), str("021")},
+		{"surrounding whitespace is trimmed", &PaymentDetails{BankName: "  Chase ", AccountNumber: "\t123\n", RoutingNumber: " 021"}, str("Chase"), str("123"), str("021")},
+		{"an empty object clears the stored values", &PaymentDetails{}, str(""), str(""), str("")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bank, acct, routing := paymentArgs(tt.in)
+			for _, c := range []struct {
+				name      string
+				got, want *string
+			}{{"bank", bank, tt.wantBank}, {"account", acct, tt.wantAcct}, {"routing", routing, tt.wantRouting}} {
+				switch {
+				case c.want == nil && c.got != nil:
+					t.Errorf("%s = %q, want nil", c.name, *c.got)
+				case c.want != nil && c.got == nil:
+					t.Errorf("%s = nil, want %q", c.name, *c.want)
+				case c.want != nil && *c.got != *c.want:
+					t.Errorf("%s = %q, want %q", c.name, *c.got, *c.want)
+				}
 			}
 		})
 	}

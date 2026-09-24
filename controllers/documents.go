@@ -62,14 +62,25 @@ type DocumentOps struct {
 	// renderPDF is injectable for tests; defaults to docpdf.Render.
 	renderPDF func(docpdf.PrintableDoc) ([]byte, error)
 	// r2 is nil when R2 is not configured; the tenant-logo lookup is then
-	// skipped (not fatal) and PDFs render with the text-only header.
+	// skipped (not fatal) and the tenant's plate is left out of the masthead.
 	r2 *storage.Client
+	// defaultLogo is the PNG shown as the tenant's logo while the tenant has
+	// not uploaded one of its own; nil means no fallback (see WithDefaultLogo).
+	defaultLogo []byte
 }
 
 // NewDocumentOps constructs the handler group. sendDisabled and r2 may both
 // be nil.
 func NewDocumentOps(loaders map[string]DocumentLoader, sendDisabled map[string]bool, r2 *storage.Client) *DocumentOps {
 	return &DocumentOps{loaders: loaders, sendDisabled: sendDisabled, renderPDF: docpdf.Render, r2: r2}
+}
+
+// WithDefaultLogo sets the logo PDFs show for a tenant that has not uploaded
+// its own (Configuration -> Company Info) and returns h. Without it such a
+// tenant's masthead carries the StoneSuite logo alone.
+func (h *DocumentOps) WithDefaultLogo(png []byte) *DocumentOps {
+	h.defaultLogo = png
+	return h
 }
 
 // loadForRender runs the shared auth gate, resolves the loader for the record's
@@ -121,16 +132,20 @@ func (h *DocumentOps) GetPDF(w http.ResponseWriter, r *http.Request) {
 
 // sellerFromTenant builds the letterhead from the tenant's display name and
 // whatever company profile fields exist in its onboarding metadata JSON,
-// then additively looks up a logo from company_profile if one has been
-// uploaded (Configuration -> Company Info -> logo). A missing/unreadable
-// logo is logged and skipped -- it must never fail document rendering.
+// then additively takes the payment details from company_profile and looks
+// up its logo if one has been uploaded (Configuration -> Company Info); a
+// tenant with no logo of its own gets the default one, when configured
+// (fallbackLogo). A missing/unreadable profile or logo is logged and skipped
+// -- it must never fail document rendering.
 func (h *DocumentOps) sellerFromTenant(ctx context.Context, pool *pgxpool.Pool, t *tenancy.Tenant) docpdf.Seller {
 	s := sellerFromTenantMeta(t.DisplayName, t.Metadata)
 	profile, err := companyprofile.Get(ctx, pool)
 	if err != nil {
-		slog.Warn("failed to load company profile for PDF logo lookup", "error", err, "tenant", t.ID)
+		slog.Warn("failed to load company profile for PDF letterhead", "error", err, "tenant", t.ID)
 		return s
 	}
+	s.Payment = paymentFromProfile(profile)
+	s.LogoPNG = fallbackLogo(profile, h.defaultLogo)
 	if profile.LogoKey == "" {
 		return s
 	}
@@ -370,8 +385,9 @@ func hasHeaderInjection(s string) bool {
 // shared shell every StoneSuite email uses, including this tenant-context
 // one (StoneSuite is the platform sending it; the seller/tenant's identity
 // appears in the message and signature text below, not as a swapped header
-// logo — there is no tenant-logo asset store today, see
-// docpdf.Seller.LogoPNG's doc comment). A bare fragment plus the old remote
+// logo — the tenant's logo is only reachable through short-lived presigned
+// URLs, so there is nothing stable to <img>; it appears on the attached PDF,
+// see docpdf.Seller.LogoPNG). A bare fragment plus the old remote
 // logo <img> (broken for most recipients, and a tracking signal) both hurt
 // inbox placement. The sender message and seller name are HTML-escaped: they
 // are free text, not markup.

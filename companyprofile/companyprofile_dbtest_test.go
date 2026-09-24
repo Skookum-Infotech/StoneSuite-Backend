@@ -5,6 +5,7 @@ package companyprofile
 import (
 	"context"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,7 +40,7 @@ func TestGet_NoRowYet_ReturnsZeroValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v, want nil", err)
 	}
-	if *got != (Profile{}) {
+	if !reflect.DeepEqual(*got, Profile{}) {
 		t.Errorf("Get() = %+v, want zero-value Profile", *got)
 	}
 }
@@ -66,6 +67,7 @@ func TestUpsert_ThenGet_RoundTrips(t *testing.T) {
 		ReturnAddress: Address{
 			Line1: "789 Returns Dock", City: "Springfield", Country: "United States", State: "IL", Zip: "62704",
 		},
+		PaymentDetails: &PaymentDetails{BankName: "Chase Bank", AccountNumber: "000123456789", RoutingNumber: "021000021"},
 	}
 	if err := Upsert(ctx, pool, want); err != nil {
 		t.Fatalf("Upsert() error = %v, want nil", err)
@@ -75,8 +77,84 @@ func TestUpsert_ThenGet_RoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v, want nil", err)
 	}
-	if *got != want {
+	if !reflect.DeepEqual(*got, want) {
 		t.Errorf("Get() = %+v, want %+v", *got, want)
+	}
+}
+
+func TestUpsert_PaymentDetails(t *testing.T) {
+	saved := &PaymentDetails{BankName: "Chase Bank", AccountNumber: "000123456789", RoutingNumber: "021000021"}
+	tests := []struct {
+		name   string
+		second *PaymentDetails // sent on the second save; the first always stores `saved`
+		want   *PaymentDetails // nil once cleared: Get reports "none stored" as nil
+	}{
+		{"omitted keeps what is stored", nil, saved},
+		{"a new value replaces it", &PaymentDetails{BankName: "Wells Fargo", AccountNumber: "999", RoutingNumber: "121000248"},
+			&PaymentDetails{BankName: "Wells Fargo", AccountNumber: "999", RoutingNumber: "121000248"}},
+		{"an empty object clears it", &PaymentDetails{}, nil},
+		{"whitespace is trimmed", &PaymentDetails{BankName: "  Chase  ", AccountNumber: " 1 ", RoutingNumber: "2 "},
+			&PaymentDetails{BankName: "Chase", AccountNumber: "1", RoutingNumber: "2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := testPool(t)
+			ctx := context.Background()
+
+			if err := Upsert(ctx, pool, Profile{CompanyName: "Acme", PaymentDetails: saved}); err != nil {
+				t.Fatalf("first Upsert() error = %v, want nil", err)
+			}
+			if err := Upsert(ctx, pool, Profile{CompanyName: "Acme Renamed", PaymentDetails: tt.second}); err != nil {
+				t.Fatalf("second Upsert() error = %v, want nil", err)
+			}
+
+			got, err := Get(ctx, pool)
+			if err != nil {
+				t.Fatalf("Get() error = %v, want nil", err)
+			}
+			if got.CompanyName != "Acme Renamed" {
+				t.Errorf("CompanyName = %q, want the second save applied", got.CompanyName)
+			}
+			if !reflect.DeepEqual(got.PaymentDetails, tt.want) {
+				t.Errorf("PaymentDetails = %+v, want %+v", got.PaymentDetails, tt.want)
+			}
+		})
+	}
+}
+
+func TestUpsert_FirstSaveWithoutPaymentDetails_LeavesThemUnset(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	if err := Upsert(ctx, pool, Profile{CompanyName: "Acme"}); err != nil {
+		t.Fatalf("Upsert() error = %v, want nil", err)
+	}
+	got, err := Get(ctx, pool)
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+	if got.PaymentDetails != nil {
+		t.Errorf("PaymentDetails = %+v, want nil (none stored)", got.PaymentDetails)
+	}
+}
+
+func TestSetLogoKey_KeepsPaymentDetails(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	want := PaymentDetails{BankName: "Chase Bank", AccountNumber: "000123456789", RoutingNumber: "021000021"}
+	if err := Upsert(ctx, pool, Profile{CompanyName: "Acme", PaymentDetails: &want}); err != nil {
+		t.Fatalf("Upsert() error = %v, want nil", err)
+	}
+	if err := SetLogoKey(ctx, pool, "company/logo.png"); err != nil {
+		t.Fatalf("SetLogoKey() error = %v, want nil", err)
+	}
+	got, err := Get(ctx, pool)
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+	if got.PaymentDetails == nil || *got.PaymentDetails != want {
+		t.Errorf("PaymentDetails = %+v, want %+v (SetLogoKey must not touch them)", got.PaymentDetails, want)
 	}
 }
 

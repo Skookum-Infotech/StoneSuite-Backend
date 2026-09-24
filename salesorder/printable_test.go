@@ -19,6 +19,7 @@ func TestToPrintable_Order(t *testing.T) {
 	}
 	d := ToPrintable(o, docpdf.Seller{Name: "Acme Stone Co"})
 	assert.Equal(t, "SALES ORDER", d.Kind)
+	assert.True(t, d.ShowPayment, "the seller is the one being paid")
 	assert.Equal(t, "SO-1001", d.Number)
 	assert.False(t, d.ShowBalance)
 	assert.Equal(t, "2026-09-23", d.DueDate)

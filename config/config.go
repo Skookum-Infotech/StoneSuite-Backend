@@ -93,6 +93,13 @@ type Config struct {
 	R2AccessKeyID       string
 	R2SecretAccessKey   string
 
+	// PDFDefaultClientLogo (PDF_DEFAULT_CLIENT_LOGO, default true) makes document
+	// PDFs show the client's logo -- the one the app header already shows -- as
+	// the tenant's logo for any tenant that has not uploaded its own. Set it to
+	// false once tenants other than that client are served, so their documents
+	// carry only the logo they upload.
+	PDFDefaultClientLogo bool
+
 	// Observability (all optional; each feature degrades gracefully when unset).
 	// SentryDSN enables error/panic reporting to Sentry (free tier).
 	SentryDSN string
@@ -216,6 +223,8 @@ func Load() {
 		CloudflareAPIToken:  getEnv("CLOUDFLARE_API_TOKEN", ""),
 		R2AccessKeyID:       getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey:   getEnv("R2_SECRET_ACCESS_KEY", ""),
+		// Document PDFs
+		PDFDefaultClientLogo: getEnvBool("PDF_DEFAULT_CLIENT_LOGO", true),
 		// Observability
 		SentryDSN:    getEnv("SENTRY_DSN", ""),
 		MetricsToken: getEnv("METRICS_TOKEN", ""),
@@ -308,6 +317,17 @@ func getEnvInt(key string, defaultValue int) int {
 	if value, exists := os.LookupEnv(key); exists {
 		if n, err := strconv.Atoi(value); err == nil {
 			return n
+		}
+	}
+	return defaultValue
+}
+
+// getEnvBool reads a boolean env var (strconv.ParseBool syntax: true/false, 1/0,
+// t/f, ...), falling back to defaultValue when unset or invalid.
+func getEnvBool(key string, defaultValue bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		if b, err := strconv.ParseBool(value); err == nil {
+			return b
 		}
 	}
 	return defaultValue

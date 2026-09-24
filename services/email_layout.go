@@ -85,8 +85,9 @@ const mso480Close = `<!--[if mso]></td></tr></table><![endif]-->`
 // (logo lockup + "STONE SUITE" wordmark, "View in browser" link) — always
 // StoneSuite, since StoneSuite is the platform sending every email; a tenant's
 // identity appears in the content text instead, e.g. "Acme Stone Co has given
-// you access..." (see docpdf.Seller.LogoPNG's doc comment for why there is no
-// tenant-logo asset to swap in here) — a 200px dark gradient banner (fading
+// you access..." (a tenant's logo is only reachable through short-lived
+// presigned URLs, so there is nothing stable to swap in here; it appears on the
+// attached PDF, see docpdf.Seller.LogoPNG) — a 200px dark gradient banner (fading
 // dots, pill badge, two-tone heading, illustration), the white content card, a
 // divider, then the standard footer (support line, social row,
 // manage-preferences link) on the warm page background.

@@ -319,7 +319,13 @@ func (h *RBACOps) UserRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 // MyPermissions returns every effective grant the calling user holds in the
-// resolved tenant. Used by the frontend to drive role-based sidebar visibility.
+// resolved tenant, plus the roles they are assigned. Used by the frontend to
+// drive role-based sidebar visibility and to show the signed-in user's own roles
+// (header menu, Account Settings) without a user:read-gated call to list every
+// workspace user. Roles are read live, not from the token, so an assignment made
+// mid-session is visible on the very next call. Unlike grants, roles are never
+// narrowed by the active role: activeRoleId says which one is enforced, roles
+// says which ones the caller holds.
 // GET /api/tenant/users/me/permissions
 func (h *RBACOps) MyPermissions(w http.ResponseWriter, r *http.Request) {
 	payload, err := middleware.GetUserFromContext(r.Context())
@@ -340,10 +346,16 @@ func (h *RBACOps) MyPermissions(w http.ResponseWriter, r *http.Request) {
 	if grants == nil {
 		grants = []authz.Grant{}
 	}
+	roles, err := userstore.RolesForIdentity(r.Context(), pool, payload.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load roles.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":      true,
 		"grants":       grants,
 		"activeRoleId": payload.ActiveRoleID,
+		"roles":        roles,
 	})
 }
 

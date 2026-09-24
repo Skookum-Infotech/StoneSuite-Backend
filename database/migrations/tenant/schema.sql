@@ -7199,6 +7199,40 @@ CREATE TABLE IF NOT EXISTS vendor_bill_conversion (
     CONSTRAINT uq_vendor_bill_conversion_bill UNIQUE (vendor_bill_id)
 );
 
+-- vendor_bill_conversion_line -- what each conversion billed, per purchase
+-- order line. A PO line's "already billed" quantity is the sum of these over
+-- bills that are live and not VOID, which is what lets ConvertFromPurchaseOrder
+-- bill only the received-but-not-yet-billed quantity. Recorded here rather than
+-- read off vendor_bill_item because editing a bill re-inserts its lines with no
+-- purchase_order_item_id (store_update.go), so that link cannot be trusted
+-- after an edit. A conversion always writes at least one row here.
+CREATE TABLE IF NOT EXISTS vendor_bill_conversion_line (
+    vendor_bill_conversion_id INTEGER       NOT NULL REFERENCES vendor_bill_conversion(vendor_bill_conversion_id) ON DELETE CASCADE,
+    purchase_order_item_id    INTEGER       NOT NULL REFERENCES purchase_order_item(purchase_order_item_id) ON DELETE CASCADE,
+    quantity                  DECIMAL(14,3) NOT NULL,
+    PRIMARY KEY (vendor_bill_conversion_id, purchase_order_item_id),
+    CONSTRAINT chk_vbcl_quantity_positive CHECK (quantity > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vbcl_po_item ON vendor_bill_conversion_line (purchase_order_item_id);
+
+-- One-time backfill for conversions made before per-line tracking existed: each
+-- billed every live line at its full ordered quantity (the old convert was a
+-- verbatim copy), so record exactly that. Only conversions with NO line rows
+-- qualify -- a newer conversion always has at least one, and may legitimately
+-- have skipped lines that had nothing left to bill, which this must never
+-- "restore". That guard is also what makes re-running this on every boot a no-op.
+INSERT INTO vendor_bill_conversion_line (vendor_bill_conversion_id, purchase_order_item_id, quantity)
+SELECT c.vendor_bill_conversion_id, poi.purchase_order_item_id, poi.quantity
+FROM vendor_bill_conversion c
+JOIN purchase_order_item poi
+  ON poi.purchase_order_id = c.purchase_order_id AND poi.item_deleted_at IS NULL AND poi.quantity > 0
+WHERE NOT EXISTS (
+    SELECT 1 FROM vendor_bill_conversion_line l
+    WHERE l.vendor_bill_conversion_id = c.vendor_bill_conversion_id
+)
+ON CONFLICT DO NOTHING;
+
 -- vendor_bill indexes (listing/filtering -- all partial on live rows)
 CREATE INDEX IF NOT EXISTS idx_vbil_vendor        ON vendor_bill (vendor_bill_vendor_id)         WHERE vendor_bill_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vbil_po             ON vendor_bill (vendor_bill_purchase_order_id) WHERE vendor_bill_deleted_at IS NULL;

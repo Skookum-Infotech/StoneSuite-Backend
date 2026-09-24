@@ -41,6 +41,23 @@ func NextStatuses(fromCode string) []string {
 	return out
 }
 
+// nonAdminTargets is the set of target statuses a caller who is not a super
+// admin may request through the transition endpoint: the two forward moves
+// the UI offers as buttons to every purchase_order:transition holder (submit
+// for approval, send to vendor). Every other move -- cancel, recall/revise to
+// draft, manual receiving, short-close, close -- is a super-admin override.
+// Approve and Reject have their own endpoints and are not gated here; receipt
+// postings roll the status up internally (ApplyReceiptRollup), not through a
+// person's transition request.
+var nonAdminTargets = map[string]bool{"PAPV": true, "SENT": true}
+
+// NonAdminMayTransitionTo reports whether a caller who is not a super admin
+// may request a move to toCode. It checks the requested target only -- the
+// move's legality from the current status is still ValidateTransition's job.
+func NonAdminMayTransitionTo(toCode string) bool {
+	return nonAdminTargets[toCode]
+}
+
 // ValidateTransition returns ErrInvalidTransition when the move is not allowed.
 func ValidateTransition(fromCode, toCode string) error {
 	if !CanTransition(fromCode, toCode) {

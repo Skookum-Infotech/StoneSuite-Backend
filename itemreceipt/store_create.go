@@ -125,8 +125,33 @@ func insertLines(ctx context.Context, tx pgx.Tx, irInternalID int, lines []resol
 //
 // Nothing is posted here — no stock moves and no qty_received changes until
 // Post is called. Creating a receipt is recording paperwork; posting it is the
-// act that touches inventory.
+// act that touches inventory. (The receiving UI no longer stops here: it calls
+// CreateAndPost. A PEND receipt now exists only for API callers of this
+// function and for receipts created before that change.)
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemReceiptInput, actorEmployeeID int) (*ItemReceipt, error) {
+	return createReceipt(ctx, pool, in, nil, actorEmployeeID)
+}
+
+// CreateAndPost creates a receipt and posts it in one transaction, so the
+// receipt is never left Pending: if posting is refused (over-receipt without
+// the override, order no longer receivable, ...) nothing is saved at all.
+// canApproveOverReceipt and in.OverReceiptReason carry the same meaning as on
+// Post.
+func CreateAndPost(
+	ctx context.Context, pool *pgxpool.Pool, in CreateItemReceiptInput,
+	canApproveOverReceipt bool, actorEmployeeID int,
+) (*ItemReceipt, error) {
+	return createReceipt(ctx, pool, in, &postOptions{canApproveOverReceipt: canApproveOverReceipt}, actorEmployeeID)
+}
+
+// postOptions, when non-nil, makes createReceipt post the receipt it just
+// inserted before committing.
+type postOptions struct{ canApproveOverReceipt bool }
+
+func createReceipt(
+	ctx context.Context, pool *pgxpool.Pool, in CreateItemReceiptInput,
+	post *postOptions, actorEmployeeID int,
+) (*ItemReceipt, error) {
 	if strings.TrimSpace(in.PurchaseOrderUUID) == "" {
 		return nil, ClientError{Msg: "A purchase order is required."}
 	}
@@ -213,6 +238,13 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemReceiptInput, 
 	}
 
 	writeHistory(ctx, tx, internalID, "create", nil, &pendingStatusID, actorEmployeeID)
+
+	if post != nil {
+		if err := postReceipt(ctx, tx, newUUID, PostInput{OverReceiptReason: in.OverReceiptReason},
+			post.canApproveOverReceipt, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create item receipt: %w", err)

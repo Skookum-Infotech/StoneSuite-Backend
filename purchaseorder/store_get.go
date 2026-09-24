@@ -87,11 +87,26 @@ func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, poMeta, error) {
 
 // itemSelect is the base SELECT for a purchase order's live lines. Column
 // order must match scanLine's Scan(...) arg order exactly.
+//
+// The qty_billed column is the quantity recorded at conversion, summed over
+// bills that are live and not VOID -- the same figure vendorbill's
+// loadPurchaseOrderSourceLines subtracts when it decides what a new bill may
+// claim. Keep the two subqueries in step.
 const itemSelect = `
 	SELECT poi.purchase_order_item_uuid, poi.line_number,
 	       ii.inventory_item_uuid,
 	       poi.sku, poi.item_name, poi.description, COALESCE(poi.unit_code,''),
-	       poi.quantity, poi.qty_received, poi.unit_price, poi.discount_percent, poi.tax_percent,
+	       poi.quantity, poi.qty_received,
+	       COALESCE((
+	           SELECT SUM(cl.quantity)
+	           FROM vendor_bill_conversion_line cl
+	           JOIN vendor_bill_conversion c ON c.vendor_bill_conversion_id = cl.vendor_bill_conversion_id
+	           JOIN vendor_bill vb ON vb.vendor_bill_id = c.vendor_bill_id AND vb.vendor_bill_deleted_at IS NULL
+	           JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
+	           WHERE cl.purchase_order_item_id = poi.purchase_order_item_id
+	             AND rs.record_status_code <> 'VOID'
+	       ), 0),
+	       poi.unit_price, poi.discount_percent, poi.tax_percent,
 	       poi.line_subtotal, poi.line_discount, poi.line_tax, poi.line_total
 	FROM purchase_order_item poi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = poi.inventory_item_id
@@ -103,7 +118,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 	err := row.Scan(
 		&l.ID, &l.LineNumber, &l.InventoryItemID,
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
-		&l.Quantity, &l.QtyReceived, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
+		&l.Quantity, &l.QtyReceived, &l.QtyBilled, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
 	)
 	return l, err

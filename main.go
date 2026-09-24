@@ -229,8 +229,21 @@ func main() {
 					warmupLLM := newChatClient()
 					if err := ragcore.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
 						log.Printf("ollama-lifecycle: warmup failed: %v", err)
+						return
 					}
+					// The embedder is only reachable once warmup above
+					// succeeded, so the help-corpus sync (which embeds any
+					// changed doc) runs after it, not in parallel with it.
+					// Best-effort: syncHelpCorpus logs its own failures and
+					// never crashes boot.
+					syncHelpCorpus(shutdownCtx, cp.Pool())
 				}()
+			} else {
+				// No Fly Ollama lifecycle configured (local dev, or an
+				// always-on embedder box) — there is no warmup step to hang
+				// this off, so sync at boot directly. Best-effort: a slow or
+				// unreachable local embedder must not block or crash boot.
+				go syncHelpCorpus(shutdownCtx, cp.Pool())
 			}
 
 			// RAG index workers: one per active tenant, draining rag_index_queue
@@ -238,7 +251,6 @@ func main() {
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
 			go startRAGIndexing(shutdownCtx, cp, tenantRouter)
-			go checkHelpCorpusFingerprint(shutdownCtx, cp.Pool())
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}

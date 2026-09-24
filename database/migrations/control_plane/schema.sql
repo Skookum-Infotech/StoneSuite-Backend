@@ -543,3 +543,16 @@ CREATE INDEX IF NOT EXISTS idx_platform_feedback_attachments_feedback
 -- reindex it; boot compares this against the running embedder and warns.
 -- NULL for rows written before this column existed (treated as unknown).
 ALTER TABLE cp_rag_chunks ADD COLUMN IF NOT EXISTS embed_fingerprint TEXT;
+
+-- ── cp_help_corpus_state ───────────────────────────────────────────────
+-- Single-row record of the last successful help-corpus sync: a content hash
+-- over docs.FS (see docs.ContentHash) and the embedder fingerprint that
+-- produced the stored vectors. Boot compares both against the running
+-- binary's current values and re-ingests only when either differs, instead
+-- of re-embedding the (small, self-hosted, CPU-bound) corpus on every boot.
+CREATE TABLE IF NOT EXISTS cp_help_corpus_state (
+    id                  SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    content_hash        TEXT         NOT NULL DEFAULT '',
+    embed_fingerprint   TEXT         NOT NULL DEFAULT '',
+    synced_at           TIMESTAMPTZ
+);

@@ -21,7 +21,6 @@ package main
 
 import (
 	"context"
-	"io/fs"
 	"log"
 	"os"
 
@@ -31,22 +30,13 @@ import (
 	"github.com/Skookum-Infotech/go-rag/provider/ollama"
 	"stonesuite-backend/ai"
 	"stonesuite-backend/config"
-	"stonesuite-backend/docs"
+	"stonesuite-backend/controllers"
 )
 
 func main() {
 	config.Load()
 	if config.AppConfig.ControlPlaneDBURL == "" {
 		log.Fatal("CONTROL_PLANE_DB_URL is required")
-	}
-
-	var docsFS fs.FS = docs.FS
-	// Pruning is only correct against the complete corpus: a directory
-	// argument may be a subset, so docs outside it are left alone.
-	prune := true
-	if len(os.Args) > 1 {
-		docsFS = os.DirFS(os.Args[1])
-		prune = false
 	}
 
 	ctx := context.Background()
@@ -57,19 +47,32 @@ func main() {
 	defer pool.Close()
 
 	embedder := ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
-	store := ai.NewCPHelpStore(pool, ai.EmbedFingerprint(embedder))
 
-	res, err := ingest.IngestFS(ctx, embedder, store, docsFS, ingest.DefaultChunkOpts)
-	if err != nil {
-		log.Fatalf("ingest: %v", err)
-	}
-	if prune {
-		n, err := ingest.PruneMissing(ctx, store, docsFS)
+	var res ingest.Result
+	var pruned int
+	if len(os.Args) > 1 {
+		// A directory argument previews uncommitted doc edits that aren't
+		// compiled into docs.FS yet. It may be a subset of the real corpus,
+		// so pruning (and recording cp_help_corpus_state, which describes
+		// docs.FS specifically) would be wrong here — go through ingest
+		// directly instead of the shared docs.FS-only helper.
+		store := ai.NewCPHelpStore(pool, ai.EmbedFingerprint(embedder))
+		res, err = ingest.IngestFS(ctx, embedder, store, os.DirFS(os.Args[1]), ingest.DefaultChunkOpts)
 		if err != nil {
-			log.Fatalf("prune: %v", err)
+			log.Fatalf("ingest: %v", err)
 		}
-		log.Printf("pruned %d chunks from docs no longer in the corpus", n)
+	} else {
+		// No argument: ingest the docs compiled into this binary
+		// (stonesuite-backend/docs), prune anything no longer in the
+		// corpus, and record the sync in cp_help_corpus_state — the same
+		// path POST /api/platform/ai/reindex-help and boot-time sync use.
+		res, pruned, err = controllers.IngestHelpCorpus(ctx, pool, embedder)
+		if err != nil {
+			log.Fatalf("ingest: %v", err)
+		}
+		log.Printf("pruned %d chunks from docs no longer in the corpus", pruned)
 	}
+
 	for _, key := range res.Ingested {
 		log.Printf("OK %s", key)
 	}

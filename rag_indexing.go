@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Skookum-Infotech/go-rag/provider/ollama"
@@ -13,7 +16,9 @@ import (
 	"stonesuite-backend/ai"
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/config"
+	"stonesuite-backend/controllers"
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/docs"
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/tenancy"
 )
@@ -223,19 +228,72 @@ func pruneIdleConversations(ctx context.Context, slug string, pool *pgxpool.Pool
 	}
 }
 
-// checkHelpCorpusFingerprint warns at boot when app-help vectors were made by
-// a different embedder than the one now configured: those vectors are not
-// comparable with query vectors, so help answers silently degrade to noise
-// until POST /api/platform/ai/reindex-help (or rag-ingest-help) is run.
-func checkHelpCorpusFingerprint(ctx context.Context, cpPool *pgxpool.Pool) {
-	current := ai.EmbedFingerprint(newDocEmbedder())
-	stale, err := ai.NewCPHelpStore(cpPool, current).StaleFingerprints(ctx, current)
+// helpCorpusState is the (content hash, embedder fingerprint) pair compared
+// to decide whether the help corpus needs re-ingesting — either the state
+// last recorded in cp_help_corpus_state, or the values computed from the
+// docs compiled into this binary and the embedder it's configured with.
+type helpCorpusState struct {
+	ContentHash      string
+	EmbedFingerprint string
+}
+
+// needsHelpResync reports whether the help corpus must be re-ingested: true
+// when no sync was ever recorded (stored == nil), or when the embedded doc
+// content or the embedder that would produce new vectors has changed since
+// the last recorded sync.
+func needsHelpResync(stored *helpCorpusState, current helpCorpusState) bool {
+	if stored == nil {
+		return true
+	}
+	return stored.ContentHash != current.ContentHash || stored.EmbedFingerprint != current.EmbedFingerprint
+}
+
+// loadHelpCorpusState reads the single row cp_help_corpus_state tracks, or
+// (nil, nil) if the help corpus has never been synced.
+func loadHelpCorpusState(ctx context.Context, cpPool *pgxpool.Pool) (*helpCorpusState, error) {
+	var s helpCorpusState
+	err := cpPool.QueryRow(ctx, `SELECT content_hash, embed_fingerprint FROM cp_help_corpus_state WHERE id = 1`).
+		Scan(&s.ContentHash, &s.EmbedFingerprint)
 	if err != nil {
-		slog.Error("help corpus fingerprint check failed", "err", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load help corpus state: %w", err)
+	}
+	return &s, nil
+}
+
+// syncHelpCorpus re-ingests the app-help corpus at boot when the docs
+// compiled into this binary or the configured embedder have changed since
+// the last recorded sync (cp_help_corpus_state), so a doc edit or model
+// swap reaches cp_rag_chunks without an operator remembering to call
+// POST /api/platform/ai/reindex-help. Must run only after Ollama (or
+// whatever embedder backend is configured) is reachable — callers are
+// responsible for that ordering; see main.go's Ollama boot goroutine and its
+// best-effort local-dev fallback.
+func syncHelpCorpus(ctx context.Context, cpPool *pgxpool.Pool) {
+	hash, err := docs.ContentHash()
+	if err != nil {
+		slog.Error("help corpus sync: content hash failed", "err", err)
 		return
 	}
-	if len(stale) > 0 {
-		slog.Warn("help corpus was embedded with a different model; reindex app help",
-			"current", current, "stored", stale)
+	docEmbed := newDocEmbedder()
+	current := helpCorpusState{ContentHash: hash, EmbedFingerprint: ai.EmbedFingerprint(docEmbed)}
+
+	stored, err := loadHelpCorpusState(ctx, cpPool)
+	if err != nil {
+		slog.Error("help corpus sync: read state failed", "err", err)
+		return
 	}
+	if !needsHelpResync(stored, current) {
+		slog.Info("help corpus up to date")
+		return
+	}
+
+	res, pruned, err := controllers.IngestHelpCorpus(ctx, cpPool, docEmbed)
+	if err != nil {
+		slog.Error("help corpus sync failed", "err", err)
+		return
+	}
+	slog.Info("help corpus synced", "ingested", len(res.Ingested), "failed", len(res.Failed), "pruned", pruned)
 }

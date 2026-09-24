@@ -8,14 +8,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Skookum-Infotech/go-rag/ingest"
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
-	"stonesuite-backend/ai"
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
-	"stonesuite-backend/docs"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
 )
@@ -154,17 +151,11 @@ func (h *AIOps) ReindexHelp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store := ai.NewCPHelpStore(h.cpPool, ai.EmbedFingerprint(h.docEmbed))
-	res, err := ingest.IngestFS(r.Context(), h.docEmbed, store, docs.FS, ingest.DefaultChunkOpts)
+	res, pruned, err := IngestHelpCorpus(r.Context(), h.cpPool, h.docEmbed)
 	if err != nil {
 		slog.Error("reindex help failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to reindex app-help docs.")
 		return
-	}
-	// docs.FS is the complete corpus, so anything not in it is a removed doc.
-	pruned, err := ingest.PruneMissing(r.Context(), store, docs.FS)
-	if err != nil {
-		slog.Error("reindex help prune failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 	}
 
 	logSecurityEvent(r, "ai_reindex_help", "ingested", len(res.Ingested), "failed", len(res.Failed), "pruned", pruned)

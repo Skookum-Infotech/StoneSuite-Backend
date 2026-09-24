@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestReconcilePlan(t *testing.T) {
@@ -38,6 +40,30 @@ func TestReconcilePlan(t *testing.T) {
 			if strings.Join(ups, ",") != tt.wantUpserts || strings.Join(dels, ",") != tt.wantDeletes {
 				t.Fatalf("upserts=%v deletes=%v", ups, dels)
 			}
+		})
+	}
+}
+
+// TestNeedsHelpResync exercises the pure decision function syncHelpCorpus
+// uses: whether the help corpus must be re-ingested given the last recorded
+// state (or its absence) and the current doc/embedder values.
+func TestNeedsHelpResync(t *testing.T) {
+	current := helpCorpusState{ContentHash: "hash-a", EmbedFingerprint: "model-a"}
+
+	tests := []struct {
+		name   string
+		stored *helpCorpusState
+		want   bool
+	}{
+		{"no state recorded yet", nil, true},
+		{"identical state: up to date", &helpCorpusState{ContentHash: "hash-a", EmbedFingerprint: "model-a"}, false},
+		{"doc content changed", &helpCorpusState{ContentHash: "hash-old", EmbedFingerprint: "model-a"}, true},
+		{"embedder changed", &helpCorpusState{ContentHash: "hash-a", EmbedFingerprint: "model-old"}, true},
+		{"both changed", &helpCorpusState{ContentHash: "hash-old", EmbedFingerprint: "model-old"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, needsHelpResync(tt.stored, current))
 		})
 	}
 }

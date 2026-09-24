@@ -149,6 +149,17 @@ func (h *AIOps) prepareAsk(w http.ResponseWriter, r *http.Request) (askRequestBo
 		return body, pa, false
 	}
 
+	status, err := h.aiSettings.Status(r.Context(), h.cpPool, pool, tenant.ID)
+	if err != nil {
+		slog.Error("ai settings status check failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return body, pa, false
+	}
+	if !status.Available {
+		writeAssistantDisabled(w)
+		return body, pa, false
+	}
+
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAskBodyBytes)).Decode(&body); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {

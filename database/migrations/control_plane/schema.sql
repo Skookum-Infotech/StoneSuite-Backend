@@ -556,3 +556,20 @@ CREATE TABLE IF NOT EXISTS cp_help_corpus_state (
     embed_fingerprint   TEXT         NOT NULL DEFAULT '',
     synced_at           TIMESTAMPTZ
 );
+
+-- ── platform_ai_settings ────────────────────────────────────────────────
+-- Single-row, per-environment master switch for the AI assistant (Ollama RAG
+-- chat + help corpus). The assistant is available to a tenant only when this
+-- is TRUE *and* that tenant's own ai_settings.assistant_enabled (tenant
+-- schema.sql) is TRUE — see aisettings.Available. Defaults TRUE so deploying
+-- this migration changes nothing until a platform admin flips it off via
+-- PUT /api/platform/ai/settings. updated_by is the acting identity's email
+-- (TEXT, not a FK — matches audit_logs.actor_email's convention of keeping
+-- an actor readable even if the identity is later deleted).
+CREATE TABLE IF NOT EXISTS platform_ai_settings (
+    id          SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled     BOOLEAN      NOT NULL DEFAULT TRUE,
+    updated_by  TEXT,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+INSERT INTO platform_ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;

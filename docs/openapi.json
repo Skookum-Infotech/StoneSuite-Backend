@@ -1169,6 +1169,66 @@
         ]
       }
     },
+    "/api/platform/ai/settings": {
+      "get": {
+        "operationId": "get_platform_ai_settings",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "aiOps.GetPlatformSettings",
+        "tags": [
+          "platform"
+        ]
+      },
+      "put": {
+        "operationId": "put_platform_ai_settings",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "aiOps.UpdatePlatformSettings",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/platform/feedback": {
       "get": {
         "operationId": "get_platform_feedback",
@@ -3451,6 +3511,99 @@
           }
         ],
         "summary": "aiOps.Reindex",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/ai/settings": {
+      "put": {
+        "operationId": "put_tenant_ai_settings",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "aiOps.UpdateSettings",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/ai/status": {
+      "get": {
+        "operationId": "get_tenant_ai_status",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "aiOps.Status",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/ai/warm": {
+      "post": {
+        "operationId": "post_tenant_ai_warm",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "aiOps.Warm",
         "tags": [
           "tenant"
         ]

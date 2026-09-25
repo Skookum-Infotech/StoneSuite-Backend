@@ -180,3 +180,47 @@ func mustEmailHTML(t *testing.T, req services.NotificationRequest) string {
 	require.NoError(t, err)
 	return out
 }
+
+// TestRejectedNotificationBody: the "sent back" notification says why when an
+// approver gave a reason (Reject), and keeps its generic wording for the
+// escapes that don't carry one (a plain void/cancel out of a gate).
+func TestRejectedNotificationBody(t *testing.T) {
+	tests := []struct{ name, detail, want string }{
+		{"no reason", "", "Sent back for changes."},
+		{"with reason", "Wrong amount", "Sent back for changes: Wrong amount"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, rejectedNotificationBody(tt.detail))
+		})
+	}
+}
+
+// TestBuildApprovalNotification_RejectionReasonIsEscaped guards the seam between
+// the reason-aware "sent back" wording and the shared email template: the reason
+// is approver-typed free text, so it must reach the in-app body verbatim and
+// appear in the email's Reason row HTML-escaped.
+func TestBuildApprovalNotification_RejectionReasonIsEscaped(t *testing.T) {
+	withFrontendURL(t, "https://app.example.com")
+	ec := EventContext{Resource: "invoice", DisplayName: "Invoice", RecordUUID: "rec-1", Detail: "<b>Wrong</b> amount"}
+	note := noteSentBack
+	note.Body = rejectedNotificationBody(ec.Detail)
+
+	req := buildApprovalNotification("tenant-1", "invoice.approval_rejected", "actor-1", recordFacts{Number: "INV-000123"}, ec, note, []contact{{UserID: "u1", Email: "a@example.com"}})
+
+	assert.Equal(t, "Sent back for changes: <b>Wrong</b> amount", req.Body)
+	html := mustEmailHTML(t, req)
+	assert.Contains(t, html, ">Reason<", "the reason gets its own row in the details box")
+	assert.Contains(t, html, "&lt;b&gt;Wrong&lt;/b&gt; amount", "free text is escaped in the email")
+	assert.NotContains(t, html, "<b>Wrong</b>")
+	// The shared sent-back note must stay untouched by the per-call override.
+	assert.Equal(t, "Sent back for changes.", noteSentBack.Body)
+}
+
+func TestBuildApprovalNotification_NoReasonRowWithoutDetail(t *testing.T) {
+	ec := EventContext{Resource: "invoice", DisplayName: "Invoice", RecordUUID: "rec-1"}
+
+	req := buildApprovalNotification("tenant-1", "invoice.approval_rejected", "actor-1", recordFacts{Number: "INV-000123"}, ec, noteSentBack, []contact{{UserID: "u1", Email: "a@example.com"}})
+
+	assert.NotContains(t, mustEmailHTML(t, req), ">Reason<")
+}

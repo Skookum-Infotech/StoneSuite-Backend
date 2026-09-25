@@ -1,6 +1,9 @@
 package rag
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // FakeEmbedder returns deterministic canned vectors of width Dim. Test-only,
 // but exported so later plans' tests can reuse it.
@@ -42,6 +45,76 @@ func (f *FakeLLM) Chat(_ context.Context, system string, messages []Message) (st
 		return "", f.Err
 	}
 	return f.Reply, nil
+}
+
+// FakeStreamingLLM satisfies both LLMClient and StreamingLLMClient, so a test
+// can choose which path AskStream takes: pass it as-is to exercise the real
+// streaming path, or wrap the same Reply in a plain FakeLLM to exercise
+// AskStream's non-streaming fallback. ChatStream splits Tokens (or, if unset,
+// Reply as one chunk) across onToken calls in order.
+type FakeStreamingLLM struct {
+	Reply       string
+	Tokens      []string
+	Err         error
+	GotSystem   string
+	GotMessages []Message
+}
+
+// Chat satisfies plain LLMClient — not used by AskStream when ChatStream is
+// available, but keeps FakeStreamingLLM usable anywhere an LLMClient is
+// expected (e.g. a test asserting AskStream and Ask agree on the answer).
+func (f *FakeStreamingLLM) Chat(_ context.Context, system string, messages []Message) (string, error) {
+	f.GotSystem = system
+	f.GotMessages = messages
+	if f.Err != nil {
+		return "", f.Err
+	}
+	return f.Reply, nil
+}
+
+// ChatStream emits Tokens (or Reply whole, if Tokens is unset) to onToken in
+// order, stopping early if onToken returns an error.
+func (f *FakeStreamingLLM) ChatStream(_ context.Context, system string, messages []Message, onToken func(string) error) (string, error) {
+	f.GotSystem = system
+	f.GotMessages = messages
+	if f.Err != nil {
+		return "", f.Err
+	}
+	tokens := f.Tokens
+	if tokens == nil {
+		tokens = []string{f.Reply}
+	}
+	var b strings.Builder
+	for _, tok := range tokens {
+		b.WriteString(tok)
+		if err := onToken(tok); err != nil {
+			return b.String(), err
+		}
+	}
+	return b.String(), nil
+}
+
+// FakeSink records every StreamSink call it receives, in order, so a test can
+// assert both the retrieved set and the exact token sequence AskStream sent.
+type FakeSink struct {
+	Retrieved     []Citation
+	RetrievedErr  error
+	Tokens        []string
+	TokenErrAfter int // if > 0, OnToken returns TokenErr once len(Tokens) reaches this
+	TokenErr      error
+}
+
+func (s *FakeSink) OnRetrieved(cites []Citation) error {
+	s.Retrieved = cites
+	return s.RetrievedErr
+}
+
+func (s *FakeSink) OnToken(token string) error {
+	s.Tokens = append(s.Tokens, token)
+	if s.TokenErrAfter > 0 && len(s.Tokens) >= s.TokenErrAfter {
+		return s.TokenErr
+	}
+	return nil
 }
 
 // FakeReranker reverses candidate order (a cheap, deterministic way for a

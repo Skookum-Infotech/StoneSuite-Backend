@@ -4,6 +4,7 @@ package ai
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -156,7 +157,10 @@ func TestConversationStore_HistoryIsBoundedToMostRecent(t *testing.T) {
 	}
 }
 
-func TestConversationStore_MessagesReturnsFullUnboundedTranscript(t *testing.T) {
+// TestConversationStore_MessagesIsNotBoundedByHistoryLimit: the transcript a
+// user reopens is far longer than the prompt window (it caps at
+// maxTranscriptMessages instead).
+func TestConversationStore_MessagesIsNotBoundedByHistoryLimit(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewConversationStore(pool)
 	ctx := ctxS(t)
@@ -177,11 +181,14 @@ func TestConversationStore_MessagesReturnsFullUnboundedTranscript(t *testing.T) 
 		t.Fatal(err)
 	}
 	if len(messages) != total {
-		t.Fatalf("Messages returned %d, want the full %d-message transcript (unlike History, it must not be bounded)", len(messages), total)
+		t.Fatalf("Messages returned %d, want the full %d-message transcript (unlike History, it is not capped at historyLimit)", len(messages), total)
 	}
 }
 
-func TestConversationStore_SetTitleIfEmptyDoesNotOverwrite(t *testing.T) {
+// TestConversationStore_AppendTurnSavesPairInOrderAndTitlesOnce: a turn is
+// saved atomically (question before answer, even though both rows share one
+// transaction), and only the first turn sets the title.
+func TestConversationStore_AppendTurnSavesPairInOrderAndTitlesOnce(t *testing.T) {
 	pool := newTestPool(t)
 	s := NewConversationStore(pool)
 	ctx := ctxS(t)
@@ -190,22 +197,90 @@ func TestConversationStore_SetTitleIfEmptyDoesNotOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetTitleIfEmpty(ctx, conv.ID, "first title"); err != nil {
+	if err := s.AppendTurn(ctx, conv.ID, "q1", "a1", "first title"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetTitleIfEmpty(ctx, conv.ID, "second title, should be ignored"); err != nil {
+	if err := s.AppendTurn(ctx, conv.ID, "q2", "a2", "second title, should be ignored"); err != nil {
 		t.Fatal(err)
 	}
 
-	got, found, err := s.Get(ctx, conv.ID)
+	msgs, err := s.Messages(ctx, conv.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found {
-		t.Fatal("expected found=true")
+	var got []string
+	for _, m := range msgs {
+		got = append(got, m.Role+":"+m.Content)
 	}
-	if got.Title != "first title" {
-		t.Fatalf("Title = %q, want the FIRST title to stick", got.Title)
+	if strings.Join(got, ",") != "user:q1,assistant:a1,user:q2,assistant:a2" {
+		t.Fatalf("messages = %v", got)
+	}
+	c, _, err := s.Get(ctx, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Title != "first title" {
+		t.Fatalf("Title = %q, want the FIRST title to stick", c.Title)
+	}
+}
+
+// TestConversationStore_HistoryRespectsCharBudget: long turns are dropped
+// oldest-first so the replayed history fits the model's context window.
+func TestConversationStore_HistoryRespectsCharBudget(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewConversationStore(pool)
+	ctx := ctxS(t)
+
+	conv, err := s.Create(ctx, convUserA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("x", historyCharBudget/3)
+	for i := 0; i < 3; i++ {
+		if err := s.AppendTurn(ctx, conv.ID, fmt.Sprintf("q%d", i), big, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := s.History(ctx, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := 0
+	for _, m := range history {
+		used += len(m.Content)
+	}
+	if used > historyCharBudget {
+		t.Fatalf("history uses %d chars, budget is %d", used, historyCharBudget)
+	}
+	if len(history) == 0 || history[len(history)-1].Content != big || history[len(history)-2].Content != "q2" {
+		t.Fatalf("the most recent turn must survive, got %d messages", len(history))
+	}
+}
+
+func TestConversationStore_DeleteIdleRemovesOnlyStale(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewConversationStore(pool)
+	ctx := ctxS(t)
+
+	stale, err := s.Create(ctx, convUserA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.Create(ctx, convUserA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE ai_conversations SET updated_at = NOW() - interval '100 days' WHERE id = $1`, stale.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeleteIdle(ctx, 90*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := s.Get(ctx, stale.ID); found {
+		t.Fatal("a conversation idle past retention must be deleted")
+	}
+	if _, found, _ := s.Get(ctx, fresh.ID); !found {
+		t.Fatal("an active conversation must be kept")
 	}
 }
 

@@ -75,3 +75,13 @@ func notifyRemainingApprovers(ctx context.Context, pool *pgxpool.Pool, uuid stri
 		ActorEmployeeID: actorEmployeeID, Resource: estimateResource, DisplayName: estimateDisplayName, RecordUUID: uuid,
 	})
 }
+
+// notifyRejected best-effort-notifies an estimate's owner that an approver rejected it and
+// sent it back to Draft, with the approver's reason.
+func notifyRejected(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int, reason string) {
+	approvalchain.NotifyApprovalRejected(ctx, pool, approvalchain.EventContext{
+		Table: estimateTable, IDColumn: estimateIDColumn, NumberColumn: estimateNumberColumn, OwnerColumn: estimateOwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: estimateResource, DisplayName: estimateDisplayName, RecordUUID: uuid, Detail: reason,
+	})
+}

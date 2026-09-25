@@ -7,23 +7,58 @@ converting — it is never re-classified backward.
 ## Leads
 
 A lead is an inbound contact that hasn't been qualified as a real sales
-opportunity yet. The lead pipeline is: New → In Progress → Qualified →
-Converted, with Unqualified and Dead as exit points at any stage once it's
-clear the lead won't go further. A qualified lead converts into a prospect.
+opportunity yet. Every lead starts in New. From New it is marked either
+Qualified or Unqualified, and that decision is final — the status can't be
+changed afterwards. A Qualified lead is converted into a prospect with the
+Convert to Prospect action, which creates a new prospect (starting in New)
+from the lead's details and leaves the lead as it is. Converting the same lead
+again opens the prospect that was already created rather than making another.
 
 ## Prospects
 
 A prospect is a qualified lead now being actively worked as a sales
-opportunity. The prospect pipeline is: In Discussion → Identified Decision
-Makers → Qualified → Proposal → In Negotiation → Purchasing, with Closed Lost
-as the exit point if the deal falls through at any stage. A prospect that
-completes purchasing converts into a customer.
+opportunity. Every prospect starts in New. From New it is moved into one of the
+working statuses — In Discussion, In Negotiation, Proposal Sent, Decision
+Pending or Contacted — or straight to Lost if the deal falls through. The
+working statuses can be changed freely, in any order, and a Lost prospect can
+be reopened. When the deal is ready to become a customer, the prospect is
+marked Pending Conversion, using the Pending Conversion button on the prospect
+page. A prospect in Pending Conversion is converted with the Convert to
+Customer action, which creates a new customer (starting in Draft) from the
+prospect's details and leaves the prospect as it is. Converting the same
+prospect again opens the customer that was already created rather than making
+another. If approvers are configured for prospects, a new prospect waits for
+approval before it can be edited or moved to another status (Lost is always
+allowed).
 
 ## Customers
 
-A customer is a closed-won deal. The customer pipeline is: Closed Won →
-Renewal, with Closed Lost as the exit point (e.g. churn). Customers can cycle
-back into Renewal repeatedly as their relationship continues.
+A customer is a closed-won deal. Every customer starts in Draft — whether it
+was added directly or converted from a prospect — and a Draft customer cannot
+be used on other records yet. A customer has four statuses: Draft, Active,
+Inactive and Credit Hold. Only an Active customer can be picked on, or used to
+create, an Estimate, Quote, Sales Order, Invoice, Payment, Refund or Credit
+Memo. Records that already exist for the customer are not affected.
+
+A customer's status is changed with the buttons in the Quick Actions card, not
+from a dropdown. A Draft customer is made Active with Make Active. An Active
+customer can be put on Credit Hold (Credit Hold button) or made Inactive (Make
+Inactive button), and a customer on Credit Hold is released back to Active with
+Release Hold or made Inactive. An Inactive customer is made Active again with
+Make Active. A customer can be made Active and Inactive as often as needed.
+
+Editing a customer sends it back to Draft, whatever status it was in, so it
+cannot be used on other records again until it is made Active. Only a real
+change counts: saving the form without changing anything leaves the status as
+it is.
+
+If approvers are configured for customers, a new customer waits for approval
+in Draft and cannot be edited or have its status changed until then. When the
+approvers approve it, it moves to Active. If an approver rejects it, it goes
+back to Draft with the rejection reason shown, and editing it sends it for
+approval again. An edit to an approved customer also sends it for approval
+again, so it becomes Active only when its approvers approve it. If no
+approvers are configured, Make Active is used instead.
 
 ## Custom fields
 

@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/Skookum-Infotech/go-rag/chunk"
@@ -44,6 +45,7 @@ type jobQueue interface {
 	ClaimPending(ctx context.Context, n int) ([]Job, error)
 	Complete(ctx context.Context, id string) error
 	Fail(ctx context.Context, id string) error
+	Release(ctx context.Context, id string) error
 }
 
 // Worker turns queued jobs into fresh vectors for ONE tenant.
@@ -60,22 +62,40 @@ func NewWorker(q jobQueue, loader RecordLoader, emb rag.Embedder, sink ChunkSink
 	return &Worker{q: q, loader: loader, emb: emb, sink: sink, batch: 20}
 }
 
-// DrainOnce processes one batch of pending jobs and returns how many it handled.
-// Per-job failures are isolated (logged + re-queued); they don't abort the batch.
+// DrainOnce processes one batch of pending jobs and returns how many it
+// handled. Per-job failures are isolated (logged + re-queued); they don't
+// abort the batch — with one exception: rag.ErrUnavailable (the embedder
+// itself is unreachable, e.g. Ollama is down or mid-restart) means every
+// other job in the batch would fail the same way, so that job is released
+// back to pending WITHOUT charging a retry attempt, the rest of the batch is
+// left untouched for the next drain, and the error is returned so the caller
+// (runTenantIndexWorker) can back off instead of hammering a dead embedder
+// every few seconds.
 func (w *Worker) DrainOnce(ctx context.Context) (int, error) {
 	jobs, err := w.q.ClaimPending(ctx, w.batch)
 	if err != nil {
 		return 0, err
 	}
+	handled := 0
 	for _, j := range jobs {
 		if err := w.process(ctx, j); err != nil {
+			if errors.Is(err, rag.ErrUnavailable) {
+				slog.Warn("rag index job deferred: embedder unavailable", "id", j.ID, "source_id", j.SourceID, "err", err)
+				if relErr := w.q.Release(ctx, j.ID); relErr != nil {
+					slog.Error("rag index release failed", "id", j.ID, "err", relErr)
+				}
+				handled++
+				return handled, err
+			}
 			slog.Warn("rag index job failed", "id", j.ID, "source_id", j.SourceID, "err", err)
 			_ = w.q.Fail(ctx, j.ID)
+			handled++
 			continue
 		}
 		_ = w.q.Complete(ctx, j.ID)
+		handled++
 	}
-	return len(jobs), nil
+	return handled, nil
 }
 
 func (w *Worker) process(ctx context.Context, j Job) error {
@@ -93,6 +113,7 @@ func (w *Worker) process(ctx context.Context, j Job) error {
 	}
 	next := rag.Chunk{
 		SourceID: j.SourceID, WorkflowID: wfID, OwnerUserID: owner, TeamID: team,
+		Kind:    doc.WorkflowKey,
 		Content: content, ContentHash: rag.VectorHash(w.fingerprint(), content),
 	}
 
@@ -120,15 +141,6 @@ func (w *Worker) fingerprint() string {
 	return ""
 }
 
-// sameScope reports whether the stored scope columns already match the record's
-// current ones. Deliberately compares every column rather than owner alone:
-// each one narrows retrieval, so any of them going stale is a scope bug.
-func sameScope(prev rag.ChunkMeta, next rag.Chunk) bool {
-	return prev.OwnerUserID == next.OwnerUserID &&
-		prev.TeamID == next.TeamID &&
-		prev.WorkflowID == next.WorkflowID
-}
-
 // reuseExisting decides whether an already-indexed record can avoid a re-embed.
 // It reports done=true when it has fully handled the job.
 //
@@ -152,9 +164,12 @@ func (w *Worker) reuseExisting(ctx context.Context, prev rag.ChunkMeta, next rag
 	if prev.ContentHash != next.ContentHash {
 		return false, nil // text or embedder changed — the stored vector is stale
 	}
-	if sameScope(prev, next) {
-		return true, nil // fully up to date; the common case on a reconciliation sweep
-	}
+	// Up to date or not, the row is touched: UpdateScope also bumps
+	// updated_at, which is what the reconciliation sweep compares against the
+	// record's own updated_at. Skipping the write when nothing changed left a
+	// record whose updated_at moved without changing its text (a no-op
+	// transition, an approval) looking stale forever, so the sweep re-queued
+	// it every cycle.
 	return true, w.sink.UpdateScope(ctx, next)
 }
 

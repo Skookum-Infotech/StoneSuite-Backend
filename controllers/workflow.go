@@ -190,7 +190,7 @@ func (h *WorkflowOps) SetCustomFieldsEnabled(w http.ResponseWriter, r *http.Requ
 // GetWorkflowApprovers GET /api/tenant/workflows/{id}/approvers
 // Returns the user ids currently configured as active approvers for this
 // workflow's CRM record type (only lead/prospect/customer support approval;
-// today only "customer" Closed-Won records ever reach a pending state).
+// today only new "customer" records ever reach a pending state).
 func (h *WorkflowOps) GetWorkflowApprovers(w http.ResponseWriter, r *http.Request) {
 	pool, _, _, ok := h.authorize(w, r, authz.ResourceWorkflowConfig, authz.ActionRead)
 	if !ok {

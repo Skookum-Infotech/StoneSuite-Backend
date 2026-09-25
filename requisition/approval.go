@@ -64,3 +64,23 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 	}
 	return info, err
 }
+
+// Reject sends a requisition that is awaiting approval back to Draft on
+// behalf of one of its configured approvers (or a super admin) via the
+// shared approvalchain engine, keeping who rejected it and why. Unlike
+// Approve it is a veto, not a vote: no quorum is needed. The reason /
+// already-rejected errors pass through unchanged for the controller to map.
+func Reject(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int, callerIsSuperAdmin bool, reason string) (*Requisition, error) {
+	_, err := approvalchain.Reject(ctx, pool, moduleConfig(), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
+	switch {
+	case errors.Is(err, approvalchain.ErrNotFound):
+		return nil, ErrNotFound
+	case errors.Is(err, approvalchain.ErrNotApprover):
+		return nil, ErrNotApprover
+	case errors.Is(err, approvalchain.ErrApprovalNotRequired):
+		return nil, ErrApprovalNotRequired
+	case err != nil:
+		return nil, err
+	}
+	return Get(ctx, pool, uuid)
+}

@@ -97,6 +97,62 @@ func TestOllamaLifecycleListMachinesPropagatesHTTPError(t *testing.T) {
 	}
 }
 
+func TestOllamaLifecycleState(t *testing.T) {
+	tests := []struct {
+		name     string
+		machines []flyMachine
+		want     string
+	}{
+		{"all started", []flyMachine{{ID: "m1", State: "started"}, {ID: "m2", State: "started"}}, flyMachineStateStarted},
+		{"all stopped", []flyMachine{{ID: "m1", State: "stopped"}, {ID: "m2", State: "stopped"}}, flyMachineStateStopped},
+		{"mixed", []flyMachine{{ID: "m1", State: "started"}, {ID: "m2", State: "stopped"}}, OllamaStateMixed},
+		{"no machines", []flyMachine{}, OllamaStateUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/machines") && r.Method == http.MethodGet {
+					_ = json.NewEncoder(w).Encode(tt.machines)
+					return
+				}
+				t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+			}))
+			defer srv.Close()
+
+			o := NewOllamaLifecycle("app1", "test-token")
+			o.client = srv.Client()
+			overrideBase(t, srv.URL)
+
+			got, err := o.State(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("State() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOllamaLifecycleState_ListErrorIsUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	o := NewOllamaLifecycle("app1", "test-token")
+	o.client = srv.Client()
+	overrideBase(t, srv.URL)
+
+	got, err := o.State(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got != OllamaStateUnknown {
+		t.Fatalf("State() = %q, want %q", got, OllamaStateUnknown)
+	}
+}
+
 // overrideBase points flyMachinesAPIBase at the test server for the duration
 // of the test, restoring the real endpoint afterward.
 func overrideBase(t *testing.T, base string) {

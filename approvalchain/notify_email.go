@@ -81,6 +81,11 @@ func buildApprovalNotification(tenantID, eventType, actorUserID string, facts re
 	if note.DateLabel != "" {
 		details = append(details, services.Detail{Label: note.DateLabel, Value: services.FormatEmailDate(facts.OccurredAt)})
 	}
+	// The approver's reason for sending a record back (EventContext.Detail, set
+	// only by NotifyApprovalRejected) is free text; the template escapes it.
+	if ec.Detail != "" {
+		details = append(details, services.Detail{Label: "Reason", Value: ec.Detail})
+	}
 	return services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  contactsToRecipients(contacts),

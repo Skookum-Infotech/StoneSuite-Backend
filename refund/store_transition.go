@@ -170,6 +170,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		VALUES ($1, $2, $3, 'transition', $4)`, internalID, curStatusID, toStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert refund transition history: %w", err)
 	}
+	// Any move takes the refund out of the state a Reject left it in.
+	if err := approvalchain.ClearRejection(ctx, tx, typeID, internalID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)

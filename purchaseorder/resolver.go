@@ -21,12 +21,22 @@ type resolved struct {
 }
 
 // systemFields is the filter whitelist (spec §4).
+//
+// Three keys name the vendor, and only one is safe to pin an order to a
+// vendor a user just selected: vendor_uuid is the vendor's public id (the
+// `vendor.id` the API returns, which a picker holds), whereas vendor_id is the
+// internal serial a client never sees and vendor_name is a snapshot taken when
+// the order was placed (it drifts on rename and omits a person's honorific).
+// vendor_uuid is a self-contained, parenthesized subselect because the builder
+// concatenates a resolved expression raw (`expr = $n`, `expr IS NULL`), and
+// that keeps it independent of the caller's FROM aliases.
 var systemFields = map[string]resolved{
 	"id":               {"po.purchase_order_uuid::text", query.TypeString},
 	"document_number":  {"COALESCE(po.purchase_order_number,'')", query.TypeString},
 	"record_number":    {"COALESCE(po.purchase_order_number,'')", query.TypeString},
 	"vendor_id":        {"po.purchase_order_vendor_id::text", query.TypeString},
 	"vendor_name":      {"po.purchase_order_vendor_name", query.TypeString},
+	"vendor_uuid":      {"(SELECT v.vendor_uuid::text FROM vendor v WHERE v.vendor_id = po.purchase_order_vendor_id)", query.TypeString},
 	"status":           {"po.purchase_order_status::text", query.TypeString},
 	"owner_id":         {"po.purchase_order_owner_id::text", query.TypeString},
 	"order_date":       {"po.purchase_order_date", query.TypeDate},

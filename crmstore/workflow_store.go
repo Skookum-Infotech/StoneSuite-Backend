@@ -244,17 +244,19 @@ func (s *workflowStore) TransitionRecord(ctx context.Context, pool *pgxpool.Pool
 	return updated, nil
 }
 
-func (s *workflowStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (*workflow.Record, string, error) {
+// ConvertRecord always creates: the v1 design has no already-converted lookup
+// (no tenant runs it), so created is always true.
+func (s *workflowStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, id, targetKey string, core, custom map[string]any, actorIdentityID string) (*workflow.Record, string, bool, error) {
 	sourceRec, err := workflow.GetRecord(ctx, pool, id)
 	if errors.Is(err, workflow.ErrRecordNotFound) {
-		return nil, "", ErrRecordNotFound
+		return nil, "", false, ErrRecordNotFound
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	targetDef, err := s.defForKey(ctx, pool, targetKey)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	if core == nil {
 		core = map[string]any{}
@@ -288,9 +290,9 @@ func (s *workflowStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool, i
 	owner, _ := workflow.UserIDByIdentity(ctx, pool, actorIdentityID)
 	newRec, err := s.engine().ConvertRecord(ctx, pool, targetDef, owner, "", sourceRec.ID, core, custom)
 	if err != nil {
-		return nil, "", mapWorkflowErr(err)
+		return nil, "", false, mapWorkflowErr(err)
 	}
-	return newRec, sourceRec.ID, nil
+	return newRec, sourceRec.ID, true, nil
 }
 
 // Approve is not part of the DesignV1 workflow model.

@@ -1,4 +1,4 @@
-# github.com/Skookum-Infotech/go-rag v0.0.0-20260909021210-b0963552102d
+# github.com/Skookum-Infotech/go-rag v0.0.0-20260923200908-103fb661b094
 ## explicit; go 1.25.0
 github.com/Skookum-Infotech/go-rag/chunk
 github.com/Skookum-Infotech/go-rag/eval
@@ -126,6 +126,12 @@ github.com/russellhaering/gosaml2/uuid
 github.com/russellhaering/goxmldsig
 github.com/russellhaering/goxmldsig/etreeutils
 github.com/russellhaering/goxmldsig/types
+# github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
+## explicit; go 1.17
+github.com/srwiley/oksvg
+# github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+## explicit; go 1.17
+github.com/srwiley/rasterx
 # github.com/stretchr/testify v1.11.1
 ## explicit; go 1.17
 github.com/stretchr/testify/assert
@@ -152,6 +158,15 @@ golang.org/x/crypto/bcrypt
 golang.org/x/crypto/blowfish
 golang.org/x/crypto/md4
 golang.org/x/crypto/ripemd160
+# golang.org/x/image v0.45.0
+## explicit; go 1.25.0
+golang.org/x/image/colornames
+golang.org/x/image/math/fixed
+golang.org/x/image/riff
+golang.org/x/image/vector
+golang.org/x/image/vp8
+golang.org/x/image/vp8l
+golang.org/x/image/webp
 # golang.org/x/net v0.57.0
 ## explicit; go 1.25.0
 golang.org/x/net/html
@@ -163,10 +178,11 @@ golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
 # golang.org/x/sys v0.47.0
 ## explicit; go 1.25.0
+golang.org/x/sys/cpu
 golang.org/x/sys/execabs
 golang.org/x/sys/unix
 golang.org/x/sys/windows
-# golang.org/x/text v0.40.0
+# golang.org/x/text v0.41.0
 ## explicit; go 1.25.0
 golang.org/x/text/cases
 golang.org/x/text/encoding

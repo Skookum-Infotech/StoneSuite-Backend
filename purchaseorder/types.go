@@ -80,7 +80,9 @@ type VendorRef struct {
 
 // Line is one ordered line in the API response — the frozen snapshot values
 // (AD-3), not live inventory_item data. QtyReceived is the receiving hook
-// (AD-4), written only by future Item Receipt postings.
+// (AD-4), written only by future Item Receipt postings. QtyBilled is how much
+// of the line existing vendor bills already cover (live, non-void bills raised
+// from this order); received minus billed is what a new bill can still claim.
 type Line struct {
 	ID              string  `json:"id"`
 	LineNumber      int     `json:"lineNumber"`
@@ -91,6 +93,7 @@ type Line struct {
 	UnitCode        string  `json:"unitCode"`
 	Quantity        float64 `json:"quantity"`
 	QtyReceived     float64 `json:"qtyReceived"`
+	QtyBilled       float64 `json:"qtyBilled"`
 	UnitPrice       float64 `json:"unitPrice"`
 	DiscountPercent float64 `json:"discountPercent"`
 	TaxPercent      float64 `json:"taxPercent"`

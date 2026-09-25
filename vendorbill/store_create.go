@@ -36,6 +36,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 		return nil, err
 	}
 
+	poID, err := resolvePurchaseOrderLineage(ctx, tx, in.PurchaseOrderUUID, vendorInternalID)
+	if err != nil {
+		return nil, err
+	}
+
 	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
 	if err != nil {
 		return nil, err
@@ -90,6 +95,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 		{"vendor_bill_balance_due", header.BalanceDue, ""},
 		{"vendor_bill_custom_fields", custom, ""},
 		{"vendor_bill_created_by", nullableInt(actorEmployeeID), ""},
+	}
+	if poID != nil {
+		cv = append(cv, colVal{"vendor_bill_purchase_order_id", *poID, ""})
 	}
 
 	insertSQL, insertArgs := buildInsert("vendor_bill", cv, "vendor_bill_id, vendor_bill_uuid")

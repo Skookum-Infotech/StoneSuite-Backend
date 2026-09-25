@@ -136,6 +136,10 @@ func (h *VendorCreditOps) vendorBillInScopeForUpdate(w http.ResponseWriter, r *h
 
 // vendorCreditFail maps a store error to an HTTP response.
 func vendorCreditFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, vendorcredit.ErrNotFound):
 		fail(w, http.StatusNotFound, "Vendor credit not found.")
@@ -326,4 +330,39 @@ func (h *VendorCreditOps) Search(w http.ResponseWriter, r *http.Request) {
 		"success": true, "scope": scope, "records": page.Records,
 		"nextCursor": page.NextCursor, "hasMore": page.HasMore,
 	})
+}
+
+// Reject POST /api/tenant/vendor-credits/{uuid}/reject  body {"reason":"..."}
+// Rejects the vendor credit named by {uuid}, which must be awaiting approval: it is flagged rejected in place until it is edited, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *VendorCreditOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authVendorCreditByUUID(w, r, uuid, authz.ActionApprove)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		vendorCreditFail(w, err, "Failed to reject vendor credit.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := vendorcredit.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, vendorcredit.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		vendorCreditFail(w, err, "Failed to reject vendor credit.")
+		return
+	}
+	auditVC(r, pool, identityID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorCredit": rec})
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -253,7 +254,7 @@ func (h *ImportOps) CreateJob(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "Unknown workflow.")
 			return
 		}
-		if err := importer.ValidateMapping(req.ColumnMapping, def.Fields); err != nil {
+		if err := importer.ValidateMapping(req.ColumnMapping, def.Fields, tenant.DesignVersion); err != nil {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -456,7 +457,22 @@ func (h *ImportOps) Commit(w http.ResponseWriter, r *http.Request) {
 	}
 	summary, err := importer.CommitJob(r.Context(), pool, st, importer.NewStore(pool), jobID, jp.WorkflowKey, identityID)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to commit import.")
+		// CommitJob returns its partial Summary alongside this error — every
+		// row up to the failure was already scored as committed/failed/
+		// skipped, and (per its own doc comment) committed/skipped rows are
+		// never repeated on a retry. Discarding it here and returning a bare
+		// "Failed to commit import." was itself the bug: a batch that failed
+		// after successfully creating hundreds of records told the caller
+		// the whole thing failed, with no way to tell how much had actually
+		// landed short of re-listing every row.
+		slog.Error("import commit did not finish",
+			"request_id", middleware.RequestIDFromContext(r.Context()),
+			"tenant_id", tenant.ID, "job_id", jobID, "summary", summary, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"message": "Import commit did not finish. Some rows may already be committed — re-running commit is safe, since committed and skipped rows are never repeated.",
+			"summary": summary,
+		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "summary": summary})

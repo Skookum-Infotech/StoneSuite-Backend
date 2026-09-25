@@ -546,3 +546,180 @@ func TestSoftDelete_UnresolvedActor(t *testing.T) {
 		t.Errorf("item_receipt_deleted_by = %d, want %d (system employee)", deletedBy, systemEmployeeID)
 	}
 }
+
+// receiptCount is how many live receipts exist against an order -- the check
+// that a refused CreateAndPost left nothing behind.
+func receiptCount(t *testing.T, pool *pgxpool.Pool, poUUID string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM item_receipt ir
+		JOIN purchase_order po ON po.purchase_order_id = ir.purchase_order_id
+		WHERE po.purchase_order_uuid = $1 AND ir.item_receipt_deleted_at IS NULL`, poUUID).Scan(&n); err != nil {
+		t.Fatalf("count receipts: %v", err)
+	}
+	return n
+}
+
+// Save-and-post: the receipt lands already posted, in one step -- it is never
+// Pending, and stock, the ordered line and the order all move with it.
+func TestCreateAndPost_PostsInOneStep(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, poLineUUID, itemUUID := seedSentPO(t, pool, 10)
+	base, _ := stockFor(t, pool, itemUUID)
+
+	got, err := CreateAndPost(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		Post:              true,
+		itemReceiptFields: itemReceiptFields{
+			Items: []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 4}},
+		},
+	}, false, 1)
+	if err != nil {
+		t.Fatalf("CreateAndPost: %v", err)
+	}
+	if got.StatusCode != "PART" {
+		t.Errorf("receipt status = %q, want PART (posted, order not yet complete)", got.StatusCode)
+	}
+	if got.PostedAt == nil {
+		t.Error("PostedAt is nil, want the post time set")
+	}
+	if got.Number[:5] != "IRCT-" {
+		t.Errorf("Number = %q, want IRCT- prefix", got.Number)
+	}
+	if q := poQtyReceived(t, pool, poUUID); q != 4 {
+		t.Errorf("qty_received = %v, want 4", q)
+	}
+	if s := poStatus(t, pool, poUUID); s != "PART" {
+		t.Errorf("PO status = %q, want PART", s)
+	}
+	onHand, ledgerSum := stockFor(t, pool, itemUUID)
+	if onHand != base+4 {
+		t.Errorf("on-hand = %v, want %v", onHand, base+4)
+	}
+	if onHand != ledgerSum {
+		t.Errorf("ledger invariant broken: on-hand %v != ledger sum %v", onHand, ledgerSum)
+	}
+	// A posted receipt is immutable, like any other.
+	if _, err := Post(ctx, pool, got.ID, PostInput{}, false, 1); !errors.Is(err, ErrAlreadyPosted) {
+		t.Errorf("Post on a CreateAndPost receipt = %v, want ErrAlreadyPosted", err)
+	}
+
+	// The rest of the order completes it.
+	rest, err := CreateAndPost(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		Post:              true,
+		itemReceiptFields: itemReceiptFields{
+			Items: []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 6}},
+		},
+	}, false, 1)
+	if err != nil {
+		t.Fatalf("CreateAndPost remainder: %v", err)
+	}
+	if rest.StatusCode != "RCVD" {
+		t.Errorf("remainder receipt status = %q, want RCVD", rest.StatusCode)
+	}
+	if s := poStatus(t, pool, poUUID); s != "RCVD" {
+		t.Errorf("PO status = %q, want RCVD", s)
+	}
+}
+
+// The point of doing it in one transaction: a refused post saves nothing, so
+// the user is never left with a Pending receipt to tidy up.
+func TestCreateAndPost_RefusedPostLeavesNothingBehind(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, poLineUUID, itemUUID := seedSentPO(t, pool, 100)
+	base, _ := stockFor(t, pool, itemUUID)
+
+	in := CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		Post:              true,
+		itemReceiptFields: itemReceiptFields{
+			Items: []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 150}},
+		},
+	}
+
+	// Over tolerance without the override.
+	if _, err := CreateAndPost(ctx, pool, in, false, 1); !errors.Is(err, ErrOverReceipt) {
+		t.Fatalf("CreateAndPost over tolerance without grant = %v, want ErrOverReceipt", err)
+	}
+	// Over tolerance with the override but no reason.
+	if _, err := CreateAndPost(ctx, pool, in, true, 1); !IsClientError(err) {
+		t.Fatalf("CreateAndPost over tolerance with grant and no reason = %v, want ClientError", err)
+	}
+
+	if n := receiptCount(t, pool, poUUID); n != 0 {
+		t.Errorf("%d receipt(s) left behind by refused posts, want 0", n)
+	}
+	if q := poQtyReceived(t, pool, poUUID); q != 0 {
+		t.Errorf("qty_received = %v after refused posts, want 0", q)
+	}
+	if onHand, _ := stockFor(t, pool, itemUUID); onHand != base {
+		t.Errorf("stock moved by a refused post: %v, want %v", onHand, base)
+	}
+}
+
+func TestCreateAndPost_OverReceiptWithGrantAndReason(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, poLineUUID, _ := seedSentPO(t, pool, 100)
+
+	got, err := CreateAndPost(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		Post:              true,
+		OverReceiptReason: "vendor shipped a full pallet",
+		itemReceiptFields: itemReceiptFields{
+			Items: []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 150}},
+		},
+	}, true, 1)
+	if err != nil {
+		t.Fatalf("CreateAndPost over tolerance with grant and reason: %v", err)
+	}
+	if got.StatusCode != "RCVD" {
+		t.Errorf("status = %q, want RCVD", got.StatusCode)
+	}
+	if got.OverReceiptReason != "vendor shipped a full pallet" {
+		t.Errorf("OverReceiptReason = %q, want it recorded", got.OverReceiptReason)
+	}
+	if q := poQtyReceived(t, pool, poUUID); q != 150 {
+		t.Errorf("qty_received = %v, want 150", q)
+	}
+}
+
+// An order that can no longer be received against refuses the whole thing, and
+// again nothing is saved.
+func TestCreateAndPost_RefusesUnreceivableOrder(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, poLineUUID, _ := seedSentPO(t, pool, 10)
+	if _, err := CreateAndPost(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		Post:              true,
+		itemReceiptFields: itemReceiptFields{
+			Items: []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 10}},
+		},
+	}, false, 1); err != nil {
+		t.Fatalf("CreateAndPost full receipt: %v", err)
+	}
+	// Give the order back to CLSD so nothing can be received against it.
+	if _, err := purchaseorder.Transition(ctx, pool, poUUID, "CLSD", 1); err != nil {
+		t.Fatalf("close order: %v", err)
+	}
+
+	before := receiptCount(t, pool, poUUID)
+	_, err := CreateAndPost(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		Post:              true,
+		itemReceiptFields: itemReceiptFields{
+			Items: []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 1}},
+		},
+	}, true, 1)
+	if !errors.Is(err, ErrPONotReceivable) {
+		t.Fatalf("CreateAndPost against a closed order = %v, want ErrPONotReceivable", err)
+	}
+	if n := receiptCount(t, pool, poUUID); n != before {
+		t.Errorf("receipt count %d -> %d, want unchanged", before, n)
+	}
+}

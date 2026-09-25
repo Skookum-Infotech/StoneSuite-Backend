@@ -69,7 +69,6 @@ func TestIsProduction(t *testing.T) {
 }
 
 func TestLoadAIConfig(t *testing.T) {
-	t.Setenv("AI_EMBED_PROVIDER", "ollama")
 	t.Setenv("AI_CHAT_MODEL", "llama3.2:1b")
 	t.Setenv("AI_EMBED_MODEL", "nomic-embed-text")
 	t.Setenv("AI_EMBED_DIM", "768")
@@ -79,9 +78,6 @@ func TestLoadAIConfig(t *testing.T) {
 
 	Load()
 
-	if AppConfig.AIEmbedProvider != "ollama" {
-		t.Fatalf("AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
-	}
 	if AppConfig.AIChatModel != "llama3.2:1b" {
 		t.Fatalf("AIChatModel = %q, want llama3.2:1b", AppConfig.AIChatModel)
 	}
@@ -97,8 +93,8 @@ func TestLoadAIConfigDefaults(t *testing.T) {
 	t.Setenv("JWT_SECRET", "x")
 	Load()
 	// ADR-001 defaults: both embeddings and chat are self-hosted via Ollama.
-	if AppConfig.AIEmbedProvider != "ollama" {
-		t.Fatalf("default AIEmbedProvider = %q, want ollama", AppConfig.AIEmbedProvider)
+	if AppConfig.AIConversationRetentionDays != 90 {
+		t.Fatalf("default AIConversationRetentionDays = %d, want 90", AppConfig.AIConversationRetentionDays)
 	}
 	if AppConfig.AIChatModel != "llama3.2:3b" {
 		t.Fatalf("default AIChatModel = %q, want llama3.2:3b", AppConfig.AIChatModel)

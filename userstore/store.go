@@ -398,6 +398,34 @@ func attachRoles(ctx context.Context, q Querier, u *User) error {
 	return rows.Err()
 }
 
+// RolesForIdentity returns the roles assigned to the workspace user linked to a
+// control-plane identity, ordered by name so the list keeps a stable display
+// order across calls. It is never nil: an identity with no users row, or no
+// roles, gets an empty slice, which serializes as [] rather than null.
+func RolesForIdentity(ctx context.Context, q Querier, identityID string) ([]RoleSummary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT r.id, r.key, r.name
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles r ON r.id = ur.role_id
+		WHERE u.identity_id = $1
+		ORDER BY r.name ASC, r.id ASC`, identityID)
+	if err != nil {
+		return nil, fmt.Errorf("roles for identity: %w", err)
+	}
+	defer rows.Close()
+
+	roles := []RoleSummary{}
+	for rows.Next() {
+		var rs RoleSummary
+		if err := rows.Scan(&rs.ID, &rs.Key, &rs.Name); err != nil {
+			return nil, fmt.Errorf("scan identity role: %w", err)
+		}
+		roles = append(roles, rs)
+	}
+	return roles, rows.Err()
+}
+
 // isDuplicateKeyErr reports whether the error is a PostgreSQL unique-constraint violation.
 func isDuplicateKeyErr(err error) bool {
 	var pgErr *pgconn.PgError

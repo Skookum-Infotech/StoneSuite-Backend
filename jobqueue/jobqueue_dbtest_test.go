@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -133,5 +134,80 @@ func TestQueue_MarkSucceededAndMarkFailed(t *testing.T) {
 	}
 	if job.Status != StatusSucceeded {
 		t.Fatalf("Status = %q, want succeeded", job.Status)
+	}
+}
+
+// backdateUpdatedAt directly rewrites a job's updated_at into the past — the
+// only way to make RequeueStale's "hasn't been touched in staleAfter" check
+// trip inside a test without actually waiting minutes.
+func backdateUpdatedAt(t *testing.T, ctx context.Context, id string, age time.Duration) {
+	t.Helper()
+	dsn := os.Getenv("TEST_CP_DATABASE_URL")
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect test db: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `UPDATE async_jobs SET updated_at = $2 WHERE id = $1`, id, time.Now().Add(-age)); err != nil {
+		t.Fatalf("backdate job %s: %v", id, err)
+	}
+}
+
+// TestQueue_RequeueStaleIsScopedToJobType is the regression test for the
+// exact cross-package race this signature exists to close: importer.Worker's
+// own reaper and provisioning.Provisioner's own reaper each used to call an
+// unscoped RequeueStale, so EITHER one could requeue the OTHER's still
+// legitimately-running job the moment it looked stale by wall-clock alone,
+// racing a second worker onto the same job while the first was still
+// mid-run. Passing jobTypes must make a reaper blind to every other type.
+func TestQueue_RequeueStaleIsScopedToJobType(t *testing.T) {
+	q, tenantID := newTestQueue(t)
+	ctx := context.Background()
+
+	provisionID, err := q.Enqueue(ctx, "provision", tenantID, map[string]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	importID, err := q.Enqueue(ctx, "import", tenantID, map[string]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"provision"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"import"}); err != nil {
+		t.Fatal(err)
+	}
+	// Both jobs are now 'running' and, from RequeueStale's point of view,
+	// equally stale.
+	backdateUpdatedAt(t, ctx, provisionID, time.Hour)
+	backdateUpdatedAt(t, ctx, importID, time.Hour)
+
+	// A reaper scoped to "import" (mirroring importer.Worker.reapStale) must
+	// requeue the import job and leave the provision job exactly as it was
+	// -- still 'running', as if a live worker still owned it.
+	n, err := q.RequeueStale(ctx, []string{"import"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("RequeueStale requeued %d jobs, want exactly 1 (the import job)", n)
+	}
+
+	importJob, err := q.Get(ctx, importID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if importJob.Status != StatusPending {
+		t.Fatalf("import job Status = %q, want pending", importJob.Status)
+	}
+
+	provisionJob, err := q.Get(ctx, provisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provisionJob.Status != StatusRunning {
+		t.Fatalf("provision job Status = %q, want still running -- an \"import\"-scoped "+
+			"reaper must never touch a provision job no matter how stale it looks", provisionJob.Status)
 	}
 }

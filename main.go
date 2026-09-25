@@ -22,13 +22,10 @@ import (
 
 	"github.com/Skookum-Infotech/go-rag/provider/ollama"
 	"github.com/Skookum-Infotech/go-rag/provider/tei"
-	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
-	"stonesuite-backend/ai"
-	"stonesuite-backend/ai/index"
+	"stonesuite-backend/aisettings"
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
-	"stonesuite-backend/crmstore"
 	"stonesuite-backend/database"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/estimate"
@@ -128,6 +125,25 @@ func main() {
 	var cp *tenancy.ControlPlane     // control-plane handle; also used by AIOps for the reindex-help platform-admin check
 	var cipher *secret.Cipher        // field-level secret cipher; also used by SSOOps to encrypt client secrets
 	var ollamaLifecycle *services.OllamaLifecycle
+	// aiToggler implements controllers.PlatformToggleListener: it owns the
+	// shared Ollama Machine's start/stop + lease-renew lifecycle and the RAG
+	// index catch-up nudge on every platform AI-switch flip, including the
+	// one this boot sequence performs below. Always constructed (nil
+	// lifecycle/lease/waker when Ollama lifecycle control isn't configured)
+	// so aiOps.WithPlatformToggleListener always has a receiver.
+	var aiToggler *aiPlatformToggler
+	// aiSettingsCache is the single platform+tenant AI-toggle cache shared by
+	// every RAG index worker/maintenance loop (rag_indexing.go) — one 30s-TTL
+	// cache passed to every tenant's goroutines, not one per tenant and not a
+	// package-level global.
+	aiSettingsCache := aisettings.NewCache(nil)
+	// indexCoordinator lets a tenant's AI switch turning back on (or the
+	// platform switch, in a later step) nudge that tenant's RAG index
+	// maintenance loop to catch up immediately instead of waiting out
+	// ragMaintenanceInterval. Registered per tenant by startRAGIndexing;
+	// always constructed (even if RAG indexing itself never starts) so
+	// AIOps.WithCatchUpNotifier below always has a non-nil receiver.
+	indexCoordinator := NewIndexCoordinator()
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		var err error
 		cp, err = tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
@@ -215,32 +231,44 @@ func main() {
 			// Proxy's flycast autostart, which was verified unreliable for this
 			// deployment (see docs/ai-assistant.md). Stopped on graceful
 			// shutdown below. Skipped entirely if unconfigured (e.g. local dev).
+			//
+			// The platform AI switch gates whether Ollama starts at all: read
+			// once here (defaulting to enabled on a read failure, same as
+			// aisettings.PlatformEnabled's own missing-row default) and drive
+			// boot through the same aiPlatformToggler.OnPlatformToggle path a
+			// later runtime PUT /api/platform/ai/settings uses, so there is
+			// exactly one place that knows how to start vs. stop this box.
 			if config.AppConfig.FlyOllamaAPIToken != "" {
 				ollamaLifecycle = services.NewOllamaLifecycle(config.AppConfig.FlyOllamaAppName, config.AppConfig.FlyOllamaAPIToken)
-				go func() {
-					if err := ollamaLifecycle.StartAll(context.Background()); err != nil {
-						log.Printf("ollama-lifecycle: start failed: %v", err)
-						return
-					}
-					// Fire a throwaway embed+chat so the first REAL /ai/ask
-					// request isn't the one paying Ollama's model-load
-					// latency — StartAll only boots the Machine, models load
-					// lazily on first inference. Best-effort: a failed
-					// warmup just means the first real request pays that
-					// latency itself, same as before this existed.
-					warmupEmb := ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim)
-					warmupLLM := ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel)
-					if err := ragcore.WarmUp(context.Background(), warmupEmb, warmupLLM); err != nil {
-						log.Printf("ollama-lifecycle: warmup failed: %v", err)
-					}
-				}()
+				lease := services.NewOllamaLease(ollamaLifecycle, config.AppConfig.AppName)
+				waker := services.NewOllamaWaker(ollamaLifecycle, config.AppConfig.OllamaBaseURL)
+				aiToggler = newAIPlatformToggler(ollamaLifecycle, lease, waker, indexCoordinator, cp.Pool(), shutdownCtx)
+
+				platformAIEnabled, perr := aisettings.PlatformEnabled(context.Background(), cp.Pool())
+				if perr != nil {
+					log.Printf("ai-platform-toggle: failed to read platform AI switch at boot, defaulting to enabled: %v", perr)
+					platformAIEnabled = true
+				}
+				if platformAIEnabled {
+					go aiToggler.OnPlatformToggle(context.Background(), true)
+				} else {
+					waker.SetEnabled(false)
+					log.Println("AI assistant disabled by platform switch; Ollama not started")
+				}
+			} else {
+				// No Fly Ollama lifecycle configured (local dev, or an
+				// always-on embedder box) — there is no warmup step to hang
+				// this off, so sync at boot directly. Best-effort: a slow or
+				// unreachable local embedder must not block or crash boot.
+				go syncHelpCorpus(shutdownCtx, cp.Pool())
+				aiToggler = newAIPlatformToggler(nil, nil, nil, indexCoordinator, cp.Pool(), shutdownCtx)
 			}
 
 			// RAG index workers: one per active tenant, draining rag_index_queue
 			// on a ticker so record writes become fresh vectors within seconds
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
-			go startRAGIndexing(shutdownCtx, cp, tenantRouter)
+			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -318,6 +346,7 @@ func main() {
 
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
+		mux.HandleFunc("/api/onboarding/lookups", tenantOps.OnboardingLookups)
 		mux.HandleFunc("/api/onboarding/apply/", tenantOps.GetApply) // GET /{token}
 		mux.HandleFunc("/api/onboarding/apply", tenantOps.SubmitApply)
 		mux.HandleFunc("/api/onboarding/set-password/", tenantOps.GetSetPassword) // GET /{token}
@@ -694,7 +723,7 @@ func main() {
 		// rag.StructuredLLMClient — see ai/ollama_llm.go); import still works
 		// for CSV/XLSX without it, since tabular staging never calls the LLM.
 		importWorker = importer.NewWorker(cp, tenantRouter, jobQueue, r2Client,
-			ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel))
+			newChatClient())
 		importWorker.Start(2)
 		log.Println("Import worker started (2 workers, durable queue).")
 
@@ -1092,6 +1121,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/sales-orders/{uuid}", tenantChain(so.Delete))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/transition", tenantChain(so.Transition))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/approve", tenantChain(so.Approve))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/reject", tenantChain(so.Reject))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/convert", tenantChain(so.Convert))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
@@ -1155,6 +1185,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/estimates/{uuid}", tenantChain(est.Delete))
 		mux.Handle("POST /api/tenant/estimates/{uuid}/transition", tenantChain(est.Transition))
 		mux.Handle("POST /api/tenant/estimates/{uuid}/approve", tenantChain(est.Approve))
+		mux.Handle("POST /api/tenant/estimates/{uuid}/reject", tenantChain(est.Reject))
 		mux.Handle("POST /api/tenant/estimates/{uuid}/convert", tenantChain(est.Convert))
 		mux.Handle("GET /api/tenant/estimates/{uuid}/audit", tenantChain(est.Audit))
 
@@ -1169,6 +1200,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/quotes/{uuid}", tenantChain(quo.Delete))
 		mux.Handle("POST /api/tenant/quotes/{uuid}/transition", tenantChain(quo.Transition))
 		mux.Handle("POST /api/tenant/quotes/{uuid}/approve", tenantChain(quo.Approve))
+		mux.Handle("POST /api/tenant/quotes/{uuid}/reject", tenantChain(quo.Reject))
 		mux.Handle("POST /api/tenant/quotes/{uuid}/convert", tenantChain(quo.Convert))
 		mux.Handle("GET /api/tenant/quotes/{uuid}/audit", tenantChain(quo.Audit))
 
@@ -1199,6 +1231,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/requisitions/{uuid}", tenantChain(reqnOps.Delete))
 		mux.Handle("POST /api/tenant/requisitions/{uuid}/transition", tenantChain(reqnOps.Transition))
 		mux.Handle("POST /api/tenant/requisitions/{uuid}/approve", tenantChain(reqnOps.Approve))
+		mux.Handle("POST /api/tenant/requisitions/{uuid}/reject", tenantChain(reqnOps.Reject))
 		mux.Handle("POST /api/tenant/requisitions/{uuid}/convert", tenantChain(reqnOps.Convert))
 		mux.Handle("GET /api/tenant/requisitions/{uuid}/audit", tenantChain(reqnOps.Audit))
 
@@ -1215,6 +1248,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/reject", tenantChain(poOps.Reject))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/audit", tenantChain(poOps.Audit))
 
@@ -1253,6 +1287,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}", tenantChain(vbOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/transition", tenantChain(vbOps.Transition))
 		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/approve", tenantChain(vbOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/reject", tenantChain(vbOps.Reject))
 		mux.Handle("POST /api/tenant/vendor-bills/{uuid}/payment", tenantChain(vbOps.RecordPayment))
 		mux.Handle("GET /api/tenant/vendor-bills/{uuid}/payments", tenantChain(vbOps.Payments))
 		mux.Handle("DELETE /api/tenant/vendor-bills/{uuid}/payments/{paymentId}", tenantChain(vbOps.RemovePayment))
@@ -1272,6 +1307,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/vendor-payments/{uuid}", tenantChain(vpOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/transition", tenantChain(vpOps.Transition))
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/approve", tenantChain(vpOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/reject", tenantChain(vpOps.Reject))
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/apply", tenantChain(vpOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-payments/{uuid}/unapply", tenantChain(vpOps.Unapply))
 		mux.Handle("GET /api/tenant/vendor-payments/{uuid}/audit", tenantChain(vpOps.Audit))
@@ -1290,6 +1326,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/vendor-credits/{uuid}", tenantChain(vcOps.Delete))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/transition", tenantChain(vcOps.Transition))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/approve", tenantChain(vcOps.Approve))
+		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reject", tenantChain(vcOps.Reject))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/apply", tenantChain(vcOps.Apply))
 		mux.Handle("POST /api/tenant/vendor-credits/{uuid}/reverse", tenantChain(vcOps.Reverse))
 		mux.Handle("GET /api/tenant/vendor-credits/{uuid}/audit", tenantChain(vcOps.Audit))
@@ -1322,6 +1359,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/invoices/{uuid}", tenantChain(invOps.Delete))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/transition", tenantChain(invOps.Transition))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/approve", tenantChain(invOps.Approve))
+		mux.Handle("POST /api/tenant/invoices/{uuid}/reject", tenantChain(invOps.Reject))
 		mux.Handle("POST /api/tenant/invoices/{uuid}/payment", tenantChain(invOps.RecordPayment))
 		mux.Handle("GET /api/tenant/invoices/{uuid}/audit", tenantChain(invOps.Audit))
 
@@ -1337,6 +1375,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/payments/{uuid}", tenantChain(payOps.Delete))
 		mux.Handle("POST /api/tenant/payments/{uuid}/transition", tenantChain(payOps.Transition))
 		mux.Handle("POST /api/tenant/payments/{uuid}/approve", tenantChain(payOps.Approve))
+		mux.Handle("POST /api/tenant/payments/{uuid}/reject", tenantChain(payOps.Reject))
 		mux.Handle("POST /api/tenant/payments/{uuid}/apply", tenantChain(payOps.Apply))
 		mux.Handle("POST /api/tenant/payments/{uuid}/unapply", tenantChain(payOps.Unapply))
 		mux.Handle("GET /api/tenant/payments/{uuid}/audit", tenantChain(payOps.Audit))
@@ -1357,6 +1396,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/credit-memos/{uuid}", tenantChain(cmOps.Delete))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/transition", tenantChain(cmOps.Transition))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/approve", tenantChain(cmOps.Approve))
+		mux.Handle("POST /api/tenant/credit-memos/{uuid}/reject", tenantChain(cmOps.Reject))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/apply", tenantChain(cmOps.Apply))
 		mux.Handle("POST /api/tenant/credit-memos/{uuid}/unapply", tenantChain(cmOps.Unapply))
 		mux.Handle("GET /api/tenant/credit-memos/{uuid}/audit", tenantChain(cmOps.Audit))
@@ -1378,6 +1418,7 @@ func main() {
 		mux.Handle("DELETE /api/tenant/refunds/{uuid}", tenantChain(rfndOps.Delete))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/transition", tenantChain(rfndOps.Transition))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/approve", tenantChain(rfndOps.Approve))
+		mux.Handle("POST /api/tenant/refunds/{uuid}/reject", tenantChain(rfndOps.Reject))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/apply", tenantChain(rfndOps.Apply))
 		mux.Handle("POST /api/tenant/refunds/{uuid}/unapply", tenantChain(rfndOps.Unapply))
 		mux.Handle("GET /api/tenant/refunds/{uuid}/audit", tenantChain(rfndOps.Audit))
@@ -1388,18 +1429,56 @@ func main() {
 		aiOps := controllers.NewAIOps(
 			cpPool,
 			ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
-			ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel),
+			newChatClient(),
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
+		if aiToggler.waker != nil {
+			// Reuse aiToggler's own waker instance (not a second one) so
+			// SetEnabled toggled by the platform-toggle listener and the
+			// waker Ask/AskStream/Warm consult are the same object.
+			aiOps = aiOps.WithOllamaWaker(aiToggler.waker)
+		}
+		aiOps = aiOps.WithPlatformToggleListener(aiToggler)
+		if aiToggler.lifecycle != nil {
+			// Only wire when configured — assigning a nil *OllamaLifecycle
+			// into the ollamaStater interface would make it a non-nil,
+			// typed-nil interface, defeating AIOps's own nil check.
+			aiOps = aiOps.WithOllamaStatus(aiToggler.lifecycle, aiToggler.lease)
+		}
+		// Share the one process-wide AI-toggle cache with the RAG index
+		// maintenance loops (see aiSettingsCache doc above) — a toggle PUT
+		// must invalidate the same cache both read from, or the nudged loop
+		// would read a stale value for up to cacheTTL.
+		aiOps = aiOps.WithSettingsCache(aiSettingsCache)
+		// Tenant AI toggle -> immediate RAG index catch-up (revive + reconcile)
+		// instead of waiting out ragMaintenanceInterval. A tenant not yet
+		// registered with indexCoordinator (RAG indexing not started, e.g.
+		// PROVISION_ADMIN_DB_URL unset) is simply a no-op nudge — see
+		// IndexCoordinator.CatchUp.
+		aiOps = aiOps.WithCatchUpNotifier(indexCoordinator)
 		// Reranking is off unless a TEI deployment is actually configured —
 		// see config.AppConfig.AIRerankBaseURL.
 		if config.AppConfig.AIRerankBaseURL != "" {
 			aiOps = aiOps.WithReranker(tei.NewReranker(config.AppConfig.AIRerankBaseURL), config.AppConfig.AIRerankCandidates)
 		}
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
+		mux.Handle("POST /api/tenant/ai/ask/stream", aiChain(aiOps.AskStream))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
+		mux.Handle("POST /api/tenant/ai/warm", aiChain(aiOps.Warm))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
+
+		// AI assistant on/off switches: a platform-admin master switch (per
+		// environment, control plane) AND a per-tenant switch (tenant DB) —
+		// the assistant is available only when both are on (aisettings.Available).
+		// Both default TRUE, so deploying this changes nothing until someone
+		// flips one off. The platform pair is gated exactly like
+		// reindex-help (RequireAuth only, no tenant chain — one row per
+		// environment, not per tenant).
+		mux.Handle("GET /api/tenant/ai/status", tenantChain(aiOps.Status))
+		mux.Handle("PUT /api/tenant/ai/settings", tenantChain(aiOps.UpdateSettings))
+		mux.Handle("GET /api/platform/ai/settings", middleware.RequireAuth(http.HandlerFunc(aiOps.GetPlatformSettings)))
+		mux.Handle("PUT /api/platform/ai/settings", middleware.RequireAuth(http.HandlerFunc(aiOps.UpdatePlatformSettings)))
 
 		// AI assistant conversation history — personal chat threads, owner-only
 		// (see ConversationOps), not RBAC-scoped CRM data. Cheap CRUD, so the
@@ -1477,15 +1556,24 @@ func main() {
 		Handler: globalHandler,
 		// WriteTimeout must exceed the slowest legitimate handler, not just the
 		// common case: POST /api/tenant/ai/ask runs a synchronous self-hosted
-		// LLM completion (ai.OllamaLLMClient, 60s inner client timeout) on top
-		// of embedding + retrieval. A too-short WriteTimeout forcibly closes
-		// the TCP connection once it elapses — even when the handler is about
-		// to finish with a correct answer — which looks identical to a proxy
-		// timeout from the client (silent "Network Error", no JSON body) but
-		// is actually us, not Fly's edge, hanging up on our own slow success.
-		// Set comfortably above OllamaLLMClient's timeout so that timeout
-		// fires first and the client gets a clean error response instead.
-		WriteTimeout: 90 * time.Second,
+		// LLM completion on top of embedding + retrieval. A too-short
+		// WriteTimeout forcibly closes the TCP connection once it elapses —
+		// even when the handler is about to finish with a correct answer —
+		// which looks identical to a proxy timeout from the client (silent
+		// "Network Error", no JSON body) but is actually us, not Fly's edge,
+		// hanging up on our own slow success.
+		//
+		// Must stay ABOVE the go-rag Ollama chat client's own timeout (100s,
+		// provider/ollama/ollama_llm.go) so that one fires first and the caller
+		// gets a clean JSON error instead of a dropped connection. It was 90s —
+		// i.e. below the client timeout — which inverted exactly the ordering
+		// this comment describes. Bump both together, never one alone.
+		//
+		// Streaming handlers (SSE) override this per-request with a rolling
+		// deadline via http.ResponseController; this value is the ceiling for
+		// ordinary buffered responses, so it stays finite to keep slowloris
+		// protection on every other route.
+		WriteTimeout: 120 * time.Second,
 		ReadTimeout:  15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
@@ -1513,11 +1601,15 @@ func main() {
 	if err := server.Shutdown(shutCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
 	}
-	// Stop the Ollama embedder box alongside this process — see the matching
-	// StartAll call above for why the backend, not Fly Proxy, owns this.
+	// Release this holder's Ollama lease and stop the shared embedder box
+	// alongside this process — but only if no other holder (the other
+	// environment sharing the Fly app) still holds an unexpired lease; see
+	// the matching OnPlatformToggle(true) call above for why the backend,
+	// not Fly Proxy, owns this. Falls back to a plain StopAll if the lease
+	// system itself is degraded or unconfigured.
 	if ollamaLifecycle != nil {
-		if err := ollamaLifecycle.StopAll(shutCtx); err != nil {
-			log.Printf("ollama-lifecycle: stop failed: %v", err)
+		if err := aiToggler.lease.ReleaseAndMaybeStop(shutCtx); err != nil {
+			log.Printf("ollama-lifecycle: release/stop failed: %v", err)
 		}
 	}
 	// Flush any buffered logs to Axiom before exit (worker already draining on
@@ -1577,123 +1669,6 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
 		} else if len(empty) > 0 {
 			log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
-		}
-	}
-}
-
-// startRAGIndexing starts one index-drain loop and one reconciliation loop per
-// active tenant. Runs once at boot (mirroring migrateAllTenants); tenants
-// provisioned after this process started are picked up on the next restart —
-// acceptable given the scale-to-zero deploy model restarts frequently.
-func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
-	tenants, err := cp.ListTenants(ctx)
-	if err != nil {
-		log.Printf("rag-index: failed to list tenants: %v", err)
-		return
-	}
-	for _, t := range tenants {
-		if !t.Servable() {
-			continue
-		}
-		pool, err := router.PoolFor(ctx, &t)
-		if err != nil {
-			log.Printf("rag-index: tenant %s: pool error: %v", t.Slug, err)
-			continue
-		}
-		store := crmstore.For(t.DesignVersion)
-		q := index.NewQueue(pool)
-		w := index.NewWorker(
-			q,
-			crmstore.NewRAGRecordLoader(store, pool),
-			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
-			ai.NewRagStore(pool),
-		)
-		go runTenantIndexWorker(ctx, t.Slug, w, q)
-		go runTenantReconciliation(ctx, t.Slug, store, pool, q)
-	}
-}
-
-// runTenantIndexWorker drains one tenant's rag_index_queue every 3s until ctx
-// is cancelled (the goroutine's explicit exit strategy). Also publishes the
-// tenant's queue-depth/oldest-pending-age metrics each tick — piggybacking on
-// the existing cadence rather than adding a separate ticker.
-func runTenantIndexWorker(ctx context.Context, slug string, w *index.Worker, q *index.Queue) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if _, err := w.DrainOnce(ctx); err != nil {
-				log.Printf("rag-index: tenant %s: drain error: %v", slug, err)
-			}
-			if pending, age, err := q.Stats(ctx); err != nil {
-				log.Printf("rag-index: tenant %s: stats error: %v", slug, err)
-			} else {
-				metrics.SetRAGIndexQueueStats(slug, pending, age)
-			}
-		}
-	}
-}
-
-// runTenantReconciliation runs reconcileTenantIndex immediately and then every
-// 10 minutes until ctx is cancelled (the goroutine's explicit exit strategy).
-// It is the backstop for the small write->enqueue crash window in
-// crmstore.IndexingStore (see its doc comment).
-func runTenantReconciliation(ctx context.Context, slug string, store crmstore.Store, pool *pgxpool.Pool, q *index.Queue) {
-	reconcileTenantIndex(ctx, slug, store, pool, q)
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			reconcileTenantIndex(ctx, slug, store, pool, q)
-		}
-	}
-}
-
-// reconcileTenantIndex enqueues an upsert for every CRM record whose
-// updated_at is newer than its rag_chunks vector (or has no chunk at all),
-// closing the gap between a write committing and its enqueue job landing.
-func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store, pool *pgxpool.Pool, q *index.Queue) {
-	rows, err := pool.Query(ctx, `SELECT source_id, updated_at FROM rag_chunks`)
-	if err != nil {
-		log.Printf("rag-reconcile: tenant %s: read rag_chunks failed: %v", slug, err)
-		return
-	}
-	indexedAt := map[string]time.Time{}
-	for rows.Next() {
-		var id string
-		var at time.Time
-		if err := rows.Scan(&id, &at); err != nil {
-			rows.Close()
-			log.Printf("rag-reconcile: tenant %s: scan failed: %v", slug, err)
-			return
-		}
-		indexedAt[id] = at
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		log.Printf("rag-reconcile: tenant %s: rows error: %v", slug, err)
-		return
-	}
-
-	for _, key := range crmstore.CRMWorkflowKeys() {
-		recs, err := store.ListRecords(ctx, pool, key, "all", "")
-		if err != nil {
-			log.Printf("rag-reconcile: tenant %s: list %s failed: %v", slug, key, err)
-			continue
-		}
-		for _, rec := range recs {
-			if at, ok := indexedAt[rec.ID]; ok && !rec.UpdatedAt.After(at) {
-				continue // vector already current
-			}
-			if err := q.Enqueue(ctx, rec.ID, "upsert"); err != nil {
-				log.Printf("rag-reconcile: tenant %s: enqueue %s failed: %v", slug, rec.ID, err)
-			}
 		}
 	}
 }

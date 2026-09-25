@@ -69,6 +69,48 @@ func TestWorker_StageTabularInsertsOneRowPerTableRow(t *testing.T) {
 	require.NotEmpty(t, staged[1].Errors, "a present but wrong-type custom field must surface a staging hint")
 }
 
+// TestWorker_StageTabularRestagingConvergesNotDuplicates is the
+// worker-level regression test for the duplicate-staging bug: a restage
+// (worker crash, stale-reap requeue, or the queue's own attempts-based
+// retry) must call stageTabular a second time for the same jobID and land
+// on the SAME row count, not double it. DeletePendingRowsForJob (called by
+// runImport, one layer up, right before this) is what makes that true for a
+// real restage; this asserts stageTabular's own UpsertRow calls converge
+// correctly given that precondition, plus the specific shrinkage case:
+// where a failed first attempt staged 3 rows but the retried file only
+// contains 2.
+func TestWorker_StageTabularRestagingConvergesNotDuplicates(t *testing.T) {
+	pool := newTestPool(t)
+	queue := newTestQueue(t)
+	w := NewWorker(nil, nil, queue, nil, nil)
+	rows := NewStore(pool)
+	ctx := context.Background()
+
+	defs := []workflow.FieldDefinition{{Key: "budget", DataType: workflow.TypeNumber}}
+	mapping := map[string]string{"Name": "core:name", "Budget": "cf:budget"}
+	firstAttempt := []map[string]string{
+		{"Name": "Acme", "Budget": "5000"},
+		{"Name": "Globex", "Budget": "6000"},
+		{"Name": "Initech", "Budget": "7000"},
+	}
+	require.NoError(t, w.stageTabular(ctx, rows, "job-restage-tabular", firstAttempt, mapping, defs))
+
+	// A restage of the SAME job (as runImport would drive it: clear, then
+	// stage) with different, and fewer, rows -- the shrinkage case.
+	require.NoError(t, rows.DeletePendingRowsForJob(ctx, "job-restage-tabular"))
+	secondAttempt := []map[string]string{
+		{"Name": "Acme", "Budget": "5000"},
+		{"Name": "Umbrella", "Budget": "9000"},
+	}
+	require.NoError(t, w.stageTabular(ctx, rows, "job-restage-tabular", secondAttempt, mapping, defs))
+
+	staged, err := rows.ListByJob(ctx, "job-restage-tabular")
+	require.NoError(t, err)
+	require.Len(t, staged, 2, "the retry's own row count must win outright -- no leftover rows from the first, longer attempt")
+	require.Equal(t, "Acme", staged[0].Mapped.Core["name"])
+	require.Equal(t, "Umbrella", staged[1].Mapped.Core["name"])
+}
+
 func TestWorker_StageExtractedInsertsOneRecordFromWholeDocument(t *testing.T) {
 	pool := newTestPool(t)
 	queue := newTestQueue(t)

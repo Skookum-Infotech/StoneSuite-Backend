@@ -132,6 +132,10 @@ func (h *VendorPaymentOps) vendorBillInScopeForUpdate(w http.ResponseWriter, r *
 // vendorPaymentFail maps a vendorpayment/vendorbill error to the correct
 // HTTP status and writes the JSON error response.
 func vendorPaymentFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, vendorpayment.ErrNotFound):
 		fail(w, http.StatusNotFound, "Vendor payment not found.")

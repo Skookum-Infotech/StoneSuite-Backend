@@ -13,6 +13,18 @@ import (
 
 	"stonesuite-backend/ai"
 	"stonesuite-backend/metrics"
+	"stonesuite-backend/models"
+	"stonesuite-backend/services"
+)
+
+// Error codes a client can branch on, carried on every AI error response —
+// SSE "error" event and non-streaming JSON alike (see classifyAIError).
+const (
+	codeStartingUp  = "starting_up"
+	codeTimeout     = "timeout"
+	codeUnavailable = "unavailable"
+	codeDisabled    = "disabled"
+	codeError       = "error"
 )
 
 // citationDTO is a citation as the API sends it: the library's public fields
@@ -64,20 +76,49 @@ func citationDTOs(ctx context.Context, pool *pgxpool.Pool, cites []ragcore.Citat
 }
 
 // classifyAIError maps a dispatch failure to what the client is told. The
-// distinctions matter to a user: "starting up, retry in a moment" and "took
-// too long, try a shorter question" call for different actions than a
-// generic failure.
-func classifyAIError(err error) (status int, outcome, message string) {
+// distinctions matter to a user: "starting up, retry in a moment", "the
+// assistant is switched off", and "took too long, try again" call for
+// different actions than a generic failure.
+//
+// A *wakeOutcome (see withOllamaWake) is unwrapped first so the message
+// reflects what actually happened to the on-demand Ollama start, not just the
+// generic ErrUnavailable/timeout underneath it.
+func classifyAIError(err error) (status int, outcome, code, message string) {
+	var wo *wakeOutcome
+	if errors.As(err, &wo) {
+		switch {
+		case errors.Is(wo.wakeErr, services.ErrWakeDisabled):
+			return http.StatusForbidden, outcomeUnavailable, codeDisabled, "The StoneSuite Assistant is turned off."
+		case wo.wakeErr != nil:
+			// services.ErrWakeCooldown or any other OllamaWaker failure.
+			return http.StatusServiceUnavailable, outcomeUnavailable, codeUnavailable, "The assistant is unavailable right now. Please try again in a minute."
+		case !wo.waked:
+			// No waker configured at all — nothing this server can do to
+			// bring it up on demand.
+			return http.StatusServiceUnavailable, outcomeUnavailable, codeUnavailable, "The assistant is unavailable right now. Please try again in a minute."
+		case errors.Is(wo.err, context.DeadlineExceeded):
+			return http.StatusGatewayTimeout, outcomeTimeout, codeStartingUp, "The assistant was starting up and took too long — please try again now."
+		}
+		err = wo.err
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return http.StatusGatewayTimeout, outcomeTimeout, "The assistant took too long to answer. Please try again, or ask a shorter question."
+		return http.StatusGatewayTimeout, outcomeTimeout, codeTimeout, "The assistant took too long to answer. Please try again, or ask a shorter question."
 	case errors.Is(err, ragcore.ErrModelNotFound):
-		return http.StatusServiceUnavailable, outcomeUnavailable, "The assistant isn't available on this server yet. Please contact your administrator."
+		return http.StatusServiceUnavailable, outcomeUnavailable, codeUnavailable, "The assistant isn't available on this server yet. Please contact your administrator."
 	case errors.Is(err, ragcore.ErrUnavailable):
-		return http.StatusServiceUnavailable, outcomeUnavailable, "The assistant is starting up — please try again in a few seconds."
+		return http.StatusServiceUnavailable, outcomeUnavailable, codeUnavailable, "The assistant is starting up — please try again in a few seconds."
 	default:
-		return http.StatusBadGateway, outcomeError, "The assistant is temporarily unavailable. Please try again."
+		return http.StatusBadGateway, outcomeError, codeError, "The assistant is temporarily unavailable. Please try again."
 	}
+}
+
+// failWithCode writes a JSON error response carrying a machine-readable code
+// (see classifyAIError) alongside the human message — same shape as
+// middleware.RateLimiter's coded 429, so a client branches on codes
+// consistently across the AI endpoints and the rate limiter.
+func failWithCode(w http.ResponseWriter, status int, msg, code string) {
+	writeJSON(w, status, models.APIResponse{Success: false, Message: msg, Code: code})
 }
 
 // finishAsk records the per-request metrics and the ai_query security log

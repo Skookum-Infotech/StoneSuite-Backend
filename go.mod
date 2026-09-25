@@ -3,7 +3,7 @@ module stonesuite-backend
 go 1.25.12
 
 require (
-	github.com/Skookum-Infotech/go-rag v0.0.0-20260923200908-103fb661b094
+	github.com/Skookum-Infotech/go-rag v0.0.0-20260925025837-dfebf4e5b598
 	github.com/beevik/etree v1.7.0
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/go-pdf/fpdf v0.9.0

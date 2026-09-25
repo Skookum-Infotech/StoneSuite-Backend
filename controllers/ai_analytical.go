@@ -1,22 +1,13 @@
 package controllers
 
 import (
-	"context"
-	"fmt"
-	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/Skookum-Infotech/go-rag/route"
-
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
-	"stonesuite-backend/ai"
 	"stonesuite-backend/crmstore"
-	"stonesuite-backend/query"
 )
 
 // countCRMTypeKeys maps a keyword found in a question to the CRM workflow
@@ -41,6 +32,7 @@ var countFillerWords = map[string]bool{
 	"my": true, "our": true, "the": true, "all": true, "of": true, "do": true, "does": true,
 	"we": true, "i": true, "you": true, "have": true, "has": true, "are": true, "is": true,
 	"there": true, "in": true, "crm": true, "number": true, "currently": true, "total": true,
+	"exist": true, "were": true, "was": true,
 }
 
 // countObjectMaxWords bounds how far past the count phrase countObject looks.
@@ -187,7 +179,21 @@ func countClauseObject(text string) ([]string, bool) {
 			if w == "and" || w == "or" {
 				continue
 			}
-			break
+			if countFillerWords[w] || filterHintSet[w] {
+				// Harmless trailing word ("do I have", "in total", "are
+				// there", "exist") — keep scanning, doesn't change the
+				// count. A filter-hint word ("closed", "won", "last") is
+				// left to classifyCountQuestion's filterHintRe check on the
+				// whole question, so hasFilterHintCountIntent still sees
+				// this as "found an object" and can trigger the routed path.
+				continue
+			}
+			// A meaningful qualifier follows the type word(s) ("customers in
+			// Texas", "leads does John have") — this clause narrows the
+			// count in a way this path cannot safely honor. Bail out of the
+			// WHOLE question rather than silently answering an unfiltered
+			// total mislabeled as the answer to a filtered question.
+			return nil, false
 		}
 		if countFillerWords[w] || filterHintSet[w] {
 			continue
@@ -202,6 +208,37 @@ func countClauseObject(text string) ([]string, bool) {
 		return crmstore.CRMWorkflowKeys(), true
 	}
 	return nil, false
+}
+
+// countFollowUpRe matches a short follow-up that names only a new CRM type
+// after a previous count question — "and customers?", "what about
+// prospects", "and leads".
+var countFollowUpRe = regexp.MustCompile(`(?i)^\s*(?:and(?: what about)?|what about)\s+(lead|leads|prospect|prospects|customer|customers)\s*\??\s*$`)
+
+// classifyFollowUpCount reports whether question is a short follow-up naming
+// only a new CRM type ("and customers?", "what about prospects") continuing a
+// previous count question in history, and if so which type to count.
+// Deliberately does not re-run filterHintRe against question itself — the
+// filter-hint guard already applies to the ORIGINAL count question this
+// follow-up continues from (countObject(prev)); a bare "and <type>?" carries
+// no filter language of its own to guard against.
+func classifyFollowUpCount(question string, history []ragcore.Message) ([]string, bool) {
+	m := countFollowUpRe.FindStringSubmatch(question)
+	if m == nil {
+		return nil, false
+	}
+	prev := previousUserQuestion(history)
+	if prev == "" {
+		return nil, false
+	}
+	if _, ok := countObject(prev); !ok {
+		return nil, false
+	}
+	key, ok := countCRMTypeKeys[strings.ToLower(m[1])]
+	if !ok {
+		return nil, false
+	}
+	return []string{key}, true
 }
 
 // classifyCountQuestion reports whether question is a pure count-of-CRM-type
@@ -230,183 +267,4 @@ func classifyCountQuestion(question string) (keys []string, ok bool) {
 func hasFilterHintCountIntent(question string) bool {
 	_, ok := countObject(question)
 	return ok && filterHintRe.MatchString(question)
-}
-
-// routeFieldWhitelist is the fixed vocabulary the LLM router may name in a
-// Filter.Field — deliberately smaller than a workflow's full FieldResolver
-// surface. owner_user_id/team_id/id are scope's job, not the model's (see
-// route's package doc); custom fields are left out because they vary per
-// tenant and per workflow, and folding a tenant's whole custom-field schema
-// into the routing prompt is a bigger feature than this pass justifies. These
-// four system fields cover the filters Phase 3 exists to unblock ("closed
-// last quarter", "qualified leads").
-var routeFieldWhitelist = []string{"status", "created_at", "updated_at", "record_number"}
-
-var routeFieldWhitelistSet = func() map[string]bool {
-	m := make(map[string]bool, len(routeFieldWhitelist))
-	for _, f := range routeFieldWhitelist {
-		m[f] = true
-	}
-	return m
-}()
-
-// routeOperatorSet bounds Filter.Op to comparisons that take a single scalar
-// value (route.Filter.Value is always a string) — OpIn/OpBetween need
-// multi-value input the router's schema doesn't offer, so they're rejected
-// here rather than mis-coerced.
-var routeOperatorSet = map[query.Operator]bool{
-	query.OpEq: true, query.OpNeq: true, query.OpGt: true, query.OpGte: true,
-	query.OpLt: true, query.OpLte: true, query.OpContains: true, query.OpStartsWith: true,
-	query.OpIsNull: true, query.OpIsEmpty: true,
-}
-
-// resolveRoutedFilteredCount attempts the LLM-routed filtered-count path: ask
-// llm to classify question via route.Extract, and — only when the model
-// returns intent=count with every filter inside routeFieldWhitelist/
-// routeOperatorSet and every workflow key a real CRM key — execute a
-// scope-composed, filtered count. Returns ok=false for every other outcome
-// (routing unsupported, malformed model output, a non-count intent, or a
-// filter/key outside the whitelist), which the caller treats as "fall back to
-// plain retrieval" — never a fatal error, per the architecture plan's rule
-// that adversarial/malformed model output must degrade, not break, the ask.
-//
-// Security: grants and actorIdentityID are the caller's, resolved from request
-// context before this function is ever reached (see AIOps.Ask) — nothing
-// route.Extract returns can influence WHOSE data is counted, only WHAT is
-// counted. That is what routeFieldWhitelist/routeOperatorSet exist to keep
-// true even if a record's content tries to steer the model via indirect
-// prompt injection: the model can at most choose a bad-but-still-whitelisted
-// filter, never a scope or identity value.
-//
-// history is the caller's prior conversation turns, if any (see
-// ai.ConversationStore.History) — passed straight to route.Extract so a
-// follow-up like "what about last month?" can resolve against the earlier
-// turn's context. Same untrusted-input caveat as any other conversation
-// content reaching the model: it can steer word choice, never scope.
-func resolveRoutedFilteredCount(ctx context.Context, llm ragcore.LLMClient, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID, question string, history []ragcore.Message) (ragcore.AskResult, bool) {
-	if len(grants.Types()) == 0 {
-		// Nothing countable: don't spend a model call deciding what to count.
-		return ragcore.AskResult{}, false
-	}
-	keys := crmstore.CRMWorkflowKeys()
-	r, err := route.Extract(ctx, llm, keys, routeFieldWhitelist, question, history)
-	if err != nil {
-		slog.Warn("ai query routing unavailable; falling back to retrieval", "err", err)
-		return ragcore.AskResult{}, false
-	}
-	if r.Intent != route.IntentCount {
-		return ragcore.AskResult{}, false
-	}
-
-	matchedKeys := r.WorkflowKeys
-	if len(matchedKeys) == 0 {
-		matchedKeys = keys
-	}
-	validKeys := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		validKeys[k] = true
-	}
-	for _, k := range matchedKeys {
-		if !validKeys[k] {
-			slog.Warn("ai query router named an unknown workflow key; falling back to retrieval", "key", k)
-			return ragcore.AskResult{}, false
-		}
-	}
-
-	clauses := make([]query.Clause, 0, len(r.Filters))
-	for _, f := range r.Filters {
-		if !routeFieldWhitelistSet[f.Field] {
-			slog.Warn("ai query router named a field outside the routing whitelist; falling back to retrieval", "field", f.Field)
-			return ragcore.AskResult{}, false
-		}
-		op := query.Operator(f.Op)
-		if !routeOperatorSet[op] {
-			slog.Warn("ai query router named an operator outside the routing whitelist; falling back to retrieval", "op", f.Op)
-			return ragcore.AskResult{}, false
-		}
-		clauses = append(clauses, query.Clause{Field: f.Field, Op: op, Value: f.Value})
-	}
-
-	res, err := countCRMRecordsFiltered(ctx, store, pool, grants, actorIdentityID, matchedKeys, clauses)
-	if err != nil {
-		slog.Warn("ai routed count failed; falling back to retrieval", "err", err)
-		return ragcore.AskResult{}, false
-	}
-	return res, true
-}
-
-// countCRMRecordsFiltered is CountRecordsFiltered summed across keys — the
-// filtered counterpart to countCRMRecords, for the LLM-routed count path.
-func countCRMRecordsFiltered(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID string, keys []string, filters []query.Clause) (ragcore.AskResult, error) {
-	return countGranted(grants, keys, func(key, scope string) (int, error) {
-		n, err := store.CountRecordsFiltered(ctx, pool, key, scope, actorIdentityID, filters)
-		if err != nil {
-			return 0, fmt.Errorf("count filtered %s records: %w", key, err)
-		}
-		return n, nil
-	})
-}
-
-// countCRMRecords sums CountRecords across keys, building a deterministic
-// answer with zero LLM calls — a plain count needs no generation, and skipping
-// the chat model avoids both its latency and any chance of it mis-stating the
-// number. Citations are always an empty (never nil) slice, matching
-// ragcore.AskResult's existing JSON convention.
-func countCRMRecords(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID string, keys []string) (ragcore.AskResult, error) {
-	return countGranted(grants, keys, func(key, scope string) (int, error) {
-		n, err := store.CountRecords(ctx, pool, key, scope, actorIdentityID)
-		if err != nil {
-			return 0, fmt.Errorf("count %s records: %w", key, err)
-		}
-		return n, nil
-	})
-}
-
-// countGranted counts each requested key the caller can read under THAT key's
-// own scope — a customer:own grant must not narrow a lead:all count, nor a
-// lead:all grant widen a customer count — and names the keys it left out
-// instead of counting them. A question only about ungranted types gets the
-// no-access sentence and no number at all.
-func countGranted(grants ai.Grants, keys []string, count func(key, scope string) (int, error)) (ragcore.AskResult, error) {
-	granted, denied := splitGranted(grants, keys)
-	if len(granted) == 0 {
-		return ragcore.AskResult{Answer: noAccessSentence(denied), Citations: []ragcore.Citation{}}, nil
-	}
-	counts := make(map[string]int, len(granted))
-	total := 0
-	for _, key := range granted {
-		n, err := count(key, grants[key])
-		if err != nil {
-			return ragcore.AskResult{}, err
-		}
-		counts[key] = n
-		total += n
-	}
-	answer := formatCountAnswer(granted, counts, total)
-	if len(denied) > 0 {
-		answer += " " + noAccessSentence(denied)
-	}
-	return ragcore.AskResult{Answer: answer, Citations: []ragcore.Citation{}}, nil
-}
-
-// formatCountAnswer renders counts as a plain sentence. A single key renders
-// as "You have N <key>s." (pluralizing the CRM type word); multiple keys
-// (the "how many CRM records" case) list each type plus a total.
-func formatCountAnswer(keys []string, counts map[string]int, total int) string {
-	if len(keys) == 1 {
-		return fmt.Sprintf("You have %d %s.", counts[keys[0]], pluralize(keys[0], counts[keys[0]]))
-	}
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[key], pluralize(key, counts[key])))
-	}
-	return fmt.Sprintf("You have %s (%d CRM records total).", strings.Join(parts, ", "), total)
-}
-
-// pluralize returns key ("lead"/"prospect"/"customer") pluralized for n.
-func pluralize(key string, n int) string {
-	if n == 1 {
-		return key
-	}
-	return key + "s"
 }

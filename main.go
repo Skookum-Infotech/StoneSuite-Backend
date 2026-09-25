@@ -426,6 +426,16 @@ func main() {
 		// everyone sharing it.
 		aiUserRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 3)
 
+		// Per-user rate limit for POST /ai/warm specifically — deliberately
+		// NOT aiUserRateLimiter/aiRateLimiter (see warmChain below): warm-up
+		// is meant to be hit on every app open, so sharing the same tight
+		// per-request AI budget as a real ask would make a normal user's
+		// first /ai/ask of the session compete with their own warm-up call
+		// for the same bucket. 1 request per 30s, burst 1, is generous for
+		// its actual purpose (avoid re-warming an already-warm box) while
+		// still bounding a caller hammering the endpoint.
+		warmUserRateLimiter := middleware.NewRateLimiter(shutdownCtx, 1.0/30.0, 1)
+
 		mux.Handle("/api/tenant/me", middleware.RequireAuth(tenantRateLimiter.PerTenant(resolver.Middleware(tenantMe))))
 
 		// tenantChain applies RequireAuth → per-tenant rate limit → tenancy
@@ -539,6 +549,15 @@ func main() {
 		// any one of them can reject a request the others would allow.
 		aiChain := func(h http.HandlerFunc) http.Handler {
 			return middleware.RequireAuth(aiRateLimiter.PerTenant(aiUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h)))))
+		}
+
+		// warmChain is tenantChain plus warmUserRateLimiter — deliberately
+		// NOT aiChain: POST /ai/warm makes no embedding/LLM call of its own
+		// on the request path (it only kicks off a detached goroutine), so it
+		// doesn't need the tight AI-specific tenant/user budgets aiChain
+		// exists to protect; it needs its own much lighter limit instead.
+		warmChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(warmUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h))))
 		}
 
 		// Public: customer-portal auth. A separate rate limiter from
@@ -1460,7 +1479,7 @@ func main() {
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/ask/stream", aiChain(aiOps.AskStream))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
-		mux.Handle("POST /api/tenant/ai/warm", aiChain(aiOps.Warm))
+		mux.Handle("POST /api/tenant/ai/warm", warmChain(aiOps.Warm))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))
 
 		// AI assistant on/off switches: a platform-admin master switch (per

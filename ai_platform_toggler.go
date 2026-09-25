@@ -17,8 +17,10 @@ import (
 
 // aiToggleWarmupTimeout bounds the detached warmup+help-corpus-sync goroutine
 // OnPlatformToggle starts on enable — it must never run unbounded in the
-// background.
-const aiToggleWarmupTimeout = 2 * time.Minute
+// background. Raised from 2 to 4 minutes to match controllers.warmBoundedTimeout
+// — a cold Machine start plus Ollama's first-inference model-load latency can
+// together exceed 2 minutes.
+const aiToggleWarmupTimeout = 4 * time.Minute
 
 // aiPlatformToggler implements controllers.PlatformToggleListener: it ties
 // the shared Ollama Machine's lifecycle (start/stop, on-demand wake, and a

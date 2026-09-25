@@ -70,6 +70,10 @@ type AIOps struct {
 	// Ollama lease, best-effort, for GetPlatformSettings's leaseHolders
 	// field. Nil under the same conditions as ollamaState.
 	leaseHolders leaseHolderLister
+	// helpCache serves intentHelp, first-turn asks from a small in-process
+	// LRU (see ai_help_cache.go) — help content is identical for every
+	// tenant, so one cache safely serves all of them.
+	helpCache *helpCache
 }
 
 // ollamaStater is the point-of-use view of *services.OllamaLifecycle.State.
@@ -101,6 +105,7 @@ func NewAIOps(cpPool *pgxpool.Pool, queryEmbed ragcore.Embedder, llm ragcore.LLM
 		cpPool: cpPool, queryEmbed: queryEmbed, llm: llm, cp: cp, docEmbed: docEmbed,
 		slots: newAILimiter(aiGlobalSlots, aiPerTenantSlots), slotWait: aiSlotWait,
 		aiSettings: aisettings.NewCache(nil), warmer: newAssistantWarmer(nil),
+		helpCache: newHelpCache(nil),
 	}
 }
 

@@ -139,7 +139,7 @@ func TestAIAsk_NonStreamingReturnsTypedCitationsAndPersistsTurn(t *testing.T) {
 	conv, err := ai.NewConversationStore(e.pool).Create(context.Background(), e.user.ID)
 	require.NoError(t, err)
 
-	rec := e.ask(t, `{"question":"what is Acme?","conversation_id":"`+conv.ID+`"}`)
+	rec := e.ask(t, `{"question":"tell me about the lead Acme","conversation_id":"`+conv.ID+`"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	var resp struct {
 		Success bool `json:"success"`
@@ -172,7 +172,7 @@ func TestAIAsk_OtherUsersConversationIs404(t *testing.T) {
 	someoneElse, err := ai.NewConversationStore(e.pool).Create(context.Background(), "aaaaaaaa-0000-0000-0000-00000000dead")
 	require.NoError(t, err)
 
-	rec := e.ask(t, `{"question":"what is Acme?","conversation_id":"`+someoneElse.ID+`"}`)
+	rec := e.ask(t, `{"question":"tell me about the lead Acme","conversation_id":"`+someoneElse.ID+`"}`)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "not 403: another user's conversation must be indistinguishable from none")
 }
 
@@ -187,8 +187,8 @@ func TestAIAsk_BusyIs429WithCodeOnBothEndpoints(t *testing.T) {
 	defer release()
 
 	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"ask":    e.ask(t, `{"question":"what is Acme?"}`),
-		"stream": doAskStream(e.resolver, e.h, e.identity.ID, e.tenantID, `{"question":"what is Acme?"}`),
+		"ask":    e.ask(t, `{"question":"tell me about the lead Acme"}`),
+		"stream": doAskStream(e.resolver, e.h, e.identity.ID, e.tenantID, `{"question":"tell me about the lead Acme"}`),
 	} {
 		assert.Equal(t, http.StatusTooManyRequests, rec.Code, name)
 		assert.Equal(t, "5", rec.Header().Get("Retry-After"), name)

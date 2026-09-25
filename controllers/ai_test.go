@@ -8,6 +8,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Skookum-Infotech/go-rag/ingest"
+	"github.com/stretchr/testify/assert"
+
 	"stonesuite-backend/ai"
 	"stonesuite-backend/middleware"
 )
@@ -98,5 +101,29 @@ func TestAIOpsReindexHelp_NonAdminRejected(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}
+
+func TestReindexHelpResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		res        ingest.Result
+		wantStatus int
+		wantOK     bool
+		wantFailed []string
+	}{
+		{"all ok", ingest.Result{Ingested: []string{"a.md"}}, http.StatusOK, true, []string{}},
+		{"partial failure", ingest.Result{Ingested: []string{"a.md"}, Failed: map[string]string{"b.md": "secret dsn"}}, http.StatusOK, true, []string{"b.md"}},
+		{"all failed", ingest.Result{Failed: map[string]string{"b.md": "x", "a.md": "y"}}, http.StatusBadGateway, false, []string{"a.md", "b.md"}},
+		{"empty corpus", ingest.Result{}, http.StatusOK, true, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, resp := reindexHelpResponse(tt.res, 0)
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Equal(t, tt.wantOK, resp["success"])
+			data := resp["data"].(map[string]any)
+			assert.Equal(t, tt.wantFailed, data["failed"])
+		})
 	}
 }

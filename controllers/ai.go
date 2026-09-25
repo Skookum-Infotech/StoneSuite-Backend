@@ -4,10 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Skookum-Infotech/go-rag/ingest"
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/ai/index"
@@ -163,7 +165,7 @@ func (h *AIOps) Reindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !status.Available {
-		writeAssistantDisabled(w)
+		writeAssistantDisabled(w, status)
 		return
 	}
 
@@ -229,6 +231,33 @@ func (h *AIOps) ReindexHelp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for doc, msg := range res.Failed {
+		slog.Error("reindex help: doc failed", "request_id", middleware.RequestIDFromContext(r.Context()), "doc", doc, "err", msg)
+	}
 	logSecurityEvent(r, "ai_reindex_help", "ingested", len(res.Ingested), "failed", len(res.Failed), "pruned", pruned)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": res, "pruned": pruned})
+	status, resp := reindexHelpResponse(res, pruned)
+	writeJSON(w, status, resp)
+}
+
+// msgNoHelpDocsIndexed is the 502 message when every help doc failed to embed.
+const msgNoHelpDocsIndexed = "No help documents could be indexed."
+
+// reindexHelpResponse builds the ReindexHelp status and body. Failed lists doc
+// names only (raw errors are logged, not returned); when nothing was ingested
+// and at least one doc failed, it is a 502 with success:false.
+func reindexHelpResponse(res ingest.Result, pruned int) (int, map[string]any) {
+	failed := make([]string, 0, len(res.Failed))
+	for doc := range res.Failed {
+		failed = append(failed, doc)
+	}
+	sort.Strings(failed)
+	ingested := res.Ingested
+	if ingested == nil {
+		ingested = []string{}
+	}
+	data := map[string]any{"ingested": ingested, "failed": failed}
+	if len(res.Ingested) == 0 && len(failed) > 0 {
+		return http.StatusBadGateway, map[string]any{"success": false, "message": msgNoHelpDocsIndexed, "data": data, "pruned": pruned}
+	}
+	return http.StatusOK, map[string]any{"success": true, "data": data, "pruned": pruned}
 }

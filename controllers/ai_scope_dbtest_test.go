@@ -149,14 +149,14 @@ func TestAIAsk_NonStreamingReturnsTypedCitationsAndPersistsTurn(t *testing.T) {
 			Citations []struct {
 				RecordType string `json:"record_type"`
 			} `json:"citations"`
+			ConversationID string `json:"conversation_id"`
+			Persisted      bool   `json:"persisted"`
 		} `json:"data"`
-		ConversationID string `json:"conversation_id"`
-		Persisted      bool   `json:"persisted"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.True(t, resp.Success)
-	assert.Equal(t, conv.ID, resp.ConversationID)
-	assert.True(t, resp.Persisted)
+	assert.Equal(t, conv.ID, resp.Data.ConversationID)
+	assert.True(t, resp.Data.Persisted)
 	require.Len(t, resp.Data.Citations, 1)
 	assert.Equal(t, "lead", resp.Data.Citations[0].RecordType)
 
@@ -198,4 +198,21 @@ func TestAIAsk_BusyIs429WithCodeOnBothEndpoints(t *testing.T) {
 	// A zero-LLM direct count needs no slot, so it still answers.
 	rec := e.ask(t, `{"question":"how many leads do we have?"}`)
 	assert.Equal(t, http.StatusOK, rec.Code, "count_direct must not wait on a model slot")
+}
+
+// TestCallerUserID_UnlinkedIdentityIs403: an authenticated identity with no
+// user row in this workspace gets a 403, not a 500.
+func TestCallerUserID_UnlinkedIdentityIs403(t *testing.T) {
+	e := newAITestEnv(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/tenant/ai/conversations", nil)
+	payload := middleware.UserContextPayload{ID: "00000000-0000-0000-0000-00000000dead", TenantID: e.tenantID}
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
+	rec := httptest.NewRecorder()
+
+	id, ok := callerUserID(rec, req, e.pool)
+
+	assert.False(t, ok)
+	assert.Empty(t, id)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), msgUserNotLinked)
 }

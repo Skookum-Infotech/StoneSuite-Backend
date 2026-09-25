@@ -116,18 +116,19 @@ func (h *AIOps) Ask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	observeSuccess(route, res)
-	persisted := recordTurn(r, pa, body.Question, res.Answer)
+	citations := citationDTOs(ctx, pa.pool, res.Citations)
+	persisted := recordTurn(r, pa, body.Question, res.Answer, citations)
 	finishAsk(r, pa, endpointAsk, route, outcomeOK, start)
 
-	resp := map[string]any{"success": true, "data": map[string]any{
+	data := map[string]any{
 		"answer":    res.Answer,
-		"citations": citationDTOs(ctx, pa.pool, res.Citations),
+		"citations": citations,
 		"truncated": res.Usage.Truncated,
 		"route":     route,
-	}}
-	if pa.conv != nil {
-		resp["conversation_id"] = pa.conv.ID
-		resp["persisted"] = persisted
 	}
-	writeJSON(w, http.StatusOK, resp)
+	if pa.conv != nil {
+		data["conversation_id"] = pa.conv.ID
+		data["persisted"] = persisted
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "data": data})
 }

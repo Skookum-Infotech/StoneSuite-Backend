@@ -98,7 +98,7 @@ func (h *AIOps) prepareAsk(w http.ResponseWriter, r *http.Request) (askRequestBo
 		return body, pa, false
 	}
 	if !status.Available {
-		writeAssistantDisabled(w)
+		writeAssistantDisabled(w, status)
 		return body, pa, false
 	}
 
@@ -179,15 +179,30 @@ func (h *AIOps) prepareAsk(w http.ResponseWriter, r *http.Request) (askRequestBo
 // WithoutCancel keeps the pool and values and drops only the cancellation; the
 // short timeout stops a wedged write outliving the request by more than a
 // moment.
-func recordTurn(r *http.Request, pa preparedAsk, question, answer string) bool {
+func recordTurn(r *http.Request, pa preparedAsk, question, answer string, citations []citationDTO) bool {
 	if pa.conv == nil {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 	defer cancel()
-	if err := pa.convStore.AppendTurn(ctx, pa.conv.ID, question, answer, conversationTitleFromQuestion(question)); err != nil {
+	if err := pa.convStore.AppendTurn(ctx, pa.conv.ID, question, answer, conversationTitleFromQuestion(question), marshalCitations(ctx, citations)); err != nil {
 		slog.Error("failed to record ai conversation turn", "request_id", middleware.RequestIDFromContext(ctx), "tenant_id", pa.tenant.ID, "err", err)
 		return false
 	}
 	return true
+}
+
+// marshalCitations encodes the client-facing citation DTOs for storage on the
+// assistant message. Empty input or a marshal failure yields nil (stored as
+// NULL): losing display-only citations must never fail the turn.
+func marshalCitations(ctx context.Context, citations []citationDTO) json.RawMessage {
+	if len(citations) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(citations)
+	if err != nil {
+		slog.Warn("ai citations marshal failed", "request_id", middleware.RequestIDFromContext(ctx), "err", err)
+		return nil
+	}
+	return raw
 }

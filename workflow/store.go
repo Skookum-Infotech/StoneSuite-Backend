@@ -553,12 +553,15 @@ func UpdateRecordFields(ctx context.Context, q Querier, id string, custom map[st
 
 // ----- identity / team helpers ----------------------------------------------
 
+// ErrNoTenantUser reports that an identity has no user row in this tenant.
+var ErrNoTenantUser = errors.New("no tenant user for identity")
+
 // UserIDByIdentity maps a control-plane identity id to the tenant-local user id.
 func UserIDByIdentity(ctx context.Context, q Querier, identityID string) (string, error) {
 	var id string
 	err := q.QueryRow(ctx, `SELECT id FROM users WHERE identity_id = $1`, identityID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errors.New("no tenant user for identity")
+		return "", ErrNoTenantUser
 	}
 	if err != nil {
 		return "", fmt.Errorf("user by identity: %w", err)

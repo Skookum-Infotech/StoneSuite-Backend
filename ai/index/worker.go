@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/Skookum-Infotech/go-rag/chunk"
 	"github.com/Skookum-Infotech/go-rag/rag"
@@ -19,6 +20,9 @@ import (
 // exists to make an exception to that visible in logs rather than a schema
 // change made speculatively before real records are observed exceeding it.
 const recordTokenBudget = 400
+
+// releaseTimeout bounds releasing a claimed batch after the embedder went away.
+const releaseTimeout = 5 * time.Second
 
 // RecordLoader loads a record's embeddable form + scope columns by id.
 // Implemented over crmstore.Store.GetRecord (adapter in the wiring layer).
@@ -66,9 +70,10 @@ func NewWorker(q jobQueue, loader RecordLoader, emb rag.Embedder, sink ChunkSink
 // handled. Per-job failures are isolated (logged + re-queued); they don't
 // abort the batch — with one exception: rag.ErrUnavailable (the embedder
 // itself is unreachable, e.g. Ollama is down or mid-restart) means every
-// other job in the batch would fail the same way, so that job is released
-// back to pending WITHOUT charging a retry attempt, the rest of the batch is
-// left untouched for the next drain, and the error is returned so the caller
+// other job in the batch would fail the same way, so that job AND every
+// not-yet-processed job of the claimed batch are released back to pending
+// WITHOUT charging a retry attempt (they must not stay 'inflight' with an
+// attempt charged until ReclaimStuck), and the error is returned so the caller
 // (runTenantIndexWorker) can back off instead of hammering a dead embedder
 // every few seconds.
 func (w *Worker) DrainOnce(ctx context.Context) (int, error) {
@@ -77,13 +82,11 @@ func (w *Worker) DrainOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	handled := 0
-	for _, j := range jobs {
+	for i, j := range jobs {
 		if err := w.process(ctx, j); err != nil {
 			if errors.Is(err, rag.ErrUnavailable) {
 				slog.Warn("rag index job deferred: embedder unavailable", "id", j.ID, "source_id", j.SourceID, "err", err)
-				if relErr := w.q.Release(ctx, j.ID); relErr != nil {
-					slog.Error("rag index release failed", "id", j.ID, "err", relErr)
-				}
+				w.releaseRemaining(ctx, jobs[i:])
 				handled++
 				return handled, err
 			}
@@ -96,6 +99,20 @@ func (w *Worker) DrainOnce(ctx context.Context) (int, error) {
 		handled++
 	}
 	return handled, nil
+}
+
+// releaseRemaining returns every job in rest to pending, refunding the attempt
+// its claim charged. It uses a context detached from cancellation so a
+// shutting-down drain still un-strands its batch; failures are logged and left
+// to ReclaimStuck.
+func (w *Worker) releaseRemaining(ctx context.Context, rest []Job) {
+	relCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
+	defer cancel()
+	for _, j := range rest {
+		if err := w.q.Release(relCtx, j.ID); err != nil {
+			slog.Error("rag index release failed", "id", j.ID, "err", err)
+		}
+	}
 }
 
 func (w *Worker) process(ctx context.Context, j Job) error {

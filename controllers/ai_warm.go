@@ -99,7 +99,7 @@ func (h *AIOps) Warm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !status.Available {
-		writeAssistantDisabled(w)
+		writeAssistantDisabled(w, status)
 		return
 	}
 

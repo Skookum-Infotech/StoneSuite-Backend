@@ -228,11 +228,12 @@ func (h *AIOps) finishStream(w io.Writer, rc *http.ResponseController, r *http.R
 		return
 	}
 	observeSuccess(route, res)
-	persisted := recordTurn(r, pa, question, res.Answer)
+	citations := citationDTOs(r.Context(), pa.pool, res.Citations)
+	persisted := recordTurn(r, pa, question, res.Answer, citations)
 	finishAsk(r, pa, endpointStream, route, outcomeOK, start)
 	data := map[string]any{
 		"answer":    res.Answer,
-		"citations": citationDTOs(r.Context(), pa.pool, res.Citations),
+		"citations": citations,
 		"truncated": res.Usage.Truncated,
 		"route":     route,
 	}

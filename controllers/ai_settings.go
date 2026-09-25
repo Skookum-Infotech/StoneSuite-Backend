@@ -13,7 +13,6 @@ import (
 	"stonesuite-backend/aisettings"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/middleware"
-	"stonesuite-backend/models"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
 )
@@ -25,14 +24,57 @@ import (
 // availability flag prepareAsk, Reindex, and Warm all gate on the same way.
 const codeAssistantDisabled = "assistant_disabled"
 
+const (
+	disabledReasonPlatform = "platform"
+	disabledReasonTenant   = "tenant"
+
+	msgDisabledByPlatform = "The StoneSuite Assistant has been turned off by the platform administrator."
+	msgDisabledByTenant   = "The StoneSuite Assistant is turned off for your organization."
+
+	// maxSettingsBodyBytes caps the {"enabled": bool} PUT bodies.
+	maxSettingsBodyBytes = 1 << 10
+
+	msgEnabledRequired = "Field 'enabled' is required."
+)
+
+// assistantDisabledPayload returns the message and reason ("platform" or
+// "tenant") for a disabled status; the platform switch wins when both are off.
+func assistantDisabledPayload(status aisettings.Status) (message, reason string) {
+	if !status.PlatformEnabled {
+		return msgDisabledByPlatform, disabledReasonPlatform
+	}
+	return msgDisabledByTenant, disabledReasonTenant
+}
+
 // writeAssistantDisabled sends the disabled 403 with the stable
-// assistant_disabled code every AI entry point agrees on.
-func writeAssistantDisabled(w http.ResponseWriter) {
-	writeJSON(w, http.StatusForbidden, models.APIResponse{
-		Success: false,
-		Code:    codeAssistantDisabled,
-		Message: "The StoneSuite Assistant is turned off for your organization.",
+// assistant_disabled code every AI entry point agrees on, plus a reason
+// telling the client which switch is off.
+func writeAssistantDisabled(w http.ResponseWriter, status aisettings.Status) {
+	message, reason := assistantDisabledPayload(status)
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"success": false,
+		"code":    codeAssistantDisabled,
+		"reason":  reason,
+		"message": message,
 	})
+}
+
+// decodeEnabledBody reads a {"enabled": bool} body capped at
+// maxSettingsBodyBytes. A missing field, malformed JSON, or a wrong type
+// writes a 400 and returns ok=false.
+func decodeEnabledBody(w http.ResponseWriter, r *http.Request) (enabled, ok bool) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingsBodyBytes)).Decode(&body); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return false, false
+	}
+	if body.Enabled == nil {
+		fail(w, http.StatusBadRequest, msgEnabledRequired)
+		return false, false
+	}
+	return *body.Enabled, true
 }
 
 // PlatformToggleListener is notified after a successful write to the
@@ -70,12 +112,6 @@ type tenantCatchUpNotifier interface {
 func (h *AIOps) WithCatchUpNotifier(n tenantCatchUpNotifier) *AIOps {
 	h.catchUpNotifier = n
 	return h
-}
-
-// tenantAISettingsBody is the request/response body shape for the tenant
-// assistant toggle — {"enabled": true/false} in, the recomputed Status out.
-type tenantAISettingsBody struct {
-	Enabled bool `json:"enabled"`
 }
 
 // Status handles GET /api/tenant/ai/status. Any authenticated tenant user
@@ -139,23 +175,22 @@ func (h *AIOps) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body tenantAISettingsBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	enabled, ok := decodeEnabledBody(w, r)
+	if !ok {
 		return
 	}
 
-	if err := aisettings.SetTenantEnabled(r.Context(), pool, body.Enabled, payload.Email); err != nil {
+	if err := aisettings.SetTenantEnabled(r.Context(), pool, enabled, payload.Email); err != nil {
 		slog.Error("save tenant ai settings failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to save assistant settings.")
 		return
 	}
 	h.aiSettings.InvalidateTenant(tenant.ID)
-	if body.Enabled && h.catchUpNotifier != nil {
+	if enabled && h.catchUpNotifier != nil {
 		h.catchUpNotifier.CatchUp(tenant.ID)
 	}
 
-	logSecurityEvent(r, "ai_settings_changed", "identity", payload.ID, "tenant_id", tenant.ID, "enabled", body.Enabled)
+	logSecurityEvent(r, "ai_settings_changed", "identity", payload.ID, "tenant_id", tenant.ID, "enabled", enabled)
 
 	status, err := h.aiSettings.Status(r.Context(), h.cpPool, pool, tenant.ID)
 	if err != nil {
@@ -247,23 +282,22 @@ func (h *AIOps) UpdatePlatformSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body tenantAISettingsBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	enabled, ok := decodeEnabledBody(w, r)
+	if !ok {
 		return
 	}
 
-	if err := aisettings.SetPlatformEnabled(r.Context(), h.cpPool, body.Enabled, payload.Email); err != nil {
+	if err := aisettings.SetPlatformEnabled(r.Context(), h.cpPool, enabled, payload.Email); err != nil {
 		slog.Error("save platform ai settings failed", "request_id", middleware.RequestIDFromContext(r.Context()), "err", err)
 		fail(w, http.StatusInternalServerError, "Failed to save assistant settings.")
 		return
 	}
 	h.aiSettings.InvalidatePlatform()
 	if h.toggleListener != nil {
-		h.toggleListener.OnPlatformToggle(r.Context(), body.Enabled)
+		h.toggleListener.OnPlatformToggle(r.Context(), enabled)
 	}
 
-	logSecurityEvent(r, "platform_ai_settings_changed", "identity", payload.ID, "enabled", body.Enabled)
+	logSecurityEvent(r, "platform_ai_settings_changed", "identity", payload.ID, "enabled", enabled)
 
 	view, err := h.loadPlatformSettingsView(r.Context())
 	if err != nil {

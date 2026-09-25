@@ -143,6 +143,25 @@ func (q *Queue) ReclaimStuck(ctx context.Context) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
+// doneRetention is how long 'done' jobs are kept before PurgeDone deletes them.
+const doneRetention = 7 * 24 * time.Hour
+
+// PurgeDone deletes 'done' jobs older than doneRetention and reports how many
+// it removed. The table has no completion timestamp, so age is measured from
+// claimed_at (the last claim, i.e. when the job ran), falling back to
+// enqueued_at for rows claimed before claimed_at existed.
+func (q *Queue) PurgeDone(ctx context.Context) (int, error) {
+	tag, err := q.pool.Exec(ctx, `
+		DELETE FROM rag_index_queue
+		WHERE status = 'done'
+		  AND COALESCE(claimed_at, enqueued_at) < NOW() - ($1 * INTERVAL '1 second')`,
+		doneRetention.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("purge done jobs: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // Revive resets every terminal 'error' job back to 'pending' with attempts
 // reset to 0, and reports how many it revived. Called on the
 // unavailable-to-available transition (AI re-enabled, or Ollama confirmed

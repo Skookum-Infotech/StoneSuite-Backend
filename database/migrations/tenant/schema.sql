@@ -8620,3 +8620,13 @@ INSERT INTO ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 -- those, same as before this existed.
 -- =====================================================================
 ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+
+-- =====================================================================
+-- Tenant-template schema -- ai_messages.citations.
+--
+-- The citation DTOs (source_type/source_id/snippet/record_type) the client was
+-- shown for an assistant answer, saved with the turn so a reopened transcript
+-- can render them. NULL on user messages and on every row saved before this
+-- column existed. Display-only: never replayed into the prompt.
+-- =====================================================================
+ALTER TABLE ai_messages ADD COLUMN IF NOT EXISTS citations JSONB;

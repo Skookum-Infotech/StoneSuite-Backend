@@ -260,8 +260,8 @@ func main() {
 				// always-on embedder box) — there is no warmup step to hang
 				// this off, so sync at boot directly. Best-effort: a slow or
 				// unreachable local embedder must not block or crash boot.
-				go syncHelpCorpus(shutdownCtx, cp.Pool())
 				aiToggler = newAIPlatformToggler(nil, nil, nil, indexCoordinator, cp.Pool(), shutdownCtx)
+				aiToggler.startHelpSync(shutdownCtx)
 			}
 
 			// RAG index workers: one per active tenant, draining rag_index_queue

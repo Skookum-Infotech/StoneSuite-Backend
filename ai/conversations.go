@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -34,13 +35,16 @@ type Conversation struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// Message is one stored turn: plain role+content text only, never citations
-// or retrieved chunks — see the ai_conversations/ai_messages schema doc
-// comment on why (grounding always re-retrieves fresh per turn).
+// Message is one stored turn: role+content text, plus (on assistant messages
+// saved via AppendTurn) the citation DTOs the client was shown, kept only so
+// a reopened transcript can render them. They are never fed back into the
+// prompt — grounding always re-retrieves fresh per turn. Citations is nil for
+// user messages and for rows saved before it existed.
 type Message struct {
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"createdAt"`
+	Role      string          `json:"role"`
+	Content   string          `json:"content"`
+	CreatedAt time.Time       `json:"createdAt"`
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 // ConversationStore persists AI assistant conversation history.
@@ -174,8 +178,8 @@ func (s *ConversationStore) AppendMessage(ctx context.Context, conversationID, r
 // which is bounded and timestamp-free for feeding straight to the LLM.
 func (s *ConversationStore) Messages(ctx context.Context, conversationID string) ([]Message, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT role, content, created_at FROM (
-			SELECT role, content, created_at FROM ai_messages
+		SELECT role, content, created_at, citations FROM (
+			SELECT role, content, created_at, citations FROM ai_messages
 			WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT $2
 		) recent ORDER BY created_at ASC`, conversationID, maxTranscriptMessages)
 	if err != nil {
@@ -185,7 +189,7 @@ func (s *ConversationStore) Messages(ctx context.Context, conversationID string)
 	out := []Message{}
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt, &m.Citations); err != nil {
 			return nil, fmt.Errorf("scan ai message: %w", err)
 		}
 		out = append(out, m)
@@ -199,11 +203,13 @@ func (s *ConversationStore) Messages(ctx context.Context, conversationID string)
 // Ollama silently drops the oldest tokens — the system prompt first.
 const historyCharBudget = 8000
 
+// historyRoleAssistant is the role stored on a model answer.
+const historyRoleAssistant = "assistant"
+
 // History returns the most recent turns of a conversation, oldest first, as
 // model messages: at most historyLimit messages and at most historyCharBudget
-// characters, dropping the oldest first. Always ends on a whole turn boundary
-// it can keep — a single message larger than the whole budget is dropped
-// rather than truncated mid-sentence.
+// characters. The cut drops whole user+assistant pairs, oldest first, so the
+// history never starts with an orphaned assistant answer (see trimHistory).
 func (s *ConversationStore) History(ctx context.Context, conversationID string) ([]rag.Message, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT role, content FROM ai_messages
@@ -214,26 +220,47 @@ func (s *ConversationStore) History(ctx context.Context, conversationID string) 
 	}
 	defer rows.Close()
 	var newestFirst []rag.Message
-	used := 0
 	for rows.Next() {
 		var m rag.Message
 		if err := rows.Scan(&m.Role, &m.Content); err != nil {
 			return nil, fmt.Errorf("scan ai message: %w", err)
 		}
-		if used+len(m.Content) > historyCharBudget {
-			break
-		}
-		used += len(m.Content)
 		newestFirst = append(newestFirst, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("load conversation history: %w", err)
 	}
-	out := make([]rag.Message, len(newestFirst))
+	oldestFirst := make([]rag.Message, len(newestFirst))
 	for i, m := range newestFirst {
-		out[len(newestFirst)-1-i] = m
+		oldestFirst[len(newestFirst)-1-i] = m
 	}
-	return out, nil
+	return trimHistory(oldestFirst, historyCharBudget), nil
+}
+
+// trimHistory drops the oldest messages until the total content fits budget
+// characters, then drops any leading assistant messages, so the result never
+// starts with an assistant answer whose question was cut away (or fell outside
+// historyLimit). A single message larger than the whole budget is dropped
+// rather than truncated mid-sentence.
+func trimHistory(oldestFirst []rag.Message, budget int) []rag.Message {
+	total := 0
+	for _, m := range oldestFirst {
+		total += len(m.Content)
+	}
+	start := 0
+	for start < len(oldestFirst) && total > budget {
+		total -= len(oldestFirst[start].Content)
+		start++
+		// Cutting a user message takes its answer with it.
+		for start < len(oldestFirst) && oldestFirst[start].Role == historyRoleAssistant {
+			total -= len(oldestFirst[start].Content)
+			start++
+		}
+	}
+	for start < len(oldestFirst) && oldestFirst[start].Role == historyRoleAssistant {
+		start++
+	}
+	return oldestFirst[start:]
 }
 
 // AppendTurn records one completed question/answer pair and sets the
@@ -242,17 +269,25 @@ func (s *ConversationStore) History(ctx context.Context, conversationID string) 
 // turn would replay as an unanswered question). clock_timestamp(), not NOW():
 // NOW() is fixed for the whole transaction, which would tie the two rows'
 // created_at and make their order undefined.
-func (s *ConversationStore) AppendTurn(ctx context.Context, conversationID, question, answer, title string) error {
+func (s *ConversationStore) AppendTurn(ctx context.Context, conversationID, question, answer, title string, citations json.RawMessage) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("append turn: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	for _, m := range []struct{ role, content string }{{"user", question}, {"assistant", answer}} {
+	// Citations ride on the assistant row only; nil stays SQL NULL.
+	var citationsArg []byte
+	if len(citations) > 0 {
+		citationsArg = citations
+	}
+	for _, m := range []struct {
+		role, content string
+		citations     []byte
+	}{{"user", question, nil}, {historyRoleAssistant, answer, citationsArg}} {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO ai_messages (conversation_id, role, content, created_at)
-			VALUES ($1, $2, $3, clock_timestamp())`, conversationID, m.role, m.content); err != nil {
+			INSERT INTO ai_messages (conversation_id, role, content, created_at, citations)
+			VALUES ($1, $2, $3, clock_timestamp(), $4)`, conversationID, m.role, m.content, m.citations); err != nil {
 			return fmt.Errorf("append turn: insert %s message: %w", m.role, err)
 		}
 	}

@@ -85,12 +85,16 @@ func (l *latencySet) String() string {
 }
 
 // writeResultsJSON writes the full result set to path as JSON.
-func writeResultsJSON(path string, results []caseResult) error {
+func writeResultsJSON(path string, results []caseResult) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create output file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", path, closeErr)
+		}
+	}()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(results); err != nil {

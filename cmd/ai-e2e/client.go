@@ -106,7 +106,7 @@ func (c *apiClient) ask(ctx context.Context, question, conversationID string) as
 	if err != nil {
 		return askResult{TransportErr: fmt.Errorf("ask request: %w", err), Total: time.Since(start)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		return c.readStatusFailure(resp, start)

@@ -51,7 +51,7 @@ func (c *apiClient) fetchAllRecords(ctx context.Context, workflowKey string) ([]
 			return nil, fmt.Errorf("list %s records: %w", workflowKey, err)
 		}
 		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxStatusBodyBytes*16))
-		resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if readErr != nil {
 			return nil, fmt.Errorf("read %s records body: %w", workflowKey, readErr)
 		}

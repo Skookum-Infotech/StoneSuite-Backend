@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,28 +88,34 @@ func TestSendNotificationWithResult_UnparseableBodyIsNotAnError(t *testing.T) {
 	assert.Empty(t, res.NotificationIDs)
 }
 
-func TestSendNotification_IncludesEmailBodyHTML(t *testing.T) {
-	var gotBody NotificationRequest
+func TestSendNotification_RendersEmailThroughSharedTemplate(t *testing.T) {
+	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer server.Close()
 
-	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret", EmailBrandName: "StoneSuite"}
 
 	err := SendNotification(context.Background(), NotificationRequest{
-		TenantID:      "tenant-1",
-		Recipients:    []RecipientTarget{{Email: "customer@example.com"}},
-		EventType:     "document.sent",
-		Resource:      "salesorder",
-		ResourceID:    "so-1",
-		Title:         "Sales Order SO-1 sent",
-		EmailBodyHTML: "<p>Branded body.</p>",
+		TenantID:   "tenant-1",
+		Recipients: []RecipientTarget{{Email: "customer@example.com"}},
+		EventType:  "document.sent",
+		Resource:   "salesorder",
+		ResourceID: "so-1",
+		Title:      "Sales Order SO-1 sent",
+		Channels:   []string{"email"},
+		Email:      &Email{Badge: "Document Sent", Heading: "Sales Order SO-1", Paragraphs: []Paragraph{{Text("Please find your sales order attached.")}}},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "<p>Branded body.</p>", gotBody.EmailBodyHTML)
+	body, _ := gotBody["emailBodyHtml"].(string)
+	assert.True(t, strings.HasPrefix(body, "<!DOCTYPE html>"), "the rendered template goes out as emailBodyHtml")
+	assert.Contains(t, body, ">DOCUMENT SENT<")
+	assert.Contains(t, body, "Please find your sales order attached.")
+	assert.NotContains(t, gotBody, "Email", "the content struct itself is not sent on the wire")
+	assert.Equal(t, "customer@example.com", gotBody["recipients"].([]any)[0].(map[string]any)["email"], "reaches the intended recipient")
 }
 
 func TestSendNotification_NotConfigured_ReturnsError(t *testing.T) {
@@ -141,4 +149,64 @@ func TestSendNotification_SlowNotifyService_TimesOutInsteadOfHanging(t *testing.
 	case <-time.After(2 * time.Second):
 		t.Fatal("SendNotification did not return — the notify client has no effective timeout")
 	}
+}
+
+func TestPersonalize(t *testing.T) {
+	two := []RecipientTarget{{Email: "a@x.com", Name: "Ann"}, {Email: "b@x.com", Name: "Bob"}}
+	tests := []struct {
+		name      string
+		req       NotificationRequest
+		wantParts int
+		wantNames []string
+	}{
+		{"no email content: one call", NotificationRequest{Recipients: two}, 1, []string{""}},
+		{"no greeting: one call", NotificationRequest{Recipients: two, Email: &Email{}}, 1, []string{""}},
+		{"fixed name: one call", NotificationRequest{Recipients: two, Email: &Email{Greet: true, RecipientName: "Pat"}}, 1, []string{"Pat"}},
+		{"shared name: one call", NotificationRequest{Recipients: []RecipientTarget{{Email: "a@x.com", Name: "Ann"}}, Email: &Email{Greet: true}}, 1, []string{"Ann"}},
+		{"different names: one call each", NotificationRequest{Recipients: two, Email: &Email{Greet: true}}, 2, []string{"Ann", "Bob"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parts := personalize(tt.req)
+			require.Len(t, parts, tt.wantParts)
+			for i, p := range parts {
+				name := ""
+				if p.Email != nil {
+					name = p.Email.RecipientName
+				}
+				assert.Equal(t, tt.wantNames[i], name)
+			}
+			if tt.wantParts > 1 {
+				assert.Equal(t, []RecipientTarget{two[0]}, parts[0].Recipients)
+				assert.Equal(t, []RecipientTarget{two[1]}, parts[1].Recipients)
+				assert.Empty(t, tt.req.Email.RecipientName, "the caller's Email is not mutated")
+			}
+		})
+	}
+}
+
+func TestSendNotificationWithResult_GreetsEachRecipientByNameAndAggregatesIDs(t *testing.T) {
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"n-` + strconv.Itoa(len(bodies)) + `"}]}}`))
+	}))
+	defer server.Close()
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	res, err := SendNotificationWithResult(context.Background(), NotificationRequest{
+		Recipients: []RecipientTarget{{Email: "a@x.com", Name: "Ann"}, {Email: "b@x.com", Name: "Bob"}},
+		Channels:   []string{"email"},
+		Email:      &Email{Greet: true, Badge: "Approval Needed", Heading: "Invoice INV-1"},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"n-1", "n-2"}, res.NotificationIDs)
+	require.Len(t, bodies, 2)
+	assert.Contains(t, bodies[0]["emailBodyHtml"], ">Hello Ann,<")
+	assert.Contains(t, bodies[1]["emailBodyHtml"], ">Hello Bob,<")
+	assert.NotContains(t, bodies[0]["recipients"].([]any)[0], "name", "names never go on the wire")
 }

@@ -48,7 +48,7 @@ func TestRenderEmail_EveryBlockCarriesItsContent(t *testing.T) {
 	for _, want := range []string{
 		"<!DOCTYPE html>",
 		">APPROVAL NEEDED<",
-		"Invoice INV-000123<br>",
+		"Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>",
 		`<span style="color:#c2f589;">needs your approval.</span>`,
 		">Please review and take action.<",
 		">Hello Alex Approver,<",
@@ -260,4 +260,20 @@ func TestRenderEmail_EqualGapBetweenEveryBodyBlock(t *testing.T) {
 		assert.NotContains(t, out, uneven)
 	}
 	assert.Contains(t, out, `<tr><td style="padding:24px;`, "card body padded equally on every side")
+}
+
+func TestKeepRefs(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"reference stays on one line", "Your Invoice INV-000123", `Your Invoice <span style="white-space:nowrap;">INV-000123</span>`},
+		{"plain text wraps normally", "needs your approval.", "needs your approval."},
+		{"escapes markup", "<b>A-1</b>", `<span style="white-space:nowrap;">&lt;b&gt;A-1&lt;/b&gt;</span>`},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, string(keepRefs(tt.in)))
+		})
+	}
 }

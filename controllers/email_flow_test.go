@@ -90,7 +90,7 @@ func TestEmailFlow_EveryModuleRendersTheSharedTemplateForTheRightRecipient(t *te
 			req:        func() services.NotificationRequest { return sendDoc("invoice", "Invoice", "INV-000123") },
 			recipients: []string{"buyer@example.com", "ap@example.com"},
 			subject:    "Invoice INV-000123",
-			contains:   []string{">DOCUMENT SENT<", "Invoice INV-000123<br>", ">Hello Pat Customer,<", "has sent you invoice", "INV-000123.pdf", ">View in portal<"},
+			contains:   []string{">DOCUMENT SENT<", "Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>", ">Hello Pat Customer,<", "has sent you invoice", "INV-000123.pdf", ">View in portal<"},
 		},
 		{
 			name:       "estimate sent",

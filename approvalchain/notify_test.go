@@ -121,7 +121,7 @@ func TestBuildApprovalNotification(t *testing.T) {
 			html, err := services.RenderEmail(e)
 			require.NoError(t, err)
 			assert.Contains(t, html, ">"+tt.badge+"<", "banner pill")
-			assert.Contains(t, html, "Invoice INV-000123<br>", "banner heading line 1")
+			assert.Contains(t, html, "Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>", "banner heading line 1")
 			assert.Contains(t, html, tt.heading, "banner heading line 2")
 			assert.Contains(t, html, ">Hello Alex Approver,<")
 			assert.Contains(t, html, tt.lead)

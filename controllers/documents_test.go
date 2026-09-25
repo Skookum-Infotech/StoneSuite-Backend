@@ -35,7 +35,7 @@ func TestDocumentEmail_MatchesDocumentDeliveredDesign(t *testing.T) {
 	out := mustRenderEmail(t, documentEmail(doc, "", "INV-0042.pdf", 245*1024))
 
 	for _, want := range []string{
-		">DOCUMENT SENT<", "Invoice INV-0042<br>", "is on its way.", "Your document is ready to view.",
+		">DOCUMENT SENT<", "Invoice <span style=\"white-space:nowrap;\">INV-0042</span><br>", "is on its way.", "Your document is ready to view.",
 		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="https://app.example.com/portal"`,
 		">INV-0042</a>. It is attached to this email as a PDF. You can also view and download it anytime from your customer portal.",
 		"INV-0042.pdf", "245 KB", ">View in portal<",
@@ -257,7 +257,7 @@ func TestNotifyOwnerOfSend_MatchesOwnerDocumentSentDesign(t *testing.T) {
 	assert.Equal(t, "Jane Owner", gotReq.Recipients[0].Name)
 	out := mustEmailHTML(t, gotReq)
 	for _, want := range []string{
-		">DOCUMENT SENT<", "Invoice INV-000123<br>", "was sent.", "A copy has been shared with your customer.",
+		">DOCUMENT SENT<", "Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>", "was sent.", "A copy has been shared with your customer.",
 		"Invoice INV-000123 has been sent to pat@example.com. A copy of the PDF is below, and you can open the record anytime to check its status.",
 		"INV-000123.pdf", "245 KB", ">View invoice<", `href="https://app.example.com/sales/invoice/rec-1"`,
 		"You're receiving this because you&#39;re an account owner.",

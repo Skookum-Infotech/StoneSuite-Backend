@@ -30,7 +30,8 @@ const defaultEmailReason = "you have a StoneSuite account."
 // literally in a template): Outlook's Word engine ignores CSS max-width, so
 // without a fixed-width 480px wrapper the card stretches to the reading pane.
 var emailTemplateFuncs = template.FuncMap{
-	"upper": strings.ToUpper,
+	"upper":    strings.ToUpper,
+	"keepRefs": keepRefs,
 	"msoOpen": func() template.HTML {
 		return `<!--[if mso]><table role="presentation" width="480" align="center" cellspacing="0" cellpadding="0"><tr><td><![endif]-->`
 	},
@@ -194,4 +195,20 @@ func (r NotificationRequest) EmailHTML() (string, error) {
 		return "", nil
 	}
 	return RenderEmail(defaultEmail(r))
+}
+
+// keepRefs HTML-escapes a banner heading and keeps each hyphenated reference
+// ("INV-000123", "SO-0042") on one line: without it a narrow phone screen wraps
+// a reference mid-number ("INV-" / "000123"). Only words containing a hyphen are
+// wrapped, so ordinary text still wraps normally.
+func keepRefs(s string) template.HTML {
+	words := strings.Split(s, " ")
+	for i, w := range words {
+		esc := template.HTMLEscapeString(w)
+		if strings.Contains(w, "-") {
+			esc = `<span style="white-space:nowrap;">` + esc + `</span>`
+		}
+		words[i] = esc
+	}
+	return template.HTML(strings.Join(words, " "))
 }

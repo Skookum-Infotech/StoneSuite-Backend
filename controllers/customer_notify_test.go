@@ -37,7 +37,7 @@ func TestBuildCustomerApprovedNotification(t *testing.T) {
 
 	assert.Contains(t, mustEmailHTML(t, req), "<!DOCTYPE html>")
 	assert.Contains(t, mustEmailHTML(t, req), ">APPROVED<", "banner pill")
-	assert.Contains(t, mustEmailHTML(t, req), "Your Invoice INV-000123<br>", "banner heading line 1")
+	assert.Contains(t, mustEmailHTML(t, req), "Your Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>", "banner heading line 1")
 	assert.Contains(t, mustEmailHTML(t, req), "has been approved.", "banner heading line 2")
 	assert.Contains(t, mustEmailHTML(t, req), "Your invoice INV-000123 has been approved. You can view the approved invoice in your customer portal anytime.")
 	assert.Contains(t, mustEmailHTML(t, req), "Thank you for your prompt action.", "banner subtitle")

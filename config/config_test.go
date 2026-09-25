@@ -154,3 +154,51 @@ func TestLoadPlatformAdminEmailDomain(t *testing.T) {
 		}
 	})
 }
+
+func TestGetEnvBool(t *testing.T) {
+	const key = "TEST_GET_ENV_BOOL"
+	tests := []struct {
+		name  string
+		value string
+		set   bool
+		def   bool
+		want  bool
+	}{
+		{"unset keeps a true default", "", false, true, true},
+		{"unset keeps a false default", "", false, false, false},
+		{"false overrides a true default", "false", true, true, false},
+		{"0 overrides a true default", "0", true, true, false},
+		{"true overrides a false default", "true", true, false, true},
+		{"1 overrides a false default", "1", true, false, true},
+		{"invalid value keeps the default", "maybe", true, true, true},
+		{"empty value keeps the default", "", true, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.set {
+				t.Setenv(key, tt.value)
+			}
+			if got := getEnvBool(key, tt.def); got != tt.want {
+				t.Errorf("getEnvBool(%q=%q, default %v) = %v, want %v", key, tt.value, tt.def, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadPDFDefaultClientLogo(t *testing.T) {
+	t.Run("on by default", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		Load()
+		if !AppConfig.PDFDefaultClientLogo {
+			t.Fatal("PDFDefaultClientLogo = false, want true by default")
+		}
+	})
+	t.Run("can be switched off", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		t.Setenv("PDF_DEFAULT_CLIENT_LOGO", "false")
+		Load()
+		if AppConfig.PDFDefaultClientLogo {
+			t.Fatal("PDFDefaultClientLogo = true, want false when PDF_DEFAULT_CLIENT_LOGO=false")
+		}
+	})
+}

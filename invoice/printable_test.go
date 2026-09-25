@@ -19,6 +19,7 @@ func TestToPrintable_Invoice(t *testing.T) {
 	}
 	d := ToPrintable(inv, docpdf.Seller{Name: "Acme Stone Co"})
 	assert.Equal(t, "INVOICE", d.Kind)
+	assert.True(t, d.ShowPayment, "the seller is the one being paid")
 	assert.Equal(t, "INV-1001", d.Number)
 	assert.True(t, d.ShowBalance)
 	assert.Equal(t, 711.88, d.BalanceDue)

@@ -19,6 +19,7 @@ func TestToPrintable_Quote(t *testing.T) {
 	}
 	d := ToPrintable(q, docpdf.Seller{Name: "Acme Stone Co"})
 	assert.Equal(t, "QUOTE", d.Kind)
+	assert.True(t, d.ShowPayment, "the seller is the one being paid")
 	assert.Equal(t, "QT-1001", d.Number)
 	assert.False(t, d.ShowBalance)
 	assert.Equal(t, "2026-09-23", d.DueDate)

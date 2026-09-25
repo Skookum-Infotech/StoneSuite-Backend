@@ -117,7 +117,7 @@ func Render(d PrintableDoc) ([]byte, error) {
 		return nil, err
 	}
 	pdf := newDoc()
-	d = toCP1252(pdf, d)
+	d = toCP1252(pdf, withDefaultWording(d))
 	label := d.Kind + " " + d.Number
 	setFooter(pdf, label)
 	pdf.SetTitle(label, false)

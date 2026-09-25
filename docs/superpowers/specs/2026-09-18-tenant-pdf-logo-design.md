@@ -1,6 +1,6 @@
 # Per-Tenant PDF Logo — Design
 
-**Status:** proposed
+**Status:** implemented (#229). The header layout it describes (logo in the letterhead, unchanged header without a logo) is superseded by [2026-09-20-pdf-masthead-design.md](2026-09-20-pdf-masthead-design.md).
 
 ## Problem
 

@@ -21,7 +21,7 @@ func ToPrintable(o Order, seller docpdf.Seller) docpdf.PrintableDoc {
 		Lines:    lines,
 		Subtotal: o.Subtotal, DiscountTotal: o.DiscountTotal, TaxTotal: o.TaxTotal,
 		ShippingCharge: o.ShippingCharge, Adjustment: o.Adjustment, GrandTotal: o.GrandTotal,
-		Terms: o.TermsConditions, Notes: o.Notes, Memo: o.Memo,
+		Terms: o.TermsConditions, Notes: o.Notes, Memo: o.Memo, ShowPayment: true,
 	}
 }
 

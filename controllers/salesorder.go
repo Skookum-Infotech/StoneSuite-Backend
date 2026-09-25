@@ -303,7 +303,7 @@ func (h *SalesOrderOps) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	auditSO(r, pool, identityID, "approve", uuid, nil, order)
 	if approvalFinalized(order.StatusCode) {
-		notifyCustomerApproved(r.Context(), h.cp, identityID, order.Customer.ID, "sales_order", "Sales Order", order.Number, uuid)
+		notifyCustomerApproved(r.Context(), h.cp, identityID, order.Customer.ID, "sales_order", "Sales Order", order.Number, order.GrandTotal, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
 }

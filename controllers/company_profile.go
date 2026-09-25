@@ -104,7 +104,7 @@ func (h *CompanyProfileOps) GetProfile(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "companyProfile": profile, "logoUrl": logoURL})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "companyProfile": profileResponse(profile), "logoUrl": logoURL})
 }
 
 // UpdateProfile PUT /api/tenant/company-profile
@@ -127,7 +127,14 @@ func (h *CompanyProfileOps) UpdateProfile(w http.ResponseWriter, r *http.Request
 		fail(w, http.StatusInternalServerError, "Failed to save company profile.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "companyProfile": profile})
+	// Answer with what is stored: an update that omitted paymentDetails keeps
+	// the stored ones, so echoing the request would misreport them.
+	saved, err := companyprofile.Get(r.Context(), pool)
+	if err != nil {
+		slog.Warn("failed to reload company profile after save", "error", err)
+		saved = &profile
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "companyProfile": profileResponse(saved)})
 }
 
 // UploadLogo PUT /api/tenant/company-profile/logo. Body is the raw image

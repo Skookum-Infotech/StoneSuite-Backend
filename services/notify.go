@@ -25,26 +25,36 @@ var notifyClient = &http.Client{Timeout: 30 * time.Second}
 type RecipientTarget struct {
 	UserID string `json:"userId"`
 	Email  string `json:"email,omitempty"`
+	// Name is the recipient's display name, used only to fill the email's
+	// "Hello {name}," greeting (see personalize); never sent to notify.
+	Name string `json:"-"`
 }
 
 // NotificationRequest is the payload sent to the notify service.
 type NotificationRequest struct {
-	TenantID    string            `json:"tenantId"`
-	Recipients  []RecipientTarget `json:"recipients"`
-	ActorUserID string            `json:"actorUserId,omitempty"`
-	EventType   string            `json:"eventType"`
-	Resource    string            `json:"resource"`
-	ResourceID  string            `json:"resourceId"`
-	Title       string            `json:"title"`
-	Body        string            `json:"body,omitempty"`
-	Link        string            `json:"link,omitempty"`
-	Channels    []string          `json:"channels,omitempty"`
-	// EmailBodyHTML, when set, is used by stonesuite-notify verbatim as the
-	// email's HTML body instead of its generic title/body template — for
-	// callers (e.g. a document-send customer email) that need their own
-	// branding.
-	EmailBodyHTML string             `json:"emailBodyHtml,omitempty"`
-	Attachments   []NotifyAttachment `json:"attachments,omitempty"`
+	TenantID    string             `json:"tenantId"`
+	Recipients  []RecipientTarget  `json:"recipients"`
+	ActorUserID string             `json:"actorUserId,omitempty"`
+	EventType   string             `json:"eventType"`
+	Resource    string             `json:"resource"`
+	ResourceID  string             `json:"resourceId"`
+	Title       string             `json:"title"`
+	Body        string             `json:"body,omitempty"`
+	Link        string             `json:"link,omitempty"`
+	Channels    []string           `json:"channels,omitempty"`
+	Attachments []NotifyAttachment `json:"attachments,omitempty"`
+	// Email is the dynamic content of the email delivery. SendNotification
+	// renders it through the one shared template (see RenderEmail) and sends
+	// the result as notify's emailBodyHtml; nil falls back to a default built
+	// from Title/Body/Link, so every email uses the same template.
+	Email *Email `json:"-"`
+}
+
+// notifyPayload is the wire body of a create call: the request plus the
+// email HTML rendered from its Email content.
+type notifyPayload struct {
+	NotificationRequest
+	EmailBodyHTML string `json:"emailBodyHtml,omitempty"`
 }
 
 // NotifyAttachment is a single file attached to a notification's email
@@ -95,7 +105,59 @@ func SendNotificationWithResult(ctx context.Context, req NotificationRequest) (N
 		return NotificationResult{}, fmt.Errorf("notify service not configured")
 	}
 
-	payload, err := json.Marshal(req)
+	var result NotificationResult
+	for _, part := range personalize(req) {
+		res, err := postNotification(ctx, cfg, part)
+		result.NotificationIDs = append(result.NotificationIDs, res.NotificationIDs...)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+// personalize splits a request so each recipient's greeting carries their own
+// name: notify stores one email body per create call, so recipients whose
+// names differ need separate calls. A request with no greeting, a fixed
+// RecipientName, or a single shared name goes out unchanged in one call.
+func personalize(req NotificationRequest) []NotificationRequest {
+	if req.Email == nil || !req.Email.Greet || req.Email.RecipientName != "" || len(req.Recipients) == 0 {
+		return []NotificationRequest{req}
+	}
+	shared := req.Recipients[0].Name
+	same := true
+	for _, r := range req.Recipients[1:] {
+		if r.Name != shared {
+			same = false
+			break
+		}
+	}
+	if same {
+		e := *req.Email
+		e.RecipientName = shared
+		req.Email = &e
+		return []NotificationRequest{req}
+	}
+	parts := make([]NotificationRequest, 0, len(req.Recipients))
+	for _, r := range req.Recipients {
+		part := req
+		e := *req.Email
+		e.RecipientName = r.Name
+		part.Email = &e
+		part.Recipients = []RecipientTarget{r}
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+// postNotification renders req's email through the shared template and makes
+// one create call to the notify service.
+func postNotification(ctx context.Context, cfg config.Config, req NotificationRequest) (NotificationResult, error) {
+	emailHTML, err := req.EmailHTML()
+	if err != nil {
+		return NotificationResult{}, fmt.Errorf("render notification email: %w", err)
+	}
+	payload, err := json.Marshal(notifyPayload{NotificationRequest: req, EmailBodyHTML: emailHTML})
 	if err != nil {
 		return NotificationResult{}, fmt.Errorf("marshal notification: %w", err)
 	}

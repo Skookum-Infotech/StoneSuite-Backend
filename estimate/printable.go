@@ -20,7 +20,7 @@ func ToPrintable(e Estimate, seller docpdf.Seller) docpdf.PrintableDoc {
 		Lines:    lines,
 		Subtotal: e.Subtotal, DiscountTotal: e.DiscountTotal, TaxTotal: e.TaxTotal,
 		ShippingCharge: e.ShippingCharge, Adjustment: e.Adjustment, GrandTotal: e.GrandTotal,
-		Terms: e.TermsConditions, Notes: e.Notes, Memo: e.Memo,
+		Terms: e.TermsConditions, Notes: e.Notes, Memo: e.Memo, ShowPayment: true,
 	}
 }
 

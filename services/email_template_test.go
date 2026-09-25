@@ -249,8 +249,12 @@ func TestRenderEmail_EqualGapBetweenEveryBodyBlock(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	// greeting, paragraph, details, attachment, button, fallback link, fine print
-	assert.Equal(t, 7, strings.Count(out, "margin:0 0 16px;"), "every body block is followed by the same 16px gap")
+	// Text blocks carry ~4px of line leading above and below, so a 12px margin
+	// reads as the same visible gap as the 16px around a box (card, button).
+	// greeting, paragraph, fallback link, fine print
+	assert.Equal(t, 4, strings.Count(out, "margin:0 0 12px;"), "text blocks share one gap")
+	assert.Contains(t, out, `style="margin:16px 0;"`, "details box: 16px above and below")
+	assert.Equal(t, 2, strings.Count(out, "margin:20px 0 16px;"), "a box that follows another box gets 20px above")
 	assert.Contains(t, out, `<p style="margin:0;font-size:13px;color:#52525b;">Need help?`, "the last block adds no trailing gap")
 	assert.Contains(t, out, "This link expires in 1 hour.<br>If you didn", "fine-print lines share one block")
 	for _, uneven := range []string{"margin:4px 0 18px", "margin:18px 0 0", "margin:6px 0 16px", "margin:0 0 14px", "margin:0 0 4px", "margin:0 0 10px"} {

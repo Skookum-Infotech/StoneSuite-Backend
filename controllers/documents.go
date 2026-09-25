@@ -321,7 +321,7 @@ func customerSendRequest(
 		}
 		recipients = append(recipients, r)
 	}
-	return services.NotificationRequest{
+	req := services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  recipients,
 		ActorUserID: actorIdentityID,
@@ -332,8 +332,13 @@ func customerSendRequest(
 		Body:        "Document sent.",
 		Email:       withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
 		Channels:    []string{"email"},
-		Attachments: []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
 	}
+	// The email's Download PDF button is the customer's copy; only attach the
+	// PDF when there is no signed link to download it from.
+	if meta.DownloadURL == "" {
+		req.Attachments = []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}}
+	}
+	return req
 }
 
 // Sends returns a record's document send history. RBAC: <type>:read.

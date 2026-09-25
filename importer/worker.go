@@ -22,8 +22,21 @@ import (
 
 const (
 	pollInterval = 2 * time.Second
-	staleAfter   = 10 * time.Minute
 	jobTimeout   = 5 * time.Minute
+	// staleAfter must clear jobTimeout by a comfortable margin: runImport's
+	// own ctx is bounded to jobTimeout (see processNext), so a job genuinely
+	// still 'running' past that has already failed and is on its way to
+	// MarkFailed -- staleAfter only needs to catch a worker that crashed
+	// outright, mid-run, before it could call MarkFailed itself. 3x leaves
+	// room for a slow claim-to-finish handoff without meaningfully delaying
+	// real crash recovery.
+	staleAfter = 3 * jobTimeout
+	// reapInterval is deliberately decoupled from staleAfter: ticking at
+	// staleAfter's own period means a job that goes stale just after a tick
+	// waits up to another full staleAfter before the next check even looks
+	// for it. Checking every minute instead bounds that worst case to
+	// staleAfter+1m regardless of when in the cycle a worker crashes.
+	reapInterval = 1 * time.Minute
 )
 
 // Worker claims and runs import jobs from the shared control-plane job
@@ -88,18 +101,19 @@ func (w *Worker) worker(ctx context.Context) {
 	}
 }
 
-// reapStale periodically requeues jobs left 'running' by a crashed worker —
-// mirrors provisioning.Provisioner.reapStale exactly.
+// reapStale periodically requeues jobs left 'running' by a crashed worker.
+// Scoped to JobTypeImport — see RequeueStale's doc comment on why an
+// unscoped call is a real cross-package race, not just a hypothetical one.
 func (w *Worker) reapStale(ctx context.Context) {
 	defer w.wg.Done()
-	ticker := time.NewTicker(staleAfter)
+	ticker := time.NewTicker(reapInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := w.queue.RequeueStale(ctx, staleAfter)
+			n, err := w.queue.RequeueStale(ctx, []string{JobTypeImport}, staleAfter)
 			if err != nil {
 				log.Printf("importer: requeue stale jobs: %v", err)
 			} else if n > 0 {
@@ -132,7 +146,11 @@ func (w *Worker) processNext(ctx context.Context) {
 		return
 	}
 
-	runCtx, cancel := context.WithTimeout(context.Background(), jobTimeout)
+	// Derived from ctx (processNext's own parameter, cancelled by Worker.Stop),
+	// not context.Background(): a detached context here would let an in-flight
+	// runImport keep going after Stop() asked every worker to exit, with no
+	// way to interrupt it short of the process dying outright.
+	runCtx, cancel := context.WithTimeout(ctx, jobTimeout)
 	defer cancel()
 
 	if err := w.runImport(runCtx, job.ID, *job.TenantID, payload); err != nil {
@@ -179,6 +197,20 @@ func (w *Worker) runImport(ctx context.Context, jobID, tenantID string, payload 
 	}
 
 	rows := NewStore(pool)
+
+	// Only after fetch/parse/definition-load all succeed: a job that dies
+	// before this point (bad file, unknown workflow) must not wipe out rows a
+	// PRIOR successful staging run already produced for it. Clearing here,
+	// right before staging begins, is what makes a restage (worker crash,
+	// stale-reap requeue, or the queue's own attempts-based retry — anything
+	// that runs runImport more than once for the same job_id) converge on
+	// exactly this run's rows instead of accumulating a duplicate set
+	// alongside whatever a failed prior attempt left behind. See
+	// UpsertRow's doc comment for the other half of this contract.
+	if err := rows.DeletePendingRowsForJob(ctx, jobID); err != nil {
+		return fmt.Errorf("clear prior staged rows: %w", err)
+	}
+
 	switch {
 	case doc.Rows != nil:
 		return w.stageTabular(ctx, rows, jobID, doc.Rows, payload.ColumnMapping, def.Fields)
@@ -195,7 +227,7 @@ func (w *Worker) stageTabular(ctx context.Context, rows *Store, jobID string, ta
 	_ = w.queue.UpdateProgress(ctx, jobID, map[string]any{"step": "staging", "staged": 0, "total": total})
 	for i, tr := range tableRows {
 		mapped := ApplyColumnMapping(tr, mapping, defs)
-		if _, err := rows.InsertRow(ctx, jobID, i, tr, mapped, stageErrors(defs, mapped.Custom)); err != nil {
+		if _, err := rows.UpsertRow(ctx, jobID, i, tr, mapped, stageErrors(defs, mapped.Custom)); err != nil {
 			return fmt.Errorf("stage row %d: %w", i, err)
 		}
 		_ = w.queue.UpdateProgress(ctx, jobID, map[string]any{"step": "staging", "staged": i + 1, "total": total})
@@ -213,7 +245,7 @@ func (w *Worker) stageExtracted(ctx context.Context, rows *Store, jobID, text st
 		return fmt.Errorf("extract fields: %w", err)
 	}
 	mapped := MappedFields{Core: map[string]any{}, Custom: custom}
-	if _, err := rows.InsertRow(ctx, jobID, 0, map[string]string{"text": text}, mapped, stageErrors(defs, custom)); err != nil {
+	if _, err := rows.UpsertRow(ctx, jobID, 0, map[string]string{"text": text}, mapped, stageErrors(defs, custom)); err != nil {
 		return fmt.Errorf("stage extracted record: %w", err)
 	}
 	_ = w.queue.UpdateProgress(ctx, jobID, map[string]any{"step": "staging", "staged": 1, "total": 1})

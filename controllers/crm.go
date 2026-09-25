@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"html"
 	"log"
 	"log/slog"
 	"net/http"
@@ -376,13 +375,14 @@ func (h *CRMOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
 type crmCreateRequest struct {
 	OwnerUserID  string         `json:"ownerUserId"`
 	TeamID       string         `json:"teamId"`
-	CrmStatusID  string         `json:"crmStatusId"` // optional chosen status (v2)
 	CoreFields   map[string]any `json:"coreFields"`
 	CustomFields map[string]any `json:"customFields"`
 }
 
 // CreateRecord POST /api/tenant/crm/{workflowKey}/records
 // A prospect or customer may be created directly without a prior lead/prospect.
+// The record starts in its stage's initial status (Lead New, Prospect New,
+// Customer Draft) — the request cannot choose one.
 func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("workflowKey")
 	st, pool, identityID, _, ok := h.authCRM(w, r, key, authz.ActionCreate)
@@ -398,7 +398,6 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 		ActorIdentityID: identityID,
 		OwnerUserID:     req.OwnerUserID,
 		TeamID:          req.TeamID,
-		CrmStatusID:     req.CrmStatusID,
 		CoreFields:      req.CoreFields,
 		CustomFields:    req.CustomFields,
 	})
@@ -566,8 +565,16 @@ type convertRequest struct {
 }
 
 // ConvertRecord POST /api/tenant/crm/records/{id}/convert
+//
+// Creates a record in a later stage as a copy of the source, in that stage's
+// initial status: a Qualified Lead becomes a Prospect (New) and a Prospect in
+// Pending Conversion becomes a Customer (Draft). Idempotent: converting a source
+// that was already converted returns the record made from it with 200 and
+// "created": false instead of a duplicate — but only if the caller could read
+// that record anyway; otherwise 409, which says the conversion happened
+// without saying which record it produced.
 func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
-	st, pool, _, identityID, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionCreate)
+	st, pool, sourceKey, identityID, ok := h.authCRMByRecordID(w, r, r.PathValue("id"), authz.ActionCreate)
 	if !ok {
 		return
 	}
@@ -594,10 +601,39 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 			"You do not have permission to create "+req.TargetWorkflowKey+".")
 		return
 	}
-	newRec, sourceID, err := st.ConvertRecord(r.Context(), pool, r.PathValue("id"),
+	newRec, sourceID, created, err := st.ConvertRecord(r.Context(), pool, r.PathValue("id"),
 		req.TargetWorkflowKey, req.CoreFields, req.CustomFields, identityID)
 	if err != nil {
 		crmFail(w, err, "Failed to convert record.")
+		return
+	}
+	if !created {
+		// Replay: newRec is the record an earlier conversion made, possibly
+		// owned by someone else. Hand it back only if the caller holds read on
+		// its resource and, when that grant is scoped, it is in scope.
+		readDecision, err := authz.Check(r.Context(), pool, identityID, resourceForKey(newRec.WorkflowID), authz.ActionRead)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			return
+		}
+		visible := readDecision.Allowed
+		if visible && readDecision.Scope != authz.ScopeAll {
+			visible, err = recordInScope(r.Context(), pool, readDecision.Scope, identityID, newRec.OwnerUserID)
+			if err != nil {
+				fail(w, http.StatusInternalServerError, "Permission check failed.")
+				return
+			}
+		}
+		if !visible {
+			fail(w, http.StatusConflict, "This "+sourceKey+" has already been converted.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":        true,
+			"record":         newRec,
+			"sourceRecordId": sourceID,
+			"created":        false,
+		})
 		return
 	}
 	auditCRM(r, pool, identityID, "convert", req.TargetWorkflowKey, newRec.ID, nil, newRec)
@@ -608,12 +644,13 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 		"success":        true,
 		"record":         newRec,
 		"sourceRecordId": sourceID,
+		"created":        true,
 	})
 }
 
 // notifyCustomerWelcome best-effort-emails a newly minted customer record's
-// contact a branded welcome message (with the company logo — see
-// welcomeEmailHTML). Fire-and-forget: the customer record has already been
+// contact a branded welcome message (see
+// welcomeEmail). Fire-and-forget: the customer record has already been
 // created by the time this runs, and a Notify outage must never undo that —
 // same reasoning as documents.go's notifyOwnerOfSend. No-ops silently if the
 // record has no contact email (CreateInput only requires one for a CUST
@@ -634,48 +671,55 @@ func notifyCustomerWelcome(
 		return
 	}
 	name, _ := rec.CoreFields["customer_name"].(string)
-	err = notify(ctx, services.NotificationRequest{
-		TenantID:      tenant.ID,
-		Recipients:    []services.RecipientTarget{{Email: email}},
-		EventType:     "customer.welcome",
-		Resource:      "customer",
-		ResourceID:    rec.ID,
-		Title:         "Welcome to " + tenant.DisplayName + "!",
-		Body:          "Welcome email sent to " + email + ".",
-		EmailBodyHTML: welcomeEmailHTML(tenant.DisplayName, name),
-		Channels:      []string{"email"},
-	})
+	err = notify(ctx, customerWelcomeRequest(tenant.ID, tenant.DisplayName, rec.ID, email, name))
 	if err != nil {
 		slog.WarnContext(ctx, "crm: welcome email for new customer failed", "record_id", rec.ID, "error", err)
 	}
 }
 
-// welcomeEmailHTML is the branded welcome message sent to a new customer's
-// contact — mirrors documents.go's documentEmailHTML: goes through
-// services.WrapEmailHTMLWithBanner, the one shared shell every StoneSuite
-// email uses, and HTML-escapes the caller-supplied names.
-func welcomeEmailHTML(tenantName, customerName string) string {
-	greeting := "Hello,"
-	if customerName != "" {
-		greeting = "Hello " + html.EscapeString(customerName) + ","
+// customerWelcomeRequest builds the Notify request for a new customer's
+// welcome email, addressed to the record's contact email.
+func customerWelcomeRequest(tenantID, tenantName, recordID, email, customerName string) services.NotificationRequest {
+	return services.NotificationRequest{
+		TenantID:   tenantID,
+		Recipients: []services.RecipientTarget{{Email: email}},
+		EventType:  "customer.welcome",
+		Resource:   "customer",
+		ResourceID: recordID,
+		Title:      "Welcome to " + tenantName + "!",
+		Body:       "Welcome email sent to " + email + ".",
+		Email:      welcomeEmail(tenantName, customerName),
+		Channels:   []string{"email"},
 	}
-	name := html.EscapeString(tenantName)
-	inner := `<p style="margin:0 0 14px;">` + greeting + `</p>` +
-		services.EmailMessageBox(`<p style="margin:0 0 14px;">Welcome to `+name+`! We're glad to have you as a customer.</p>`) +
-		`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>` + name + `</p>`
-	return services.WrapEmailHTMLWithBanner(
-		"Welcome to "+tenantName+".",
-		"Welcome",
-		"Welcome to",
-		tenantName,
-		inner,
-	)
+}
+
+// welcomeEmail is the content of the welcome message sent to a new customer's
+// contact; it renders through the shared template like every other email.
+func welcomeEmail(tenantName, customerName string) *services.Email {
+	return &services.Email{
+		Preheader:     "Welcome to " + tenantName + ".",
+		Badge:         "Welcome",
+		Icon:          services.IconWave,
+		Heading:       "Welcome to",
+		HeadingAccent: tenantName + ".",
+		Subtitle:      "We're glad to have you.",
+		Greet:         true,
+		RecipientName: customerName,
+		Paragraphs: []services.Paragraph{{
+			services.Text("Thank you for choosing "), services.Bold(tenantName),
+			services.Text(". Your customer portal is where you can view your sales orders, invoices, payments and refunds, and send notes to our team."),
+		}},
+		ActionURL:   services.PortalURL(),
+		ActionLabel: "Go to portal",
+		Reason:      "you're a customer of " + tenantName + ".",
+	}
 }
 
 // ---- approval ---------------------------------------------------------------
 
 // ApproveRecord POST /api/tenant/crm/records/{id}/approve
-// Approves a Closed-Won customer if the caller is a configured approver. Only
+// Approves a record awaiting approval if the caller is a configured approver (a
+// customer then becomes Active). Only
 // supported on the v2 design; v1 returns 400 (not supported).
 func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

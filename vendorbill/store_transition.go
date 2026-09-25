@@ -124,6 +124,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	}
 
 	writeHistory(ctx, tx, internalID, "transition", &curStatusID, &toStatusID, actorEmployeeID)
+	// Any move takes the bill out of the state a Reject left it in.
+	if err := approvalchain.ClearRejection(ctx, tx, recordTypeID, internalID); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)

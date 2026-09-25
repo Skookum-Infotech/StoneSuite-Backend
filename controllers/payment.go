@@ -125,6 +125,10 @@ func (h *PaymentOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.Requ
 }
 
 func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, payment.ErrNotFound):
 		fail(w, http.StatusNotFound, "Payment not found.")
@@ -229,7 +233,7 @@ func (h *PaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	auditPayment(r, pool, empID, "approve", uuid, nil, p)
 	if approvalFinalized(p.StatusCode) {
-		notifyCustomerApproved(r.Context(), h.cp, identityID, p.Customer.ID, "payment", "Payment", p.Number, uuid)
+		notifyCustomerApproved(r.Context(), h.cp, identityID, p.Customer.ID, "payment", "Payment", p.Number, p.Amount, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }
@@ -315,4 +319,39 @@ func (h *PaymentOps) Search(w http.ResponseWriter, r *http.Request) {
 		"success": true, "scope": scope, "records": page.Records,
 		"nextCursor": page.NextCursor, "hasMore": page.HasMore,
 	})
+}
+
+// Reject POST /api/tenant/payments/{uuid}/reject  body {"reason":"..."}
+// Rejects the payment named by {uuid}, which must be awaiting approval: it is flagged rejected in place until it is edited, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *PaymentOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authPaymentByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		paymentFail(w, err, "Failed to reject payment.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := payment.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, payment.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		paymentFail(w, err, "Failed to reject payment.")
+		return
+	}
+	auditPayment(r, pool, empID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": rec})
 }

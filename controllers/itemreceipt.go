@@ -173,6 +173,9 @@ func (h *ItemReceiptOps) search(w http.ResponseWriter, r *http.Request, pool *pg
 }
 
 // Create POST /api/tenant/item-receipts
+//
+// With "post": true the receipt is created and posted in one transaction (see
+// createAndPost); otherwise it is created Pending, as before.
 func (h *ItemReceiptOps) Create(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authIR(w, r, authz.ActionCreate)
 	if !ok {
@@ -181,6 +184,10 @@ func (h *ItemReceiptOps) Create(w http.ResponseWriter, r *http.Request) {
 	var in itemreceipt.CreateItemReceiptInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if in.Post {
+		h.createAndPost(w, r, pool, identityID, in)
 		return
 	}
 	ir, err := itemreceipt.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))

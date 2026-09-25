@@ -4,17 +4,17 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-524 endpoints across 7 surfaces, read from `main.go`.
+543 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 443 |
+| staff token + tenant | 459 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
-| none | 17 |
-| staff token | 13 |
+| none | 18 |
+| staff token | 15 |
 | portal token | 3 |
 | customer token | 2 |
 
@@ -46,6 +46,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `ANY` | `/api/onboarding/apply` | no rate limit |
 | `ANY` | `/api/onboarding/apply/` | no rate limit |
 | `ANY` | `/api/onboarding/form-schema` | no rate limit |
+| `ANY` | `/api/onboarding/lookups` | no rate limit |
 | `ANY` | `/api/onboarding/set-password` | no rate limit |
 | `ANY` | `/api/onboarding/set-password/` | no rate limit |
 | `POST` | `/api/onboarding/user-invite/accept` | no rate limit |
@@ -133,7 +134,7 @@ Staff sign-in, session rotation, password reset and SAML SSO.
 |---|---|---|---|
 | `ANY` | `/api/auth/tenant-login` | none (rate-limited) | `tenantOps.TenantLogin` |
 
-## `onboarding` — 7 endpoints
+## `onboarding` — 8 endpoints
 
 Public tenant onboarding and workspace-user invitations.
 
@@ -149,6 +150,12 @@ Public tenant onboarding and workspace-user invitations.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `ANY` | `/api/onboarding/form-schema` | none | `tenantOps.FormSchema` |
+
+### lookups
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `ANY` | `/api/onboarding/lookups` | none | `tenantOps.OnboardingLookups` |
 
 ### set-password
 
@@ -263,7 +270,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 14 endpoints
+## `platform` — 16 endpoints
 
 Platform-admin operations across tenants.
 
@@ -278,6 +285,8 @@ Platform-admin operations across tenants.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `POST` | `/api/platform/ai/reindex-help` | staff token | `aiOps.ReindexHelp` |
+| `GET` | `/api/platform/ai/settings` | staff token | `aiOps.GetPlatformSettings` |
+| `PUT` | `/api/platform/ai/settings` | staff token | `aiOps.UpdatePlatformSettings` |
 
 ### feedback
 
@@ -311,7 +320,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 442 endpoints
+## `tenant` — 458 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -327,11 +336,15 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `POST` | `/api/tenant/ai/ask` | staff token + tenant | `aiOps.Ask` |
+| `POST` | `/api/tenant/ai/ask/stream` | staff token + tenant | `aiOps.AskStream` |
 | `GET` | `/api/tenant/ai/conversations` | staff token + tenant | `convOps.List` |
 | `POST` | `/api/tenant/ai/conversations` | staff token + tenant | `convOps.Create` |
 | `DELETE` | `/api/tenant/ai/conversations/{id}` | staff token + tenant | `convOps.Delete` |
 | `GET` | `/api/tenant/ai/conversations/{id}` | staff token + tenant | `convOps.Get` |
 | `POST` | `/api/tenant/ai/reindex` | staff token + tenant | `aiOps.Reindex` |
+| `PUT` | `/api/tenant/ai/settings` | staff token + tenant | `aiOps.UpdateSettings` |
+| `GET` | `/api/tenant/ai/status` | staff token + tenant | `aiOps.Status` |
+| `POST` | `/api/tenant/ai/warm` | staff token + tenant | `aiOps.Warm` |
 
 ### audit
 
@@ -386,6 +399,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/credit-memos/{uuid}/approve` | staff token + tenant | `cmOps.Approve` |
 | `GET` | `/api/tenant/credit-memos/{uuid}/audit` | staff token + tenant | `cmOps.Audit` |
 | `GET` | `/api/tenant/credit-memos/{uuid}/refunds` | staff token + tenant | `cmOps.Refunds` |
+| `POST` | `/api/tenant/credit-memos/{uuid}/reject` | staff token + tenant | `cmOps.Reject` |
 | `POST` | `/api/tenant/credit-memos/{uuid}/transition` | staff token + tenant | `cmOps.Transition` |
 | `POST` | `/api/tenant/credit-memos/{uuid}/unapply` | staff token + tenant | `cmOps.Unapply` |
 
@@ -459,6 +473,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/estimates/{uuid}/approve` | staff token + tenant | `est.Approve` |
 | `GET` | `/api/tenant/estimates/{uuid}/audit` | staff token + tenant | `est.Audit` |
 | `POST` | `/api/tenant/estimates/{uuid}/convert` | staff token + tenant | `est.Convert` |
+| `POST` | `/api/tenant/estimates/{uuid}/reject` | staff token + tenant | `est.Reject` |
 | `POST` | `/api/tenant/estimates/{uuid}/transition` | staff token + tenant | `est.Transition` |
 
 ### expenses
@@ -682,6 +697,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/invoices/{uuid}/payment` | staff token + tenant | `invOps.RecordPayment` |
 | `GET` | `/api/tenant/invoices/{uuid}/payments` | staff token + tenant | `invOps.Payments` |
 | `ANY` | `/api/tenant/invoices/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
+| `POST` | `/api/tenant/invoices/{uuid}/reject` | staff token + tenant | `invOps.Reject` |
 | `POST` | `/api/tenant/invoices/{uuid}/transition` | staff token + tenant | `invOps.Transition` |
 
 ### item-receipts
@@ -720,6 +736,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/payments/{uuid}/audit` | staff token + tenant | `payOps.Audit` |
 | `ANY` | `/api/tenant/payments/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
 | `GET` | `/api/tenant/payments/{uuid}/refunds` | staff token + tenant | `payOps.Refunds` |
+| `POST` | `/api/tenant/payments/{uuid}/reject` | staff token + tenant | `payOps.Reject` |
 | `POST` | `/api/tenant/payments/{uuid}/transition` | staff token + tenant | `payOps.Transition` |
 | `POST` | `/api/tenant/payments/{uuid}/unapply` | staff token + tenant | `payOps.Unapply` |
 
@@ -749,6 +766,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/purchase-orders/{uuid}/audit` | staff token + tenant | `poOps.Audit` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/convert-to-bill` | staff token + tenant | `poOps.ConvertToBill` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/receipts` | staff token + tenant | `irOps.ForPurchaseOrder` |
+| `POST` | `/api/tenant/purchase-orders/{uuid}/reject` | staff token + tenant | `poOps.Reject` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/transition` | staff token + tenant | `poOps.Transition` |
 
 ### quotes
@@ -764,6 +782,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/quotes/{uuid}/approve` | staff token + tenant | `quo.Approve` |
 | `GET` | `/api/tenant/quotes/{uuid}/audit` | staff token + tenant | `quo.Audit` |
 | `POST` | `/api/tenant/quotes/{uuid}/convert` | staff token + tenant | `quo.Convert` |
+| `POST` | `/api/tenant/quotes/{uuid}/reject` | staff token + tenant | `quo.Reject` |
 | `POST` | `/api/tenant/quotes/{uuid}/transition` | staff token + tenant | `quo.Transition` |
 
 ### records
@@ -798,6 +817,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/refunds/{uuid}/approve` | staff token + tenant | `rfndOps.Approve` |
 | `GET` | `/api/tenant/refunds/{uuid}/audit` | staff token + tenant | `rfndOps.Audit` |
 | `ANY` | `/api/tenant/refunds/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
+| `POST` | `/api/tenant/refunds/{uuid}/reject` | staff token + tenant | `rfndOps.Reject` |
 | `POST` | `/api/tenant/refunds/{uuid}/transition` | staff token + tenant | `rfndOps.Transition` |
 | `POST` | `/api/tenant/refunds/{uuid}/unapply` | staff token + tenant | `rfndOps.Unapply` |
 
@@ -814,6 +834,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/requisitions/{uuid}/approve` | staff token + tenant | `reqnOps.Approve` |
 | `GET` | `/api/tenant/requisitions/{uuid}/audit` | staff token + tenant | `reqnOps.Audit` |
 | `POST` | `/api/tenant/requisitions/{uuid}/convert` | staff token + tenant | `reqnOps.Convert` |
+| `POST` | `/api/tenant/requisitions/{uuid}/reject` | staff token + tenant | `reqnOps.Reject` |
 | `POST` | `/api/tenant/requisitions/{uuid}/transition` | staff token + tenant | `reqnOps.Transition` |
 
 ### roles
@@ -839,6 +860,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/sales-orders/{uuid}/fabricate` | staff token + tenant | `fj.Fabricate` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/inventory` | staff token + tenant | `so.Inventory` |
 | `ANY` | `/api/tenant/sales-orders/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
+| `POST` | `/api/tenant/sales-orders/{uuid}/reject` | staff token + tenant | `so.Reject` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/transition` | staff token + tenant | `so.Transition` |
 
 ### search
@@ -889,6 +911,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/vendor-bills/{uuid}/payment` | staff token + tenant | `vbOps.RecordPayment` |
 | `GET` | `/api/tenant/vendor-bills/{uuid}/payments` | staff token + tenant | `vbOps.Payments` |
 | `DELETE` | `/api/tenant/vendor-bills/{uuid}/payments/{paymentId}` | staff token + tenant | `vbOps.RemovePayment` |
+| `POST` | `/api/tenant/vendor-bills/{uuid}/reject` | staff token + tenant | `vbOps.Reject` |
 | `POST` | `/api/tenant/vendor-bills/{uuid}/transition` | staff token + tenant | `vbOps.Transition` |
 
 ### vendor-credits
@@ -904,6 +927,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/vendor-credits/{uuid}/apply` | staff token + tenant | `vcOps.Apply` |
 | `POST` | `/api/tenant/vendor-credits/{uuid}/approve` | staff token + tenant | `vcOps.Approve` |
 | `GET` | `/api/tenant/vendor-credits/{uuid}/audit` | staff token + tenant | `vcOps.Audit` |
+| `POST` | `/api/tenant/vendor-credits/{uuid}/reject` | staff token + tenant | `vcOps.Reject` |
 | `POST` | `/api/tenant/vendor-credits/{uuid}/reverse` | staff token + tenant | `vcOps.Reverse` |
 | `POST` | `/api/tenant/vendor-credits/{uuid}/transition` | staff token + tenant | `vcOps.Transition` |
 
@@ -920,6 +944,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/vendor-payments/{uuid}/apply` | staff token + tenant | `vpOps.Apply` |
 | `POST` | `/api/tenant/vendor-payments/{uuid}/approve` | staff token + tenant | `vpOps.Approve` |
 | `GET` | `/api/tenant/vendor-payments/{uuid}/audit` | staff token + tenant | `vpOps.Audit` |
+| `POST` | `/api/tenant/vendor-payments/{uuid}/reject` | staff token + tenant | `vpOps.Reject` |
 | `POST` | `/api/tenant/vendor-payments/{uuid}/transition` | staff token + tenant | `vpOps.Transition` |
 | `POST` | `/api/tenant/vendor-payments/{uuid}/unapply` | staff token + tenant | `vpOps.Unapply` |
 

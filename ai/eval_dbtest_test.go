@@ -51,7 +51,7 @@ func TestEvalHarnessWiresIntoRecordsCorpus(t *testing.T) {
 		vec []float32
 	}{{nearID, near}, {farID, far}} {
 		if err := s.Upsert(ctx, rag.Chunk{
-			SourceID: tc.id, WorkflowID: tc.id, OwnerUserID: userA,
+			SourceID: tc.id, OwnerUserID: userA, Kind: "lead",
 			Content: "fixture content for " + tc.id, ContentHash: tc.id,
 			Embedding: tc.vec,
 		}); err != nil {
@@ -63,7 +63,7 @@ func TestEvalHarnessWiresIntoRecordsCorpus(t *testing.T) {
 		{Question: "any question — the fixture query vector decides ranking", Relevant: []string{"record:" + nearID}},
 	}
 	retrieve := func(ctx context.Context, _ string) ([]rag.Citation, error) {
-		return RecordsCorpus(pool, "own", userA).SearchVector(ctx, near, 5)
+		return RecordsCorpus(pool, Grants{"lead": ScopeOwn}, userA).SearchVector(ctx, near, 5)
 	}
 
 	rep := eval.Run(ctx, golden, 5, retrieve)

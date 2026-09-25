@@ -129,6 +129,11 @@ func (p *Provisioner) worker(ctx context.Context) {
 }
 
 // reapStale periodically requeues jobs left 'running' by a crashed worker.
+// Scoped to JobTypeTenantProvision — importer.Worker runs its own reaper on
+// its own schedule for JobTypeImport; RequeueStale used to sweep the whole
+// async_jobs table regardless of caller, so this reaper could requeue a
+// live import job mid-run just as easily as importer's could requeue a live
+// provisioning job. See RequeueStale's doc comment.
 func (p *Provisioner) reapStale(ctx context.Context) {
 	defer p.wg.Done()
 	ticker := time.NewTicker(staleAfter)
@@ -138,7 +143,7 @@ func (p *Provisioner) reapStale(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := p.queue.RequeueStale(ctx, staleAfter)
+			n, err := p.queue.RequeueStale(ctx, []string{JobTypeTenantProvision}, staleAfter)
 			if err != nil {
 				log.Printf("provisioning: requeue stale jobs: %v", err)
 			} else if n > 0 {

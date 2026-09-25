@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,6 +26,8 @@ type EventContext struct {
 	RecordTypeID, StatusID, InternalID         int
 	ActorEmployeeID                            int
 	Resource, DisplayName, RecordUUID          string
+	// Detail is the approver's reason, read only by NotifyApprovalRejected.
+	Detail string
 }
 
 // contact is one resolved notification recipient: a StoneSuite user reached
@@ -38,12 +39,13 @@ type EventContext struct {
 type contact struct {
 	UserID string
 	Email  string
+	Name   string // users.full_name, for the email greeting
 }
 
 func contactsToRecipients(contacts []contact) []services.RecipientTarget {
 	recipients := make([]services.RecipientTarget, len(contacts))
 	for i, c := range contacts {
-		recipients[i] = services.RecipientTarget{UserID: c.UserID, Email: c.Email}
+		recipients[i] = services.RecipientTarget{UserID: c.UserID, Email: c.Email, Name: c.Name}
 	}
 	return recipients
 }
@@ -73,12 +75,12 @@ func NotifyApprovalRequested(ctx context.Context, pool *pgxpool.Pool, ec EventCo
 	if len(contacts) == 0 {
 		return
 	}
-	number, err := fetchNumber(ctx, pool, ec.Table, ec.IDColumn, ec.NumberColumn, ec.InternalID)
+	facts, err := fetchFacts(ctx, pool, ec)
 	if err != nil {
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for approval-requested notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".approval_requested", number,
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".approval_requested", facts,
 		resolveActorUserID(ctx, pool, ec.ActorEmployeeID), ec, noteApprovalRequested, contacts)
 }
 
@@ -103,12 +105,12 @@ func NotifyRemainingApprovers(ctx context.Context, pool *pgxpool.Pool, ec EventC
 	if len(contacts) == 0 {
 		return
 	}
-	number, err := fetchNumber(ctx, pool, ec.Table, ec.IDColumn, ec.NumberColumn, ec.InternalID)
+	facts, err := fetchFacts(ctx, pool, ec)
 	if err != nil {
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for approval reminder failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".approval_requested", number,
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".approval_requested", facts,
 		resolveActorUserID(ctx, pool, ec.ActorEmployeeID), ec, noteApprovalReminder, contacts)
 }
 
@@ -124,7 +126,19 @@ func NotifyApproved(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 // instead of clearing approval. Same no-op/failure semantics as
 // NotifyApprovalRequested.
 func NotifyApprovalRejected(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
-	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", noteSentBack)
+	note := noteSentBack
+	note.Body = rejectedNotificationBody(ec.Detail)
+	notifyOwner(ctx, pool, ec, ec.Resource+".approval_rejected", note)
+}
+
+// rejectedNotificationBody words the "sent back" notification: it says why
+// when an approver gave a reason (Reject), and stays generic for the escapes
+// that carry none (a plain void/cancel out of a gate).
+func rejectedNotificationBody(detail string) string {
+	if detail == "" {
+		return noteSentBack.Body
+	}
+	return "Sent back for changes: " + detail
 }
 
 // NotifyCreated best-effort-notifies the actor who created a new record
@@ -148,12 +162,12 @@ func NotifyCreated(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 	if !ok {
 		return
 	}
-	number, err := fetchNumber(ctx, pool, ec.Table, ec.IDColumn, ec.NumberColumn, ec.InternalID)
+	facts, err := fetchFacts(ctx, pool, ec)
 	if err != nil {
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for created notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".created", number,
+	sendApprovalNotification(ctx, tenant.ID, ec.Resource+".created", facts,
 		actor.UserID, ec, noteCreated, []contact{actor})
 }
 
@@ -174,67 +188,13 @@ func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, event
 	if !ok {
 		return
 	}
-	number, err := fetchNumber(ctx, pool, ec.Table, ec.IDColumn, ec.NumberColumn, ec.InternalID)
+	facts, err := fetchFacts(ctx, pool, ec)
 	if err != nil {
 		slog.ErrorContext(ctx, "approvalchain: resolve record number for owner notification failed", "eventType", eventType, "recordId", ec.RecordUUID, "error", err)
 		return
 	}
-	sendApprovalNotification(ctx, tenant.ID, eventType, number,
+	sendApprovalNotification(ctx, tenant.ID, eventType, facts,
 		resolveActorUserID(ctx, pool, ec.ActorEmployeeID), ec, note, []contact{owner})
-}
-
-// approvalNote is the wording of one approval-chain notification, shared by
-// the in-app row (title, body) and its email (banner, message, button). The
-// notes below are read-only.
-type approvalNote struct {
-	Badge   string // banner pill, e.g. "Approval Needed"
-	Verb    string // what happened: title tail and banner heading line 2
-	Body    string // notification body, also the email's message
-	CTAVerb string // button verb, joined with the module name: "Review" -> "Review invoice"
-}
-
-var (
-	noteApprovalRequested = approvalNote{Badge: "Approval Needed", Verb: "needs your approval", Body: "Submitted for approval.", CTAVerb: "Review"}
-	noteApprovalReminder  = approvalNote{Badge: "Approval Reminder", Verb: "still needs your approval", Body: "Still awaiting your sign-off.", CTAVerb: "Review"}
-	noteApproved          = approvalNote{Badge: "Approved", Verb: "was approved", Body: "Approved.", CTAVerb: "View"}
-	noteSentBack          = approvalNote{Badge: "Sent Back", Verb: "was sent back", Body: "Sent back for changes.", CTAVerb: "View"}
-	noteCreated           = approvalNote{Badge: "Created", Verb: "was created", Body: "Created.", CTAVerb: "View"}
-)
-
-// buildApprovalNotification builds the Notify request for one approval-chain
-// event. The email body is built here, through the shared StoneSuite shell,
-// rather than left to stonesuite-notify's bare generic template — which is
-// unescaped and only knows the relative in-app route, useless as an email link.
-func buildApprovalNotification(tenantID, eventType, number, actorUserID string, ec EventContext, note approvalNote, contacts []contact) services.NotificationRequest {
-	subject := fmt.Sprintf("%s %s", ec.DisplayName, number)
-	link := resourceRoute(ec.Resource, ec.RecordUUID)
-	return services.NotificationRequest{
-		TenantID:    tenantID,
-		Recipients:  contactsToRecipients(contacts),
-		ActorUserID: actorUserID,
-		EventType:   eventType,
-		Resource:    ec.Resource,
-		ResourceID:  ec.RecordUUID,
-		Title:       subject + " " + note.Verb,
-		Body:        note.Body,
-		Link:        link,
-		Channels:    []string{"email"},
-		EmailBodyHTML: services.BuildRecordEmailHTML(services.RecordEmail{
-			Badge:   note.Badge,
-			Subject: subject,
-			Verb:    note.Verb,
-			Message: note.Body,
-			Path:    link,
-			CTA:     note.CTAVerb + " " + strings.ToLower(ec.DisplayName),
-		}),
-	}
-}
-
-func sendApprovalNotification(ctx context.Context, tenantID, eventType, number, actorUserID string, ec EventContext, note approvalNote, contacts []contact) {
-	err := services.SendNotification(ctx, buildApprovalNotification(tenantID, eventType, number, actorUserID, ec, note, contacts))
-	if err != nil {
-		slog.ErrorContext(ctx, "approvalchain: send approval notification failed", "eventType", eventType, "resourceId", ec.RecordUUID, "error", err)
-	}
 }
 
 // activeApproverContacts resolves every active approver configured on
@@ -243,7 +203,7 @@ func sendApprovalNotification(ctx context.Context, tenantID, eventType, number, 
 // stonesuite-notify scopes by, see the contact type) plus u.email.
 func activeApproverContacts(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID int) ([]contact, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`
-		SELECT u.identity_id, u.email
+		SELECT u.identity_id, u.email, u.full_name
 		FROM %s ea
 		JOIN employee e ON e.employee_id = ea.approver_employee_id
 		JOIN users u ON u.id = e.employee_user_id
@@ -260,7 +220,7 @@ func activeApproverContacts(ctx context.Context, q workflow.Querier, approverTab
 // statusID) who have not yet signed off on internalID's current round.
 func remainingApproverContacts(ctx context.Context, q workflow.Querier, approverTable, approvalTable, idColumn string, recordTypeID, statusID, internalID int) ([]contact, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`
-		SELECT u.identity_id, u.email
+		SELECT u.identity_id, u.email, u.full_name
 		FROM %s ea
 		JOIN employee e ON e.employee_id = ea.approver_employee_id
 		JOIN users u ON u.id = e.employee_user_id
@@ -281,7 +241,7 @@ func scanContacts(rows pgx.Rows) ([]contact, error) {
 	var contacts []contact
 	for rows.Next() {
 		var c contact
-		if err := rows.Scan(&c.UserID, &c.Email); err != nil {
+		if err := rows.Scan(&c.UserID, &c.Email, &c.Name); err != nil {
 			return nil, fmt.Errorf("scan approver contact: %w", err)
 		}
 		contacts = append(contacts, c)
@@ -298,11 +258,11 @@ func scanContacts(rows pgx.Rows) ([]contact, error) {
 func ownerContact(ctx context.Context, q workflow.Querier, table, idColumn, ownerColumn string, internalID int) (contact, bool, error) {
 	var c contact
 	err := q.QueryRow(ctx, fmt.Sprintf(`
-		SELECT u.identity_id, u.email
+		SELECT u.identity_id, u.email, u.full_name
 		FROM %s t
 		JOIN employee e ON e.employee_id = t.%s
 		JOIN users u ON u.id = e.employee_user_id
-		WHERE t.%s = $1`, table, ownerColumn, idColumn), internalID).Scan(&c.UserID, &c.Email)
+		WHERE t.%s = $1`, table, ownerColumn, idColumn), internalID).Scan(&c.UserID, &c.Email, &c.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contact{}, false, nil
 	}
@@ -323,10 +283,10 @@ func actorContact(ctx context.Context, q workflow.Querier, actorEmployeeID int) 
 	}
 	var c contact
 	err := q.QueryRow(ctx, `
-		SELECT u.identity_id, u.email
+		SELECT u.identity_id, u.email, u.full_name
 		FROM employee e
 		JOIN users u ON u.id = e.employee_user_id
-		WHERE e.employee_id = $1`, actorEmployeeID).Scan(&c.UserID, &c.Email)
+		WHERE e.employee_id = $1`, actorEmployeeID).Scan(&c.UserID, &c.Email, &c.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contact{}, false, nil
 	}

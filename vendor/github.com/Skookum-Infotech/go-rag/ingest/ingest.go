@@ -100,20 +100,62 @@ func ingestOne(ctx context.Context, embedder rag.Embedder, store HelpStore, fsys
 // unchanged; a section that doesn't becomes several, labeled "Title (i/n)"
 // so each keeps a distinct citation identity (HelpCorpus cites by section
 // label — see ai.HelpCorpus in StoneSuite).
+//
+// Two headings with the same title in one doc (two "Overview"s) would share a
+// citation identity and collapse into one during fusion, silently dropping a
+// section; the repeat is labeled "Title #2" instead.
 func splitSections(sections []Section, chunkOpts chunk.Options) (labels, texts []string) {
+	seen := map[string]int{}
 	for _, sec := range sections {
+		title := sec.Title
+		seen[title]++
+		if n := seen[title]; n > 1 {
+			title = fmt.Sprintf("%s #%d", title, n)
+		}
 		parts := chunk.Split(sec.Content, chunkOpts)
 		if len(parts) <= 1 {
-			labels = append(labels, sec.Title)
+			labels = append(labels, title)
 			texts = append(texts, sec.Content)
 			continue
 		}
 		for i, part := range parts {
-			labels = append(labels, fmt.Sprintf("%s (%d/%d)", sec.Title, i+1, len(parts)))
+			labels = append(labels, fmt.Sprintf("%s (%d/%d)", title, i+1, len(parts)))
 			texts = append(texts, part)
 		}
 	}
 	return labels, texts
+}
+
+// DocPruner is the optional delete side of a HelpStore: it removes every doc
+// whose key is NOT in keep, returning how many were removed.
+type DocPruner interface {
+	PruneDocs(ctx context.Context, keep []string) (int, error)
+}
+
+// PruneMissing deletes docs from store that no longer exist as *.md files in
+// fsys — a doc removed from the corpus otherwise keeps answering questions
+// forever. Separate from IngestFS on purpose: pruning is only correct when
+// fsys is the COMPLETE corpus, and a caller ingesting a subset must not
+// silently delete everything else.
+func PruneMissing(ctx context.Context, store DocPruner, fsys fs.FS) (int, error) {
+	names, err := fs.Glob(fsys, "*.md")
+	if err != nil {
+		return 0, fmt.Errorf("glob: %w", err)
+	}
+	if len(names) == 0 {
+		// An empty corpus is far more likely a wiring mistake than an intent
+		// to delete every doc.
+		return 0, fmt.Errorf("prune: corpus has no docs; refusing to delete everything")
+	}
+	keep := make([]string, len(names))
+	for i, name := range names {
+		keep[i] = strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	n, err := store.PruneDocs(ctx, keep)
+	if err != nil {
+		return 0, fmt.Errorf("prune: %w", err)
+	}
+	return n, nil
 }
 
 // DocChunk is one embeddable section of a document, ready for a HelpStore to

@@ -36,6 +36,19 @@ type Summary struct {
 	Skipped   int `json:"skipped"`
 }
 
+// rowUpdater is the subset of *Store CommitJob needs to stage its outcome.
+// Defined here, at the point of use, rather than taking *Store directly, so a
+// test can substitute a fake that fails partway through a batch — the one
+// behavior (a Summary reflecting exactly what happened before an internal
+// error, returned alongside that error rather than discarded) that matters
+// most for CommitJob's callers to get right, and the one hardest to exercise
+// against a real database on demand.
+type rowUpdater interface {
+	ListByJob(ctx context.Context, jobID string) ([]Row, error)
+	MarkFailed(ctx context.Context, id string, errs []string) error
+	MarkCommitted(ctx context.Context, id, recordID string) error
+}
+
 // CommitJob turns every still-pending (or previously failed) staged row of
 // jobID into a real CRM record via the exact same crmstore.Store.CreateRecord
 // / workflow.ValidateCustomFields path a manual create-record call uses — see
@@ -43,7 +56,14 @@ type Summary struct {
 // job: a row already StatusCommitted or StatusSkipped is counted as skipped,
 // never recommitted, and one row's failure never aborts the rest of the
 // batch.
-func CommitJob(ctx context.Context, pool *pgxpool.Pool, store crmstore.Store, rows *Store, jobID, workflowKey, actorIdentityID string) (Summary, error) {
+//
+// If rows.MarkFailed/MarkCommitted itself errors (a genuine write failure,
+// not a validation rejection), the loop stops and returns early — but the
+// Summary returned alongside that error still reflects every row scored
+// before the failure. Callers MUST use it: discarding it because err != nil
+// is what let a batch that had already created hundreds of real records
+// report back as a flat, misleading "commit failed".
+func CommitJob(ctx context.Context, pool *pgxpool.Pool, store crmstore.Store, rows rowUpdater, jobID, workflowKey, actorIdentityID string) (Summary, error) {
 	def, err := LoadWorkflowDefinition(ctx, pool, workflowKey)
 	if err != nil {
 		return Summary{}, err

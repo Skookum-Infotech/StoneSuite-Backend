@@ -39,7 +39,29 @@ type Gate struct {
 	// on Approved until it is converted to a PO, and a Vendor Bill must be
 	// Approved before anything can be paid against it (vendorbill.PayableStatuses).
 	SkipTargetWhenUngated bool
+	// Reject says how a configured approver's Reject answers at this gate --
+	// see RejectMode. The zero value means the gate takes no Reject at all, so
+	// a module has to opt in on purpose.
+	Reject RejectMode
+	// RejectStatusCode is the status a Reject sends the record back to, e.g.
+	// "DRFT". Set only with RejectToStatus.
+	RejectStatusCode string
 }
+
+// RejectMode is how a gate answers an approver's Reject.
+type RejectMode int
+
+const (
+	// RejectUnsupported (the zero value): the gate has no Reject action.
+	RejectUnsupported RejectMode = iota
+	// RejectToStatus sends the record back to Gate.RejectStatusCode, for a gate
+	// with an earlier status to return to (Pending Approval -> Draft).
+	RejectToStatus
+	// RejectInPlace keeps the record's status and marks its approval rejected,
+	// for a gate that sits on the record's very first status -- there is
+	// nothing earlier to return to, so editing the record reopens approval.
+	RejectInPlace
+)
 
 // ModuleConfig maps one workflows.key to the relational module's approval
 // gate(s), approver/approval table names, and record table shape.
@@ -97,7 +119,7 @@ var registry = map[string]ModuleConfig{
 			RecordVersionColumn: "estimate_record_version", DeletedAtColumn: "estimate_deleted_at",
 			CreatedAtColumn: "estimate_created_at",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
 	"quote": {
 		RecordTypeCode: "QUOT", ApproverTable: "quote_approver", ApprovalTable: "quote_approval",
@@ -109,7 +131,7 @@ var registry = map[string]ModuleConfig{
 			RecordVersionColumn: "quote_record_version", DeletedAtColumn: "quote_deleted_at",
 			CreatedAtColumn: "quote_created_at",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
 	"sales_order": {
 		RecordTypeCode: "SORD", ApproverTable: "sales_order_approver", ApprovalTable: "sales_order_approval",
@@ -121,7 +143,7 @@ var registry = map[string]ModuleConfig{
 			RecordVersionColumn: "sales_order_record_version", DeletedAtColumn: "sales_order_deleted_at",
 			CreatedAtColumn: "sales_order_created_at",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
 	"purchase_order": {
 		RecordTypeCode: "PORD", ApproverTable: "purchase_order_approver", ApprovalTable: "purchase_order_approval",
@@ -134,7 +156,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "purchase_order_created_at",
 			OwnerColumn:     "purchase_order_owner_id", NumberColumn: "purchase_order_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 		DisplayName: "Purchase Order",
 		Resource:    "purchase_order",
 	},
@@ -152,7 +174,7 @@ var registry = map[string]ModuleConfig{
 			// requisition_requested_by_id), so it doubles as the notify owner.
 			OwnerColumn: "requisition_requested_by_id", NumberColumn: "requisition_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 		DisplayName: "Requisition",
 		Resource:    "requisition",
 	},
@@ -167,7 +189,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "vendor_bill_created_at",
 			OwnerColumn:     "vendor_bill_owner_id", NumberColumn: "vendor_bill_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 		DisplayName: "Vendor Bill",
 		Resource:    "vendor_bill",
 	},
@@ -182,7 +204,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "vendor_payment_created_at",
 			OwnerColumn:     "vendor_payment_owner_id", NumberColumn: "vendor_payment_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 		DisplayName: "Vendor Payment",
 		Resource:    "vendor_payment",
 	},
@@ -233,7 +255,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "invoice_created_at",
 			OwnerColumn:     "invoice_owner_id", NumberColumn: "invoice_number",
 		},
-		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 		DisplayName: "Invoice",
 		Resource:    "invoice",
 	},
@@ -248,7 +270,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "payment_created_at",
 			OwnerColumn:     "payment_owner_id", NumberColumn: "payment_number",
 		},
-		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV", Reject: RejectInPlace}},
 		DisplayName: "Payment",
 		Resource:    "payment",
 	},
@@ -266,7 +288,7 @@ var registry = map[string]ModuleConfig{
 		// Credit Memo has no separate Pending status -- the gate sits on
 		// Draft itself. Void always escapes (AlwaysAllowedExitCodes), so a
 		// draft credit memo can still be voided without approval.
-		Gates:       []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV", Reject: RejectInPlace}},
 		DisplayName: "Credit Memo",
 		Resource:    "credit_memo",
 	},
@@ -281,7 +303,7 @@ var registry = map[string]ModuleConfig{
 			CreatedAtColumn: "refund_created_at",
 			OwnerColumn:     "refund_owner_id", NumberColumn: "refund_number",
 		},
-		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "APPV", Reject: RejectInPlace}},
 		DisplayName: "Refund",
 		Resource:    "refund",
 	},
@@ -300,7 +322,7 @@ var registry = map[string]ModuleConfig{
 		// Draft itself, mirroring credit_memo. Void always escapes
 		// (AlwaysAllowedExitCodes), so a draft vendor credit can still be
 		// voided without approval.
-		Gates:       []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV"}},
+		Gates:       []Gate{{StatusCode: "DRFT", TargetStatusCode: "APPV", Reject: RejectInPlace}},
 		DisplayName: "Vendor Credit",
 		Resource:    "vendor_credit",
 	},

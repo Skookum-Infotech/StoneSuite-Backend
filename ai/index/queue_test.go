@@ -147,3 +147,188 @@ func TestStatsReportsPendingCountAndOldestAge(t *testing.T) {
 		t.Fatalf("pending after claim = %d, want 0", pending)
 	}
 }
+
+// TestEnqueueDedupesAgainstExistingPending proves the reconciliation sweep
+// re-deriving the same (source, op) pair on every maintenance tick does not
+// pile up duplicate pending rows.
+func TestEnqueueDedupesAgainstExistingPending(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+
+	const recID = "55555555-5555-5555-5555-555555555555"
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := q.Stats(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("pending = %d, want 1 (duplicate enqueue must be skipped)", pending)
+	}
+
+	// A different op for the same source is NOT a duplicate.
+	if err := q.Enqueue(ctx(t), recID, "delete"); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err = q.Stats(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 2 {
+		t.Fatalf("pending = %d, want 2 (different op is a distinct job)", pending)
+	}
+
+	// Once the first job is claimed (no longer 'pending'), enqueueing the
+	// same source+op again must not be treated as a duplicate.
+	if _, err := q.ClaimPending(ctx(t), 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err = q.Stats(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("pending = %d, want 1 (both prior jobs are now inflight, so a fresh upsert is not a duplicate)", pending)
+	}
+}
+
+// TestReleaseReturnsToPendingWithoutChargingAnAttempt proves the retry-burn
+// fix: Release must undo the attempt ClaimPending charged, not just flip the
+// status back to pending.
+func TestReleaseReturnsToPendingWithoutChargingAnAttempt(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+
+	const recID = "66666666-6666-6666-6666-666666666666"
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := q.ClaimPending(ctx(t), 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("claim = %+v, %v; want 1 job", jobs, err)
+	}
+	if err := q.Release(ctx(t), jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+	var attempts int
+	if err := pool.QueryRow(ctx(t), `SELECT status, attempts FROM rag_index_queue WHERE id=$1`, jobs[0].ID).
+		Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("status = %q, want pending", status)
+	}
+	if attempts != 0 {
+		t.Fatalf("attempts = %d, want 0 (Release must not charge a retry attempt)", attempts)
+	}
+
+	// The job must be claimable again — and this can repeat indefinitely
+	// (Release never exhausts attempts, unlike Fail).
+	jobs2, err := q.ClaimPending(ctx(t), 10)
+	if err != nil || len(jobs2) != 1 {
+		t.Fatalf("re-claim after release = %+v, %v; want 1 job", jobs2, err)
+	}
+}
+
+// TestReclaimStuckResetsOldInflightJobs proves a worker crash between Claim
+// and Complete/Fail/Release does not strand a job 'inflight' forever.
+func TestReclaimStuckResetsOldInflightJobs(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+
+	const recID = "77777777-7777-7777-7777-777777777777"
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := q.ClaimPending(ctx(t), 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("claim = %+v, %v; want 1 job", jobs, err)
+	}
+
+	// Freshly claimed: not yet stale, ReclaimStuck must leave it alone.
+	n, err := q.ReclaimStuck(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("reclaimed = %d, want 0 (job was just claimed)", n)
+	}
+
+	// Backdate claimed_at past reclaimStaleAfter to simulate an abandoned claim.
+	if _, err := pool.Exec(ctx(t),
+		`UPDATE rag_index_queue SET claimed_at = NOW() - INTERVAL '11 minutes' WHERE id = $1`, jobs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	n, err = q.ReclaimStuck(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("reclaimed = %d, want 1", n)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx(t), `SELECT status FROM rag_index_queue WHERE id=$1`, jobs[0].ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("status = %q, want pending", status)
+	}
+}
+
+// TestReviveResetsErrorRowsToPending proves the catch-up path: jobs that
+// exhausted maxAttempts while the assistant was unavailable get a fresh set
+// of attempts once it's re-enabled.
+func TestReviveResetsErrorRowsToPending(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+
+	const recID = "88888888-8888-8888-8888-888888888888"
+	if err := q.Enqueue(ctx(t), recID, "upsert"); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	for i := 0; i < maxAttempts; i++ {
+		jobs, err := q.ClaimPending(ctx(t), 10)
+		if err != nil || len(jobs) != 1 {
+			t.Fatalf("claim attempt %d = %+v, %v", i, jobs, err)
+		}
+		id = jobs[0].ID
+		if err := q.Fail(ctx(t), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var status string
+	if err := pool.QueryRow(ctx(t), `SELECT status FROM rag_index_queue WHERE id=$1`, id).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "error" {
+		t.Fatalf("status = %q, want error (precondition)", status)
+	}
+
+	n, err := q.Revive(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("revived = %d, want 1", n)
+	}
+
+	var attempts int
+	if err := pool.QueryRow(ctx(t), `SELECT status, attempts FROM rag_index_queue WHERE id=$1`, id).
+		Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || attempts != 0 {
+		t.Fatalf("after revive: status=%q attempts=%d, want pending/0", status, attempts)
+	}
+}

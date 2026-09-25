@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -290,9 +289,9 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	_ = workflow.LogAudit(r.Context(), pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
 
-	ownerAddr, ownerIdentityID := ownerSendContact(r.Context(), pool, ownerUserID)
-	notifyOwnerOfSend(r.Context(), services.SendNotification, ownerAddr,
-		tenant.ID, ownerIdentityID, identityID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
+	ownerAddr, ownerIdentityID, ownerName := ownerSendContact(r.Context(), pool, ownerUserID)
+	notifyOwnerOfSend(r.Context(), services.SendNotification, sendOwner{Email: ownerAddr, IdentityID: ownerIdentityID, Name: ownerName},
+		tenant.ID, identityID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "sendId": sendID, "sentTo": to,
@@ -310,20 +309,24 @@ func customerSendRequest(
 ) services.NotificationRequest {
 	recipients := make([]services.RecipientTarget, 0, len(to)+len(cc))
 	for _, addr := range append(append([]string{}, to...), cc...) {
-		recipients = append(recipients, services.RecipientTarget{Email: addr})
+		r := services.RecipientTarget{Email: addr}
+		if strings.EqualFold(addr, meta.DefaultRecipientEmail) {
+			r.Name = meta.DefaultRecipientName
+		}
+		recipients = append(recipients, r)
 	}
 	return services.NotificationRequest{
-		TenantID:      tenantID,
-		Recipients:    recipients,
-		ActorUserID:   actorIdentityID,
-		EventType:     "document.sent",
-		Resource:      meta.WorkflowKey,
-		ResourceID:    recordID,
-		Title:         subject,
-		Body:          "Document sent.",
-		EmailBodyHTML: documentEmailHTML(doc, message, fileName),
-		Channels:      []string{"email"},
-		Attachments:   []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
+		TenantID:    tenantID,
+		Recipients:  recipients,
+		ActorUserID: actorIdentityID,
+		EventType:   "document.sent",
+		Resource:    meta.WorkflowKey,
+		ResourceID:  recordID,
+		Title:       subject,
+		Body:        "Document sent.",
+		Email:       documentEmail(doc, message, fileName, len(pdf)),
+		Channels:    []string{"email"},
+		Attachments: []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
 	}
 }
 
@@ -380,35 +383,6 @@ func hasHeaderInjection(s string) bool {
 	return strings.ContainsAny(s, "\r\n")
 }
 
-// documentEmailHTML is the transactional email body wrapping an optional
-// sender message. It goes through services.WrapEmailHTMLWithBanner — the one
-// shared shell every StoneSuite email uses, including this tenant-context
-// one (StoneSuite is the platform sending it; the seller/tenant's identity
-// appears in the message and signature text below, not as a swapped header
-// logo — the tenant's logo is only reachable through short-lived presigned
-// URLs, so there is nothing stable to <img>; it appears on the attached PDF,
-// see docpdf.Seller.LogoPNG). A bare fragment plus the old remote
-// logo <img> (broken for most recipients, and a tracking signal) both hurt
-// inbox placement. The sender message and seller name are HTML-escaped: they
-// are free text, not markup.
-func documentEmailHTML(d docpdf.PrintableDoc, message, fileName string) string {
-	msg := "Please find your " + strings.ToLower(d.Kind) + " " + d.Number + " attached."
-	if message != "" {
-		msg = message
-	}
-	seller := html.EscapeString(d.Seller.Name)
-	inner := services.EmailMessageBox(`<p style="margin:0 0 14px;">`+html.EscapeString(msg)+`</p>`+
-		services.EmailAttachmentChip(fileName)) +
-		`<p style="font-size:13px;color:#71717a;margin:14px 0 0;">Regards,<br>` + seller + `</p>`
-	return services.WrapEmailHTMLWithBanner(
-		d.Kind+" "+d.Number+" from "+d.Seller.Name,
-		"Document Sent",
-		d.Kind+" "+d.Number,
-		"is on its way.",
-		inner,
-	)
-}
-
 // ownerSendContact best-effort-resolves the record owner's email address and
 // control-plane identity id for the owner ping below. Notify never resolves an
 // email from a bare id (it owns no user directory; see services/notify.go), so
@@ -417,63 +391,15 @@ func documentEmailHTML(d docpdf.PrintableDoc, message, fileName string) string {
 // approvalchain/notify.go's contact type — a row keyed by users.id is one the
 // bell can never find). Lookup failure is logged and swallowed, same as the
 // ping itself. An empty identity id ⇒ notifyOwnerOfSend no-ops.
-func ownerSendContact(ctx context.Context, pool *pgxpool.Pool, ownerUserID string) (email, identityID string) {
+func ownerSendContact(ctx context.Context, pool *pgxpool.Pool, ownerUserID string) (email, identityID, name string) {
 	if ownerUserID == "" {
-		return "", ""
+		return "", "", ""
 	}
 	u, err := userstore.GetUserByID(ctx, pool, ownerUserID)
 	if err != nil {
 		slog.WarnContext(ctx, "documents: load owner contact for send notification failed",
 			"owner_user_id", ownerUserID, "error", err)
-		return "", ""
+		return "", "", ""
 	}
-	return u.Email, u.IdentityID
-}
-
-// notifyOwnerOfSend best-effort-notifies the record's internal owner that
-// the document was sent, with the same PDF the customer received attached.
-// ownerIdentityID and actorIdentityID are control-plane identity ids (the id
-// Notify scopes by), not tenant users.ids. notify is injected (defaults to
-// services.SendNotification) so tests don't need a live notify service. A
-// failure here is logged and swallowed — the document has already been sent
-// and recorded by the time this runs, and a Notify outage must never undo that.
-func notifyOwnerOfSend(
-	ctx context.Context,
-	notify func(context.Context, services.NotificationRequest) error,
-	ownerUserEmail, tenantID, ownerIdentityID, actorIdentityID string,
-	doc docpdf.PrintableDoc, number, workflowKey, recordID string,
-	sentTo []string, pdf []byte, fileName string,
-) {
-	if ownerIdentityID == "" {
-		return
-	}
-	link := recordLink(workflowKey, recordID)
-	err := notify(ctx, services.NotificationRequest{
-		TenantID:    tenantID,
-		Recipients:  []services.RecipientTarget{{UserID: ownerIdentityID, Email: ownerUserEmail}},
-		ActorUserID: actorIdentityID,
-		EventType:   "document.sent",
-		Resource:    workflowKey,
-		ResourceID:  recordID,
-		Title:       doc.Kind + " " + number + " sent",
-		Body:        "Sent to " + strings.Join(sentTo, ", "),
-		Link:        link,
-		Channels:    []string{"email"},
-		EmailBodyHTML: services.BuildRecordEmailHTML(services.RecordEmail{
-			Badge:      "Document Sent",
-			Subject:    doc.Kind + " " + number,
-			Verb:       "was sent",
-			Message:    "Sent to " + strings.Join(sentTo, ", ") + ".",
-			Path:       link,
-			CTA:        "View " + strings.ToLower(doc.Kind),
-			Attachment: fileName,
-		}),
-		Attachments: []services.NotifyAttachment{
-			{FileName: fileName, ContentType: "application/pdf", Content: pdf},
-		},
-	})
-	if err != nil {
-		slog.WarnContext(ctx, "documents: notify owner of send failed",
-			"record_id", recordID, "error", err)
-	}
+	return u.Email, u.IdentityID, u.FullName
 }

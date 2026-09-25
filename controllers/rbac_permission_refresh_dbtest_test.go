@@ -56,8 +56,11 @@ func seedRBACTestIdentity(t *testing.T, cp *tenancy.ControlPlane, pool *pgxpool.
 // permission and returns its id.
 func seedRBACTestRole(t *testing.T, pool *pgxpool.Pool, namePrefix string, grant authz.Grant) string {
 	t.Helper()
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	roleID, err := authz.CreateRole(context.Background(), pool, namePrefix+"-"+suffix, namePrefix, "", []authz.Grant{grant})
+	// Both key and name are suffixed: name is now uniqueness-checked same as
+	// key, so a fixed name would collide with a leftover row from a prior run
+	// against a persistent dbtest database.
+	unique := namePrefix + "-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	roleID, err := authz.CreateRole(context.Background(), pool, unique, unique, "", []authz.Grant{grant})
 	require.NoError(t, err)
 	return roleID
 }

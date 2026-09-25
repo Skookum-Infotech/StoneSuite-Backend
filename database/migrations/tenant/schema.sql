@@ -788,16 +788,58 @@ CREATE TABLE IF NOT EXISTS lkp_crm_status (
 INSERT INTO lkp_crm_status (crm_status_code, crm_status_name, crm_status_record_type, crm_status_is_active, crm_status_is_system, crm_status_created_by) VALUES
     ('LQUA', 'Lead Qualified',                       1, TRUE, TRUE, 1),
     ('LUNQ', 'Lead Unqualified',                     1, TRUE, TRUE, 1),
-    ('PDIS', 'Prospect In Discussion',               2, TRUE, TRUE, 1),
-    ('PNEG', 'Prospect In Negotiation',              2, TRUE, TRUE, 1),
-    ('PPRP', 'Prospect Proposal',                    2, TRUE, TRUE, 1),
-    ('PIDM', 'Prospect Identified Decision Makers',  2, TRUE, TRUE, 1),
-    ('PPUR', 'Prospect Purchasing',                  2, TRUE, TRUE, 1),
-    ('PCLL', 'Prospect Closed Lost',                 2, TRUE, TRUE, 1),
-    ('CCLW', 'Customer Closed Won',                  3, TRUE, TRUE, 1),
-    ('CCLL', 'Customer Closed Lost',                 3, TRUE, TRUE, 1),
-    ('CREN', 'Customer Renewal',                     3, TRUE, TRUE, 1)
-ON CONFLICT (crm_status_code, crm_status_record_type) DO NOTHING;
+    ('PDIS', 'In Discussion',                        2, TRUE, TRUE, 1),
+    ('PNEG', 'In Negotiation',                       2, TRUE, TRUE, 1),
+    ('PPRP', 'Proposal Sent',                        2, TRUE, TRUE, 1),
+    ('PIDM', 'Decision Pending',                     2, TRUE, TRUE, 1),
+    ('PPUR', 'Contacted',                            2, TRUE, TRUE, 1),
+    ('PCLL', 'Lost',                                 2, TRUE, TRUE, 1),
+    -- The customer statuses Closed Won, Closed Lost and Renewal are retired (see the
+    -- migration at the end of this file), so they are no longer seeded. A customer is
+    -- Draft, Active, Inactive or on Credit Hold.
+    -- Entry statuses: what a record starts in when it is created or converted
+    -- into a stage (Lead New, Prospect New, Customer Draft). Resolved by CODE in
+    -- crmstore/relational_status.go (crmInitialStatusCode), never by lowest id --
+    -- appended last so a fresh tenant and one that predates them number alike.
+    ('LNEW', 'New',                                  1, TRUE, TRUE, 1),
+    ('PNEW', 'New',                                  2, TRUE, TRUE, 1),
+    ('CDRF', 'Draft',                                3, TRUE, TRUE, 1),
+    -- Prospect Pending Conversion: set by the Pending Conversion header button and
+    -- never picked from the status dropdown (crmActionOnlyStatuses). It is the only
+    -- status a prospect can be converted to a customer from (crmConvertRules).
+    -- Appended last for the same reason as the entry statuses above.
+    ('PPCV', 'Pending Conversion',                   2, TRUE, TRUE, 1),
+    -- Customer statuses: Active is the only one a customer can be used on other
+    -- records in (workflow/customer_usable.go). Draft, Inactive and Credit Hold are
+    -- not. Reached by the customer Quick Action buttons and by approval, never from
+    -- the status dropdown (crmActionOnlyStatuses). Appended last as above.
+    ('CACT', 'Active',                               3, TRUE, TRUE, 1),
+    ('CINA', 'Inactive',                             3, TRUE, TRUE, 1),
+    ('CCHD', 'Credit Hold',                          3, TRUE, TRUE, 1)
+ON CONFLICT DO NOTHING;
+
+-- Prospect statuses were renamed to drop the "Prospect " prefix and shorten them.
+-- The seed above never overwrites an existing row, so a tenant created before the
+-- rename still carries the old names. Each row is matched on its OLD name, so it is
+-- renamed exactly once and a name someone sets later is never overwritten. A row
+-- whose new name is already taken is skipped, since names are unique per record
+-- type and a clash must not abort the migration for the whole tenant.
+UPDATE lkp_crm_status AS cs
+   SET crm_status_name = r.new_name
+  FROM (VALUES
+        ('PDIS', 'Prospect In Discussion',              'In Discussion'),
+        ('PNEG', 'Prospect In Negotiation',             'In Negotiation'),
+        ('PPRP', 'Prospect Proposal',                   'Proposal Sent'),
+        ('PIDM', 'Prospect Identified Decision Makers', 'Decision Pending'),
+        ('PPUR', 'Prospect Purchasing',                 'Contacted'),
+        ('PCLL', 'Prospect Closed Lost',                'Lost')
+  ) AS r(code, old_name, new_name)
+ WHERE cs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'PROS')
+   AND cs.crm_status_code = r.code
+   AND cs.crm_status_name = r.old_name
+   AND NOT EXISTS (SELECT 1 FROM lkp_crm_status x
+                    WHERE x.crm_status_record_type = cs.crm_status_record_type
+                      AND x.crm_status_name = r.new_name);
 
 -- 7. lkp_customer_type ------------------------------------------------
 CREATE TABLE IF NOT EXISTS lkp_customer_type (
@@ -7157,6 +7199,40 @@ CREATE TABLE IF NOT EXISTS vendor_bill_conversion (
     CONSTRAINT uq_vendor_bill_conversion_bill UNIQUE (vendor_bill_id)
 );
 
+-- vendor_bill_conversion_line -- what each conversion billed, per purchase
+-- order line. A PO line's "already billed" quantity is the sum of these over
+-- bills that are live and not VOID, which is what lets ConvertFromPurchaseOrder
+-- bill only the received-but-not-yet-billed quantity. Recorded here rather than
+-- read off vendor_bill_item because editing a bill re-inserts its lines with no
+-- purchase_order_item_id (store_update.go), so that link cannot be trusted
+-- after an edit. A conversion always writes at least one row here.
+CREATE TABLE IF NOT EXISTS vendor_bill_conversion_line (
+    vendor_bill_conversion_id INTEGER       NOT NULL REFERENCES vendor_bill_conversion(vendor_bill_conversion_id) ON DELETE CASCADE,
+    purchase_order_item_id    INTEGER       NOT NULL REFERENCES purchase_order_item(purchase_order_item_id) ON DELETE CASCADE,
+    quantity                  DECIMAL(14,3) NOT NULL,
+    PRIMARY KEY (vendor_bill_conversion_id, purchase_order_item_id),
+    CONSTRAINT chk_vbcl_quantity_positive CHECK (quantity > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vbcl_po_item ON vendor_bill_conversion_line (purchase_order_item_id);
+
+-- One-time backfill for conversions made before per-line tracking existed: each
+-- billed every live line at its full ordered quantity (the old convert was a
+-- verbatim copy), so record exactly that. Only conversions with NO line rows
+-- qualify -- a newer conversion always has at least one, and may legitimately
+-- have skipped lines that had nothing left to bill, which this must never
+-- "restore". That guard is also what makes re-running this on every boot a no-op.
+INSERT INTO vendor_bill_conversion_line (vendor_bill_conversion_id, purchase_order_item_id, quantity)
+SELECT c.vendor_bill_conversion_id, poi.purchase_order_item_id, poi.quantity
+FROM vendor_bill_conversion c
+JOIN purchase_order_item poi
+  ON poi.purchase_order_id = c.purchase_order_id AND poi.item_deleted_at IS NULL AND poi.quantity > 0
+WHERE NOT EXISTS (
+    SELECT 1 FROM vendor_bill_conversion_line l
+    WHERE l.vendor_bill_conversion_id = c.vendor_bill_conversion_id
+)
+ON CONFLICT DO NOTHING;
+
 -- vendor_bill indexes (listing/filtering -- all partial on live rows)
 CREATE INDEX IF NOT EXISTS idx_vbil_vendor        ON vendor_bill (vendor_bill_vendor_id)         WHERE vendor_bill_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_vbil_po             ON vendor_bill (vendor_bill_purchase_order_id) WHERE vendor_bill_deleted_at IS NULL;
@@ -8215,7 +8291,6 @@ CREATE INDEX IF NOT EXISTS idx_vcrd_pending ON vendor_credit  (vendor_credit_cre
 -- whose notify response could not be parsed (non-fatal).
 ALTER TABLE document_sends ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
 
-
 -- =====================================================================
 -- Tenant-template schema -- Phase 42: Company Info (tenant's own company
 -- identity/address, editable at Configuration -> Company Info).
@@ -8339,3 +8414,217 @@ CREATE TABLE IF NOT EXISTS company_location (
 -- At most one live default location at a time.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_location_default
     ON company_location (is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
+
+
+-- =====================================================================
+-- APPROVAL REJECTION (Sales / Purchases)
+--
+-- A configured approver can reject a record that is awaiting approval
+-- (approvalchain.Reject). A gate with an earlier status to return to sends the
+-- record back to Draft; a gate on a record's very first status (Credit Memo,
+-- Vendor Credit, Payment, Refund) keeps the status and flags the approval
+-- rejected in place until the record is edited. Either way WHO rejected it,
+-- WHEN and WHY lives in this one shared table rather than three columns on
+-- every module's header -- the engine reads it generically off
+-- approvalchain's ModuleConfig, and a record has at most one current
+-- rejection.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS approval_rejection (
+    approval_rejection_id   SERIAL      PRIMARY KEY,
+    record_type_id          INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),
+    record_id                INTEGER     NOT NULL,  -- the row's internal id in the module's own table; polymorphic on record_type_id, so no FK
+    record_status_id         INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- the status the record was left in
+    rejected_by              INTEGER         NULL REFERENCES employee(employee_id),
+    rejected_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reason                   TEXT        NOT NULL,
+    CONSTRAINT uq_approval_rejection UNIQUE (record_type_id, record_id)
+);
+
+-- Widen the history action CHECKs so a rejected record's history row can say
+-- 'reject' (widening-only; existing rows stay valid). purchase_order,
+-- vendor_bill, vendor_payment and vendor_credit history have no action CHECK,
+-- and expense_history already allows 'reject'.
+--
+-- estimate_history, quote_history and sales_order_history are also widened to
+-- allow 'approve_override': those three keep their own approval.go, whose
+-- super-admin override has always written that action, but their CHECK never
+-- listed it -- the swallowed INSERT error aborted the transaction, so an
+-- override approval on any of them failed at commit.
+ALTER TABLE estimate_history DROP CONSTRAINT IF EXISTS chk_estimate_history_action;
+ALTER TABLE estimate_history ADD CONSTRAINT chk_estimate_history_action
+    CHECK (action IN ('create','transition','convert','update','approve','approve_override','reject'));
+
+ALTER TABLE quote_history DROP CONSTRAINT IF EXISTS chk_quote_history_action;
+ALTER TABLE quote_history ADD CONSTRAINT chk_quote_history_action
+    CHECK (action IN ('create','transition','convert','update','approve','approve_override','reject'));
+
+ALTER TABLE sales_order_history DROP CONSTRAINT IF EXISTS chk_sales_order_history_action;
+ALTER TABLE sales_order_history ADD CONSTRAINT chk_sales_order_history_action
+    CHECK (action IN ('create','transition','cancel','update','approve','approve_override','convert','reject'));
+
+ALTER TABLE invoice_history DROP CONSTRAINT IF EXISTS chk_invoice_history_action;
+ALTER TABLE invoice_history ADD CONSTRAINT chk_invoice_history_action
+    CHECK (action IN ('create','transition','update','payment','unapply','credit','uncredit','convert','approve','approve_override','reject'));
+
+ALTER TABLE payment_history DROP CONSTRAINT IF EXISTS chk_payment_history_action;
+ALTER TABLE payment_history ADD CONSTRAINT chk_payment_history_action
+    CHECK (action IN ('create','apply','unapply','transition','approve','approve_override','reject'));
+
+ALTER TABLE credit_memo_history DROP CONSTRAINT IF EXISTS chk_credit_memo_history_action;
+ALTER TABLE credit_memo_history ADD CONSTRAINT chk_credit_memo_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override','reject'));
+
+ALTER TABLE refund_history DROP CONSTRAINT IF EXISTS chk_refund_history_action;
+ALTER TABLE refund_history ADD CONSTRAINT chk_refund_history_action
+    CHECK (action IN ('create','update','transition','apply','unapply','approve','approve_override','reject'));
+
+ALTER TABLE requisition_history DROP CONSTRAINT IF EXISTS chk_reqn_history_action;
+ALTER TABLE requisition_history ADD CONSTRAINT chk_reqn_history_action
+    CHECK (action IN ('create','transition','update','approve','convert','reject'));
+
+-- CRM customer status rework: migrate existing customers ---------------------
+-- These statements read the customer table, so they live here at the end of the file
+-- and not next to the lkp_crm_status seed near the top, which runs before that table
+-- exists on a fresh tenant. The seed adds the new customer statuses first.
+
+-- Customer statuses were reworked: Closed Won, Renewal and Closed Lost are retired
+-- in favour of Draft, Active, Inactive and Credit Hold. First move every customer
+-- off the retired statuses. Won and Renewal customers were the usable ones, so
+-- they become Active. Closed Lost becomes Inactive. A customer still waiting on
+-- (or rejected from) approval becomes Draft instead, whatever it was in, because
+-- approval is what makes a customer Active. Nothing is touched once no customer is
+-- left in a retired status, and a target status that is missing leaves the
+-- customer where it is rather than clearing its status.
+UPDATE customer AS c
+   SET customer_crm_status = t.target_id
+  FROM (SELECT cu.customer_id,
+               (SELECT ns.crm_status_id FROM lkp_crm_status ns
+                 WHERE ns.crm_status_record_type = rs.crm_status_record_type
+                   AND ns.crm_status_code = CASE
+                         WHEN cu.customer_approval_status IN ('pending', 'rejected') THEN 'CDRF'
+                         WHEN rs.crm_status_code = 'CCLL' THEN 'CINA'
+                         ELSE 'CACT' END) AS target_id
+          FROM customer cu
+          JOIN lkp_crm_status rs ON rs.crm_status_id = cu.customer_crm_status
+         WHERE rs.crm_status_code IN ('CCLW', 'CREN', 'CCLL')
+           AND rs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'CUST')) AS t
+ WHERE c.customer_id = t.customer_id
+   AND t.target_id IS NOT NULL;
+
+-- Then retire the three statuses themselves. They are soft-deleted rather than
+-- dropped, since the status history still points at them, and only once no customer
+-- is left in one.
+UPDATE lkp_crm_status AS cs
+   SET crm_status_is_active = FALSE, crm_status_deleted_at = NOW()
+ WHERE cs.crm_status_code IN ('CCLW', 'CREN', 'CCLL')
+   AND cs.crm_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'CUST')
+   AND cs.crm_status_deleted_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM customer c WHERE c.customer_crm_status = cs.crm_status_id);
+
+-- -- 000043_import_rows_unique ---------------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 43: make (job_id, row_index) unique on
+-- import_rows, so restaging a job converges on its rows instead of
+-- appending a second copy of every one of them.
+--
+-- runImport (importer/worker.go) only ever inserted rows, and nothing
+-- cleared a job's prior rows before restaging it -- so a job that failed or
+-- crashed partway through staging (worker crash, a stale-reap requeue that
+-- flipped a still-legitimately-running job back to pending, or the queue's
+-- own attempts-based retry) would restage from row 0 on its next attempt,
+-- landing a second row at every row_index the first attempt already reached.
+-- A job that failed at row 8,000 of 10,000 could end up with 18,000 staged
+-- rows, half of them duplicates a reviewer would have to spot by hand.
+--
+-- The Go-side fix (importer/store.go's UpsertRow + DeletePendingRowsForJob,
+-- called by runImport right before staging begins) needs this unique index
+-- to converge against; without it, UpsertRow's own ON CONFLICT clause has
+-- nothing to conflict on and silently behaves like a plain INSERT again.
+--
+-- This file is re-applied on every boot, so any tenant that already hit the
+-- bug pre-fix has real duplicate (job_id, row_index) pairs on disk today --
+-- asserting uniqueness before converging them would fail every subsequent
+-- boot for that tenant. The DELETE below runs first and is idempotent: a
+-- committed row is NEVER a deletion candidate (already produced a real CRM
+-- record; a status filter, not a tie-break, keeps it out of harm's way even
+-- against another committed duplicate -- the one shape of this bug the
+-- migration deliberately does not resolve on its own, since discarding
+-- either row's tracking metadata could not undo an already-created second
+-- record). Among non-committed duplicates it keeps the most recently
+-- inserted one, so once no duplicates remain it's a no-op.
+--
+-- idx_import_rows_job (job_id, row_index) is superseded by the new unique
+-- index below, which serves every lookup the old one did plus the
+-- uniqueness guarantee -- dropped by name only, per this repo's rule for
+-- correcting an index in place rather than leaving the superseded
+-- definition live alongside its replacement.
+-- =====================================================================
+
+DELETE FROM import_rows a USING import_rows b
+WHERE a.job_id = b.job_id
+  AND a.row_index = b.row_index
+  AND a.id <> b.id
+  AND a.status <> 'committed'
+  AND ( b.status = 'committed'
+     OR (a.created_at, a.id) < (b.created_at, b.id) );
+
+CREATE UNIQUE INDEX IF NOT EXISTS import_rows_job_row_idx ON import_rows (job_id, row_index);
+DROP INDEX IF EXISTS idx_import_rows_job;
+
+-- -- 000044_rag_chunks_record_type ------------------------------------------
+-- =====================================================================
+-- Tenant-template schema -- Phase 44: rag_chunks.record_type for per-type
+-- AI retrieval scope.
+--
+-- rag_chunks had no column saying whether a row is a lead, prospect or
+-- customer, so the assistant's retrieval scope was ONE clause over every
+-- row: a caller with lead:read "all" and no customer grant at all was
+-- scoped "all" and retrieved customer records. record_type lets the scope
+-- be built per granted type ((type = X AND scope_X) OR ...).
+--
+-- Existing rows keep NULL until the reconciliation sweep refreshes them
+-- (a scope-only UPDATE, no re-embed). A NULL row matches no per-type
+-- clause, so until then retrieval is fail-closed: fewer results, never
+-- extra ones.
+-- =====================================================================
+
+ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS record_type TEXT;
+CREATE INDEX IF NOT EXISTS rag_chunks_type_owner_idx ON rag_chunks (record_type, owner_user_id);
+
+-- =====================================================================
+-- Tenant-template schema -- Phase 45: per-tenant AI assistant on/off switch.
+--
+-- Singleton row (id always 1), same shape as accounting_settings/
+-- company_profile. The assistant is available to this tenant only when
+-- assistant_enabled is TRUE here AND the control plane's
+-- platform_ai_settings.enabled is TRUE (control_plane/schema.sql) -- see
+-- aisettings.Available. Defaults TRUE so applying this migration changes
+-- nothing until a tenant admin flips it off via PUT /api/tenant/ai/settings.
+-- updated_by is the acting user's email (TEXT, not a users(id) FK) --
+-- matching platform_ai_settings.updated_by's convention in the control
+-- plane, so a toggle stays attributable even if the user row is later
+-- removed.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS ai_settings (
+    id                  SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    assistant_enabled   BOOLEAN      NOT NULL DEFAULT TRUE,
+    updated_by          TEXT,
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+INSERT INTO ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- =====================================================================
+-- Tenant-template schema -- Phase 46: rag_index_queue.claimed_at, so stuck
+-- 'inflight' jobs can be reclaimed.
+--
+-- ClaimPending moves a job to 'inflight' and, until now, recorded nothing
+-- about when. A worker that crashed (or was redeployed) between Claim and
+-- Complete/Fail/Release left that row 'inflight' forever -- there was no way
+-- to tell an abandoned claim from one still legitimately being processed.
+-- claimed_at lets ai/index.Queue.ReclaimStuck reset anything claimed more
+-- than reclaimStaleAfter ago back to 'pending'. NULL on rows claimed before
+-- this migration (and on every row until the next Claim); ReclaimStuck skips
+-- those, same as before this existed.
+-- =====================================================================
+ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;

@@ -63,6 +63,17 @@ var goldenQuestions = []struct {
 	{question: "How many customers are in the renewal stage", wantOK: false},
 	{question: "Total number of rejected prospects", wantOK: false},
 	{question: "How many leads since last month", wantOK: false},
+
+	// --- Retrieval: a CRM type word that is NOT what is being counted ---
+	// (substring matching used to answer these with "You have N customers.")
+	{question: "What's the total balance for customer Acme?", wantOK: false},
+	{question: "How many emails did customer Acme send?", wantOK: false},
+	{question: "How many leader boards are there?", wantOK: false},
+	{question: "How many days until the lead converts", wantOK: false},
+
+	// --- Analytical: fillers between the count phrase and the type ---
+	{question: "How many of our leads do we have", wantOK: true, wantKeys: []string{"lead"}},
+	{question: "how many customers or prospects are there", wantOK: true, wantKeys: []string{"customer", "prospect"}},
 }
 
 // TestGoldenQuestionSet runs every entry in goldenQuestions through the same

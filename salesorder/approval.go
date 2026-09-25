@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/workflow"
 )
 
@@ -253,6 +254,13 @@ type ApprovalInfo struct {
 	// approver, so this isn't "approved" yet, but the caller's own part is
 	// done and the UI shouldn't re-offer them the Approve button.
 	CallerAlreadyApproved bool `json:"callerAlreadyApproved"`
+	// CanReject is true while the sales order awaits approval and the caller is a
+	// configured approver or a super admin -- one rejection is enough, no quorum.
+	CanReject bool `json:"canReject"`
+	// Rejection is the latest rejection, present while the sales order still sits in
+	// the status the rejection sent it back to (Draft). Gated is false there, yet
+	// the page still shows why.
+	Rejection *approvalchain.RejectionInfo `json:"rejection,omitempty"`
 }
 
 // GetApprovalInfo resolves ApprovalInfo for a sales order. Returns Gated:
@@ -275,12 +283,19 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 		return ApprovalInfo{}, fmt.Errorf("resolve SORD record type: %w", err)
 	}
 
+	// Loaded before the gated checks: a sales order sent back to Draft is no longer
+	// gated, yet its page still has to say why.
+	rejection, err := approvalchain.CurrentRejection(ctx, pool, recordTypeID, internalID, curStatusID)
+	if err != nil {
+		return ApprovalInfo{}, err
+	}
+
 	required, err := activeApproverCount(ctx, pool, recordTypeID, curStatusID)
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
 	if required == 0 || approvalStatus == approvalApproved {
-		return ApprovalInfo{Gated: false}, nil
+		return ApprovalInfo{Gated: false, Rejection: rejection}, nil
 	}
 
 	rows, err := pool.Query(ctx, `
@@ -330,5 +345,30 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 		CanApprove:            isApprover || callerIsSuperAdmin,
 		IsOverride:            !isApprover && callerIsSuperAdmin,
 		CallerAlreadyApproved: callerAlreadyApproved,
+		CanReject:             isApprover || callerIsSuperAdmin,
+		Rejection:             rejection,
 	}, nil
+}
+
+// Reject sends a sales order that is awaiting approval back to Draft on behalf of one of its
+// configured approvers (or a super admin), keeping who rejected it and why.
+// Approve keeps this package's own copy of the sign-off logic, but a rejection
+// has nothing to gain from a second copy, so it runs on the shared
+// approvalchain engine. Unlike Approve it is a veto, not a vote: no quorum is
+// needed. The reason / already-rejected errors pass through unchanged for the
+// controller to map.
+func Reject(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int, callerIsSuperAdmin bool, reason string) (*Order, error) {
+	out, err := approvalchain.Reject(ctx, pool, moduleConfig(), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
+	switch {
+	case errors.Is(err, approvalchain.ErrNotFound):
+		return nil, ErrNotFound
+	case errors.Is(err, approvalchain.ErrNotApprover):
+		return nil, ErrNotApprover
+	case errors.Is(err, approvalchain.ErrApprovalNotRequired):
+		return nil, ErrApprovalNotRequired
+	case err != nil:
+		return nil, err
+	}
+	notifyRejected(ctx, pool, uuid, out.InternalID, actorEmployeeID, out.Reason)
+	return Get(ctx, pool, uuid)
 }

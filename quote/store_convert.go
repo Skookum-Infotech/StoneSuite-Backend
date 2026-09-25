@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // ErrEstimateNotFound is returned when the source estimate uuid matches no
@@ -207,6 +209,16 @@ func ConvertFromEstimate(ctx context.Context, pool *pgxpool.Pool, estimateUUID s
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, fmt.Errorf("check existing conversion: %w", err)
+	}
+
+	// Checked after the replay above, so repeating a conversion still returns the
+	// quote it already made even if the customer has since gone on hold.
+	msg, err := workflow.CustomerNotUsableByID(ctx, tx, src.customerInternalID)
+	if err != nil {
+		return nil, false, err
+	}
+	if msg != "" {
+		return nil, false, ClientError{Msg: msg}
 	}
 
 	lines, err := loadEstimateSourceLines(ctx, tx, src.internalID)

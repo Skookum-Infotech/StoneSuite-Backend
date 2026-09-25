@@ -81,6 +81,10 @@ func (h *InvoiceOps) authInvoiceByUUID(w http.ResponseWriter, r *http.Request, u
 }
 
 func invoiceFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, invoice.ErrNotFound):
 		fail(w, http.StatusNotFound, "Invoice not found.")
@@ -177,7 +181,7 @@ func (h *InvoiceOps) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	auditInvoice(r, pool, empID, "approve", uuid, nil, inv)
 	if approvalFinalized(inv.StatusCode) {
-		notifyCustomerApproved(r.Context(), h.cp, identityID, inv.Customer.ID, "invoice", "Invoice", inv.Number, uuid)
+		notifyCustomerApproved(r.Context(), h.cp, identityID, inv.Customer.ID, "invoice", "Invoice", inv.Number, inv.GrandTotal, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})
 }
@@ -263,4 +267,39 @@ func (h *InvoiceOps) Search(w http.ResponseWriter, r *http.Request) {
 		"success": true, "scope": scope, "records": page.Records,
 		"nextCursor": page.NextCursor, "hasMore": page.HasMore,
 	})
+}
+
+// Reject POST /api/tenant/invoices/{uuid}/reject  body {"reason":"..."}
+// Rejects the invoice named by {uuid}, which must be awaiting approval: it is sent back to Draft, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *InvoiceOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authInvoiceByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		invoiceFail(w, err, "Failed to reject invoice.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := invoice.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, invoice.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		invoiceFail(w, err, "Failed to reject invoice.")
+		return
+	}
+	auditInvoice(r, pool, empID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": rec})
 }

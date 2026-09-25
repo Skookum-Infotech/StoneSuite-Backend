@@ -101,6 +101,10 @@ func (h *EstimateOps) authEstimateByUUID(w http.ResponseWriter, r *http.Request,
 
 // estimateFail maps a store error to an HTTP response.
 func estimateFail(w http.ResponseWriter, err error, serverMsg string) {
+	if status, ok := approvalRejectStatus(err); ok {
+		fail(w, status, err.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, estimate.ErrNotFound):
 		fail(w, http.StatusNotFound, "Estimate not found.")
@@ -290,4 +294,39 @@ func (h *EstimateOps) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	auditEstimate(r, pool, identityID, "approve", uuid, nil, est)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "estimate": est})
+}
+
+// Reject POST /api/tenant/estimates/{uuid}/reject  body {"reason":"..."}
+// Rejects the estimate named by {uuid}, which must be awaiting approval: it is sent back to Draft, keeping the
+// reason. Authorized like Approve (an approver's veto, not a vote): the caller
+// must be a configured approver of the current status, or a super admin.
+func (h *EstimateOps) Reject(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authEstimateByUUID(w, r, uuid, authz.ActionTransition)
+	if !ok {
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
+	if err != nil {
+		estimateFail(w, err, "Failed to reject estimate.")
+		return
+	}
+	empID := resolveEmployeeID(r, identityID)
+	rec, err := estimate.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	if err != nil {
+		if errors.Is(err, estimate.ErrNotApprover) {
+			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
+		}
+		estimateFail(w, err, "Failed to reject estimate.")
+		return
+	}
+	auditEstimate(r, pool, identityID, "reject", uuid, nil, rec)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "estimate": rec})
 }

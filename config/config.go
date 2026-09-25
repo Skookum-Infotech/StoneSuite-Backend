@@ -56,12 +56,6 @@ type Config struct {
 	// https://stonesuite-backend.fly.dev -- used to build SAML ACS/metadata
 	// URLs, which must be reachable at this backend, not the frontend.
 	APIBaseURL string
-	// Email Configuration
-	ResendAPIKey   string // optional: if set, all email goes through Resend API
-	SMTPHost       string
-	SMTPPort       string
-	SenderEmail    string
-	SenderPassword string
 	// Notify Service
 	NotifyURL    string
 	NotifyAPIKey string
@@ -114,9 +108,17 @@ type Config struct {
 	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
 	// the same Ollama box — no third-party LLM account, API key, or quota.
 	// All optional; the assistant no-ops when unconfigured.
-	AIEmbedProvider string // "ollama" (the only implementation today)
-	OllamaBaseURL   string // e.g. http://embedder:11434
-	AIChatModel     string // Ollama model tag, e.g. llama3.2:3b
+	OllamaBaseURL string // e.g. http://embedder:11434
+	AIChatModel   string // Ollama model tag, e.g. llama3.2:3b
+	// AIKeepAlive is Ollama's keep_alive for chat requests (e.g. "30m"): how
+	// long the model stays loaded after a request. Empty uses Ollama's own
+	// default (5m); on the scale-to-zero box a longer value only matters while
+	// the Machine is up anyway.
+	AIKeepAlive string
+	// AIConversationRetentionDays deletes assistant conversations idle for
+	// longer than this (0 disables). Chat history can quote record data the
+	// user has since lost access to, so it is not kept forever.
+	AIConversationRetentionDays int
 	// AIEmbedModel must name a model the Ollama box actually pulled (see
 	// ollama/entrypoint.sh) AND have an entry in ai.modelPrefixes — an
 	// unregistered model silently loses its task prefixes and degrades recall.
@@ -135,6 +137,10 @@ type Config struct {
 	// FlyOllamaAPIToken is unset (e.g. local dev, or an always-on embedder box).
 	FlyOllamaAPIToken string
 	FlyOllamaAppName  string
+	// AppName identifies this backend process as an Ollama-lease holder (see
+	// services/ollama_lease.go) — Fly sets FLY_APP_NAME automatically on every
+	// deployed Machine; "local" outside Fly (dev, tests).
+	AppName string
 
 	// AIRerankBaseURL points at a self-hosted TEI reranking deployment (see
 	// go-rag's provider/tei). Empty (default) disables reranking entirely:
@@ -147,17 +153,21 @@ type Config struct {
 	// Only takes effect when AIRerankBaseURL is set.
 	AIRerankCandidates int
 
-	// Email branding/contact placeholders consumed by services/email_layout.go
+	// Email branding/contact placeholders consumed by the shared email template (services/templates/email.html)
 	// (support line, "manage preferences" footer link, social-follow row, and
 	// the wordmark shown in transactional email headers/footers). Every one of
 	// these is a placeholder until a real support inbox, preferences page, and
 	// social accounts exist — see CLAUDE.md discussion; swap the env var, not
 	// the template code, once real values are available.
-	EmailBrandName          string
-	SupportEmail            string
-	EmailPreferencesURL     string
-	EmailSocialXURL         string
-	EmailSocialInstagramURL string
+	EmailBrandName         string
+	SupportEmail           string
+	EmailPreferencesURL    string
+	EmailSocialXURL        string
+	EmailSocialLinkedInURL string
+	EmailSocialYouTubeURL  string
+	// EmailUnsubscribeURL is the footer "Unsubscribe" link; empty falls back
+	// to EmailPreferencesURL (where email notifications are switched off).
+	EmailUnsubscribeURL string
 	// EmailViewInBrowserURL is the destination of the "View in browser" link in
 	// every email header. There is no hosted copy of a sent email yet, so it
 	// defaults to the frontend origin; point it at a real web-view route once
@@ -204,12 +214,6 @@ func Load() {
 		SAMLMetadataRefreshInterval: parseDuration(getEnv("SAML_METADATA_REFRESH_INTERVAL", "24h")),
 		SAMLRequestStateTTL:         parseDuration(getEnv("SAML_REQUEST_STATE_TTL", "15m")),
 		APIBaseURL:                  getEnv("API_BASE_URL", "http://localhost:8080"),
-		// Email Configuration
-		ResendAPIKey:   getEnv("RESEND_API_KEY", ""),
-		SMTPHost:       getEnv("SMTP_HOST", ""),
-		SMTPPort:       getEnv("SMTP_PORT", "587"),
-		SenderEmail:    getEnv("SENDER_EMAIL", ""),
-		SenderPassword: getEnv("SENDER_PASSWORD", ""),
 		// Notify Service
 		NotifyURL:    getEnv("NOTIFY_URL", "http://localhost:8081"),
 		NotifyAPIKey: getEnv("NOTIFY_API_KEY", ""),
@@ -231,9 +235,10 @@ func Load() {
 		AxiomToken:   getEnv("AXIOM_TOKEN", ""),
 		AxiomDataset: getEnv("AXIOM_DATASET", ""),
 		// AI / RAG assistant (ADR-001)
-		AIEmbedProvider: getEnv("AI_EMBED_PROVIDER", "ollama"),
-		OllamaBaseURL:   getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
-		AIChatModel:     getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
+		OllamaBaseURL:               getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		AIChatModel:                 getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
+		AIKeepAlive:                 getEnv("AI_KEEP_ALIVE", ""),
+		AIConversationRetentionDays: getEnvInt("AI_CONVERSATION_RETENTION_DAYS", 90),
 		// Must match ollama/entrypoint.sh's default pull and ollama/fly.toml —
 		// a default that names a model the box never pulled fails every embed.
 		AIEmbedModel: getEnv("AI_EMBED_MODEL", "snowflake-arctic-embed:m"),
@@ -241,16 +246,19 @@ func Load() {
 		// Ollama lifecycle control (see Config.FlyOllamaAPIToken doc)
 		FlyOllamaAPIToken: getEnv("FLY_OLLAMA_API_TOKEN", ""),
 		FlyOllamaAppName:  getEnv("FLY_OLLAMA_APP_NAME", "stonesuite-ollama"),
+		AppName:           getEnv("FLY_APP_NAME", "local"),
 		// Reranking (see Config.AIRerankBaseURL doc) — off by default.
 		AIRerankBaseURL:    getEnv("AI_RERANK_BASE_URL", ""),
 		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),
 		// Email branding/contact placeholders (see Config field doc comment)
-		EmailBrandName:          getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
-		SupportEmail:            getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
-		EmailPreferencesURL:     getEnv("EMAIL_PREFERENCES_URL", "https://app.stonesuite.io/settings/notifications"),
-		EmailSocialXURL:         getEnv("EMAIL_SOCIAL_X_URL", "https://x.com/stonesuite"),
-		EmailSocialInstagramURL: getEnv("EMAIL_SOCIAL_INSTAGRAM_URL", "https://instagram.com/stonesuite"),
-		EmailViewInBrowserURL:   getEnv("EMAIL_VIEW_IN_BROWSER_URL", getEnv("FRONTEND_URL", "http://localhost:5173")),
+		EmailBrandName:         getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
+		SupportEmail:           getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
+		EmailPreferencesURL:    getEnv("EMAIL_PREFERENCES_URL", "https://app.stonesuite.io/settings/notifications"),
+		EmailSocialXURL:        getEnv("EMAIL_SOCIAL_X_URL", "https://x.com/stonesuite"),
+		EmailSocialLinkedInURL: getEnv("EMAIL_SOCIAL_LINKEDIN_URL", "https://www.linkedin.com/company/stonesuite"),
+		EmailSocialYouTubeURL:  getEnv("EMAIL_SOCIAL_YOUTUBE_URL", "https://www.youtube.com/@stonesuite"),
+		EmailUnsubscribeURL:    getEnv("EMAIL_UNSUBSCRIBE_URL", ""),
+		EmailViewInBrowserURL:  getEnv("EMAIL_VIEW_IN_BROWSER_URL", getEnv("FRONTEND_URL", "http://localhost:5173")),
 	}
 }
 

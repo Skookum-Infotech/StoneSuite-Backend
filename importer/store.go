@@ -3,9 +3,11 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,11 +35,27 @@ type Store struct{ pool *pgxpool.Pool }
 // NewStore builds a Store over a tenant pool.
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-// InsertRow stages one candidate record. errs is a hint from partial
-// validation at staging time (see stageErrors) — informational only, shown
-// to a reviewer before commit; it does not block InsertRow or later commit
-// attempts, which re-validate fully.
-func (s *Store) InsertRow(ctx context.Context, jobID string, rowIndex int, raw any, mapped MappedFields, errs []string) (string, error) {
+// UpsertRow stages one candidate record, converging on the same
+// (job_id, row_index) if this job has staged that index before — see the
+// import_rows_job_row_idx unique index and its migration comment. This is
+// what makes restaging a job (after a worker crash, a stale-reap requeue, or
+// the queue's own attempts-based retry — anything that runs runImport more
+// than once for the same job_id) converge on exactly what THIS run stages,
+// instead of appending a second copy of every row alongside whatever a
+// prior partial run already inserted. Pair with DeletePendingRowsForJob,
+// called once before a (re)run begins, to also converge on shrinkage (a
+// retried run that stages fewer rows than the failed one did).
+//
+// A row already StatusCommitted is left completely untouched: the WHERE
+// clause on DO UPDATE skips it, so RETURNING produces no row and this
+// returns ("", nil) rather than an error — restaging must never overwrite a
+// row that already produced a real CRM record, and the caller (the staging
+// loop) only cares about the error, never the id, for exactly this reason.
+//
+// errs is a hint from partial validation at staging time (see stageErrors)
+// — informational only, shown to a reviewer before commit; it does not
+// block staging or later commit attempts, which re-validate fully.
+func (s *Store) UpsertRow(ctx context.Context, jobID string, rowIndex int, raw any, mapped MappedFields, errs []string) (string, error) {
 	rawJSON, err := json.Marshal(raw)
 	if err != nil {
 		return "", fmt.Errorf("marshal raw row: %w", err)
@@ -55,13 +73,38 @@ func (s *Store) InsertRow(ctx context.Context, jobID string, rowIndex int, raw a
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO import_rows (job_id, row_index, raw, mapped, errors, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (job_id, row_index) DO UPDATE
+			SET raw = EXCLUDED.raw, mapped = EXCLUDED.mapped, errors = EXCLUDED.errors, updated_at = NOW()
+			WHERE import_rows.status <> $7
 		RETURNING id`,
-		jobID, rowIndex, rawJSON, mappedJSON, errsJSON, StatusPending,
+		jobID, rowIndex, rawJSON, mappedJSON, errsJSON, StatusPending, StatusCommitted,
 	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("insert import row: %w", err)
+		return "", fmt.Errorf("upsert import row: %w", err)
 	}
 	return id, nil
+}
+
+// DeletePendingRowsForJob removes every not-yet-committed staged row of
+// jobID. Call once, before a (re)run of staging begins (see runImport), so a
+// job being restaged converges on exactly what this run stages rather than
+// accumulating alongside a prior partial run's rows — the other half of
+// UpsertRow's contract, needed specifically for shrinkage: a retried run
+// that stages FEWER rows than a failed prior attempt did would otherwise
+// leave the failed run's extra tail rows behind forever, since UpsertRow on
+// its own only ever converges rows that both runs happen to produce at the
+// same index. Committed rows are untouched: they already produced a real CRM
+// record and are never a candidate for re-staging.
+func (s *Store) DeletePendingRowsForJob(ctx context.Context, jobID string) error {
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM import_rows WHERE job_id = $1 AND status <> $2`,
+		jobID, StatusCommitted); err != nil {
+		return fmt.Errorf("delete pending import rows for job %s: %w", jobID, err)
+	}
+	return nil
 }
 
 // ListByJob returns every row of jobID, in row_index order.

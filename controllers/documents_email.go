@@ -108,3 +108,12 @@ func notifyOwnerOfSend(
 			"record_id", recordID, "error", err)
 	}
 }
+
+// withDownloadLink points the email's PDF card at url so a click downloads the
+// PDF; a blank url leaves the card as a plain, unlinked label.
+func withDownloadLink(e *services.Email, url string) *services.Email {
+	if e.Attachment != nil {
+		e.Attachment.URL = url
+	}
+	return e
+}

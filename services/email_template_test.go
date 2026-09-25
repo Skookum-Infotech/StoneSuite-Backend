@@ -157,11 +157,8 @@ func TestRenderEmail_HeaderAndBanner(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `aria-label="StoneSuite"`, "brand logo")
-	assert.Contains(t, out, `<g fill="none" stroke="#BFFF80" stroke-width="5">`, "lime outlined blocks")
-	assert.Contains(t, out, `>STONE</text>`)
-	assert.Contains(t, out, `>SUITE</text>`)
-	assert.Contains(t, out, `fill="#F2EFE8"`, "cream wordmark")
+	assert.Contains(t, out, `alt="StoneSuite"`, "brand logo")
+	assert.Contains(t, out, `<img src="`+EmailLogoURL()+`"`, "logo is a hosted image; Gmail strips inline SVG")
 	assert.Contains(t, out, `bgcolor="#001219"`, "dark header so the light logo stays legible")
 	assert.Contains(t, out, `<a href="https://app.stonesuite.io/view"`, "view-in-browser target comes from config")
 	assert.Contains(t, out, referenceBannerGradient)
@@ -202,7 +199,7 @@ func TestRenderEmail_SectionOrder(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	order := []string{`aria-label="StoneSuite"`, referenceBannerGradient, "Hello Alex Approver", ">Invoice Number<", "INV-0042.pdf", ">Review invoice<", "This link expires", "Need help?", "FOLLOW STONESUITE", ">Unsubscribe<"}
+	order := []string{`alt="StoneSuite"`, referenceBannerGradient, "Hello Alex Approver", ">Invoice Number<", "INV-0042.pdf", ">Review invoice<", "This link expires", "Need help?", "FOLLOW STONESUITE", ">Unsubscribe<"}
 	last := -1
 	for _, mark := range order {
 		i := strings.Index(out, mark)
@@ -218,7 +215,7 @@ func TestRenderEmail_HasOutlookFixedWidthFallback(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `<!--[if mso]><table role="presentation" width="480"`)
+	assert.Contains(t, out, `<!--[if mso]><table role="presentation" width="640"`)
 	assert.Contains(t, out, `<!--[if mso]></td></tr></table><![endif]-->`)
 }
 
@@ -276,4 +273,16 @@ func TestKeepRefs(t *testing.T) {
 			assert.Equal(t, tt.want, string(keepRefs(tt.in)))
 		})
 	}
+}
+
+func TestRenderEmail_AttachmentCardLink(t *testing.T) {
+	withTestEmailBrand(t)
+	e := sampleEmail()
+	e.Attachment = &AttachmentCard{FileName: "INV-0042.pdf", Size: "245 KB", URL: "https://api.example/dl/tok"}
+	assert.Contains(t, mustRender(t, e), `<a href="https://api.example/dl/tok"`, "PDF card links to the download")
+
+	e.Attachment.URL = ""
+	out := mustRender(t, e)
+	assert.Contains(t, out, "INV-0042.pdf")
+	assert.NotContains(t, out, "/dl/tok")
 }

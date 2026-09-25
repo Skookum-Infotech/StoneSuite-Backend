@@ -28,12 +28,12 @@ const defaultEmailReason = "you have a StoneSuite account."
 // emailTemplateFuncs are the helpers the template calls. msoOpen/msoClose emit
 // Outlook-desktop conditional comments (html/template strips comments written
 // literally in a template): Outlook's Word engine ignores CSS max-width, so
-// without a fixed-width 480px wrapper the card stretches to the reading pane.
+// without a fixed-width 640px wrapper the card stretches to the reading pane.
 var emailTemplateFuncs = template.FuncMap{
 	"upper":    strings.ToUpper,
 	"keepRefs": keepRefs,
 	"msoOpen": func() template.HTML {
-		return `<!--[if mso]><table role="presentation" width="480" align="center" cellspacing="0" cellpadding="0"><tr><td><![endif]-->`
+		return `<!--[if mso]><table role="presentation" width="640" align="center" cellspacing="0" cellpadding="0"><tr><td><![endif]-->`
 	},
 	"msoClose": func() template.HTML { return `<!--[if mso]></td></tr></table><![endif]-->` },
 }
@@ -90,6 +90,7 @@ type Detail struct {
 type AttachmentCard struct {
 	FileName string
 	Size     string // human-readable, e.g. "245 KB"
+	URL      string // absolute download link; the card is a plain label when empty
 }
 
 // Email is the dynamic content of one email. SendNotification renders it
@@ -119,6 +120,7 @@ type emailView struct {
 	BrandName, SupportEmail                          string
 	PreferencesURL, UnsubscribeURL, ViewInBrowserURL string
 	SocialLinkedInURL, SocialXURL, SocialYouTubeURL  string
+	LogoURL                                          string
 }
 
 // RenderEmail renders e through the shared email template.
@@ -145,6 +147,7 @@ func RenderEmail(e Email) (string, error) {
 		SocialLinkedInURL: cfg.EmailSocialLinkedInURL,
 		SocialXURL:        cfg.EmailSocialXURL,
 		SocialYouTubeURL:  cfg.EmailSocialYouTubeURL,
+		LogoURL:           EmailLogoURL(),
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, v); err != nil {

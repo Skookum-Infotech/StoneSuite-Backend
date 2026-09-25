@@ -29,6 +29,8 @@ type DocMeta struct {
 	DefaultRecipientEmail string
 	DefaultRecipientName  string
 	DefaultSubject        string
+	// DownloadURL is the signed, login-free link the emailed PDF card points at.
+	DownloadURL string
 }
 
 // recordLink builds a notification's deep-link path for resource+recordID
@@ -66,6 +68,9 @@ type DocumentOps struct {
 	// defaultLogo is the PNG shown as the tenant's logo while the tenant has
 	// not uploaded one of its own; nil means no fallback (see WithDefaultLogo).
 	defaultLogo []byte
+	// linkTenants / linkPool back DownloadByLink (see WithPublicDownload).
+	linkTenants docLinkTenants
+	linkPool    func(context.Context, *tenancy.Tenant) (*pgxpool.Pool, error)
 }
 
 // NewDocumentOps constructs the handler group. sendDisabled and r2 may both
@@ -257,6 +262,7 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fileName := workflow.SanitizeFileName(meta.Number + ".pdf")
+	meta.DownloadURL = DocLinkURL(tenant.ID, recordID)
 	// actorUserID (tenant users.id) is for the document_sends row and the
 	// tenant audit log below. Notify, by contrast, scopes by the control-plane
 	// identity id — so identityID is what goes on the notification requests.
@@ -324,7 +330,7 @@ func customerSendRequest(
 		ResourceID:  recordID,
 		Title:       subject,
 		Body:        "Document sent.",
-		Email:       documentEmail(doc, message, fileName, len(pdf)),
+		Email:       withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
 		Channels:    []string{"email"},
 		Attachments: []services.NotifyAttachment{{FileName: fileName, ContentType: "application/pdf", Content: pdf}},
 	}

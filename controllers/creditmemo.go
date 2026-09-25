@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
+	"stonesuite-backend/payment"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
@@ -123,6 +124,51 @@ func (h *CreditMemoOps) invoiceInScopeForUpdate(w http.ResponseWriter, r *http.R
 	return true
 }
 
+// paymentInScopeForUpdate checks the caller holds payment:update and that the
+// payment a credit memo is being issued from is within their scope, writing the
+// response and returning false on denial (404 on scope denial, per the IDOR
+// convention). Issuing a memo from a payment consumes part of that payment's
+// overpayment, so it changes the payment as a side effect of a credit-memo-side
+// action -- the same reason invoiceInScopeForUpdate guards Apply/Unapply.
+func (h *CreditMemoOps) paymentInScopeForUpdate(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID, paymentUUID string) bool {
+	decision, err := authz.Check(r.Context(), pool, identityID, authz.ResourcePayment, authz.ActionUpdate)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return false
+	}
+	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(authz.ResourcePayment), "action", string(authz.ActionUpdate))
+		fail(w, http.StatusForbidden, "You do not have permission to update payments.")
+		return false
+	}
+	if decision.Scope == authz.ScopeAll {
+		return true
+	}
+	pay, err := payment.Get(r.Context(), pool, paymentUUID)
+	if errors.Is(err, payment.ErrNotFound) {
+		fail(w, http.StatusNotFound, "Payment not found.")
+		return false
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load payment.")
+		return false
+	}
+	allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, identityID, pay.OwnerUserID)
+	if aerr != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return false
+	}
+	if !allowed {
+		logSecurityEvent(r, "idor_denied",
+			"identity", identityID, "record", paymentUUID, "resource", string(authz.ResourcePayment),
+			"action", "update", "scope", string(decision.Scope))
+		fail(w, http.StatusNotFound, "Payment not found.")
+		return false
+	}
+	return true
+}
+
 func creditMemoFail(w http.ResponseWriter, err error, serverMsg string) {
 	if status, ok := approvalRejectStatus(err); ok {
 		fail(w, status, err.Error())
@@ -173,6 +219,11 @@ func (h *CreditMemoOps) Create(w http.ResponseWriter, r *http.Request) {
 	// never applies. Reject rather than silently ignoring the field.
 	if len(in.Applications) > 0 {
 		fail(w, http.StatusBadRequest, "A new credit memo starts as a draft and cannot be applied; approve it first, then apply.")
+		return
+	}
+	// Issuing from a payment consumes its overpayment, so the caller must be
+	// allowed to change that payment and to see it.
+	if in.SourcePaymentUUID != "" && !h.paymentInScopeForUpdate(w, r, pool, identityID, in.SourcePaymentUUID) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)

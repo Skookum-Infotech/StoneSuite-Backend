@@ -25,13 +25,14 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 
 	var internalID, curStatusID, typeID int
 	var curStatusCode, approvalStatus string
+	var credited float64
 	err = tx.QueryRow(ctx, `
-		SELECT p.payment_id, p.payment_status, p.record_type, rs.record_status_code, p.payment_approval_status
+		SELECT p.payment_id, p.payment_status, p.record_type, rs.record_status_code, p.payment_approval_status, p.payment_credited_total
 		FROM payment p
 		JOIN lkp_record_status rs ON rs.record_status_id = p.payment_status
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL
 		FOR UPDATE OF p`, id,
-	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode, &approvalStatus)
+	).Scan(&internalID, &curStatusID, &typeID, &curStatusCode, &approvalStatus, &credited)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -87,6 +88,11 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if toStatusCode == "VOID" {
+		// A credit memo issued from this payment holds part of its money, and
+		// voiding the payment would leave that credit backed by nothing.
+		if credited > 0 {
+			return nil, ClientError{Msg: "Cannot void a payment that has credit memos issued from it; void or delete those credit memos first."}
+		}
 		// ORDER BY invoice_id fixes a global lock order across invoices so two
 		// concurrent VOID cascades touching the same two invoices can't lock
 		// them in opposite orders and deadlock.

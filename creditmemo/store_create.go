@@ -111,6 +111,10 @@ func resolveLineageSalesOrder(ctx context.Context, pool *pgxpool.Pool, salesOrde
 // fields, inserts header+lines, assigns the memo number post-insert, and writes
 // the 'create' history row. New memos start at DRFT.
 //
+// The money comes from Amount (no lines) or from Lines. With SourcePaymentUUID
+// the memo's total is taken out of that payment's overpayment in this same
+// transaction, so the same money is never credited twice.
+//
 // Applications in the input are NOT processed here: a DRFT memo cannot move
 // money (spec AD-7). Approve it, then call Apply.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, actorEmployeeID int) (*CreditMemo, error) {
@@ -120,8 +124,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
 		return nil, ClientError{Msg: "salesTaxPercent must be between 0 and 100."}
 	}
-	if len(in.Lines) == 0 {
-		return nil, ClientError{Msg: "a credit memo needs at least one line."}
+	if err := validateCreateMoney(in.Amount, in.Lines); err != nil {
+		return nil, err
 	}
 
 	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
@@ -156,6 +160,10 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 		}
 		resolved = append(resolved, rl)
 		lineMoney = append(lineMoney, rl.money)
+	}
+	if len(in.Lines) == 0 {
+		// No line items: the amount stands in for them (subtotal = amount).
+		lineMoney = append(lineMoney, ComputeAmountLine(in.Amount, in.SalesTaxPercent))
 	}
 	money := ComputeHeader(lineMoney, in.Adjustment, 0)
 
@@ -192,6 +200,20 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the source payment and check it can cover the memo before inserting:
+	// the check and the insert then see the same overpayment.
+	var sourcePaymentID *int
+	if in.SourcePaymentUUID != "" {
+		paymentID, room, err := lockSourcePayment(ctx, tx, in.SourcePaymentUUID, custID)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkPaymentRoom(money.GrandTotal, room); err != nil {
+			return nil, err
+		}
+		sourcePaymentID = &paymentID
+	}
+
 	var newID int
 	var newUUID string
 	err = tx.QueryRow(ctx, `
@@ -209,12 +231,13 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 			credit_memo_bill_addr_line1, credit_memo_bill_addr_line2, credit_memo_bill_addr_suitenum,
 			credit_memo_bill_addr_city, credit_memo_bill_addr_state, credit_memo_bill_addr_zip,
 			credit_memo_bill_addr_country, credit_memo_bill_phone, credit_memo_bill_fax, credit_memo_bill_email,
-			credit_memo_custom_fields, credit_memo_created_by, credit_memo_updated_by
+			credit_memo_custom_fields, credit_memo_created_by, credit_memo_updated_by,
+			credit_memo_source_payment_id
 		) VALUES (
 			$1,$2, $3,$4,$5, $6,COALESCE(NULLIF($7,'')::date, CURRENT_DATE),$8, $9,$10,$11,$12, $13,$14, $15,$16,
 			$17,$18,$19,$20,$21, $22,$23,
 			$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,
-			$36,$37,$38
+			$36,$37,$38,$39
 		) RETURNING credit_memo_id, credit_memo_uuid`,
 		typeID, statusID,
 		custID, srcInvoiceID, srcSalesOrderID,
@@ -230,6 +253,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 		billing.City, billing.StateID, billing.Zip,
 		billing.CountryID, billing.Phone, billing.Fax, billing.Email,
 		custom, nullableInt(actorEmployeeID), nullableInt(actorEmployeeID),
+		sourcePaymentID,
 	).Scan(&newID, &newUUID)
 	if err != nil {
 		return nil, fmt.Errorf("insert credit memo: %w", err)
@@ -249,6 +273,12 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateCreditMemoInput, a
 			rl.money.Subtotal, rl.money.Discount, rl.money.Tax, rl.money.Total,
 			nullableInt(actorEmployeeID)); err != nil {
 			return nil, fmt.Errorf("insert credit memo line: %w", err)
+		}
+	}
+
+	if sourcePaymentID != nil {
+		if err := recomputePaymentCredited(ctx, tx, *sourcePaymentID, actorEmployeeID); err != nil {
+			return nil, err
 		}
 	}
 

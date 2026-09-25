@@ -31,17 +31,18 @@ type lockedPayment struct {
 	customerID int
 	statusCode string
 	amount     float64
+	credited   float64 // overpayment already turned into credit memos
 }
 
 func lockPaymentForUpdate(ctx context.Context, tx pgx.Tx, paymentUUID string) (lockedPayment, error) {
 	var lp lockedPayment
 	err := tx.QueryRow(ctx, `
-		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_amount
+		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_amount, p.payment_credited_total
 		FROM payment p
 		JOIN lkp_record_status rs ON rs.record_status_id = p.payment_status
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL
 		FOR UPDATE OF p`, paymentUUID,
-	).Scan(&lp.internalID, &lp.customerID, &lp.statusCode, &lp.amount)
+	).Scan(&lp.internalID, &lp.customerID, &lp.statusCode, &lp.amount, &lp.credited)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedPayment{}, ErrNotFound
 	}
@@ -113,7 +114,8 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(application_amount),0) FROM payment_application WHERE payment_id = $1 AND application_deleted_at IS NULL`, lp.internalID).Scan(&applied); err != nil {
 		return nil, fmt.Errorf("sum payment applications: %w", err)
 	}
-	unapplied := round2(lp.amount - applied)
+	// Money already turned into a credit memo is no longer the payment's to spend.
+	unapplied := round2(lp.amount - applied - lp.credited)
 	// BalanceDue nets off credit memos as well as cash, so a credited invoice
 	// cannot be overpaid.
 	invoiceBalance := li.BalanceDue()

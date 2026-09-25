@@ -58,7 +58,8 @@ primary_region = "iad"
   # here than raw core count. 4gb RAM gives headroom for KV-cache during
   # generation on top of both models' resident weights (~1.5GB). This is a
   # fixed, modest Fly cost (still scale-to-zero — nothing while idle), not a
-  # per-request API bill.
+  # per-request API bill. Bumped from 1 to 2 dedicated performance cores:
+  # roughly halves prefill and generation time on this CPU-only box.
   memory   = "4gb"
   cpu_kind = "performance"
-  cpus     = 1
+  cpus     = 2

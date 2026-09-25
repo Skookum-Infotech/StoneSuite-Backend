@@ -37,7 +37,7 @@ func TestDocumentEmail_MatchesDocumentDeliveredDesign(t *testing.T) {
 	for _, want := range []string{
 		">DOCUMENT SENT<", "Invoice <span style=\"white-space:nowrap;\">INV-0042</span><br>", "is on its way.", "Your document is ready to view.",
 		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="https://app.example.com/portal"`,
-		">INV-0042</a>. It is attached to this email as a PDF. You can also view and download it anytime from your customer portal.",
+		">INV-0042</a>. It is attached to this email as a PDF. You can also download it anytime using the button below.",
 		"INV-0042.pdf", "245 KB", ">View in portal<",
 	} {
 		assert.Contains(t, out, want)
@@ -272,4 +272,17 @@ func mustEmailHTML(t *testing.T, req services.NotificationRequest) string {
 	out, err := req.EmailHTML()
 	require.NoError(t, err)
 	return out
+}
+
+func TestWithDownloadLink_PointsEveryLinkAtThePDF(t *testing.T) {
+	prev := config.AppConfig
+	config.AppConfig.FrontendURL = "https://app.example.com"
+	t.Cleanup(func() { config.AppConfig = prev })
+	const url = "https://api.example.com/d/signed"
+	e := withDownloadLink(documentEmail(docpdf.PrintableDoc{Kind: "INVOICE", Number: "INV-1", Seller: docpdf.Seller{Name: "Acme"}}, "", "INV-1.pdf", 10), url)
+
+	assert.Equal(t, url, e.ActionURL)
+	assert.Equal(t, "Download PDF", e.ActionLabel)
+	assert.Equal(t, url, e.Attachment.URL)
+	assert.Equal(t, url, e.Paragraphs[0][2].Href)
 }

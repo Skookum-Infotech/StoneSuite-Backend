@@ -20,7 +20,7 @@ func documentEmail(d docpdf.PrintableDoc, message, fileName string, pdfSize int)
 	paragraphs := []services.Paragraph{{
 		services.Bold(d.Seller.Name), services.Text(" has sent you " + strings.ToLower(kind) + " "),
 		services.Link(d.Number, portal),
-		services.Text(". It is attached to this email as a PDF. You can also view and download it anytime from your customer portal."),
+		services.Text(". It is attached to this email as a PDF. You can also download it anytime using the button below."),
 	}}
 	if message != "" {
 		paragraphs = append(paragraphs, services.Paragraph{services.Text(message)})
@@ -109,11 +109,23 @@ func notifyOwnerOfSend(
 	}
 }
 
-// withDownloadLink points the email's PDF card at url so a click downloads the
-// PDF; a blank url leaves the card as a plain, unlinked label.
+// withDownloadLink points the PDF card, the document-number link and the
+// button at url so one click downloads the PDF (the customer portal route is
+// not a stable landing page); a blank url leaves the email unchanged.
 func withDownloadLink(e *services.Email, url string) *services.Email {
+	if url == "" {
+		return e
+	}
 	if e.Attachment != nil {
 		e.Attachment.URL = url
+	}
+	e.ActionURL, e.ActionLabel = url, "Download PDF"
+	for _, p := range e.Paragraphs {
+		for i := range p {
+			if p[i].Href != "" {
+				p[i].Href = url
+			}
+		}
 	}
 	return e
 }

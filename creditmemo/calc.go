@@ -20,6 +20,14 @@ func ComputeLine(in LineInput) LineMoney {
 	return LineMoney{Subtotal: sub, Discount: disc, Tax: tax, Total: round2(sub - disc + tax)}
 }
 
+// ComputeAmountLine derives the money of a credit memo that carries one amount
+// instead of line items: the amount is the subtotal, tax is charged on top of
+// it, and there is no discount. Rounding is ComputeLine's, so an amount-only
+// memo and a one-line memo for the same figure agree to the cent.
+func ComputeAmountLine(amount, taxPercent float64) LineMoney {
+	return ComputeLine(LineInput{Quantity: 1, UnitPrice: amount, TaxPercent: taxPercent})
+}
+
 // HeaderMoney holds a credit memo's computed totals and application rollup.
 type HeaderMoney struct {
 	Subtotal, DiscountTotal, TaxTotal, GrandTotal, AppliedTotal, UnappliedAmount float64

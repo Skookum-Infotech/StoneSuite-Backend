@@ -37,7 +37,7 @@ func TestDocumentEmail_MatchesDocumentDeliveredDesign(t *testing.T) {
 	for _, want := range []string{
 		">DOCUMENT SENT<", "Invoice <span style=\"white-space:nowrap;\">INV-0042</span><br>", "is on its way.", "Your document is ready to view.",
 		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="https://app.example.com/portal"`,
-		">INV-0042</a>. It is attached to this email as a PDF. You can also download it anytime using the button below.",
+		">INV-0042</a>. Use the button below to download the PDF.",
 		"INV-0042.pdf", "245 KB", ">View in portal<",
 	} {
 		assert.Contains(t, out, want)

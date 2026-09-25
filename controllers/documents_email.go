@@ -20,7 +20,7 @@ func documentEmail(d docpdf.PrintableDoc, message, fileName string, pdfSize int)
 	paragraphs := []services.Paragraph{{
 		services.Bold(d.Seller.Name), services.Text(" has sent you " + strings.ToLower(kind) + " "),
 		services.Link(d.Number, portal),
-		services.Text(". It is attached to this email as a PDF. You can also download it anytime using the button below."),
+		services.Text(". Use the button below to download the PDF."),
 	}}
 	if message != "" {
 		paragraphs = append(paragraphs, services.Paragraph{services.Text(message)})

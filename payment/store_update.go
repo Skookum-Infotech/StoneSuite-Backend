@@ -79,8 +79,25 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	if err != nil {
 		return err
 	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete payment: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Locked so a credit memo cannot be issued from the payment between the
+	// check below and the delete.
+	var credited float64
+	if err := tx.QueryRow(ctx,
+		`SELECT payment_credited_total FROM payment WHERE payment_id = $1 FOR UPDATE`,
+		internalID).Scan(&credited); err != nil {
+		return fmt.Errorf("lock payment for delete: %w", err)
+	}
+	if credited > 0 {
+		return ClientError{Msg: "Cannot delete a payment that has credit memos issued from it; void or delete those credit memos first."}
+	}
 	var liveApplications int
-	if err := pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT COUNT(*) FROM payment_application WHERE payment_id = $1 AND application_deleted_at IS NULL`,
 		internalID).Scan(&liveApplications); err != nil {
 		return fmt.Errorf("count live applications: %w", err)
@@ -89,7 +106,7 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 		return ClientError{Msg: "Cannot delete a payment with live applications; unapply or void it first."}
 	}
 	deletedBy := actorOrSystem(actorEmployeeID)
-	tag, err := pool.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE payment SET payment_deleted_at = NOW(), payment_deleted_by = $1
 		WHERE payment_uuid = $2 AND payment_deleted_at IS NULL`, deletedBy, id)
 	if err != nil {
@@ -97,6 +114,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete payment: %w", err)
 	}
 	return nil
 }

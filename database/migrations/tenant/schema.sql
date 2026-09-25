@@ -8628,3 +8628,33 @@ INSERT INTO ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 -- those, same as before this existed.
 -- =====================================================================
 ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+
+-- -- 000045_credit_memo_source_payment ---------------------------------------
+-- =====================================================================
+-- Tenant migration 045: a credit memo can be issued from a payment's
+-- overpayment.
+--
+-- When a customer pays more than an invoice is owed, the extra sits on the
+-- payment as payment_unapplied_amount (refundable, or appliable to another
+-- invoice). Issuing a credit memo for that same money without consuming it
+-- would credit the customer twice, so a memo records the payment it came from
+-- and takes its total out of that payment's usable overpayment.
+--
+--   credit_memo.credit_memo_source_payment_id -- lineage + the link the rollup
+--       sums over. Set at creation, never changed afterwards. Deliberately NOT
+--       ON DELETE SET NULL: losing the link would silently hand the money back.
+--   payment.payment_credited_total -- rollup: the summed grand total of the
+--       payment's live (not deleted, not VOID) linked credit memos. Sole
+--       writer is creditmemo/, exactly as refund/ is the sole writer of
+--       payment_refunded_total.
+--
+--   available_from_payment = payment_unapplied_amount
+--                            - payment_refunded_total
+--                            - payment_credited_total
+-- =====================================================================
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_source_payment_id INTEGER NULL REFERENCES payment(payment_id);
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_credited_total DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (payment_credited_total >= 0);
+
+CREATE INDEX IF NOT EXISTS idx_cm_source_payment
+    ON credit_memo (credit_memo_source_payment_id)
+    WHERE credit_memo_deleted_at IS NULL AND credit_memo_source_payment_id IS NOT NULL;

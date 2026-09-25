@@ -47,21 +47,22 @@ type lockedSource struct {
 
 func lockPaymentSource(ctx context.Context, tx pgx.Tx, paymentUUID string) (lockedSource, error) {
 	var ls lockedSource
-	var unapplied, refunded float64
+	var unapplied, refunded, credited float64
 	err := tx.QueryRow(ctx, `
-		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_unapplied_amount, p.payment_refunded_total
+		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_unapplied_amount, p.payment_refunded_total, p.payment_credited_total
 		FROM payment p
 		JOIN lkp_record_status rs ON rs.record_status_id = p.payment_status
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL
 		FOR UPDATE OF p`, paymentUUID,
-	).Scan(&ls.internalID, &ls.customerID, &ls.statusCode, &unapplied, &refunded)
+	).Scan(&ls.internalID, &ls.customerID, &ls.statusCode, &unapplied, &refunded, &credited)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedSource{}, ClientError{Msg: "Unknown or deleted payment."}
 	}
 	if err != nil {
 		return lockedSource{}, fmt.Errorf("lock payment source: %w", err)
 	}
-	ls.available = round2(unapplied - refunded)
+	// Money already turned into a credit memo cannot also be refunded.
+	ls.available = round2(unapplied - refunded - credited)
 	return ls, nil
 }
 

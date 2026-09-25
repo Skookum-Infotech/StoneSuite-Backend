@@ -155,3 +155,24 @@ func TestRound2(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeAmountLine(t *testing.T) {
+	tests := []struct {
+		name       string
+		amount     float64
+		taxPercent float64
+		want       LineMoney
+	}{
+		{name: "plain amount", amount: 250, want: LineMoney{Subtotal: 250, Total: 250}},
+		{name: "tax on top of the amount", amount: 250, taxPercent: 10, want: LineMoney{Subtotal: 250, Tax: 25, Total: 275}},
+		{name: "tax rounds to 2dp", amount: 19.99, taxPercent: 8.25, want: LineMoney{Subtotal: 19.99, Tax: 1.65, Total: 21.64}},
+		{name: "a zero amount is a zero line", amount: 0, taxPercent: 10, want: LineMoney{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ComputeAmountLine(tc.amount, tc.taxPercent); got != tc.want {
+				t.Fatalf("ComputeAmountLine(%v, %v) = %+v, want %+v", tc.amount, tc.taxPercent, got, tc.want)
+			}
+		})
+	}
+}

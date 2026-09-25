@@ -40,6 +40,7 @@ const headerSelect = `
 	       c.customer_uuid, COALESCE(c.customer_name,''),
 	       i.invoice_uuid, COALESCE(i.invoice_number,''),
 	       so.sales_order_uuid,
+	       sp.payment_uuid, COALESCE(sp.payment_number,''),
 	       COALESCE(ou.id::text,''), cm.credit_memo_owner_id, cm.credit_memo_sales_rep_id,
 	       cm.credit_memo_reference_number, cm.credit_memo_date, cm.credit_memo_reason,
 	       cm.credit_memo_sales_tax_percent,
@@ -62,6 +63,7 @@ const headerSelect = `
 	JOIN customer c ON c.customer_id = cm.credit_memo_customer_id
 	LEFT JOIN invoice i ON i.invoice_id = cm.credit_memo_invoice_id
 	LEFT JOIN sales_order so ON so.sales_order_id = cm.credit_memo_sales_order_id
+	LEFT JOIN payment sp ON sp.payment_id = cm.credit_memo_source_payment_id
 	LEFT JOIN employee oe ON oe.employee_id = cm.credit_memo_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 
@@ -77,6 +79,8 @@ func scanCreditMemo(row pgx.Row) (*CreditMemo, creditMemoMeta, error) {
 		invoiceUUID   *string
 		invoiceNumber string
 		salesOrderID  *string
+		sourcePayUUID *string
+		sourcePayNum  string
 		ownerEmpID    *int
 		salesRepID    *int
 		priceLevelID  *int
@@ -92,6 +96,7 @@ func scanCreditMemo(row pgx.Row) (*CreditMemo, creditMemoMeta, error) {
 		&cm.Customer.ID, &cm.Customer.Name,
 		&invoiceUUID, &invoiceNumber,
 		&salesOrderID,
+		&sourcePayUUID, &sourcePayNum,
 		&cm.OwnerUserID, &ownerEmpID, &salesRepID,
 		&cm.ReferenceNumber, &cm.CreditMemoDate, &cm.Reason,
 		&cm.SalesTaxPercent,
@@ -117,6 +122,9 @@ func scanCreditMemo(row pgx.Row) (*CreditMemo, creditMemoMeta, error) {
 		cm.Invoice = &InvoiceRef{ID: *invoiceUUID, Number: invoiceNumber}
 	}
 	cm.SalesOrderID = salesOrderID
+	if sourcePayUUID != nil {
+		cm.SourcePayment = &PaymentRef{ID: *sourcePayUUID, Number: sourcePayNum}
+	}
 	cm.OwnerEmployeeID = ownerEmpID
 	cm.SalesRepID = salesRepID
 	cm.PriceLevelID = priceLevelID

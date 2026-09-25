@@ -213,7 +213,7 @@ func Load() {
 		SAMLRequestTimeout:          parseDuration(getEnv("SAML_REQUEST_TIMEOUT", "10m")),
 		SAMLMetadataRefreshInterval: parseDuration(getEnv("SAML_METADATA_REFRESH_INTERVAL", "24h")),
 		SAMLRequestStateTTL:         parseDuration(getEnv("SAML_REQUEST_STATE_TTL", "15m")),
-		APIBaseURL:                  getEnv("API_BASE_URL", "http://localhost:8080"),
+		APIBaseURL:                  defaultAPIBaseURL(),
 		// Notify Service
 		NotifyURL:    getEnv("NOTIFY_URL", "http://localhost:8081"),
 		NotifyAPIKey: getEnv("NOTIFY_API_KEY", ""),
@@ -348,4 +348,17 @@ func parseDuration(s string) time.Duration {
 		d = 10 * time.Minute // default
 	}
 	return d
+}
+
+// defaultAPIBaseURL is API_BASE_URL, else the Fly app's public address
+// (FLY_APP_NAME is set on every Fly Machine), else localhost. Emailed logo and
+// PDF-download links must be publicly reachable, so localhost is a last resort.
+func defaultAPIBaseURL() string {
+	if v := os.Getenv("API_BASE_URL"); v != "" {
+		return v
+	}
+	if app := os.Getenv("FLY_APP_NAME"); app != "" {
+		return "https://" + app + ".fly.dev"
+	}
+	return "http://localhost:8080"
 }

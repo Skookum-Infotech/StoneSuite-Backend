@@ -8638,7 +8638,6 @@ ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 -- column existed. Display-only: never replayed into the prompt.
 -- =====================================================================
 ALTER TABLE ai_messages ADD COLUMN IF NOT EXISTS citations JSONB;
-=======
 -- -- 000045_credit_memo_source_payment ---------------------------------------
 -- =====================================================================
 -- Tenant migration 045: a credit memo can be issued from a payment's

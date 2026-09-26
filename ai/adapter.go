@@ -64,13 +64,14 @@ const (
 
 	// recordsFloorDist and helpFloorDist are the per-corpus relevance floors
 	// (see rag.CorpusConfig.FloorDistance): a vector hit farther than this
-	// cosine distance is dropped before it ever reaches the model. Provisional
-	// — tightened from the single floorDist=0.9 that filtered effectively
-	// nothing — revisit both once the e2e eval harness (chore/ai-e2e-harness)
-	// has logged enough real distances to calibrate against actual
-	// refusal/hallucination rates rather than a guess.
-	recordsFloorDist = 0.55
-	helpFloorDist    = 0.6
+	// cosine distance is dropped before it ever reaches the model. Calibrated
+	// on the help corpus with the e2e question set: on-topic questions' best
+	// chunk sits at 0.42-0.69, off-topic and injection prompts at 0.86+, so
+	// 0.8 keeps every real question and still refuses the rest. The records
+	// floor is looser than the old 0.55 guess, which refused legitimate help
+	// answers; not yet measured against real record distances.
+	recordsFloorDist = 0.7
+	helpFloorDist    = 0.8
 )
 
 // Per-intent output token budgets: the num_predict cap passed to

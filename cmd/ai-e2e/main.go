@@ -133,6 +133,12 @@ func filterCases(cases []testCase, ids []string) []testCase {
 func runCases(ctx context.Context, client *apiClient, cases []testCase, ph map[string]string, gap time.Duration) []caseResult {
 	results := make([]caseResult, 0, len(cases))
 	conversationByCaseID := map[string]string{}
+	followedUp := map[string]bool{}
+	for _, c := range cases {
+		if c.FollowUpOf != "" {
+			followedUp[c.FollowUpOf] = true
+		}
+	}
 
 	for i, raw := range cases {
 		if i > 0 {
@@ -145,9 +151,22 @@ func runCases(ctx context.Context, client *apiClient, cases []testCase, ph map[s
 			conversationID = conversationByCaseID[c.FollowUpOf]
 		}
 
+		// The server only persists history when the client supplies a
+		// conversation id, so create one up front for any case that is
+		// followed up by another.
+		if conversationID == "" && followedUp[c.ID] {
+			id, err := client.createConversation(ctx)
+			if err != nil {
+				slog.Warn("create conversation failed", "id", c.ID, "err", err)
+			} else {
+				conversationID = id
+				conversationByCaseID[c.ID] = id
+			}
+		}
+
 		slog.Info("running case", "id", c.ID, "category", c.Category)
-		res := client.ask(ctx, c.Question, conversationID)
-		if res.ConversationID != "" {
+		res := client.askRetry(ctx, c.Question, conversationID)
+		if res.ConversationID != "" && conversationByCaseID[c.ID] == "" {
 			conversationByCaseID[c.ID] = res.ConversationID
 		}
 

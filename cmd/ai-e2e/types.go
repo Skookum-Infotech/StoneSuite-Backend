@@ -47,6 +47,9 @@ type askResult struct {
 	SourcesCount   int
 	TransportErr   error
 	StatusBodyRaw  map[string]any
+	// RetryAfter is the server's requested wait on a 429 (Retry-After header
+	// or body retryAfter, seconds); zero when absent.
+	RetryAfter time.Duration
 }
 
 // caseResult is one case's outcome: its scripted expectations, the raw

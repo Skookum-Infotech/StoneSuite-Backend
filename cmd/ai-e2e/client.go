@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,12 +35,14 @@ type apiClient struct {
 	base  string
 	token string
 	hc    *http.Client
+	// sleep waits between a 429 and its single retry; injectable for tests.
+	sleep func(context.Context, time.Duration)
 }
 
 // newAPIClient builds a client against base ("https://host") using token as
 // the bearer credential for every request.
 func newAPIClient(base, token string) *apiClient {
-	return &apiClient{base: strings.TrimSuffix(base, "/"), token: token, hc: &http.Client{}}
+	return &apiClient{base: strings.TrimSuffix(base, "/"), token: token, hc: &http.Client{}, sleep: sleepCtx}
 }
 
 // askRequestBody mirrors controllers.askRequestBody — the wire shape
@@ -125,7 +128,86 @@ func (c *apiClient) readStatusFailure(resp *http.Response, start time.Time) askR
 	if err := json.Unmarshal(raw, &parsed); err == nil {
 		res.StatusBodyRaw = parsed
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		res.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), parsed)
+	}
 	return res
+}
+
+// maxRetryWait caps how long a 429 retry will wait.
+const maxRetryWait = 30 * time.Second
+
+// parseRetryAfter reads the wait (seconds) from the Retry-After header, else
+// the body's retryAfter field. Returns zero when neither is usable.
+func parseRetryAfter(header string, body map[string]any) time.Duration {
+	if n, err := strconv.ParseFloat(strings.TrimSpace(header), 64); err == nil && n > 0 {
+		return time.Duration(n * float64(time.Second))
+	}
+	if n, ok := body["retryAfter"].(float64); ok && n > 0 {
+		return time.Duration(n * float64(time.Second))
+	}
+	return 0
+}
+
+// sleepCtx waits d or until ctx is done.
+func sleepCtx(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+// askRetry runs ask and, on a 429, waits the server-suggested time (capped at
+// maxRetryWait, minimum one second) and retries once.
+func (c *apiClient) askRetry(ctx context.Context, question, conversationID string) askResult {
+	res := c.ask(ctx, question, conversationID)
+	if res.HTTPStatus != http.StatusTooManyRequests {
+		return res
+	}
+	wait := res.RetryAfter
+	if wait < time.Second {
+		wait = time.Second
+	}
+	if wait > maxRetryWait {
+		wait = maxRetryWait
+	}
+	c.sleep(ctx, wait)
+	return c.ask(ctx, question, conversationID)
+}
+
+// createConversation runs POST /api/tenant/ai/conversations and returns the
+// new conversation id.
+func (c *apiClient) createConversation(ctx context.Context) (string, error) {
+	req, err := c.authedRequest(ctx, http.MethodPost, "/api/tenant/ai/conversations", []byte("{}"))
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create conversation: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxStatusBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("read create conversation response: %w", err)
+	}
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("create conversation: status %d", resp.StatusCode)
+	}
+	var out struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("decode create conversation response: %w", err)
+	}
+	if out.Data.ID == "" {
+		return "", fmt.Errorf("create conversation: empty id in response")
+	}
+	return out.Data.ID, nil
 }
 
 // readSSEStream reads a 200 text/event-stream body to completion, timing

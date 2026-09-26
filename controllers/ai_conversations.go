@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -23,8 +24,13 @@ type ConversationOps struct{}
 // resolves its own tenant pool from request context.
 func NewConversationOps() *ConversationOps { return &ConversationOps{} }
 
+// msgUserNotLinked is the 403 body when the caller's identity has no user row
+// in this workspace.
+const msgUserNotLinked = "Your account is not linked to a user in this workspace."
+
 // callerUserID resolves the caller's internal user id — the value every
-// conversation is owned by — and writes a 500 if it cannot be determined.
+// conversation is owned by — and writes a 403 if the identity is not linked to
+// a user in this workspace, or a 500 if the lookup itself failed.
 //
 // Not discardable, and not defaultable to "": ownership here is an equality
 // check against owner_user_id, so an empty id silently matches nothing and
@@ -38,6 +44,11 @@ func callerUserID(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool) (s
 		return "", false
 	}
 	id, err := workflow.UserIDByIdentity(r.Context(), pool, payload.ID)
+	if errors.Is(err, workflow.ErrNoTenantUser) {
+		logSecurityEvent(r, "permission_denied", "identity", payload.ID, "resource", "ai_conversation", "action", "access")
+		fail(w, http.StatusForbidden, msgUserNotLinked)
+		return "", false
+	}
 	if err != nil || id == "" {
 		slog.Error("ai conversation: could not resolve caller user id",
 			"request_id", middleware.RequestIDFromContext(r.Context()),

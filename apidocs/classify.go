@@ -32,6 +32,7 @@ var chainAuth = []struct {
 	{"customerAuthRateLimiter", AuthPublicLimited},
 	{"tenantChain", AuthStaffTenant},
 	{"aiChain", AuthStaffTenant},
+	{"warmChain", AuthStaffTenant},
 	{"searchChain", AuthStaffTenant},
 }
 

@@ -274,6 +274,13 @@ func runTenantMaintenance(ctx context.Context, slug, tenantID string, store crms
 			slog.Info("rag-index: reclaimed stuck inflight jobs", "tenant", slug, "reclaimed", n)
 		}
 	}
+	purgeDone := func() {
+		if n, err := q.PurgeDone(ctx); err != nil {
+			slog.Error("rag-index: purge done jobs failed", "tenant", slug, "err", err)
+		} else if n > 0 {
+			slog.Info("rag-index: purged old done jobs", "tenant", slug, "purged", n)
+		}
+	}
 	catchUp := func() {
 		if n, err := q.Revive(ctx); err != nil {
 			slog.Error("rag-index: revive failed", "tenant", slug, "err", err)
@@ -292,6 +299,7 @@ func runTenantMaintenance(ctx context.Context, slug, tenantID string, store crms
 		// A crashed worker can strand a job 'inflight' regardless of
 		// whether AI is currently available, so this always runs.
 		reclaimStuck()
+		purgeDone()
 		switch decideMaintenanceAction(status.Available, prevAvailable) {
 		case maintenanceCatchUp:
 			slog.Info("rag-index: assistant available, catching up", "tenant", slug)
@@ -470,37 +478,37 @@ func loadHelpCorpusState(ctx context.Context, cpPool *pgxpool.Pool) (*helpCorpus
 	return &s, nil
 }
 
-// syncHelpCorpus re-ingests the app-help corpus at boot when the docs
-// compiled into this binary or the configured embedder have changed since
-// the last recorded sync (cp_help_corpus_state), so a doc edit or model
-// swap reaches cp_rag_chunks without an operator remembering to call
-// POST /api/platform/ai/reindex-help. Must run only after Ollama (or
-// whatever embedder backend is configured) is reachable — callers are
-// responsible for that ordering; see main.go's Ollama boot goroutine and its
-// best-effort local-dev fallback.
-func syncHelpCorpus(ctx context.Context, cpPool *pgxpool.Pool) {
+// syncHelpCorpus re-ingests the app-help corpus when the docs compiled into
+// this binary or the configured embedder have changed since the last recorded
+// sync (cp_help_corpus_state), so a doc edit or model swap reaches
+// cp_rag_chunks without an operator remembering to call
+// POST /api/platform/ai/reindex-help. It returns nil when the corpus was synced
+// or is already up to date, and an error otherwise (including when some docs
+// failed to embed) so the caller can retry — see helpSyncer.
+func syncHelpCorpus(ctx context.Context, cpPool *pgxpool.Pool) error {
 	hash, err := docs.ContentHash()
 	if err != nil {
-		slog.Error("help corpus sync: content hash failed", "err", err)
-		return
+		return fmt.Errorf("help corpus sync: content hash: %w", err)
 	}
 	docEmbed := newDocEmbedder()
 	current := helpCorpusState{ContentHash: hash, EmbedFingerprint: ai.EmbedFingerprint(docEmbed)}
 
 	stored, err := loadHelpCorpusState(ctx, cpPool)
 	if err != nil {
-		slog.Error("help corpus sync: read state failed", "err", err)
-		return
+		return fmt.Errorf("help corpus sync: read state: %w", err)
 	}
 	if !needsHelpResync(stored, current) {
 		slog.Info("help corpus up to date")
-		return
+		return nil
 	}
 
 	res, pruned, err := controllers.IngestHelpCorpus(ctx, cpPool, docEmbed)
 	if err != nil {
-		slog.Error("help corpus sync failed", "err", err)
-		return
+		return fmt.Errorf("help corpus sync: %w", err)
 	}
 	slog.Info("help corpus synced", "ingested", len(res.Ingested), "failed", len(res.Failed), "pruned", pruned)
+	if len(res.Failed) > 0 {
+		return fmt.Errorf("help corpus sync: %d doc(s) failed to embed", len(res.Failed))
+	}
+	return nil
 }

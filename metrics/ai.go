@@ -5,17 +5,36 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// aiStepBuckets widens the default Prometheus buckets (which top out at 10s)
+// to reach the box's actual worst case: a CPU-bound ~20-25 tok/s model can
+// legitimately take well over a minute to generate a full answer, and the
+// default buckets would silently bucket every slow request into the same
+// "+Inf" tail, making p95/p99 useless for exactly the requests worth
+// investigating.
+var aiStepBuckets = []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 150, 180}
+
 var (
 	aiEmbedDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "ai_embed_duration_seconds",
 		Help:    "Latency of the query-embedding step of an /ai/ask request.",
-		Buckets: prometheus.DefBuckets,
+		Buckets: aiStepBuckets,
 	})
 
 	aiLLMDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "ai_llm_duration_seconds",
 		Help:    "Latency of the chat-completion step of an /ai/ask request.",
-		Buckets: prometheus.DefBuckets,
+		Buckets: aiStepBuckets,
+	})
+
+	// aiTTFT is time-to-first-token: request start to the first streamed
+	// token reaching the sink (see controllers' channelSink) — the latency
+	// signal that actually matches what a streaming client perceives as
+	// "did anything happen yet", as opposed to ai_llm_duration_seconds
+	// (whole-generation time) or ai_request_duration_seconds (whole request).
+	aiTTFT = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "ai_ttft_seconds",
+		Help:    "Time to first token for a streamed /ai/ask/stream request.",
+		Buckets: aiStepBuckets,
 	})
 
 	aiLLMTimeoutsTotal = promauto.NewCounter(prometheus.CounterOpts{
@@ -84,6 +103,9 @@ func ObserveAIAsk(refused bool) {
 // ObserveAIQueryRoute records one ask's dispatch route ("count_direct",
 // "count_routed", or "rag" — see AIOps.Ask's three-way dispatch).
 func ObserveAIQueryRoute(route string) { aiQueryRouteTotal.WithLabelValues(route).Inc() }
+
+// ObserveAITTFT records the time-to-first-token of one streamed ask.
+func ObserveAITTFT(seconds float64) { aiTTFT.Observe(seconds) }
 
 // SetRAGIndexQueueStats publishes one tenant's rag_index_queue backlog —
 // pending job count and the oldest pending job's age — so an operator can

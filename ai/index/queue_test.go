@@ -332,3 +332,45 @@ func TestReviveResetsErrorRowsToPending(t *testing.T) {
 		t.Fatalf("after revive: status=%q attempts=%d, want pending/0", status, attempts)
 	}
 }
+
+// TestPurgeDoneDeletesOnlyOldDoneRows: 'done' rows older than doneRetention go;
+// recent done rows and rows in any other status stay.
+func TestPurgeDoneDeletesOnlyOldDoneRows(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+
+	rows := []struct {
+		source, status, age string
+		wantGone            bool
+	}{
+		{"aaaaaaaa-0000-0000-0000-000000000001", "done", "8 days", true},
+		{"aaaaaaaa-0000-0000-0000-000000000002", "done", "1 day", false},
+		{"aaaaaaaa-0000-0000-0000-000000000003", "error", "30 days", false},
+		{"aaaaaaaa-0000-0000-0000-000000000004", "pending", "30 days", false},
+	}
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		if err := pool.QueryRow(ctx(t), `
+			INSERT INTO rag_index_queue (source_id, op, status, enqueued_at, claimed_at)
+			VALUES ($1, 'upsert', $2, NOW() - $3::interval, NOW() - $3::interval) RETURNING id`,
+			r.source, r.status, r.age).Scan(&ids[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM rag_index_queue WHERE id = ANY($1::uuid[])`, ids)
+	})
+
+	if _, err := q.PurgeDone(ctx(t)); err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range rows {
+		var n int
+		if err := pool.QueryRow(ctx(t), `SELECT COUNT(*) FROM rag_index_queue WHERE id=$1`, ids[i]).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if gone := n == 0; gone != r.wantGone {
+			t.Fatalf("row %s/%s/%s: gone=%v, want %v", r.source, r.status, r.age, gone, r.wantGone)
+		}
+	}
+}

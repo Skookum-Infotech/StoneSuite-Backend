@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,11 @@ const (
 	leaseTTL           = 15 * time.Minute
 	leaseRenewInterval = 5 * time.Minute
 )
+
+// leaseDegradeAfterFailures is how many consecutive metadata-API failures it
+// takes to mark the lease degraded. One transient blip must not disable
+// leasing; any success resets the count.
+const leaseDegradeAfterFailures = 3
 
 // sanitizeLeaseHolder reduces holder to the [a-z0-9-] alphabet the lease key
 // is built from — Fly app names are already this shape, but this is the
@@ -55,19 +61,22 @@ func sanitizeLeaseHolder(holder string) string {
 // one environment turning its AI assistant off never stops the box the other
 // environment is actively using.
 //
-// If the Machines metadata API ever fails (token lacking permission, or a
-// Machine that can't take metadata), OllamaLease permanently falls back to
-// behaving as if no lease system existed: Acquire becomes a no-op and
-// ReleaseAndMaybeStop degrades to a plain, unconditional StopAll — the same
-// behavior this type replaces. A single warning is logged the first time
-// that happens.
+// If the Machines metadata API fails leaseDegradeAfterFailures times in a row
+// (token lacking permission, or a Machine that can't take metadata), the lease
+// is marked degraded: OtherHolders reports nothing and ReleaseAndMaybeStop
+// cannot tell whether another holder is using the box. A degraded lease keeps
+// retrying Acquire on every RenewLoop tick, and the first success clears the
+// degradation. While degraded, a process that previously held a lease leaves
+// the shared box running rather than risk stopping the other environment's
+// Ollama; a process that never held one falls back to a plain StopAll.
 type OllamaLease struct {
 	lifecycle *OllamaLifecycle
 	key       string
 
 	mu       sync.Mutex
-	degraded bool
-	warnOnce sync.Once
+	failures int  // consecutive metadata failures
+	degraded bool // failures reached leaseDegradeAfterFailures
+	held     bool // this process has successfully written its lease
 }
 
 // NewOllamaLease builds a lease for holder (typically config.AppConfig.AppName)
@@ -76,40 +85,68 @@ func NewOllamaLease(lifecycle *OllamaLifecycle, holder string) *OllamaLease {
 	return &OllamaLease{lifecycle: lifecycle, key: leaseKeyPrefix + sanitizeLeaseHolder(holder)}
 }
 
-// markDegraded permanently disables the lease's metadata calls after the
-// first failure and logs exactly one warning explaining the fallback.
-func (l *OllamaLease) markDegraded(err error) {
+// recordFailure counts one consecutive metadata failure and, on reaching
+// leaseDegradeAfterFailures, marks the lease degraded (warning once per
+// transition into that state).
+func (l *OllamaLease) recordFailure(err error) {
 	l.mu.Lock()
-	l.degraded = true
+	l.failures++
+	becameDegraded := !l.degraded && l.failures >= leaseDegradeAfterFailures
+	if becameDegraded {
+		l.degraded = true
+	}
+	failures := l.failures
 	l.mu.Unlock()
-	l.warnOnce.Do(func() {
-		slog.Warn("ollama-lease: metadata API unavailable, falling back to plain start/stop",
-			"app", l.lifecycle.appName, "error", err)
-	})
+	if becameDegraded {
+		slog.Warn("ollama-lease: metadata API unavailable, lease degraded",
+			"app", l.lifecycle.appName, "consecutive_failures", failures, "error", err)
+	}
 }
 
-// isDegraded reports whether a prior metadata-API failure has disabled
-// leasing for the rest of this process's life.
+// recordSuccess resets the failure count and clears a degraded state.
+func (l *OllamaLease) recordSuccess() {
+	l.mu.Lock()
+	wasDegraded := l.degraded
+	l.failures = 0
+	l.degraded = false
+	l.mu.Unlock()
+	if wasDegraded {
+		slog.Info("ollama-lease: metadata API recovered, lease no longer degraded", "app", l.lifecycle.appName)
+	}
+}
+
+// isDegraded reports whether enough consecutive metadata failures have
+// accumulated to consider leasing unavailable right now.
 func (l *OllamaLease) isDegraded() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.degraded
 }
 
+// hasHeld reports whether this process has successfully written its lease.
+func (l *OllamaLease) hasHeld() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.held
+}
+
+// setHeld records whether this process currently has a lease written.
+func (l *OllamaLease) setHeld(held bool) {
+	l.mu.Lock()
+	l.held = held
+	l.mu.Unlock()
+}
+
 // Acquire (re)writes this holder's lease, with a fresh leaseTTL expiry, onto
-// every Machine in the app. A no-op once the lease has degraded (see
-// OllamaLease doc). Never returns an error the caller must act on — a
-// failure here only marks the lease degraded and is logged once; callers
-// (RenewLoop, the platform-toggle listener) proceed exactly as if it
-// succeeded, since the fallback is "start/stop unconditionally", not "fail
-// the operation".
+// every Machine in the app. It always attempts the write, even while degraded,
+// so a recovered metadata API clears the degradation. Never returns an error
+// the caller must act on — a failure only counts toward degradation and is
+// logged when that threshold is crossed; callers (RenewLoop, the
+// platform-toggle listener) proceed exactly as if it succeeded.
 func (l *OllamaLease) Acquire(ctx context.Context) error {
-	if l.isDegraded() {
-		return nil
-	}
 	machines, err := l.lifecycle.listMachines(ctx)
 	if err != nil {
-		l.markDegraded(fmt.Errorf("list machines: %w", err))
+		l.recordFailure(fmt.Errorf("list machines: %w", err))
 		return nil
 	}
 	expiry := strconv.FormatInt(time.Now().Add(leaseTTL).Unix(), 10)
@@ -120,18 +157,29 @@ func (l *OllamaLease) Acquire(ctx context.Context) error {
 		}
 	}
 	if firstErr != nil {
-		l.markDegraded(firstErr)
+		l.recordFailure(firstErr)
+		return nil
+	}
+	l.recordSuccess()
+	if len(machines) > 0 {
+		l.setHeld(true)
 	}
 	return nil
 }
 
 // RenewLoop acquires the lease immediately and then every leaseRenewInterval
-// until ctx is cancelled — the explicit exit strategy is ctx.Done(). Callers
-// (the platform-toggle listener) run this in a goroutine derived from the
-// shutdown context, started only while the platform AI switch is on.
+// until ctx is cancelled — the explicit exit strategy is ctx.Done(). Every
+// tick retries, including while degraded. Callers (the platform-toggle
+// listener) run this in a goroutine derived from the shutdown context, started
+// only while the platform AI switch is on.
 func (l *OllamaLease) RenewLoop(ctx context.Context) {
+	l.renewLoop(ctx, leaseRenewInterval)
+}
+
+// renewLoop is RenewLoop with an injectable interval, for tests.
+func (l *OllamaLease) renewLoop(ctx context.Context, interval time.Duration) {
 	_ = l.Acquire(ctx)
-	ticker := time.NewTicker(leaseRenewInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -145,17 +193,19 @@ func (l *OllamaLease) RenewLoop(ctx context.Context) {
 
 // ReleaseAndMaybeStop deletes this holder's lease key from every Machine,
 // then stops the app only if shouldStop decides no other holder's lease is
-// still unexpired; otherwise it logs and leaves the app running. Degrades to
-// a plain, unconditional StopAll if the lease has degraded or any metadata
-// call in this method fails — never blocks shutdown past ctx's own deadline.
+// still unexpired; otherwise it logs and leaves the app running. When the
+// lease is degraded, or a metadata call in this method fails, other holders
+// can't be ruled out: a process that previously held a lease leaves the
+// shared box running (with a warning), while one that never did falls back to
+// a plain StopAll. Never blocks shutdown past ctx's own deadline.
 func (l *OllamaLease) ReleaseAndMaybeStop(ctx context.Context) error {
 	if l.isDegraded() {
-		return l.lifecycle.StopAll(ctx)
+		return l.stopUnverified(ctx, errors.New("lease degraded"))
 	}
 	machines, err := l.lifecycle.listMachines(ctx)
 	if err != nil {
-		l.markDegraded(fmt.Errorf("list machines: %w", err))
-		return l.lifecycle.StopAll(ctx)
+		l.recordFailure(fmt.Errorf("list machines: %w", err))
+		return l.stopUnverified(ctx, err)
 	}
 	if len(machines) == 0 {
 		return nil
@@ -167,14 +217,29 @@ func (l *OllamaLease) ReleaseAndMaybeStop(ctx context.Context) error {
 	}
 	leases, err := l.getMetadata(ctx, machines[0].ID)
 	if err != nil {
-		l.markDegraded(fmt.Errorf("read lease metadata: %w", err))
-		return l.lifecycle.StopAll(ctx)
+		l.recordFailure(fmt.Errorf("read lease metadata: %w", err))
+		return l.stopUnverified(ctx, err)
 	}
+	l.recordSuccess()
+	l.setHeld(false) // own key deleted and verified; nothing left to protect
 	if shouldStop(leases, l.key, time.Now()) {
 		return l.lifecycle.StopAll(ctx)
 	}
 	slog.Info("ollama left running for other holder(s)", "app", l.lifecycle.appName)
 	return nil
+}
+
+// stopUnverified handles a release where other holders could not be checked.
+// If this process held a lease, the shared box is left running — stopping it
+// could kill the other environment's Ollama — and a warning is logged;
+// otherwise it stops unconditionally, as it did before leases existed.
+func (l *OllamaLease) stopUnverified(ctx context.Context, cause error) error {
+	if l.hasHeld() {
+		slog.Warn("ollama-lease: cannot verify other holders; leaving shared Ollama running",
+			"app", l.lifecycle.appName, "error", cause)
+		return nil
+	}
+	return l.lifecycle.StopAll(ctx)
 }
 
 // OtherHolders reports the still-unexpired lease holders other than this

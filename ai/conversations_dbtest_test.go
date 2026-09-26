@@ -3,6 +3,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -197,10 +198,10 @@ func TestConversationStore_AppendTurnSavesPairInOrderAndTitlesOnce(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendTurn(ctx, conv.ID, "q1", "a1", "first title"); err != nil {
+	if err := s.AppendTurn(ctx, conv.ID, "q1", "a1", "first title", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendTurn(ctx, conv.ID, "q2", "a2", "second title, should be ignored"); err != nil {
+	if err := s.AppendTurn(ctx, conv.ID, "q2", "a2", "second title, should be ignored", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -237,7 +238,7 @@ func TestConversationStore_HistoryRespectsCharBudget(t *testing.T) {
 	}
 	big := strings.Repeat("x", historyCharBudget/3)
 	for i := 0; i < 3; i++ {
-		if err := s.AppendTurn(ctx, conv.ID, fmt.Sprintf("q%d", i), big, "t"); err != nil {
+		if err := s.AppendTurn(ctx, conv.ID, fmt.Sprintf("q%d", i), big, "t", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -326,5 +327,48 @@ func TestConversationStore_DeleteMissingIsNoop(t *testing.T) {
 	s := NewConversationStore(pool)
 	if err := s.Delete(ctxS(t), "00000000-0000-0000-0000-000000000000"); err != nil {
 		t.Fatalf("Delete of a nonexistent id must be a no-op, not an error: %v", err)
+	}
+}
+
+// TestConversationStore_AppendTurnPersistsCitations: citations ride on the
+// assistant row only, come back from Messages verbatim, and rows saved
+// without any (or before the column existed) return none.
+func TestConversationStore_AppendTurnPersistsCitations(t *testing.T) {
+	pool := newTestPool(t)
+	s := NewConversationStore(pool)
+	ctx := ctxS(t)
+
+	conv, err := s.Create(ctx, convUserA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cites := json.RawMessage(`[{"source_type":"records","source_id":"abc","snippet":"hi","record_type":"lead"}]`)
+	if err := s.AppendTurn(ctx, conv.ID, "q1", "a1", "t", cites); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendTurn(ctx, conv.ID, "q2", "a2", "t", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, err := s.Messages(ctx, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("got %d messages, want 4", len(msgs))
+	}
+	if msgs[0].Citations != nil || msgs[2].Citations != nil || msgs[3].Citations != nil {
+		t.Fatalf("only the first assistant message carries citations: %+v", msgs)
+	}
+	if string(msgs[1].Citations) == "" {
+		t.Fatal("assistant message lost its citations")
+	}
+	var got []map[string]string
+	if err := json.Unmarshal(msgs[1].Citations, &got); err != nil || len(got) != 1 || got[0]["record_type"] != "lead" {
+		t.Fatalf("citations = %s (%v)", msgs[1].Citations, err)
+	}
+	body, err := json.Marshal(msgs[0])
+	if err != nil || strings.Contains(string(body), "citations") {
+		t.Fatalf("a message without citations must omit the key: %s", body)
 	}
 }

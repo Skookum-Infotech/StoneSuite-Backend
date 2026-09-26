@@ -22,6 +22,7 @@ func TestWithRetrievedFallback(t *testing.T) {
 		{"fewer than the cap are all kept", ragcore.AskResult{Grounded: true}, four[:2], four[:2]},
 		{"model-cited sources win", ragcore.AskResult{Grounded: true, Citations: []ragcore.Citation{cite("9")}}, four, []ragcore.Citation{cite("9")}},
 		{"refusal never gets sources", ragcore.AskResult{Grounded: false, Citations: []ragcore.Citation{}}, four, []ragcore.Citation{}},
+		{"refusal is passed through unchanged even if Citations were non-empty", ragcore.AskResult{Grounded: false, Citations: []ragcore.Citation{cite("stale")}}, four, []ragcore.Citation{cite("stale")}},
 		{"nothing retrieved stays empty", ragcore.AskResult{Grounded: true, Citations: []ragcore.Citation{}}, nil, []ragcore.Citation{}},
 	}
 	for _, tt := range tests {

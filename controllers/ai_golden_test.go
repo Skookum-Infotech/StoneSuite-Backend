@@ -1,6 +1,10 @@
 package controllers
 
-import "testing"
+import (
+	"testing"
+
+	ragcore "github.com/Skookum-Infotech/go-rag/rag"
+)
 
 // goldenQuestions is the P2.2 golden-question regression set: realistic
 // StoneSuite CRM questions, each labeled with the routing decision the AI
@@ -98,5 +102,103 @@ func TestGoldenQuestionSet(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// goldenRoutingCases is the golden-question set for the routing decisions
+// runAskDispatch makes ahead of (or instead of) classifyCountQuestion:
+// intent classification (ai.NewAssistant.ForCaller's corpus/prompt choice),
+// the record-number lookup fast path, the qualifier fall-through fix
+// (Phase 6a), and the count follow-up path (Phase 6d). Each row exercises
+// exactly one pure classifier — no DB, no Ollama — same CI-gating rationale
+// as goldenQuestions above.
+var goldenRoutingCases = []struct {
+	name string
+	run  func(t *testing.T)
+}{
+	// --- intent: data ---
+	{"data: record type word", func(t *testing.T) {
+		if got := classifyIntent("Show me my leads", ""); got != intentData {
+			t.Errorf("classifyIntent = %q, want data", got)
+		}
+	}},
+	{"data: record number", func(t *testing.T) {
+		if got := classifyIntent("What's the status of LEAD-000012?", ""); got != intentData {
+			t.Errorf("classifyIntent = %q, want data", got)
+		}
+	}},
+	// --- intent: help ---
+	{"help: how do I", func(t *testing.T) {
+		if got := classifyIntent("How do I set up SSO?", ""); got != intentHelp {
+			t.Errorf("classifyIntent = %q, want help", got)
+		}
+	}},
+	// --- intent: mixed (neither cue) ---
+	{"mixed: no cue, no history", func(t *testing.T) {
+		if got := classifyIntent("hello", ""); got != intentMixed {
+			t.Errorf("classifyIntent = %q, want mixed", got)
+		}
+	}},
+	// --- intent: follow-up inherits previous turn ---
+	{"follow-up inherits data intent", func(t *testing.T) {
+		if got := classifyIntent("and its city?", "What's LEAD-000012's phone number?"); got != intentData {
+			t.Errorf("classifyIntent = %q, want data", got)
+		}
+	}},
+
+	// --- lookup: record number + recognized field matches ---
+	{"lookup: record number + field matches", func(t *testing.T) {
+		number, hasField, ok := lookupTemplateMatch("What city is LEAD-000012 in?")
+		if !ok || !hasField || number != "LEAD-000012" {
+			t.Errorf("lookupTemplateMatch = (%q, %v, %v), want (LEAD-000012, true, true)", number, hasField, ok)
+		}
+	}},
+	// --- lookup: record number with no recognized field falls through ---
+	{"lookup: record number, no field -> falls through to RAG", func(t *testing.T) {
+		_, hasField, ok := lookupTemplateMatch("Tell me about LEAD-000012")
+		if !ok || hasField {
+			t.Errorf("lookupTemplateMatch hasField = %v, want false (no field named)", hasField)
+		}
+	}},
+	// --- lookup: no record number at all is not this path ---
+	{"lookup: no record number -> not this path", func(t *testing.T) {
+		if _, _, ok := lookupTemplateMatch("how many leads do we have"); ok {
+			t.Error("lookupTemplateMatch matched a question with no record number")
+		}
+	}},
+
+	// --- qualifier fall-through (Phase 6a): a meaningful word after the
+	// type word must defer to RAG, not answer an unfiltered total ---
+	{"qualifier: 'customers in Texas' falls through", func(t *testing.T) {
+		if _, ok := classifyCountQuestion("how many customers in Texas"); ok {
+			t.Error("expected fall-through for a qualifier naming a place")
+		}
+	}},
+	{"qualifier: 'leads does John have' falls through", func(t *testing.T) {
+		if _, ok := classifyCountQuestion("how many leads does John have"); ok {
+			t.Error("expected fall-through for a qualifier naming a person")
+		}
+	}},
+
+	// --- count follow-up (Phase 6d) ---
+	{"follow-up: 'and customers?' after a count question", func(t *testing.T) {
+		history := []ragcore.Message{{Role: ragcore.RoleUser, Content: "how many leads do we have"}}
+		keys, ok := classifyFollowUpCount("and customers?", history)
+		if !ok || len(keys) != 1 || keys[0] != "customer" {
+			t.Errorf("classifyFollowUpCount = (%v, %v), want ([customer], true)", keys, ok)
+		}
+	}},
+	{"follow-up: no prior count question -> not a follow-up", func(t *testing.T) {
+		history := []ragcore.Message{{Role: ragcore.RoleUser, Content: "how do I export a report"}}
+		if _, ok := classifyFollowUpCount("and customers?", history); ok {
+			t.Error("expected no match: the previous question was not a count")
+		}
+	}},
+}
+
+// TestGoldenRoutingSet runs goldenRoutingCases — see its doc comment.
+func TestGoldenRoutingSet(t *testing.T) {
+	for _, tt := range goldenRoutingCases {
+		t.Run(tt.name, tt.run)
 	}
 }

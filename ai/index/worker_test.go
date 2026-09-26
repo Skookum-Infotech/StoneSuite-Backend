@@ -328,7 +328,8 @@ func TestWorkerReEnqueuesOnEmbedError(t *testing.T) {
 // TestWorkerReleasesAndStopsBatchOnEmbedderUnavailable is the retry-burn fix:
 // when the embedder itself is unreachable, every other job in the batch would
 // fail the identical way within the same few seconds, so DrainOnce must not
-// burn an attempt on each one and must not keep trying the rest of the batch.
+// burn an attempt on each one, must not keep trying the rest of the batch,
+// and must release every job it claimed but did not process.
 func TestWorkerReleasesAndStopsBatchOnEmbedderUnavailable(t *testing.T) {
 	q := &fakeQueue{pending: []Job{
 		{ID: "1", SourceID: "rec-1", Op: "upsert"},
@@ -350,11 +351,14 @@ func TestWorkerReleasesAndStopsBatchOnEmbedderUnavailable(t *testing.T) {
 	if q.failed["1"] {
 		t.Fatal("job 1 must not be charged a retry attempt while the embedder is unreachable")
 	}
-	if q.claimed["2"] == false {
+	if !q.claimed["2"] {
 		t.Fatal("job 2 should have been claimed by ClaimPending")
 	}
-	if q.done["2"] || q.failed["2"] || q.released["2"] {
-		t.Fatal("job 2 must be left untouched — the batch stops at the first unavailable job")
+	if q.done["2"] || q.failed["2"] {
+		t.Fatal("job 2 must not be processed or failed — the batch stops at the first unavailable job")
+	}
+	if !q.released["2"] {
+		t.Fatal("job 2 must be released too, not stranded inflight with an attempt charged")
 	}
 }
 
@@ -373,5 +377,29 @@ func TestWorkerHandlesDeleteWithoutEmbedding(t *testing.T) {
 	}
 	if !q.done["1"] {
 		t.Fatal("successful delete job must be marked done")
+	}
+}
+
+// TestWorkerReleasesOnlyUnprocessedJobsOnUnavailable: jobs completed before the
+// embedder went away stay done; only the failing job and the untouched tail
+// of the claimed batch are released.
+func TestWorkerReleasesOnlyUnprocessedJobsOnUnavailable(t *testing.T) {
+	q := &fakeQueue{pending: []Job{
+		{ID: "1", SourceID: "rec-1", Op: "delete"},
+		{ID: "2", SourceID: "rec-2", Op: "upsert"},
+		{ID: "3", SourceID: "rec-3", Op: "upsert"},
+	}}
+	emb := &rag.FakeEmbedder{Err: fmt.Errorf("dial: %w", rag.ErrUnavailable)}
+	w := NewWorker(q, &fakeLoader{}, emb, &fakeChunkSink{})
+
+	n, err := w.DrainOnce(ctxW(t))
+	if !errors.Is(err, rag.ErrUnavailable) || n != 2 {
+		t.Fatalf("DrainOnce = %d, %v; want 2, ErrUnavailable", n, err)
+	}
+	if !q.done["1"] || q.released["1"] {
+		t.Fatal("job 1 completed before the outage and must stay done")
+	}
+	if !q.released["2"] || !q.released["3"] {
+		t.Fatalf("jobs 2 and 3 must both be released, got %v", q.released)
 	}
 }

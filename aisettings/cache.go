@@ -39,6 +39,11 @@ type Cache struct {
 	ttl   time.Duration
 	now   clock
 	items map[string]cacheEntry
+	// gen counts invalidations per key. A reader captures it before its
+	// database read and stores the result only if it is unchanged, so a read
+	// that started before a write can't re-cache the pre-write value after the
+	// write's Invalidate.
+	gen map[string]uint64
 }
 
 // NewCache builds a Cache with the standard 30s TTL. now is the clock to use;
@@ -47,7 +52,7 @@ func NewCache(now clock) *Cache {
 	if now == nil {
 		now = time.Now
 	}
-	return &Cache{ttl: cacheTTL, now: now, items: make(map[string]cacheEntry)}
+	return &Cache{ttl: cacheTTL, now: now, items: make(map[string]cacheEntry), gen: make(map[string]uint64)}
 }
 
 // get returns the cached value for key, if present and unexpired.
@@ -68,48 +73,74 @@ func (c *Cache) set(key string, value bool) {
 	c.items[key] = cacheEntry{enabled: value, expiresAt: c.now().Add(c.ttl)}
 }
 
+// generation returns key's current invalidation count.
+func (c *Cache) generation(key string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen[key]
+}
+
+// setIfGeneration stores value for key only if no invalidation of key has
+// happened since gen was captured; otherwise the value is possibly stale and
+// is dropped (the caller still returns it, just doesn't cache it).
+func (c *Cache) setIfGeneration(key string, value bool, gen uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen[key] != gen {
+		return
+	}
+	c.items[key] = cacheEntry{enabled: value, expiresAt: c.now().Add(c.ttl)}
+}
+
+// invalidate drops key and bumps its generation.
+func (c *Cache) invalidate(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.items, key)
+	c.gen[key]++
+}
+
+// cached returns key's value from the cache, or fetches it and stores it
+// unless key was invalidated while the fetch was in flight.
+func (c *Cache) cached(ctx context.Context, key string, fetch func(context.Context) (bool, error)) (bool, error) {
+	if v, ok := c.get(key); ok {
+		return v, nil
+	}
+	gen := c.generation(key)
+	v, err := fetch(ctx)
+	if err != nil {
+		return false, err
+	}
+	c.setIfGeneration(key, v, gen)
+	return v, nil
+}
+
 // InvalidatePlatform drops the cached platform switch, forcing the next read
 // back to the database. Called after a successful platform-settings write.
 func (c *Cache) InvalidatePlatform() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.items, PlatformKey)
+	c.invalidate(PlatformKey)
 }
 
 // InvalidateTenant drops the cached switch for one tenant, forcing the next
 // read back to the database. Called after a successful tenant-settings write.
 func (c *Cache) InvalidateTenant(tenantKey string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.items, tenantKey)
+	c.invalidate(tenantKey)
 }
 
 // platformEnabledCached returns the platform switch, reading through the
 // cache and falling back to the database on a miss.
 func (c *Cache) platformEnabledCached(ctx context.Context, cpPool *pgxpool.Pool) (bool, error) {
-	if v, ok := c.get(PlatformKey); ok {
-		return v, nil
-	}
-	v, err := PlatformEnabled(ctx, cpPool)
-	if err != nil {
-		return false, err
-	}
-	c.set(PlatformKey, v)
-	return v, nil
+	return c.cached(ctx, PlatformKey, func(ctx context.Context) (bool, error) {
+		return PlatformEnabled(ctx, cpPool)
+	})
 }
 
 // tenantEnabledCached returns tenantKey's own switch, reading through the
 // cache and falling back to the database on a miss.
 func (c *Cache) tenantEnabledCached(ctx context.Context, tenantPool *pgxpool.Pool, tenantKey string) (bool, error) {
-	if v, ok := c.get(tenantKey); ok {
-		return v, nil
-	}
-	v, err := TenantEnabled(ctx, tenantPool)
-	if err != nil {
-		return false, err
-	}
-	c.set(tenantKey, v)
-	return v, nil
+	return c.cached(ctx, tenantKey, func(ctx context.Context) (bool, error) {
+		return TenantEnabled(ctx, tenantPool)
+	})
 }
 
 // Status resolves the combined platform + tenant switch state for tenantKey

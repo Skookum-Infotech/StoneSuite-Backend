@@ -36,21 +36,32 @@ type LLMClient struct {
 	// tests can shrink them without waiting out the real values.
 	firstTokenTimeout time.Duration
 	idleTimeout       time.Duration
+	// maxPredictTokens is the num_predict sent with every request from this
+	// client. Defaulted from DefaultMaxPredictTokens, overridable per call
+	// site (not per request) via WithMaxTokens.
+	maxPredictTokens int
 }
 
-// maxPredictTokens bounds how many tokens the model may generate per answer.
-// A CPU-bound box has no fast path — worst-case generation time scales
-// directly with output length, and an unbounded response risks the request
-// running past Fly's own proxy timeout regardless of how quick the model
-// starts responding. 300 tokens is plenty for a grounded, cited answer; an
-// answer that hits it is reported via rag.Usage.Truncated.
-const maxPredictTokens = 300
+// DefaultMaxPredictTokens bounds how many tokens the model may generate per
+// answer. A CPU-bound box has no fast path — worst-case generation time
+// scales directly with output length, and an unbounded response risks the
+// request running past Fly's own proxy timeout regardless of how quick the
+// model starts responding. 300 tokens is plenty for a grounded, cited
+// answer; an answer that hits it is reported via rag.Usage.Truncated.
+// Exported so callers can size their own budgeting (e.g. rag.Orchestrator's
+// history trimming) off the same number without duplicating it.
+const DefaultMaxPredictTokens = 300
 
-// contextWindow is the num_ctx sent with every request. Ollama's own default
-// is small enough that a system prompt + retrieved context + a few history
-// turns can overflow it, and Ollama then drops the OLDEST tokens silently —
-// which is the system prompt. 4096 fits llama3.2 comfortably on this box.
-const contextWindow = 4096
+// DefaultContextWindow is the num_ctx sent with every request. Ollama's own
+// default is small enough that a system prompt + retrieved context + a few
+// history turns can overflow it, and Ollama then drops the OLDEST tokens
+// silently — which is the system prompt. 4096 fits llama3.2 comfortably on
+// this box. Exported for the same reason as DefaultMaxPredictTokens.
+//
+// Fixed per client, never overridden per call: Ollama reloads the model
+// whenever num_ctx changes between requests, which is exactly the reload
+// WarmUp exists to avoid paying on the first real request.
+const DefaultContextWindow = 4096
 
 // answerTemperature keeps grounded answers close to the retrieved text;
 // routingTemperature makes schema-constrained extraction deterministic.
@@ -107,6 +118,7 @@ func NewLLMClient(baseURL, model string) *LLMClient {
 		retryDelay:        defaultRetryDelay,
 		firstTokenTimeout: streamFirstTokenTimeout,
 		idleTimeout:       streamIdleTimeout,
+		maxPredictTokens:  DefaultMaxPredictTokens,
 	}
 }
 
@@ -116,6 +128,28 @@ func NewLLMClient(baseURL, model string) *LLMClient {
 func (c *LLMClient) WithKeepAlive(keepAlive string) *LLMClient {
 	c.keepAlive = keepAlive
 	return c
+}
+
+// WithMaxTokens returns a shallow copy of c with its per-call num_predict
+// overridden to n — e.g. rag.WarmUp asking for a 1-token completion so
+// warm-up pays for model load without paying for a full generation. num_ctx
+// is untouched by design (see DefaultContextWindow): only num_predict may
+// vary between requests without risking a model reload.
+//
+// Returns a copy rather than mutating c: c is shared across concurrent
+// requests (see the LLMClient doc), so a caller reaching for a cheaper
+// warm-up call must never race with another goroutine's real request using
+// the shared client.
+//
+// Returns rag.LLMClient rather than *LLMClient on purpose: Go requires a
+// method's return type to match an interface declaration exactly to satisfy
+// it structurally (no covariance), so rag.WarmUp's optional maxTokensSetter
+// check — WithMaxTokens(int) rag.LLMClient — can only recognize this method
+// if it is declared with that exact return type.
+func (c *LLMClient) WithMaxTokens(n int) rag.LLMClient {
+	cp := *c
+	cp.maxPredictTokens = n
+	return &cp
 }
 
 type ollamaChatMessage struct {
@@ -196,8 +230,8 @@ func (c *LLMClient) buildRequest(system string, messages []rag.Message, stream b
 		Format:    format,
 		KeepAlive: c.keepAlive,
 		Options: ollamaChatOptions{
-			NumPredict:  maxPredictTokens,
-			NumCtx:      contextWindow,
+			NumPredict:  c.maxPredictTokens,
+			NumCtx:      DefaultContextWindow,
 			Temperature: temperature,
 		},
 	}

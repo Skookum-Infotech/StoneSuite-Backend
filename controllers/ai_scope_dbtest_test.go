@@ -139,7 +139,7 @@ func TestAIAsk_NonStreamingReturnsTypedCitationsAndPersistsTurn(t *testing.T) {
 	conv, err := ai.NewConversationStore(e.pool).Create(context.Background(), e.user.ID)
 	require.NoError(t, err)
 
-	rec := e.ask(t, `{"question":"what is Acme?","conversation_id":"`+conv.ID+`"}`)
+	rec := e.ask(t, `{"question":"tell me about the lead Acme","conversation_id":"`+conv.ID+`"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	var resp struct {
 		Success bool `json:"success"`
@@ -149,14 +149,14 @@ func TestAIAsk_NonStreamingReturnsTypedCitationsAndPersistsTurn(t *testing.T) {
 			Citations []struct {
 				RecordType string `json:"record_type"`
 			} `json:"citations"`
+			ConversationID string `json:"conversation_id"`
+			Persisted      bool   `json:"persisted"`
 		} `json:"data"`
-		ConversationID string `json:"conversation_id"`
-		Persisted      bool   `json:"persisted"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.True(t, resp.Success)
-	assert.Equal(t, conv.ID, resp.ConversationID)
-	assert.True(t, resp.Persisted)
+	assert.Equal(t, conv.ID, resp.Data.ConversationID)
+	assert.True(t, resp.Data.Persisted)
 	require.Len(t, resp.Data.Citations, 1)
 	assert.Equal(t, "lead", resp.Data.Citations[0].RecordType)
 
@@ -172,7 +172,7 @@ func TestAIAsk_OtherUsersConversationIs404(t *testing.T) {
 	someoneElse, err := ai.NewConversationStore(e.pool).Create(context.Background(), "aaaaaaaa-0000-0000-0000-00000000dead")
 	require.NoError(t, err)
 
-	rec := e.ask(t, `{"question":"what is Acme?","conversation_id":"`+someoneElse.ID+`"}`)
+	rec := e.ask(t, `{"question":"tell me about the lead Acme","conversation_id":"`+someoneElse.ID+`"}`)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "not 403: another user's conversation must be indistinguishable from none")
 }
 
@@ -187,8 +187,8 @@ func TestAIAsk_BusyIs429WithCodeOnBothEndpoints(t *testing.T) {
 	defer release()
 
 	for name, rec := range map[string]*httptest.ResponseRecorder{
-		"ask":    e.ask(t, `{"question":"what is Acme?"}`),
-		"stream": doAskStream(e.resolver, e.h, e.identity.ID, e.tenantID, `{"question":"what is Acme?"}`),
+		"ask":    e.ask(t, `{"question":"tell me about the lead Acme"}`),
+		"stream": doAskStream(e.resolver, e.h, e.identity.ID, e.tenantID, `{"question":"tell me about the lead Acme"}`),
 	} {
 		assert.Equal(t, http.StatusTooManyRequests, rec.Code, name)
 		assert.Equal(t, "5", rec.Header().Get("Retry-After"), name)
@@ -198,4 +198,21 @@ func TestAIAsk_BusyIs429WithCodeOnBothEndpoints(t *testing.T) {
 	// A zero-LLM direct count needs no slot, so it still answers.
 	rec := e.ask(t, `{"question":"how many leads do we have?"}`)
 	assert.Equal(t, http.StatusOK, rec.Code, "count_direct must not wait on a model slot")
+}
+
+// TestCallerUserID_UnlinkedIdentityIs403: an authenticated identity with no
+// user row in this workspace gets a 403, not a 500.
+func TestCallerUserID_UnlinkedIdentityIs403(t *testing.T) {
+	e := newAITestEnv(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/tenant/ai/conversations", nil)
+	payload := middleware.UserContextPayload{ID: "00000000-0000-0000-0000-00000000dead", TenantID: e.tenantID}
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
+	rec := httptest.NewRecorder()
+
+	id, ok := callerUserID(rec, req, e.pool)
+
+	assert.False(t, ok)
+	assert.Empty(t, id)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), msgUserNotLinked)
 }

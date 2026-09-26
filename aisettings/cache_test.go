@@ -1,6 +1,7 @@
 package aisettings
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -62,5 +63,53 @@ func TestCache_InvalidateTenant(t *testing.T) {
 	}
 	if v, ok := c.get("tenant-b"); !ok || v != false {
 		t.Fatalf("InvalidateTenant must not disturb other tenants' entries")
+	}
+}
+
+// TestCache_InvalidateDuringFetchDoesNotCacheStaleValue interleaves a read that
+// fetched the old value with a write's Invalidate: the stale value must not be
+// cached, so the next read goes back to the source.
+func TestCache_InvalidateDuringFetchDoesNotCacheStaleValue(t *testing.T) {
+	c := NewCache(nil)
+	source := true
+	calls := 0
+	fetch := func(context.Context) (bool, error) {
+		calls++
+		old := source
+		if calls == 1 {
+			// The write lands between this read's DB fetch and its cache store.
+			source = false
+			c.InvalidateTenant("tenant-a")
+		}
+		return old, nil
+	}
+
+	got, err := c.cached(context.Background(), "tenant-a", fetch)
+	if err != nil || !got {
+		t.Fatalf("first read = (%v, %v), want the pre-write value (true, nil)", got, err)
+	}
+	if _, ok := c.get("tenant-a"); ok {
+		t.Fatal("a read that raced an Invalidate must not populate the cache")
+	}
+	got, err = c.cached(context.Background(), "tenant-a", fetch)
+	if err != nil || got {
+		t.Fatalf("second read = (%v, %v), want the post-write value (false, nil)", got, err)
+	}
+	if _, ok := c.get("tenant-a"); !ok {
+		t.Fatal("an undisturbed read must be cached")
+	}
+}
+
+func TestCache_InvalidateOtherKeyDoesNotBlockCaching(t *testing.T) {
+	c := NewCache(nil)
+	fetch := func(context.Context) (bool, error) {
+		c.InvalidateTenant("tenant-b")
+		return true, nil
+	}
+	if _, err := c.cached(context.Background(), "tenant-a", fetch); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.get("tenant-a"); !ok {
+		t.Fatal("invalidating a different key must not stop this key being cached")
 	}
 }

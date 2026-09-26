@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,31 +179,158 @@ func TestOllamaLeaseReleaseAndMaybeStop_LeavesRunningForOtherHolder(t *testing.T
 	assert.True(t, ok, "other holder's lease must be left alone")
 }
 
-func TestOllamaLeaseDegradesOnMetadataFailure(t *testing.T) {
-	// Simulates a token that can start/stop Machines but lacks permission on
-	// the metadata endpoints specifically — the fallback case the doc
-	// comment describes.
+// flakyMetadataServer fakes a Fly app whose metadata endpoints can be switched
+// between working and failing (403), and counts /stop calls.
+type flakyMetadataServer struct {
+	failing atomic.Bool
+	stops   atomic.Int32
+	mu      sync.Mutex
+	store   map[string]string
+}
+
+func newFlakyMetadataServer(t *testing.T) *flakyMetadataServer {
+	t.Helper()
+	f := &flakyMetadataServer{store: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/machines") && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode([]flyMachine{{ID: "m1"}})
 		case strings.HasSuffix(r.URL.Path, "/stop") && r.Method == http.MethodPost:
+			f.stops.Add(1)
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(r.URL.Path, "/metadata"):
-			w.WriteHeader(http.StatusForbidden)
+			if f.failing.Load() {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			switch {
+			case strings.Contains(r.URL.Path, "/metadata/") && r.Method == http.MethodPost:
+				_, key := metadataPathParts(r.URL.Path)
+				var body metadataValue
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				f.store[key] = body.Value
+			case strings.Contains(r.URL.Path, "/metadata/") && r.Method == http.MethodDelete:
+				_, key := metadataPathParts(r.URL.Path)
+				delete(f.store, key)
+			default:
+				_ = json.NewEncoder(w).Encode(f.store)
+			}
 		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	overrideBase(t, srv.URL)
+	return f
+}
 
+func newFlakyLease(t *testing.T, f *flakyMetadataServer) *OllamaLease {
+	t.Helper()
 	lifecycle := NewOllamaLifecycle("app1", "test-token")
-	lifecycle.client = srv.Client()
-	lease := NewOllamaLease(lifecycle, "backend-a")
+	lifecycle.client = http.DefaultClient
+	return NewOllamaLease(lifecycle, "backend-a")
+}
 
-	require.NoError(t, lease.Acquire(context.Background()), "Acquire must not surface a metadata failure")
+func TestOllamaLeaseDegradesOnlyAfterConsecutiveFailures(t *testing.T) {
+	f := newFlakyMetadataServer(t)
+	f.failing.Store(true)
+	lease := newFlakyLease(t, f)
+	ctx := context.Background()
+
+	for i := 1; i < leaseDegradeAfterFailures; i++ {
+		require.NoError(t, lease.Acquire(ctx), "Acquire must not surface a metadata failure")
+		assert.False(t, lease.isDegraded(), "%d failure(s) must not degrade", i)
+	}
+	require.NoError(t, lease.Acquire(ctx))
 	assert.True(t, lease.isDegraded())
+}
 
-	require.NoError(t, lease.ReleaseAndMaybeStop(context.Background()), "must fall back to a plain StopAll, not error")
+func TestOllamaLeaseSuccessResetsFailureCounter(t *testing.T) {
+	f := newFlakyMetadataServer(t)
+	lease := newFlakyLease(t, f)
+	ctx := context.Background()
+
+	f.failing.Store(true)
+	for i := 0; i < leaseDegradeAfterFailures-1; i++ {
+		require.NoError(t, lease.Acquire(ctx))
+	}
+	f.failing.Store(false)
+	require.NoError(t, lease.Acquire(ctx))
+	f.failing.Store(true)
+	for i := 0; i < leaseDegradeAfterFailures-1; i++ {
+		require.NoError(t, lease.Acquire(ctx))
+	}
+	assert.False(t, lease.isDegraded(), "non-consecutive failures must not add up to degradation")
+}
+
+func TestOllamaLeaseDegradedThenRecovered(t *testing.T) {
+	f := newFlakyMetadataServer(t)
+	lease := newFlakyLease(t, f)
+	ctx := context.Background()
+
+	f.failing.Store(true)
+	for i := 0; i < leaseDegradeAfterFailures; i++ {
+		require.NoError(t, lease.Acquire(ctx))
+	}
+	require.True(t, lease.isDegraded())
+
+	f.failing.Store(false)
+	require.NoError(t, lease.Acquire(ctx), "Acquire must keep retrying while degraded")
+	assert.False(t, lease.isDegraded(), "a success clears degradation")
+	f.mu.Lock()
+	_, wrote := f.store[lease.key]
+	f.mu.Unlock()
+	assert.True(t, wrote, "the recovered Acquire must actually write the lease")
+}
+
+func TestOllamaLeaseRenewLoopRetriesWhileDegraded(t *testing.T) {
+	f := newFlakyMetadataServer(t)
+	f.failing.Store(true)
+	lease := newFlakyLease(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		lease.renewLoop(ctx, 10*time.Millisecond)
+	}()
+
+	require.Eventually(t, lease.isDegraded, 2*time.Second, 5*time.Millisecond)
+	f.failing.Store(false)
+	require.Eventually(t, func() bool { return !lease.isDegraded() }, 2*time.Second, 5*time.Millisecond,
+		"a later tick must clear degradation without restarting the loop")
+	cancel()
+	<-done
+}
+
+func TestOllamaLeaseReleaseWhileDegraded(t *testing.T) {
+	tests := []struct {
+		name      string
+		heldFirst bool
+		wantStops int32
+	}{
+		{"never held a lease: plain StopAll", false, 1},
+		{"previously held a lease: leave the shared box running", true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFlakyMetadataServer(t)
+			lease := newFlakyLease(t, f)
+			ctx := context.Background()
+			if tt.heldFirst {
+				require.NoError(t, lease.Acquire(ctx))
+				require.True(t, lease.hasHeld())
+			}
+			f.failing.Store(true)
+			for i := 0; i < leaseDegradeAfterFailures; i++ {
+				require.NoError(t, lease.Acquire(ctx))
+			}
+			require.True(t, lease.isDegraded())
+
+			require.NoError(t, lease.ReleaseAndMaybeStop(ctx))
+
+			assert.Equal(t, tt.wantStops, f.stops.Load())
+		})
+	}
 }

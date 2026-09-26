@@ -47,12 +47,14 @@ func (l *RAGRecordLoader) Load(ctx context.Context, sourceID string) (rag.Record
 	if rec.RecordNumber != "" {
 		core["record_number"] = rec.RecordNumber
 	}
+	labels := l.fieldLabels(ctx, key)
+	cappedCore, cappedCustom := capRecordFields(core, rec.CustomFields, ragPriorityFields, labels, ragRecordByteBudget)
 	doc := rag.RecordDoc{
 		WorkflowKey: key,
 		StateName:   l.stateName(ctx, rec.CurrentStateID),
-		Core:        core,
-		Custom:      rec.CustomFields,
-		FieldLabels: l.fieldLabels(ctx, key),
+		Core:        cappedCore,
+		Custom:      cappedCustom,
+		FieldLabels: labels,
 		Priority:    ragPriorityFields,
 	}
 	return doc, workflowUUIDOrEmpty(rec.WorkflowID), rec.OwnerUserID, rec.TeamID, nil

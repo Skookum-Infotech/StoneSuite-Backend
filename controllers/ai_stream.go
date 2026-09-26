@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,7 @@ import (
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/metrics"
 	"stonesuite-backend/middleware"
 )
 
@@ -35,9 +37,12 @@ type sseEvent struct {
 // returns ctx.Err() instead of blocking against a channel nobody reads, which
 // lets the dispatch (and ChatStream beneath it) unwind without leaking.
 type channelSink struct {
-	ch   chan<- sseEvent
-	ctx  context.Context
-	pool *pgxpool.Pool
+	ch    chan<- sseEvent
+	ctx   context.Context
+	pool  *pgxpool.Pool
+	start time.Time // request start, for the ai_ttft_seconds metric
+
+	ttftOnce sync.Once
 }
 
 func (s *channelSink) send(ev sseEvent) error {
@@ -54,6 +59,7 @@ func (s *channelSink) OnRetrieved(cites []ragcore.Citation) error {
 }
 
 func (s *channelSink) OnToken(token string) error {
+	s.ttftOnce.Do(func() { metrics.ObserveAITTFT(time.Since(s.start).Seconds()) })
 	return s.send(sseEvent{event: "token", data: token})
 }
 
@@ -107,7 +113,7 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 
 	// Slot acquisition happens before any SSE header so a busy 429 is still an
 	// ordinary JSON response.
-	if needsModel(body.Question) {
+	if needsModel(body.Question, pa.history) {
 		release, ok := h.acquireSlot(r.Context(), pa.tenant.ID)
 		if !ok {
 			finishAsk(r, pa, endpointStream, routeRAG, outcomeBusy, start)
@@ -147,7 +153,7 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 
 	store := crmstore.For(pa.tenant.DesignVersion)
 	events := make(chan sseEvent, 4)
-	sink := &channelSink{ch: events, ctx: ctx, pool: pa.pool}
+	sink := &channelSink{ch: events, ctx: ctx, pool: pa.pool, start: start}
 
 	type outcome struct {
 		res   ragcore.AskResult
@@ -203,7 +209,7 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			finishAsk(r, pa, endpointStream, routeRAG, outcomeTimeout, start)
-			_ = writeSSE(w, "error", map[string]any{"success": false, "message": "The assistant took too long to respond."})
+			_ = writeSSE(w, "error", map[string]any{"success": false, "code": codeTimeout, "message": "The assistant took too long to respond."})
 			_ = rc.Flush()
 			return
 		}
@@ -214,20 +220,22 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 // returned.
 func (h *AIOps) finishStream(w io.Writer, rc *http.ResponseController, r *http.Request, pa preparedAsk, question string, res ragcore.AskResult, route string, err error, start time.Time) {
 	if err != nil {
-		_, outcome, msg := classifyAIError(err)
+		_, outcome, code, msg := classifyAIError(err)
 		slog.Error("ai ask stream failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", pa.tenant.ID, "route", route, "err", err)
 		finishAsk(r, pa, endpointStream, route, outcome, start)
-		_ = writeSSE(w, "error", map[string]any{"success": false, "message": msg})
+		_ = writeSSE(w, "error", map[string]any{"success": false, "code": code, "message": msg})
 		_ = rc.Flush()
 		return
 	}
 	observeSuccess(route, res)
-	persisted := recordTurn(r, pa, question, res.Answer)
+	citations := citationDTOs(r.Context(), pa.pool, res.Citations)
+	persisted := recordTurn(r, pa, question, res.Answer, citations)
 	finishAsk(r, pa, endpointStream, route, outcomeOK, start)
 	data := map[string]any{
 		"answer":    res.Answer,
-		"citations": citationDTOs(r.Context(), pa.pool, res.Citations),
+		"citations": citations,
 		"truncated": res.Usage.Truncated,
+		"route":     route,
 	}
 	if pa.conv != nil {
 		data["conversation_id"] = pa.conv.ID

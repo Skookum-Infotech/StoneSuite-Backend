@@ -2,9 +2,12 @@ package ai
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Skookum-Infotech/go-rag/rag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,4 +44,38 @@ func keysOf(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestTrimHistory(t *testing.T) {
+	u := func(n int) rag.Message { return rag.Message{Role: "user", Content: strings.Repeat("u", n)} }
+	a := func(n int) rag.Message { return rag.Message{Role: "assistant", Content: strings.Repeat("a", n)} }
+	roles := func(ms []rag.Message) string {
+		var out []string
+		for _, m := range ms {
+			out = append(out, m.Role[:1]+strconv.Itoa(len(m.Content)))
+		}
+		return strings.Join(out, ",")
+	}
+	tests := []struct {
+		name   string
+		in     []rag.Message
+		budget int
+		want   string
+	}{
+		{"fits", []rag.Message{u(1), a(2), u(3), a(4)}, 100, "u1,a2,u3,a4"},
+		{"cut whole oldest pair", []rag.Message{u(5), a(5), u(5), a(5)}, 12, "u5,a5"},
+		{"never starts with assistant after cut", []rag.Message{u(9), a(1), u(2), a(2)}, 6, "u2,a2"},
+		{"leading orphan assistant dropped even when it fits", []rag.Message{a(2), u(2), a(2)}, 100, "u2,a2"},
+		{"oversized newest answer drops its pair", []rag.Message{u(1), a(1), u(1), a(50)}, 10, ""},
+		{"empty", nil, 10, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trimHistory(tt.in, tt.budget)
+			assert.Equal(t, tt.want, roles(got))
+			if len(got) > 0 {
+				assert.Equal(t, "user", got[0].Role)
+			}
+		})
+	}
 }

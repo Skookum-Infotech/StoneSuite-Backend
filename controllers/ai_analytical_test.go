@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/ai"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/query"
+	"stonesuite-backend/workflow"
 )
 
 func TestClassifyCountQuestion(t *testing.T) {
@@ -123,6 +124,34 @@ func TestClassifyCountQuestion(t *testing.T) {
 			question: "how many customers and how many leads won last week",
 			wantOK:   false,
 		},
+		{
+			name:     "qualifier after the type word -> fall through",
+			question: "how many customers in Texas",
+			wantOK:   false,
+		},
+		{
+			name:     "qualifier naming a person -> fall through",
+			question: "how many leads does John have",
+			wantOK:   false,
+		},
+		{
+			name:     "trailing 'do I have' is harmless",
+			question: "how many customers do I have",
+			wantKeys: []string{"customer"},
+			wantOK:   true,
+		},
+		{
+			name:     "trailing 'are there' is harmless",
+			question: "how many customers are there",
+			wantKeys: []string{"customer"},
+			wantOK:   true,
+		},
+		{
+			name:     "trailing 'exist' is harmless",
+			question: "how many customers exist",
+			wantKeys: []string{"customer"},
+			wantOK:   true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,11 +176,12 @@ func TestClassifyCountQuestion(t *testing.T) {
 
 func TestFormatCountAnswer(t *testing.T) {
 	tests := []struct {
-		name  string
-		keys  []string
-		count map[string]int
-		total int
-		want  string
+		name       string
+		keys       []string
+		count      map[string]int
+		total      int
+		filterDesc string
+		want       string
 	}{
 		{
 			name:  "single key singular",
@@ -174,10 +204,26 @@ func TestFormatCountAnswer(t *testing.T) {
 			total: 5,
 			want:  "You have 2 customers, 3 leads, 0 prospects (5 CRM records total).",
 		},
+		{
+			name:       "single key with filter description",
+			keys:       []string{"lead"},
+			count:      map[string]int{"lead": 3},
+			total:      3,
+			filterDesc: "status New, created since 2026-09-01",
+			want:       "You have 3 leads with status New, created since 2026-09-01.",
+		},
+		{
+			name:       "multiple keys with filter description",
+			keys:       []string{"customer", "lead"},
+			count:      map[string]int{"customer": 1, "lead": 2},
+			total:      3,
+			filterDesc: "status New",
+			want:       "You have 1 customer, 2 leads with status New (3 CRM records total).",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatCountAnswer(tt.keys, tt.count, tt.total)
+			got := formatCountAnswer(tt.keys, tt.count, tt.total, tt.filterDesc)
 			if got != tt.want {
 				t.Fatalf("formatCountAnswer() = %q, want %q", got, tt.want)
 			}
@@ -218,6 +264,20 @@ type fakeCountStore struct {
 	calls         []string
 	scopes        []string // "key:scope" per CountRecords call
 	filteredCalls []filteredCall
+	// statuses is returned by AllStatuses — the source resolveRoutedFilteredCount
+	// uses to build route.WithAllowedValues and map a status name back to its
+	// id (see statusAllowedValues). Empty by default: no status allowed-values
+	// offered, matching resolveRoutedFilteredCount's pre-Phase-6b behavior.
+	statuses []workflow.StatusInfo
+}
+
+// AllStatuses satisfies crmstore.Store for resolveRoutedFilteredCount's
+// status-name-to-id lookup (see statusAllowedValues); every other test double
+// in this file that never sets f.statuses gets an empty list back, which
+// resolveRoutedFilteredCount treats as "offer no status allowed-values" —
+// not a fallback.
+func (f *fakeCountStore) AllStatuses(context.Context, *pgxpool.Pool) ([]workflow.StatusInfo, error) {
+	return f.statuses, nil
 }
 
 // allGrants / ownGrants read every CRM type at one scope — the shape every
@@ -419,13 +479,16 @@ func TestResolveRoutedFilteredCount_HappyPath(t *testing.T) {
 		"filters": [{"field": "status", "op": "eq", "value": "qualified"}],
 		"search_text": ""
 	}`}
-	store := &fakeCountStore{counts: map[string]int{"lead": 4}}
+	store := &fakeCountStore{
+		counts:   map[string]int{"lead": 4},
+		statuses: []workflow.StatusInfo{{WorkflowKey: "lead", StatusLabel: "qualified", StateID: "42"}},
+	}
 
 	res, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, ownGrants, "identity-1", "how many leads are qualified this week", nil)
 	if !ok {
 		t.Fatal("expected the routed count path to succeed")
 	}
-	if res.Answer != "You have 4 leads." {
+	if res.Answer != "You have 4 leads with status qualified." {
 		t.Fatalf("Answer = %q", res.Answer)
 	}
 	if len(store.filteredCalls) != 1 {
@@ -435,21 +498,31 @@ func TestResolveRoutedFilteredCount_HappyPath(t *testing.T) {
 	if call.key != "lead" || call.scope != "own" || call.actorIdentityID != "identity-1" {
 		t.Fatalf("call = %+v, want key=lead scope=own actorIdentityID=identity-1", call)
 	}
-	if len(call.filters) != 1 || call.filters[0] != (query.Clause{Field: "status", Op: query.OpEq, Value: "qualified"}) {
-		t.Fatalf("filters = %+v, want one status=qualified eq filter", call.filters)
+	// The filter's value is the status ID ("42"), resolved from the model's
+	// status NAME ("qualified") via statusAllowedValues — never the raw name,
+	// which the store's column doesn't hold (see relationalSystemFields).
+	if len(call.filters) != 1 || call.filters[0] != (query.Clause{Field: "status", Op: query.OpEq, Value: "42"}) {
+		t.Fatalf("filters = %+v, want one status=42 eq filter", call.filters)
 	}
 }
 
-func TestResolveRoutedFilteredCount_NoWorkflowKeysCountsAll(t *testing.T) {
+// TestResolveRoutedFilteredCount_NoFilterFallsBack locks in the Phase 6b
+// behavior: a question only routed here because it carried a filter-hint word
+// (hasFilterHintCountIntent), where the model then extracted neither a
+// workflow key nor a filter (Route.NoFilter), is a FAILED extraction — not
+// "count every type unfiltered". Before this fix the same model response
+// (empty workflow_keys, empty filters) silently returned the unfiltered
+// total, mislabeled as the answer to a filtered question.
+func TestResolveRoutedFilteredCount_NoFilterFallsBack(t *testing.T) {
 	llm := &fakeStructuredLLM{response: `{"intent": "count", "workflow_keys": [], "filters": [], "search_text": ""}`}
 	store := &fakeCountStore{counts: map[string]int{"lead": 1, "prospect": 2, "customer": 3}}
 
 	_, ok := resolveRoutedFilteredCount(context.Background(), llm, store, nil, allGrants, "identity-1", "how many records were touched last week", nil)
-	if !ok {
-		t.Fatal("expected success")
+	if ok {
+		t.Fatal("expected fallback: Route.NoFilter must never be read as an unfiltered count")
 	}
-	if len(store.filteredCalls) != len(crmstore.CRMWorkflowKeys()) {
-		t.Fatalf("expected one call per CRM workflow key when the model names none, got %d", len(store.filteredCalls))
+	if len(store.filteredCalls) != 0 {
+		t.Fatalf("store must not be called when the router extracted no filter, got %v", store.filteredCalls)
 	}
 }
 

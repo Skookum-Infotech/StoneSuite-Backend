@@ -1,4 +1,4 @@
--- =====================================================================
+-- ==============================================================
 -- StoneSuite Tenant Schema -- single canonical file.
 --
 -- Applied to EACH tenant's isolated database at provisioning time and
@@ -8629,6 +8629,16 @@ INSERT INTO ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 -- =====================================================================
 ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 
+-- =====================================================================
+-- Tenant-template schema -- ai_messages.citations.
+--
+-- The citation DTOs (source_type/source_id/snippet/record_type) the client was
+-- shown for an assistant answer, saved with the turn so a reopened transcript
+-- can render them. NULL on user messages and on every row saved before this
+-- column existed. Display-only: never replayed into the prompt.
+-- =====================================================================
+ALTER TABLE ai_messages ADD COLUMN IF NOT EXISTS citations JSONB;
+=======
 -- -- 000045_credit_memo_source_payment ---------------------------------------
 -- =====================================================================
 -- Tenant migration 045: a credit memo can be issued from a payment's

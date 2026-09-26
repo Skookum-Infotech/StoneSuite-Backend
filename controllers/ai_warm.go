@@ -15,8 +15,11 @@ import (
 
 // warmBoundedTimeout bounds the detached goroutine POST /api/tenant/ai/warm
 // launches (EnsureRunning + one trivial embed/chat call) — its only exit
-// strategy, since the request that triggered it has already returned.
-const warmBoundedTimeout = 60 * time.Second
+// strategy, since the request that triggered it has already returned. Raised
+// from 60s to cover a cold Fly Machine start (can itself take up to ~60s)
+// PLUS Ollama's own model-load latency on first inference, which the
+// original 60s budget did not leave any room for.
+const warmBoundedTimeout = 4 * time.Minute
 
 // warmCooldown is how long a *successful* warm-up is trusted before another
 // is worth paying for. POST /warm is meant to be hit repeatedly (e.g. on
@@ -96,7 +99,7 @@ func (h *AIOps) Warm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !status.Available {
-		writeAssistantDisabled(w)
+		writeAssistantDisabled(w, status)
 		return
 	}
 

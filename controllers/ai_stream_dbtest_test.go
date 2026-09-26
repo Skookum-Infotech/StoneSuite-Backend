@@ -305,7 +305,7 @@ func TestAIOpsAskStream_RealRagRouteEndToEnd(t *testing.T) {
 
 	// Deliberately not count-shaped (no "how many"/"count of") so
 	// runAskDispatch falls through both count gates into the "rag" branch.
-	rec := doAskStream(resolver, h, identity.ID, tenant.ID, `{"question":"what is going on with Acme?"}`)
+	rec := doAskStream(resolver, h, identity.ID, tenant.ID, `{"question":"tell me about the lead Acme"}`)
 
 	require.Equal(t, http.StatusOK, rec.Code, "response body: %s", rec.Body.String())
 	frames := parseSSE(rec.Body.String())
@@ -350,7 +350,7 @@ func TestAIOpsAskStream_LLMFailureEmitsErrorEvent(t *testing.T) {
 	llm := &rag.FakeStreamingLLM{Err: assert.AnError}
 	h := NewAIOps(cpPool, fakeEmbedder{}, llm, nil, nil)
 
-	rec := doAskStream(resolver, h, identity.ID, tenant.ID, `{"question":"what is going on with Acme?"}`)
+	rec := doAskStream(resolver, h, identity.ID, tenant.ID, `{"question":"tell me about the lead Acme"}`)
 
 	require.Equal(t, http.StatusOK, rec.Code, "the error surfaces as an SSE event, not an HTTP status")
 	frames := parseSSE(rec.Body.String())
@@ -390,7 +390,7 @@ func TestAIOpsAskStream_CtxDoneEmitsErrorEvent(t *testing.T) {
 	llm := &blockingStreamingLLM{}
 	h := NewAIOps(cpPool, fakeEmbedder{}, llm, nil, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask/stream", strings.NewReader(`{"question":"what is going on with Acme?"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/tenant/ai/ask/stream", strings.NewReader(`{"question":"tell me about the lead Acme"}`))
 	payload := middleware.UserContextPayload{ID: identity.ID, TenantID: tenant.ID}
 	ctx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
 	defer cancel()

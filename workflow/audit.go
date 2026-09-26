@@ -4,7 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 )
+
+// AuditObserver is told about every audit row LogAuditFull writes, after the
+// insert succeeded. It is how one write hook re-indexes every module for the
+// AI assistant without each module's controller knowing about RAG. It must be
+// best-effort and never panic: the primary operation has already committed.
+type AuditObserver func(ctx context.Context, q Querier, action, resource, resourceID string)
+
+var auditObserver atomic.Pointer[AuditObserver]
+
+// SetAuditObserver installs the observer once at boot, before the server takes
+// traffic (nil clears it). It is process-wide because audit writes carry no
+// dependency-injection seam.
+func SetAuditObserver(o AuditObserver) {
+	if o == nil {
+		auditObserver.Store(nil)
+		return
+	}
+	auditObserver.Store(&o)
+}
 
 // LogAuditFull writes one enriched row to the unified audit_logs table (the
 // columns added by tenant migration 020): a before/after change record with
@@ -47,6 +67,9 @@ func LogAuditFull(
 		nullIfEmpty(sessionID), nullIfEmpty(appVersion))
 	if err != nil {
 		return fmt.Errorf("log audit (full): %w", err)
+	}
+	if o := auditObserver.Load(); o != nil {
+		(*o)(ctx, q, action, resource, resourceID)
 	}
 	return nil
 }

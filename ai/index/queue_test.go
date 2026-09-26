@@ -374,3 +374,33 @@ func TestPurgeDoneDeletesOnlyOldDoneRows(t *testing.T) {
 		}
 	}
 }
+
+// TestEnqueueTyped_RoundTripsRecordType proves a module job keeps its record
+// type through claim (routing to the module's loader depends on it), a CRM
+// job comes back with none, and the pending-dedupe still holds per source+op.
+func TestEnqueueTyped_RoundTripsRecordType(t *testing.T) {
+	pool := newTestPool(t)
+	q := NewQueue(pool)
+	ctx := context.Background()
+	const modID, crmID = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+
+	for i := 0; i < 2; i++ { // second call must dedupe
+		if err := q.EnqueueTyped(ctx, modID, "quote", "upsert"); err != nil {
+			t.Fatalf("enqueue typed: %v", err)
+		}
+	}
+	if err := q.Enqueue(ctx, crmID, "upsert"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	jobs, err := q.ClaimPending(ctx, 10)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	got := map[string]string{}
+	for _, j := range jobs {
+		got[j.SourceID] = j.RecordType
+	}
+	if len(jobs) != 2 || got[modID] != "quote" || got[crmID] != "" {
+		t.Fatalf("jobs=%+v", jobs)
+	}
+}

@@ -63,7 +63,7 @@ type fakeLoader struct {
 	loadErr                 error
 }
 
-func (l *fakeLoader) Load(_ context.Context, _ string) (rag.RecordDoc, string, string, string, error) {
+func (l *fakeLoader) Load(_ context.Context, _, _ string) (rag.RecordDoc, string, string, string, error) {
 	if l.loadErr != nil {
 		return rag.RecordDoc{}, "", "", "", l.loadErr
 	}
@@ -401,5 +401,25 @@ func TestWorkerReleasesOnlyUnprocessedJobsOnUnavailable(t *testing.T) {
 	}
 	if !q.released["2"] || !q.released["3"] {
 		t.Fatalf("jobs 2 and 3 must both be released, got %v", q.released)
+	}
+}
+
+// recordingLoader captures the (recordType, sourceID) the worker asked for.
+type recordingLoader struct{ gotType, gotID string }
+
+func (l *recordingLoader) Load(_ context.Context, recordType, sourceID string) (rag.RecordDoc, string, string, string, error) {
+	l.gotType, l.gotID = recordType, sourceID
+	return rag.RecordDoc{WorkflowKey: recordType}, "", "owner-1", "", nil
+}
+
+func TestWorker_PassesRecordTypeToLoader(t *testing.T) {
+	q := &fakeQueue{pending: []Job{{ID: "1", SourceID: "rec-1", RecordType: "quote", Op: "upsert"}}}
+	l := &recordingLoader{}
+	w := NewWorker(q, l, &rag.FakeEmbedder{Dim: 768}, &fakeChunkSink{})
+	if _, err := w.DrainOnce(context.Background()); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if l.gotType != "quote" || l.gotID != "rec-1" {
+		t.Fatalf("loader saw type=%q id=%q", l.gotType, l.gotID)
 	}
 }

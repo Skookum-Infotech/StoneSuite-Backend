@@ -8667,3 +8667,8 @@ ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_credited_total DECIMAL(
 CREATE INDEX IF NOT EXISTS idx_cm_source_payment
     ON credit_memo (credit_memo_source_payment_id)
     WHERE credit_memo_deleted_at IS NULL AND credit_memo_source_payment_id IS NOT NULL;
+
+-- Tenant-template schema -- Phase 47: rag_index_queue.record_type, so the index
+-- worker can route a job to the owning module's loader. NULL = a CRM workflow
+-- record (every row enqueued before this column existed).
+ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS record_type TEXT;

@@ -13,18 +13,14 @@ import (
 	"stonesuite-backend/crmstore"
 )
 
-// countCRMRecords sums CountRecords across keys, building a deterministic
+// countCRMRecords sums the per-type count (CRM store or module hook) across keys, building a deterministic
 // answer with zero LLM calls — a plain count needs no generation, and skipping
 // the chat model avoids both its latency and any chance of it mis-stating the
 // number. Citations are always an empty (never nil) slice, matching
 // ragcore.AskResult's existing JSON convention.
 func countCRMRecords(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID string, keys []string) (ragcore.AskResult, error) {
 	return countGranted(grants, keys, "", func(key, scope string) (int, error) {
-		n, err := store.CountRecords(ctx, pool, key, scope, actorIdentityID)
-		if err != nil {
-			return 0, fmt.Errorf("count %s records: %w", key, err)
-		}
-		return n, nil
+		return countRecordType(ctx, store, pool, actorIdentityID, key, scope)
 	})
 }
 
@@ -66,13 +62,17 @@ func formatCountAnswer(keys []string, counts map[string]int, total int, filterDe
 		suffix = " with " + filterDesc
 	}
 	if len(keys) == 1 {
-		return fmt.Sprintf("You have %d %s%s.", counts[keys[0]], pluralize(keys[0], counts[keys[0]]), suffix)
+		return fmt.Sprintf("You have %d %s%s.", counts[keys[0]], pluralize(recordTypeLabel(keys[0]), counts[keys[0]]), suffix)
 	}
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[key], pluralize(key, counts[key])))
+		parts = append(parts, fmt.Sprintf("%d %s", counts[key], pluralize(recordTypeLabel(key), counts[key])))
 	}
-	return fmt.Sprintf("You have %s%s (%d CRM records total).", strings.Join(parts, ", "), suffix, total)
+	scopeWord := "CRM records"
+	if anyModuleType(keys) {
+		scopeWord = "records"
+	}
+	return fmt.Sprintf("You have %s%s (%d %s total).", strings.Join(parts, ", "), suffix, total, scopeWord)
 }
 
 // pluralize returns key ("lead"/"prospect"/"customer") pluralized for n.

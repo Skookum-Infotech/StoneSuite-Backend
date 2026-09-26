@@ -16,6 +16,14 @@ type InvoiceRef struct {
 	Number string `json:"number"`
 }
 
+// PaymentRef is the flattened {id, number} of the payment a memo was issued
+// from. Unlike InvoiceRef this one carries money: the memo's total is taken out
+// of that payment's usable overpayment (see source_payment.go).
+type PaymentRef struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
+}
+
 // Address is a credit memo's frozen billing snapshot.
 type Address struct {
 	CustomerName string `json:"customerName"`
@@ -72,9 +80,10 @@ type CreditMemo struct {
 	StatusCode string `json:"statusCode"`
 	StatusName string `json:"status"`
 
-	Customer     CustomerRef `json:"customer"`
-	Invoice      *InvoiceRef `json:"invoice,omitempty"`
-	SalesOrderID *string     `json:"salesOrderId,omitempty"`
+	Customer      CustomerRef `json:"customer"`
+	Invoice       *InvoiceRef `json:"invoice,omitempty"`
+	SalesOrderID  *string     `json:"salesOrderId,omitempty"`
+	SourcePayment *PaymentRef `json:"sourcePayment,omitempty"`
 
 	OwnerUserID     string `json:"-"`
 	OwnerEmployeeID *int   `json:"ownerEmployeeId,omitempty"`
@@ -133,25 +142,34 @@ type ApplicationInput struct {
 }
 
 // CreateCreditMemoInput is the request payload for POST /api/tenant/credit-memos.
+//
+// The money is either Amount (the normal case: one figure, tax and adjustment
+// on top) or Lines (kept for API clients) -- exactly one of them.
+//
+// SourcePaymentUUID issues the memo from that payment's overpayment: the memo's
+// total is consumed from it, so it must be the same customer's, not void, and
+// have that much left.
 type CreateCreditMemoInput struct {
-	CustomerUUID    string                `json:"customerUuid"`
-	InvoiceUUID     string                `json:"invoiceUuid"`
-	SalesOrderUUID  string                `json:"salesOrderUuid"`
-	ReferenceNumber string                `json:"referenceNumber"`
-	CreditMemoDate  string                `json:"creditMemoDate,omitempty"` // "yyyy-mm-dd"; blank ⇒ CURRENT_DATE
-	Reason          string                `json:"reason"`
-	SalesTaxPercent float64               `json:"salesTaxPercent"`
-	Adjustment      float64               `json:"adjustment"`
-	PriceLevelID    *int                  `json:"priceLevelId,omitempty"`
-	CurrencyID      *int                  `json:"currencyId,omitempty"`
-	OwnerEmployeeID *int                  `json:"ownerEmployeeId,omitempty"`
-	SalesRepID      *int                  `json:"salesRepId,omitempty"`
-	Memo            string                `json:"memo"`
-	Notes           string                `json:"notes"`
-	InternalNotes   string                `json:"internalNotes"`
-	CustomFields    map[string]any        `json:"customFields"`
-	Lines           []CreditMemoLineInput `json:"lines"`
-	Applications    []ApplicationInput    `json:"applications"`
+	CustomerUUID      string                `json:"customerUuid"`
+	InvoiceUUID       string                `json:"invoiceUuid"`
+	SalesOrderUUID    string                `json:"salesOrderUuid"`
+	SourcePaymentUUID string                `json:"sourcePaymentUuid"`
+	Amount            float64               `json:"amount"`
+	ReferenceNumber   string                `json:"referenceNumber"`
+	CreditMemoDate    string                `json:"creditMemoDate,omitempty"` // "yyyy-mm-dd"; blank ⇒ CURRENT_DATE
+	Reason            string                `json:"reason"`
+	SalesTaxPercent   float64               `json:"salesTaxPercent"`
+	Adjustment        float64               `json:"adjustment"`
+	PriceLevelID      *int                  `json:"priceLevelId,omitempty"`
+	CurrencyID        *int                  `json:"currencyId,omitempty"`
+	OwnerEmployeeID   *int                  `json:"ownerEmployeeId,omitempty"`
+	SalesRepID        *int                  `json:"salesRepId,omitempty"`
+	Memo              string                `json:"memo"`
+	Notes             string                `json:"notes"`
+	InternalNotes     string                `json:"internalNotes"`
+	CustomFields      map[string]any        `json:"customFields"`
+	Lines             []CreditMemoLineInput `json:"lines"`
+	Applications      []ApplicationInput    `json:"applications"`
 }
 
 // UpdateCreditMemoInput is the request payload for PATCH
@@ -161,6 +179,7 @@ type CreateCreditMemoInput struct {
 // APPV the memo is an authorized instrument and applications may exist against
 // it. Non-monetary fields stay editable in any non-terminal status.
 type UpdateCreditMemoInput struct {
+	Amount          *float64              `json:"amount,omitempty"` // replaces any line items with this one amount
 	ReferenceNumber string                `json:"referenceNumber"`
 	CreditMemoDate  string                `json:"creditMemoDate,omitempty"` // "yyyy-mm-dd"; blank leaves the stored date unchanged
 	Reason          string                `json:"reason"`

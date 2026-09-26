@@ -43,6 +43,9 @@ type Payment struct {
 	Amount          float64 `json:"amount"`
 	AppliedTotal    float64 `json:"appliedTotal"`
 	UnappliedAmount float64 `json:"unappliedAmount"`
+	// CreditedTotal is the part of the overpayment already turned into credit
+	// memos (issued from this payment); it is no longer free to apply or refund.
+	CreditedTotal float64 `json:"creditedTotal"`
 
 	CustomFields map[string]any `json:"customFields"`
 	Applications []Application  `json:"applications"`

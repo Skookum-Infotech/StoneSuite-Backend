@@ -1,4 +1,4 @@
--- =====================================================================
+-- ==============================================================
 -- StoneSuite Tenant Schema -- single canonical file.
 --
 -- Applied to EACH tenant's isolated database at provisioning time and
@@ -8363,6 +8363,14 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS return_addr_zip       VARCH
 -- lives in the tenant's own R2 bucket. Empty string means no logo uploaded.
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS logo_r2_key VARCHAR(255) NOT NULL DEFAULT '';
 
+-- Bank details printed on customer-facing documents (invoice, quote, estimate,
+-- sales order) so a customer knows where to send payment. Plain text on
+-- purpose: they appear on every document the tenant sends. Empty string means
+-- not set.
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_name           VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_account_number VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_routing_number VARCHAR(255) NOT NULL DEFAULT '';
+
 -- =====================================================================
 -- Company Locations — Configuration -> Company Info -> Locations tab.
 -- Physical addresses a tenant operates from (offices, warehouses,
@@ -8630,3 +8638,33 @@ ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
 -- column existed. Display-only: never replayed into the prompt.
 -- =====================================================================
 ALTER TABLE ai_messages ADD COLUMN IF NOT EXISTS citations JSONB;
+=======
+-- -- 000045_credit_memo_source_payment ---------------------------------------
+-- =====================================================================
+-- Tenant migration 045: a credit memo can be issued from a payment's
+-- overpayment.
+--
+-- When a customer pays more than an invoice is owed, the extra sits on the
+-- payment as payment_unapplied_amount (refundable, or appliable to another
+-- invoice). Issuing a credit memo for that same money without consuming it
+-- would credit the customer twice, so a memo records the payment it came from
+-- and takes its total out of that payment's usable overpayment.
+--
+--   credit_memo.credit_memo_source_payment_id -- lineage + the link the rollup
+--       sums over. Set at creation, never changed afterwards. Deliberately NOT
+--       ON DELETE SET NULL: losing the link would silently hand the money back.
+--   payment.payment_credited_total -- rollup: the summed grand total of the
+--       payment's live (not deleted, not VOID) linked credit memos. Sole
+--       writer is creditmemo/, exactly as refund/ is the sole writer of
+--       payment_refunded_total.
+--
+--   available_from_payment = payment_unapplied_amount
+--                            - payment_refunded_total
+--                            - payment_credited_total
+-- =====================================================================
+ALTER TABLE credit_memo ADD COLUMN IF NOT EXISTS credit_memo_source_payment_id INTEGER NULL REFERENCES payment(payment_id);
+ALTER TABLE payment     ADD COLUMN IF NOT EXISTS payment_credited_total DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (payment_credited_total >= 0);
+
+CREATE INDEX IF NOT EXISTS idx_cm_source_payment
+    ON credit_memo (credit_memo_source_payment_id)
+    WHERE credit_memo_deleted_at IS NULL AND credit_memo_source_payment_id IS NOT NULL;

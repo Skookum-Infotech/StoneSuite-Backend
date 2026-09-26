@@ -20,7 +20,7 @@ func ToPrintable(q Quote, seller docpdf.Seller) docpdf.PrintableDoc {
 		Lines:    lines,
 		Subtotal: q.Subtotal, DiscountTotal: q.DiscountTotal, TaxTotal: q.TaxTotal,
 		ShippingCharge: q.ShippingCharge, Adjustment: q.Adjustment, GrandTotal: q.GrandTotal,
-		Terms: q.TermsConditions, Notes: q.Notes, Memo: q.Memo,
+		Terms: q.TermsConditions, Notes: q.Notes, Memo: q.Memo, ShowPayment: true,
 	}
 }
 

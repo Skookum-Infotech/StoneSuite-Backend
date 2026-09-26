@@ -46,9 +46,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 
 	// Lock the memo first — the global order is credit_memo < payment < invoice.
 	var approvalStatus string
+	var sourcePaymentID *int
 	if err := tx.QueryRow(ctx,
-		`SELECT credit_memo_approval_status FROM credit_memo WHERE credit_memo_id = $1 FOR UPDATE`, internalID,
-	).Scan(&approvalStatus); err != nil {
+		`SELECT credit_memo_approval_status, credit_memo_source_payment_id FROM credit_memo WHERE credit_memo_id = $1 FOR UPDATE`, internalID,
+	).Scan(&approvalStatus, &sourcePaymentID); err != nil {
 		return nil, fmt.Errorf("lock credit memo for transition: %w", err)
 	}
 
@@ -75,6 +76,13 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 
 	if toStatusCode == "VOID" {
+		// Lock order is credit_memo < payment < invoice, so the source payment is
+		// locked before any invoice below.
+		if sourcePaymentID != nil {
+			if _, err := lockLinkedPayment(ctx, tx, *sourcePaymentID); err != nil {
+				return nil, err
+			}
+		}
 		// ORDER BY invoice_id fixes a global lock order across invoices so two
 		// concurrent VOID cascades touching the same two invoices can't lock
 		// them in opposite orders and deadlock.
@@ -139,6 +147,13 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		VALUES ($1, $2, $3, 'transition', $4)`,
 		internalID, fromStatusID, toStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert credit memo transition history: %w", err)
+	}
+	if toStatusCode == "VOID" && sourcePaymentID != nil {
+		// The memo is VOID now, so the recompute stops counting it: its money goes
+		// back to the payment's overpayment.
+		if err := recomputePaymentCredited(ctx, tx, *sourcePaymentID, actorEmployeeID); err != nil {
+			return nil, err
+		}
 	}
 	// Any move takes the memo out of the state a Reject left it in.
 	if err := approvalchain.ClearRejection(ctx, tx, typeID, internalID); err != nil {

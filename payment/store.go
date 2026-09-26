@@ -27,7 +27,7 @@ const headerSelect = `
 	       p.payment_method, COALESCE(pm.payment_method_name,''),
 	       p.payment_reference_number, p.payment_date, p.payment_currency,
 	       p.payment_memo, p.payment_internal_notes,
-	       p.payment_amount, p.payment_applied_total, p.payment_unapplied_amount,
+	       p.payment_amount, p.payment_applied_total, p.payment_unapplied_amount, p.payment_credited_total,
 	       p.payment_custom_fields, p.payment_created_at, p.payment_updated_at, p.payment_record_version,
 	       p.payment_id, p.payment_status, p.payment_customer_id
 	FROM payment p
@@ -59,7 +59,7 @@ func scanPayment(row pgx.Row) (*Payment, paymentMeta, error) {
 		&p.MethodID, &p.MethodName,
 		&p.ReferenceNumber, &p.PaymentDate, &currencyID,
 		&p.Memo, &p.InternalNotes,
-		&p.Amount, &p.AppliedTotal, &p.UnappliedAmount,
+		&p.Amount, &p.AppliedTotal, &p.UnappliedAmount, &p.CreditedTotal,
 		&custom, &p.CreatedAt, &p.UpdatedAt, &p.RecordVersion,
 		&meta.internalID, &meta.statusID, &meta.customerID,
 	)

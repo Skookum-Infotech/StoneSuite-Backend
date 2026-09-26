@@ -20,7 +20,7 @@ func ToPrintable(inv Invoice, seller docpdf.Seller) docpdf.PrintableDoc {
 		Lines:    lines,
 		Subtotal: inv.Subtotal, DiscountTotal: inv.DiscountTotal, TaxTotal: inv.TaxTotal,
 		ShippingCharge: inv.ShippingCharge, Adjustment: inv.Adjustment, GrandTotal: inv.GrandTotal,
-		AmountPaid: inv.AmountPaid, BalanceDue: inv.BalanceDue, ShowBalance: true,
+		AmountPaid: inv.AmountPaid, BalanceDue: inv.BalanceDue, ShowBalance: true, ShowPayment: true,
 		Terms: inv.TermsConditions, Notes: inv.Notes, Memo: inv.Memo,
 	}
 }

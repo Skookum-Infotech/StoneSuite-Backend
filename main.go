@@ -314,6 +314,7 @@ func main() {
 	health := controllers.NewHealthOps(readyCheck)
 	mux.HandleFunc("GET /api/healthz", health.Healthz)
 	mux.HandleFunc("GET /api/readyz", health.Readyz)
+	mux.HandleFunc("GET "+services.EmailLogoPath, services.EmailLogoHandler)
 
 	// /api/metrics — Prometheus exposition. Optionally bearer-token protected
 	// (METRICS_TOKEN); Fly's built-in Prometheus scrapes this for free.
@@ -898,6 +899,16 @@ func main() {
 		// order -- Export PDF stays available for it via docLoaders above.
 		docSendDisabled := map[string]bool{"purchase_order": true}
 		docOps := controllers.NewDocumentOps(docLoaders, docSendDisabled, r2Client)
+		if cp != nil && tenantRouter != nil {
+			docOps.WithPublicDownload(cp, tenantRouter.PoolFor)
+			// Customer PDF link from the email card: no login, signed + expiring.
+			mux.HandleFunc("GET "+controllers.DocLinkPathPrefix+"{token}", docOps.DownloadByLink)
+		}
+		if config.AppConfig.PDFDefaultClientLogo {
+			// Same client logo the app header shows, for tenants that have not
+			// uploaded their own (PDF_DEFAULT_CLIENT_LOGO=false turns it off).
+			docOps.WithDefaultLogo(controllers.ClientLogoPNG())
+		}
 		mux.Handle("GET /api/tenant/records/{id}/document/pdf", tenantChain(docOps.GetPDF))
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
@@ -1538,7 +1549,7 @@ func main() {
 		// NOTE: this is an allowlist. A route registered on the mux under a
 		// prefix that is missing here is unreachable — it 404s before the mux
 		// ever sees it. Add new top-level prefixes here as well as on the mux.
-		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") {
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

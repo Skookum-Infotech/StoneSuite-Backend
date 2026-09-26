@@ -99,7 +99,7 @@ func TestNotifyCustomerApproved_DB(t *testing.T) {
 		notifyMu.Unlock()
 
 		handler := resolver.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			notifyCustomerApproved(r.Context(), cp, notifyTestStaffIdentityID, customerUUID, "invoice", "Invoice", "INV-000123", recordUUID)
+			notifyCustomerApproved(r.Context(), cp, notifyTestStaffIdentityID, customerUUID, "invoice", "Invoice", "INV-000123", 12450, recordUUID)
 			w.WriteHeader(http.StatusOK)
 		}))
 		req := httptest.NewRequest(http.MethodPost, "/test", nil)

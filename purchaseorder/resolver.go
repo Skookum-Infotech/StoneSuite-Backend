@@ -45,7 +45,7 @@ var systemFields = map[string]resolved{
 	"vendor_uuid":      {"(SELECT v.vendor_uuid::text FROM vendor v WHERE v.vendor_id = po.purchase_order_vendor_id)", query.TypeString},
 	"status":           {"po.purchase_order_status::text", query.TypeString},
 	"status_code":      {"rs.record_status_code", query.TypeString},
-	"owner_id":        {"po.purchase_order_owner_id::text", query.TypeString},
+	"owner_id":         {"po.purchase_order_owner_id::text", query.TypeString},
 	"order_date":       {"po.purchase_order_date", query.TypeDate},
 	"expected_date":    {"po.purchase_order_expected_date", query.TypeDate},
 	"reference_number": {"po.purchase_order_reference_number", query.TypeString},

@@ -17,6 +17,7 @@ func TestResolverResolve(t *testing.T) {
 		wantSub string // substring expected in the resolved expression
 	}{
 		{"system field status", "status", true, "purchase_order_status"},
+		{"system field status code", "status_code", true, "rs.record_status_code"},
 		{"system field vendor", "vendor_id", true, "purchase_order_vendor_id"},
 		{"system field vendor uuid", "vendor_uuid", true, "v.vendor_uuid::text"},
 		{"system field grand total", "grand_total", true, "purchase_order_grand_total"},
@@ -130,6 +131,32 @@ func TestVendorUUIDFilter(t *testing.T) {
 		var ife *query.InvalidFilterError
 		if !errors.As(err, &ife) {
 			t.Fatalf("Build with an unknown key err = %v, want an *InvalidFilterError (400)", err)
+		}
+	})
+}
+
+// status_code narrows by the status's stable code (the item-receipt PO picker
+// asks for SENT/PART). The codes must be bound, never interpolated, and — like
+// vendor_uuid — it is filterable only, since the code is no stable keyset order.
+func TestStatusCodeFilter(t *testing.T) {
+	t.Run("in binds one list", func(t *testing.T) {
+		built, err := query.Build(query.Request{Filters: []query.Clause{
+			{Field: "status_code", Op: query.OpIn, Value: []any{"SENT", "PART"}},
+		}}, resolver{}, 1)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if !strings.Contains(built.Where, "rs.record_status_code = ANY($1)") {
+			t.Errorf("Where = %q, want it to filter rs.record_status_code = ANY($1)", built.Where)
+		}
+		if len(built.Args) != 1 {
+			t.Errorf("Args = %v, want one bound list", built.Args)
+		}
+	})
+
+	t.Run("is filterable but not sortable", func(t *testing.T) {
+		if _, _, ok := (resolver{}).SortExpr("status_code"); ok {
+			t.Fatal("SortExpr(status_code) must not resolve")
 		}
 	})
 }

@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/duplicate"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/portal"
@@ -247,6 +248,10 @@ func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
 
 // crmFail maps a store error to an HTTP response (400 for client errors).
 func crmFail(w http.ResponseWriter, err error, serverMsg string) {
+	if dup, ok := duplicate.As(err); ok {
+		writeDuplicate(w, dup)
+		return
+	}
 	switch {
 	case errors.Is(err, crmstore.ErrRecordNotFound):
 		fail(w, http.StatusNotFound, "Record not found.")

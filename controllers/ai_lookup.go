@@ -45,6 +45,22 @@ var lookupFieldAliases = map[string]string{
 // lookupFieldWordRe finds the first lookupFieldAliases word a question names.
 var lookupFieldWordRe = regexp.MustCompile(`(?i)\b(city|phone|email|address|status|company|name)\b`)
 
+// lookupAnyFieldWordRe is lookupFieldWordRe plus the words that only make
+// sense on a module document (a quote's total, an invoice's balance).
+var lookupAnyFieldWordRe = regexp.MustCompile(`(?i)\b(city|phone|email|address|status|company|name|customer|vendor|total|amount|balance|date|memo)\b`)
+
+// moduleFieldKeys maps a plain-English field word to the Core key a module's
+// AI document carries it under (see globalsearch aiPriorityDocument).
+var moduleFieldKeys = map[string]string{
+	"status": "status", "customer": "customer", "company": "customer",
+	"vendor": "vendor", "total": "grand_total", "amount": "grand_total",
+	"balance": "balance", "date": "date", "memo": "memo",
+}
+
+// lookupDescribeRe marks a request to summarize a record ("tell me about
+// QUOT-000012"), answered for module records from their document.
+var lookupDescribeRe = regexp.MustCompile(`(?i)\b(tell me about|details?|describe|summary|summarize|info|information)\b`)
+
 // lookupNotFoundAnswer is returned for both "no record with this number
 // exists" and "exists but outside the caller's scope" — identically, the same
 // IDOR-safe convention as recordInScope's 404 (controllers/scope.go):
@@ -90,6 +106,8 @@ func lookupValueText(v any) (string, bool) {
 		return "", false
 	case string:
 		return x, strings.TrimSpace(x) != ""
+	case float64:
+		return fmt.Sprintf("%.2f", x), true
 	default:
 		return fmt.Sprintf("%v", x), true
 	}
@@ -105,6 +123,9 @@ func lookupValueText(v any) (string, bool) {
 func findRecordByNumber(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, identityID, number string) (workflow.Record, bool) {
 	req := query.Request{Filters: []query.Clause{{Field: "record_number", Op: query.OpEq, Value: number}}, Limit: 1}
 	for _, key := range grants.Types() {
+		if isModuleType(key) {
+			continue // module records are found through their own Search (findModuleRecordByNumber)
+		}
 		page, err := store.SearchRecords(ctx, pool, key, grants[key], identityID, req)
 		if err != nil {
 			slog.Warn("ai record lookup: search failed", "key", key, "err", err)
@@ -135,28 +156,41 @@ func lookupRecordAnswer(ctx context.Context, store crmstore.Store, pool *pgxpool
 	if !ok {
 		return ragcore.AskResult{}, false
 	}
-	alias, coreKey, hasField := lookupField(question)
-	if !hasField {
+	alias, coreKey, crmField := lookupField(question)
+	word := strings.ToLower(lookupAnyFieldWordRe.FindString(question))
+	describe := lookupDescribeRe.MatchString(question)
+	if !crmField && word == "" && !describe {
 		return ragcore.AskResult{}, false
 	}
+	if !crmField {
+		// No CRM alias named: only a module document can answer from a template.
+		// Anything else (including a CRM record) goes to RAG, never a not-found.
+		if res, found := lookupModuleAnswer(ctx, pool, grants, identityID, number, word, describe); found {
+			return res, true
+		}
+		return ragcore.AskResult{}, false
+	}
+	notFound := ragcore.AskResult{Answer: fmt.Sprintf(lookupNotFoundAnswer, number), Citations: []ragcore.Citation{}}
 	if len(grants.Types()) == 0 {
-		return ragcore.AskResult{Answer: fmt.Sprintf(lookupNotFoundAnswer, number), Citations: []ragcore.Citation{}}, true
+		return notFound, true
 	}
-	rec, found := findRecordByNumber(ctx, store, pool, grants, identityID, number)
-	if !found {
-		return ragcore.AskResult{Answer: fmt.Sprintf(lookupNotFoundAnswer, number), Citations: []ragcore.Citation{}}, true
-	}
-	text, hasValue := lookupValueText(rec.CoreFields[coreKey])
-	if !hasValue {
+	if rec, found := findRecordByNumber(ctx, store, pool, grants, identityID, number); found {
+		text, hasValue := lookupValueText(rec.CoreFields[coreKey])
+		if !hasValue {
+			return ragcore.AskResult{
+				Answer:    fmt.Sprintf("%s doesn't have a %s on file.", number, alias),
+				Citations: []ragcore.Citation{{SourceType: ai.CorpusRecords, SourceID: rec.ID, Snippet: number}},
+			}, true
+		}
 		return ragcore.AskResult{
-			Answer:    fmt.Sprintf("%s doesn't have a %s on file.", number, alias),
-			Citations: []ragcore.Citation{{SourceType: ai.CorpusRecords, SourceID: rec.ID, Snippet: number}},
+			Answer: fmt.Sprintf("%s's %s is %s.", number, alias, text),
+			Citations: []ragcore.Citation{
+				{SourceType: ai.CorpusRecords, SourceID: rec.ID, Snippet: fmt.Sprintf("%s: %s", alias, text)},
+			},
 		}, true
 	}
-	return ragcore.AskResult{
-		Answer: fmt.Sprintf("%s's %s is %s.", number, alias, text),
-		Citations: []ragcore.Citation{
-			{SourceType: ai.CorpusRecords, SourceID: rec.ID, Snippet: fmt.Sprintf("%s: %s", alias, text)},
-		},
-	}, true
+	if res, found := lookupModuleAnswer(ctx, pool, grants, identityID, number, word, describe); found {
+		return res, true
+	}
+	return notFound, true
 }

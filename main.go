@@ -49,6 +49,7 @@ import (
 	"stonesuite-backend/vendorcredit"
 	"stonesuite-backend/vendorpayment"
 	"stonesuite-backend/vendors"
+	"stonesuite-backend/workflow"
 )
 
 func main() {
@@ -268,6 +269,7 @@ func main() {
 			// on a ticker so record writes become fresh vectors within seconds
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
+			workflow.SetAuditObserver(ragAuditObserver)
 			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")

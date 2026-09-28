@@ -32,11 +32,11 @@ const helpPrompt = `You are StoneSuite's assistant, answering a question about h
 ` + groundingRules + `
 Describe steps using the app's screens, menus, and buttons.`
 
-// dataPrompt answers "what does my CRM data say" questions from the records
-// corpus only: lead with the answer, not a UI walkthrough — a small model
+// dataPrompt answers "what do my records say" questions (CRM records plus
+// documents such as quotes) from the records corpus only: lead with the answer, not a UI walkthrough — a small model
 // asked a direct question ("what's this lead's phone number?") otherwise
 // tends to pad with the record's whole context before ever answering it.
-const dataPrompt = `You are StoneSuite's assistant, answering a question about the caller's own CRM data.
+const dataPrompt = `You are StoneSuite's assistant, answering a question about the caller's own StoneSuite records (CRM records and business documents such as quotes).
 ` + groundingRules + `
 Answer the question directly in the first sentence (the value, name, number or list), then at most one short supporting sentence. Cite sources by [n]. Never describe UI steps unless asked how to do something.`
 

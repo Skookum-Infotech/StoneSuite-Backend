@@ -73,12 +73,24 @@ func runAskDispatch(ctx context.Context, h *AIOps, pa preparedAsk, store crmstor
 	}
 
 	if hasFilterHintCountIntent(question) {
+		if keys, _ := countObject(question); anyModuleType(keys) {
+			res, err := moduleFilteredCountNote(ctx, store, pa.pool, pa.grants, pa.identityID, keys)
+			if err != nil {
+				return res, routeCountDirect, err
+			}
+			return res, routeCountDirect, emit(res)
+		}
 		if routed, ok := resolveRoutedFilteredCount(ctx, h.llm, store, pa.pool, pa.grants, pa.identityID, question, pa.history); ok {
 			return routed, routeCountRouted, emit(routed)
 		}
 	}
 
 	intent := classifyIntent(question, previousUserQuestion(pa.history))
+	if intent != ai.IntentHelp {
+		if res, ok := moduleCoverageAnswer(question, pa.grants); ok {
+			return res, routeLookup, emit(res)
+		}
+	}
 	firstTurn := len(pa.history) == 0
 	if intent == ai.IntentHelp && firstTurn {
 		if res, ok := h.helpCacheGet(question); ok {

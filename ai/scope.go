@@ -8,18 +8,14 @@ import (
 	"github.com/Skookum-Infotech/go-rag/rag"
 )
 
-// Record types rag_chunks.record_type may hold — the CRM workflow keys the
-// index worker writes (see crmstore.CRMWorkflowKeys). A grant naming anything
-// else is ignored.
-var recordTypes = map[string]bool{"lead": true, "prospect": true, "customer": true}
-
 // Scope values a grant may carry. Anything else is treated as no grant.
 const (
 	ScopeOwn = "own"
 	ScopeAll = "all"
 )
 
-// Grants maps each CRM record type the caller may read to their RBAC scope for
+// Grants maps each record type (the CRM workflow keys plus every AI-indexed
+// module's record type) the caller may read to their RBAC scope for
 // it ("own" or "all"). A type absent from the map is not readable at all.
 //
 // Per type, not one scope for everything: rag_chunks mixes leads, prospects and
@@ -29,11 +25,13 @@ const (
 type Grants map[string]string
 
 // Types returns the record types this grant set can actually read, sorted —
-// unknown types and unrecognised scopes are dropped, fail-closed.
+// unrecognised scopes (e.g. the retired "team") are dropped, fail-closed. Which
+// type names are legal is decided by whoever builds the Grants (the controllers'
+// registry-driven resolveAIGrants), never by client input.
 func (g Grants) Types() []string {
 	var out []string
 	for t, scope := range g {
-		if recordTypes[t] && (scope == ScopeOwn || scope == ScopeAll) {
+		if t != "" && (scope == ScopeOwn || scope == ScopeAll) {
 			out = append(out, t)
 		}
 	}

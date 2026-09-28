@@ -80,7 +80,7 @@ var filterHintSet = func() map[string]bool {
 }()
 
 // countWordRe splits a question into lowercase words for countObject.
-var countWordRe = regexp.MustCompile(`[a-z]+`)
+var countWordRe = regexp.MustCompile(`[a-z_]+`)
 
 // countStrongPhraseRe marks the start of an explicit count clause. A question
 // can hold several ("how many customers and how many leads"); the weaker
@@ -102,6 +102,7 @@ var countStrongPhraseRe = regexp.MustCompile(`(?i)\b(?:how many|count of|number 
 // clause we can't answer ("... and how many emails") sends the whole question
 // to RAG rather than answering only the half we understood.
 func countObject(question string) ([]string, bool) {
+	question = normalizeModuleNouns(question)
 	first := countIntentRe.FindStringIndex(question)
 	if first == nil {
 		return nil, false
@@ -154,6 +155,15 @@ func nextClauseStart(question string, phraseEnd int) int {
 	return phraseEnd
 }
 
+// countTypeForWord maps a normalized word to the record type it counts: a CRM
+// type word or an AI-indexed module noun.
+func countTypeForWord(w string) (string, bool) {
+	if key, ok := countCRMTypeKeys[w]; ok {
+		return key, true
+	}
+	return moduleTypeForWord(w)
+}
+
 // countClauseObject parses the text after ONE count phrase into CRM type keys.
 func countClauseObject(text string) ([]string, bool) {
 	words := countWordRe.FindAllString(strings.ToLower(text), -1)
@@ -164,7 +174,7 @@ func countClauseObject(text string) ([]string, bool) {
 	var keys []string
 	all := false
 	for _, w := range words {
-		if key, ok := countCRMTypeKeys[w]; ok {
+		if key, ok := countTypeForWord(w); ok {
 			if !seen[key] {
 				seen[key] = true
 				keys = append(keys, key)
@@ -213,7 +223,7 @@ func countClauseObject(text string) ([]string, bool) {
 // countFollowUpRe matches a short follow-up that names only a new CRM type
 // after a previous count question — "and customers?", "what about
 // prospects", "and leads".
-var countFollowUpRe = regexp.MustCompile(`(?i)^\s*(?:and(?: what about)?|what about)\s+(lead|leads|prospect|prospects|customer|customers)\s*\??\s*$`)
+var countFollowUpRe = regexp.MustCompile(`(?i)^\s*(?:and(?: what about)?|what about)\s+([a-z_ ]+?)\s*\??\s*$`)
 
 // classifyFollowUpCount reports whether question is a short follow-up naming
 // only a new CRM type ("and customers?", "what about prospects") continuing a
@@ -227,6 +237,7 @@ func classifyFollowUpCount(question string, history []ragcore.Message) ([]string
 	if m == nil {
 		return nil, false
 	}
+	m[1] = normalizeModuleNouns(m[1])
 	prev := previousUserQuestion(history)
 	if prev == "" {
 		return nil, false
@@ -234,7 +245,7 @@ func classifyFollowUpCount(question string, history []ragcore.Message) ([]string
 	if _, ok := countObject(prev); !ok {
 		return nil, false
 	}
-	key, ok := countCRMTypeKeys[strings.ToLower(m[1])]
+	key, ok := countTypeForWord(strings.ToLower(m[1]))
 	if !ok {
 		return nil, false
 	}

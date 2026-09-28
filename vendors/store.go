@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/duplicate"
 	"stonesuite-backend/query"
 	"stonesuite-backend/workflow"
 )
@@ -335,6 +336,10 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorInput, actor
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := checkVendorNameFree(ctx, tx, vendorDuplicateName(in.VendorType, in.vendorFields), ""); err != nil {
+		return nil, err
+	}
+
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, vendorRecordTypeCode)
 	if err != nil {
 		return nil, fmt.Errorf("resolve VNDR record type: %w", err)
@@ -387,11 +392,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID int
-	var vendorType string
+	var vendorType, currentName string
 	err = tx.QueryRow(ctx, `
-		SELECT vendor_id, vendor_type FROM vendor
-		WHERE vendor_uuid = $1 AND vendor_deleted_at IS NULL`, uuid,
-	).Scan(&internalID, &vendorType)
+		SELECT v.vendor_id, v.vendor_type, `+vendorNameSQL+`
+		FROM vendor v
+		WHERE v.vendor_uuid = $1 AND v.vendor_deleted_at IS NULL`, uuid,
+	).Scan(&internalID, &vendorType, &currentName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -401,6 +407,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 
 	if err := validateVendorType(vendorType, in.vendorFields); err != nil {
 		return nil, err
+	}
+
+	// Only a real rename is checked, so a vendor that already shares its name
+	// with another can still be edited for anything else.
+	if newName := vendorDuplicateName(vendorType, in.vendorFields); duplicate.Key(newName) != duplicate.Key(currentName) {
+		if err := checkVendorNameFree(ctx, tx, newName, uuid); err != nil {
+			return nil, err
+		}
 	}
 
 	cv := vendorColVals(in.vendorFields)

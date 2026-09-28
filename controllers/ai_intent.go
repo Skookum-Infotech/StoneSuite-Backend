@@ -57,7 +57,7 @@ func hasDataCue(question string) bool {
 	if intentDataInterrogativeRe.MatchString(question) {
 		return true
 	}
-	if intentDataMyOurRe.MatchString(question) && (intentDataRecordTypeRe.MatchString(question) || intentDataFieldWordRe.MatchString(question)) {
+	if intentDataMyOurRe.MatchString(question) && (intentDataRecordTypeRe.MatchString(question) || hasModuleNoun(question) || intentDataFieldWordRe.MatchString(question)) {
 		return true
 	}
 	if intentDataFieldWordRe.MatchString(question) {

@@ -25,9 +25,11 @@ const recordTokenBudget = 400
 const releaseTimeout = 5 * time.Second
 
 // RecordLoader loads a record's embeddable form + scope columns by id.
-// Implemented over crmstore.Store.GetRecord (adapter in the wiring layer).
+// recordType is empty for a CRM workflow record and a module's AI record type
+// otherwise; the wiring layer's adapter routes on it (CRM over
+// crmstore.Store.GetRecord, modules over their globalsearch AI hooks).
 type RecordLoader interface {
-	Load(ctx context.Context, sourceID string) (doc rag.RecordDoc, workflowID, ownerUserID, teamID string, err error)
+	Load(ctx context.Context, recordType, sourceID string) (doc rag.RecordDoc, workflowID, ownerUserID, teamID string, err error)
 }
 
 // ChunkSink reads and writes rag_chunks rows. Implemented by ai.RagStore.
@@ -119,7 +121,7 @@ func (w *Worker) process(ctx context.Context, j Job) error {
 	if j.Op == "delete" {
 		return w.sink.Delete(ctx, j.SourceID)
 	}
-	doc, wfID, owner, team, err := w.loader.Load(ctx, j.SourceID)
+	doc, wfID, owner, team, err := w.loader.Load(ctx, j.RecordType, j.SourceID)
 	if err != nil {
 		return err
 	}

@@ -12,6 +12,7 @@ import (
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/ai"
+	"stonesuite-backend/globalsearch"
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/models"
 	"stonesuite-backend/services"
@@ -35,6 +36,20 @@ type citationDTO struct {
 	SourceID   string `json:"source_id,omitempty"`
 	Snippet    string `json:"snippet"`
 	RecordType string `json:"record_type,omitempty"`
+	// Domain and Module are the frontend route segments (/{domain}/{module}/{id})
+	// for a module record; empty for a CRM record, whose route the client already
+	// derives from record_type.
+	Domain string `json:"domain,omitempty"`
+	Module string `json:"module,omitempty"`
+}
+
+// citationRoute returns the frontend route segments for a module record type,
+// or "", "" for a CRM type (or any type without AI hooks).
+func citationRoute(recordType string) (domain, module string) {
+	if p, ok := globalsearch.AIByRecordType(recordType); ok {
+		return p.Domain, p.Module
+	}
+	return "", ""
 }
 
 // citationDTOs converts cites for the API, looking up each record citation's
@@ -70,6 +85,7 @@ func citationDTOs(ctx context.Context, pool *pgxpool.Pool, cites []ragcore.Citat
 	for i := range out {
 		if out[i].SourceType == ai.CorpusRecords {
 			out[i].RecordType = types[out[i].SourceID]
+			out[i].Domain, out[i].Module = citationRoute(out[i].RecordType)
 		}
 	}
 	return out

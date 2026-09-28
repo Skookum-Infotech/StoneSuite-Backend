@@ -30,6 +30,12 @@ type resolved struct {
 // vendor_uuid is a self-contained, parenthesized subselect because the builder
 // concatenates a resolved expression raw (`expr = $n`, `expr IS NULL`), and
 // that keeps it independent of the caller's FROM aliases.
+//
+// `status` is the internal lkp_record_status id, which no client can look up
+// from a code; status_code is the same status by its stable code (SENT, PART,
+// ...) so a picker can narrow to e.g. receivable orders server-side. It reads
+// the `rs` join poSelect (store_get.go) already carries, so like every other
+// key here it is only valid inside that query.
 var systemFields = map[string]resolved{
 	"id":               {"po.purchase_order_uuid::text", query.TypeString},
 	"document_number":  {"COALESCE(po.purchase_order_number,'')", query.TypeString},
@@ -38,6 +44,7 @@ var systemFields = map[string]resolved{
 	"vendor_name":      {"po.purchase_order_vendor_name", query.TypeString},
 	"vendor_uuid":      {"(SELECT v.vendor_uuid::text FROM vendor v WHERE v.vendor_id = po.purchase_order_vendor_id)", query.TypeString},
 	"status":           {"po.purchase_order_status::text", query.TypeString},
+	"status_code":      {"rs.record_status_code", query.TypeString},
 	"owner_id":         {"po.purchase_order_owner_id::text", query.TypeString},
 	"order_date":       {"po.purchase_order_date", query.TypeDate},
 	"expected_date":    {"po.purchase_order_expected_date", query.TypeDate},

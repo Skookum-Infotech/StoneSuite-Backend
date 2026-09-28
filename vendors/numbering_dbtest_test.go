@@ -39,7 +39,7 @@ func TestCreate_HonorsRecordNumberingConfig(t *testing.T) {
 
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Acme Supply Co"},
+		vendorFields: vendorFields{LegalName: uniqueName("Acme Supply Co")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -54,7 +54,7 @@ func TestCreate_WithoutConfigKeepsSerialDefault(t *testing.T) {
 
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Default Format Co"},
+		vendorFields: vendorFields{LegalName: uniqueName("Default Format Co")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)

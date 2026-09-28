@@ -9,15 +9,17 @@ import (
 
 	"stonesuite-backend/ai"
 	"stonesuite-backend/authz"
+	"stonesuite-backend/globalsearch"
 )
 
 // aiScopeResources are the CRM resources rag_chunks covers (see
 // crmstore.CRMWorkflowKeys and controllers/crm.go storeFromContext). Each
-// resource name is also its rag_chunks.record_type value.
+// resource name is also its rag_chunks.record_type value. Every other indexed
+// module comes from the globalsearch AI registry (see resolveAIGrants).
 var aiScopeResources = []authz.Resource{authz.ResourceLead, authz.ResourceProspect, authz.ResourceCustomer}
 
-// resolveAIGrants checks read access on every aiScopeResources type and
-// returns the caller's scope per granted type. Types the caller holds no grant
+// resolveAIGrants checks read access on every aiScopeResources type and every
+// globalsearch AI module, and returns the caller's scope per granted type. Types the caller holds no grant
 // on are absent — retrieval and counts then cannot reach them at all.
 //
 // This replaced a single "narrowest scope" across all types, which skipped
@@ -34,6 +36,20 @@ func resolveAIGrants(ctx context.Context, pool *pgxpool.Pool, identityID string)
 		if d.Allowed {
 			grants[string(res)] = string(d.Scope)
 		}
+	}
+	for _, p := range globalsearch.AIProviders() {
+		d, err := authz.Check(ctx, pool, identityID, p.Resource, authz.ActionRead)
+		if err != nil {
+			return nil, fmt.Errorf("check %s read: %w", p.Resource, err)
+		}
+		if !d.Allowed {
+			continue
+		}
+		scope := d.Scope
+		if !p.AI.OwnScoped {
+			scope = authz.ScopeAll // no owner column: any read grant sees every row
+		}
+		grants[p.AI.RecordType] = string(scope)
 	}
 	return grants, nil
 }

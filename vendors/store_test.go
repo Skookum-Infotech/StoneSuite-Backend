@@ -53,9 +53,10 @@ func TestCreate_UnknownVendorType_IsClientError(t *testing.T) {
 
 func TestCreate_Organization_SnapshotsAndAssignsNumber(t *testing.T) {
 	pool := testPool(t)
+	legalName := uniqueName("Acme Supply Co")
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Acme Supply Co"},
+		vendorFields: vendorFields{LegalName: legalName},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -66,16 +67,17 @@ func TestCreate_Organization_SnapshotsAndAssignsNumber(t *testing.T) {
 	if created.StatusCode != "ACT_" {
 		t.Errorf("StatusCode = %q, want ACT_", created.StatusCode)
 	}
-	if created.DisplayName != "Acme Supply Co" {
-		t.Errorf("DisplayName = %q, want Acme Supply Co", created.DisplayName)
+	if created.DisplayName != legalName {
+		t.Errorf("DisplayName = %q, want %q", created.DisplayName, legalName)
 	}
 }
 
 func TestUpdate_ChangesEditableFieldsNotType(t *testing.T) {
 	pool := testPool(t)
+	newFamily := uniqueName("Smith")
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Person",
-		vendorFields: vendorFields{GivenName: "Jane", FamilyName: "Doe"},
+		vendorFields: vendorFields{GivenName: "Jane", FamilyName: uniqueName("Doe")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -83,7 +85,7 @@ func TestUpdate_ChangesEditableFieldsNotType(t *testing.T) {
 
 	updated, err := Update(context.Background(), pool, created.ID, UpdateVendorInput{
 		VendorType:   "Organization", // ignored by Update; type is fixed at creation
-		vendorFields: vendorFields{GivenName: "Jane", FamilyName: "Smith"},
+		vendorFields: vendorFields{GivenName: "Jane", FamilyName: newFamily},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Update: %v", err)
@@ -91,8 +93,8 @@ func TestUpdate_ChangesEditableFieldsNotType(t *testing.T) {
 	if updated.VendorType != "Person" {
 		t.Errorf("VendorType after update = %q, want Person (fixed at creation)", updated.VendorType)
 	}
-	if updated.FamilyName != "Smith" {
-		t.Errorf("FamilyName after update = %q, want Smith", updated.FamilyName)
+	if updated.FamilyName != newFamily {
+		t.Errorf("FamilyName after update = %q, want %q", updated.FamilyName, newFamily)
 	}
 }
 
@@ -100,7 +102,7 @@ func TestSoftDelete_ThenGetReturnsNotFound(t *testing.T) {
 	pool := testPool(t)
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Delete Me LLC"},
+		vendorFields: vendorFields{LegalName: uniqueName("Delete Me LLC")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -117,7 +119,7 @@ func TestTransition_ActiveToOnHold(t *testing.T) {
 	pool := testPool(t)
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "On Hold Inc"},
+		vendorFields: vendorFields{LegalName: uniqueName("On Hold Inc")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -135,7 +137,7 @@ func TestTransition_RejectsIllegalMove(t *testing.T) {
 	pool := testPool(t)
 	created, err := Create(context.Background(), pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Illegal Move Inc"},
+		vendorFields: vendorFields{LegalName: uniqueName("Illegal Move Inc")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -151,7 +153,7 @@ func TestSearch_ReturnsCreatedVendor(t *testing.T) {
 	ctx := context.Background()
 	created, err := Create(ctx, pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Findable Corp"},
+		vendorFields: vendorFields{LegalName: uniqueName("Findable Corp")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -183,7 +185,7 @@ func TestSoftDelete_UnresolvedActor(t *testing.T) {
 	ctx := context.Background()
 	created, err := Create(ctx, pool, CreateVendorInput{
 		VendorType:   "Organization",
-		vendorFields: vendorFields{LegalName: "Unresolved Actor LLC"},
+		vendorFields: vendorFields{LegalName: uniqueName("Unresolved Actor LLC")},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)

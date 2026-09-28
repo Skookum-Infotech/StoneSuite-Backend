@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/duplicate"
 )
 
 // Update overwrites an item's editable fields in place (SKU included — the
@@ -54,6 +56,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 			return ErrNotFound
 		}
 		return fmt.Errorf("lock inventory item: %w", err)
+	}
+
+	// Only a real rename is checked, so an item that already shares its name
+	// with another can still be edited for anything else.
+	if duplicate.Key(in.Name) != duplicate.Key(before.Name) {
+		if err := checkItemNameFree(ctx, tx, in.Name, uuid); err != nil {
+			return err
+		}
 	}
 
 	tag, err := tx.Exec(ctx, `

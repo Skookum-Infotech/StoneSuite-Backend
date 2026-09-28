@@ -107,6 +107,14 @@ not up front.
     are the **frontend** route segments (`/{domain}/{module}/{id}`), not always the
     registry key. Skip only if the record has no detail page to navigate to.
 
+11b. **AI hooks.** `globalsearch/ai_<domain>.go` — one `addAI("<provider key>",
+    AIHooks{OwnScoped, Label, Nouns, Load, ListLive, Count})`, copying `quote` in
+    `ai_sales.go`. `Load` maps `Get` to a `rag.RecordDoc` whose `Core` keys follow the
+    convention in CLAUDE.md (AI / RAG rule 5); `ListLive`/`Count` use `liveTable` /
+    `countTable` with the real column names (`OwnScoped` only if `Search` narrows by
+    owner). Without this the assistant can't answer about the module at all — it
+    answers "I can't answer questions about … yet". `TestAIRegistry_*` guards it.
+
 12. **User help doc.** Add or extend the product area's user help doc in
     `docs/` and list it in `docs/embed.go` — the module is invisible to the
     in-app assistant otherwise. End-user content only (screens, menus,

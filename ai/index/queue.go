@@ -7,14 +7,19 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Job is one pending index unit.
 type Job struct {
 	ID       string
-	SourceID string // workflow record external id (what crmstore.GetRecord accepts)
-	Op       string // "upsert" | "delete"
+	SourceID string // record external id (workflow record id for CRM, module row uuid otherwise)
+	// RecordType names the module that owns SourceID (a globalsearch AI record
+	// type such as "quote"). Empty means a CRM workflow record, which is what
+	// every job enqueued before the column existed is.
+	RecordType string
+	Op         string // "upsert" | "delete"
 }
 
 // Queue is the durable outbox backing near-real-time indexing.
@@ -35,13 +40,32 @@ func NewQueue(pool *pgxpool.Pool) *Queue { return &Queue{pool: pool} }
 // enqueues for the same (source, op), but the two callers here (index-on-write,
 // the single-threaded-per-tenant reconcile sweep) make that an acceptable trade.
 func (q *Queue) Enqueue(ctx context.Context, sourceID, op string) error {
-	_, err := q.pool.Exec(ctx, `
-		INSERT INTO rag_index_queue (source_id, op)
-		SELECT $1, $2
+	return q.EnqueueTyped(ctx, sourceID, "", op)
+}
+
+// Execer is the one pgx method EnqueueVia needs, so a caller holding only a
+// workflow.Querier (or a tx) can enqueue without a Queue.
+type Execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// EnqueueTyped is Enqueue for a module record: recordType routes the job to
+// that module's loader.
+func (q *Queue) EnqueueTyped(ctx context.Context, sourceID, recordType, op string) error {
+	return EnqueueVia(ctx, q.pool, sourceID, recordType, op)
+}
+
+// EnqueueVia is the dedupe-insert behind Enqueue/EnqueueTyped, over any Execer.
+// The pending-dedupe key stays (source_id, op): a source id belongs to exactly
+// one record type, so the type never needs to be part of it.
+func EnqueueVia(ctx context.Context, x Execer, sourceID, recordType, op string) error {
+	_, err := x.Exec(ctx, `
+		INSERT INTO rag_index_queue (source_id, record_type, op)
+		SELECT $1, NULLIF($3, ''), $2
 		WHERE NOT EXISTS (
 			SELECT 1 FROM rag_index_queue
 			WHERE source_id = $1 AND op = $2 AND status = 'pending')`,
-		sourceID, op)
+		sourceID, op, recordType)
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
 	}
@@ -60,7 +84,7 @@ func (q *Queue) ClaimPending(ctx context.Context, n int) ([]Job, error) {
 		WHERE id IN (
 			SELECT id FROM rag_index_queue WHERE status='pending'
 			ORDER BY enqueued_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-		RETURNING id, source_id, op`, n)
+		RETURNING id, source_id, COALESCE(record_type, ''), op`, n)
 	if err != nil {
 		return nil, fmt.Errorf("claim: %w", err)
 	}
@@ -68,7 +92,7 @@ func (q *Queue) ClaimPending(ctx context.Context, n int) ([]Job, error) {
 	var jobs []Job
 	for rows.Next() {
 		var j Job
-		if err := rows.Scan(&j.ID, &j.SourceID, &j.Op); err != nil {
+		if err := rows.Scan(&j.ID, &j.SourceID, &j.RecordType, &j.Op); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		jobs = append(jobs, j)

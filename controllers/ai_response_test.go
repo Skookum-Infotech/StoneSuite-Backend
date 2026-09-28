@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
+	"github.com/stretchr/testify/assert"
 
 	"stonesuite-backend/services"
 )
@@ -95,5 +96,16 @@ func TestClassifyAIError(t *testing.T) {
 				t.Fatal("expected a non-empty message")
 			}
 		})
+	}
+}
+
+func TestCitationRoute(t *testing.T) {
+	d, m := citationRoute("quote")
+	assert.Equal(t, "sales", d)
+	assert.Equal(t, "quote", m)
+	for _, crm := range []string{"lead", "customer", "", "unknown"} {
+		d, m := citationRoute(crm)
+		assert.Empty(t, d, crm)
+		assert.Empty(t, m, crm)
 	}
 }

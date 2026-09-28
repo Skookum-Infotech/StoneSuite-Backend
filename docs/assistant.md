@@ -2,8 +2,8 @@
 
 The StoneSuite Assistant is a chat-style helper built into StoneSuite. It answers
 two kinds of questions: how to do something in the app, and questions about your
-own CRM records (leads, prospects, customers) — including counts, like how many
-customers you have. It only answers from what it can actually retrieve, and it
+own records (CRM leads, prospects and customers, plus documents like quotes and
+invoices) — including counts, like how many customers you have. It only answers from what it can actually retrieve, and it
 only sees records your role is allowed to see. If it can't find a good answer,
 it says so plainly instead of guessing.
 
@@ -26,14 +26,29 @@ does the Credit Hold status mean," "how do I invite a customer to the portal."
 It answers from StoneSuite's help documentation, so it can walk you through
 menu paths, buttons, and statuses by name.
 
-## Asking about your CRM records
+## Asking about your records
 
 Ask about a specific lead, prospect, or customer — "what's the status of the
 Acme deal," "who owns the Initech prospect," "summarize the notes on this
 lead." The assistant searches your tenant's own records and answers only from
-what it finds and what your role lets you see. It can also answer simple count
-questions about your CRM records, like "how many customers do we have" or "how
-many prospects are there."
+what it finds and what your role lets you see.
+
+It also covers your business documents and records, not just the CRM: quotes,
+estimates, sales orders, invoices, payments, credit memos, refunds, vendors,
+requisitions, purchase orders, item receipts, vendor bills, vendor payments,
+vendor credits, expenses, inventory (items, units, adjustments, transfers,
+counts), the chart of accounts, cash transfers, and installation jobs. Ask "what
+is the total on quote QUOT-000012" or "who is the vendor on purchase order PO-000034,"
+using the record number when you have it — a question with a record number and a
+field like status, total or balance is answered straight from the record.
+
+Simple count questions work too, like "how many customers do we have" or "how
+many quotes are there." Counts of documents give the overall total; the
+assistant can't yet narrow a document count by status or date.
+
+You only get answers about records your role can see. Someone who can read only
+their own quotes is answered from their own quotes, and asking about a module
+your role has no access to gets a clear "you don't have access" reply.
 
 ## What it can't do
 

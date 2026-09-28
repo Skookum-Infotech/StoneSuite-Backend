@@ -22,6 +22,7 @@ import (
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/docs"
+	"stonesuite-backend/globalsearch"
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/tenancy"
 )
@@ -29,6 +30,11 @@ import (
 // ragMaintenanceInterval is how often tenants are rescanned for new ones and
 // each tenant's index is reconciled.
 const ragMaintenanceInterval = 10 * time.Minute
+
+// ragReconcileMaxUpserts caps how many upserts one reconcile sweep enqueues, so
+// the first backfill after a module gains AI hooks feeds the embedder over
+// several sweeps instead of flooding a small CPU box with thousands of jobs.
+const ragReconcileMaxUpserts = 500
 
 // ragDrainInterval is the normal cadence of the index-drain loop when the
 // embedder is healthy.
@@ -163,7 +169,7 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 			}
 			store := crmstore.For(t.DesignVersion)
 			q := index.NewQueue(pool)
-			w := index.NewWorker(q, crmstore.NewRAGRecordLoader(store, pool), newDocEmbedder(), ai.NewRagStore(pool))
+			w := index.NewWorker(q, newRAGLoaderRouter(crmstore.NewRAGRecordLoader(store, pool), pool), newDocEmbedder(), ai.NewRagStore(pool))
 			started[t.ID] = true
 			nudge := coordinator.register(t.ID)
 			go runTenantIndexWorker(ctx, t.Slug, t.ID, w, q, aiCache, cp.Pool(), pool)
@@ -378,6 +384,7 @@ func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store
 	}
 
 	live := map[string]time.Time{}
+	moduleType := map[string]string{} // source id -> module record type; absent = CRM
 	complete := true
 	for _, key := range crmstore.CRMWorkflowKeys() {
 		recs, err := store.ListRecords(ctx, pool, key, "all", "")
@@ -390,10 +397,26 @@ func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store
 			live[rec.ID] = rec.UpdatedAt
 		}
 	}
+	for _, p := range globalsearch.AIProviders() {
+		recs, err := p.AI.ListLive(ctx, pool)
+		if err != nil {
+			slog.Error("rag-reconcile: list module records failed", "tenant", slug, "type", p.AI.RecordType, "err", err)
+			complete = false
+			continue
+		}
+		for id, at := range recs {
+			live[id] = at
+			moduleType[id] = p.AI.RecordType
+		}
+	}
 
 	upserts, deletes := reconcilePlan(indexed, live, complete)
+	if len(upserts) > ragReconcileMaxUpserts {
+		slog.Info("rag-reconcile: throttling backfill", "tenant", slug, "planned", len(upserts), "enqueued", ragReconcileMaxUpserts)
+		upserts = upserts[:ragReconcileMaxUpserts]
+	}
 	for _, id := range upserts {
-		if err := q.Enqueue(ctx, id, "upsert"); err != nil {
+		if err := q.EnqueueTyped(ctx, id, moduleType[id], "upsert"); err != nil {
 			slog.Error("rag-reconcile: enqueue failed", "tenant", slug, "source_id", id, "op", "upsert", "err", err)
 		}
 	}

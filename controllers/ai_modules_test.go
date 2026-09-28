@@ -94,7 +94,7 @@ func TestModuleCoverageAnswer(t *testing.T) {
 	}{
 		{"indexed + granted proceeds", "what is the total on the Smith quote", quoteGrant, ""},
 		{"indexed but no grant says so", "what is the total on the Smith quote", ai.Grants{}, "You don't have access to quote records."},
-		{"unindexed module is honest", "what is the balance on the Smith invoice", quoteGrant, "I can't answer questions about invoice records yet. You can find them in the invoice section."},
+		{"invoice is indexed and grant-checked like any module", "what is the balance on the Smith invoice", quoteGrant, "You don't have access to invoice records."},
 		{"CRM type word defers to RAG", "which customers asked for an invoice", quoteGrant, ""},
 		{"no module noun proceeds", "what is my favourite colour", quoteGrant, ""},
 	}
@@ -105,4 +105,13 @@ func TestModuleCoverageAnswer(t *testing.T) {
 			assert.Equal(t, tt.wantAns, res.Answer)
 		})
 	}
+}
+
+// TestUnindexedLexEmptyOnceAllModulesCovered documents that, now every
+// sales/purchases/inventory/finance globalsearch provider has AI hooks, the
+// "not yet indexed" honesty path in moduleCoverageAnswer has no real module
+// left to fire on. The path itself stays in place for the next new module
+// that ships without its AI hooks (new-module skill step 11b covers that).
+func TestUnindexedLexEmptyOnceAllModulesCovered(t *testing.T) {
+	assert.Nil(t, unindexedLex().nounRe, "expected no unindexed sales/purchases/inventory/finance module left; if this fails, a new module shipped without AI hooks")
 }

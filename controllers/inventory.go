@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/duplicate"
 	"stonesuite-backend/inventory"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -62,6 +63,10 @@ func (h *InventoryOps) authInventory(w http.ResponseWriter, r *http.Request, act
 
 // inventoryFail maps a store error to an HTTP response.
 func inventoryFail(w http.ResponseWriter, err error, serverMsg string) {
+	if dup, ok := duplicate.As(err); ok {
+		writeDuplicate(w, dup)
+		return
+	}
 	switch {
 	case errors.Is(err, inventory.ErrNotFound):
 		fail(w, http.StatusNotFound, "Item not found.")

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/duplicate"
 	"stonesuite-backend/workflow"
 )
 
@@ -612,6 +613,11 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	if err != nil {
 		return nil, err
 	}
+	if code == customerTypeCode {
+		if err := s.checkCustomerNameFree(ctx, pool, typeID, getStr(core, "customer_name"), ""); err != nil {
+			return nil, err
+		}
+	}
 	// A new record always starts in its stage's initial status (Lead New /
 	// Prospect New / Customer Draft); the caller does not choose it.
 	statusID, err := s.initialStatusID(ctx, pool, typeID, code)
@@ -702,6 +708,17 @@ func (s *relationalStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, 
 	curStatusCode, err := s.statusCodeByID(ctx, pool, statusID)
 	if err != nil {
 		return err
+	}
+	// Only a real rename is checked, so a customer that already shares its name
+	// with another can still be edited for anything else.
+	if typeCode == customerTypeCode && duplicate.Key(getStr(c, "customer_name")) != duplicate.Key(getStr(beforeCore, "customer_name")) {
+		typeID, err := s.typeIDByCode(ctx, pool, typeCode)
+		if err != nil {
+			return err
+		}
+		if err := s.checkCustomerNameFree(ctx, pool, typeID, getStr(c, "customer_name"), id); err != nil {
+			return err
+		}
 	}
 	resetTo := editedStatusReset(typeCode, curStatusCode, crmFieldsChanged(beforeCore, c, beforeCustom, merged))
 	sets = append(sets, "customer_crm_status = "+settledStatusSQL(fmt.Sprintf("$%d", len(args)+1)))
@@ -980,6 +997,13 @@ func (s *relationalStore) ConvertRecord(ctx context.Context, pool *pgxpool.Pool,
 	}
 	if err := requireContactEmailForCustomer(code, getStr(core, "customer_contact_email")); err != nil {
 		return nil, "", false, err
+	}
+	// A prospect converts into a customer under the same name, so this is where
+	// converting one that is really an existing customer is caught.
+	if code == customerTypeCode {
+		if err := s.checkCustomerNameFree(ctx, pool, typeID, getStr(core, "customer_name"), ""); err != nil {
+			return nil, "", false, err
+		}
 	}
 	ownerEmp := s.employeeIDOrZero(ctx, pool, actorIdentityID)
 	approvalStatus, err := s.entryApprovalStatus(ctx, pool, code)

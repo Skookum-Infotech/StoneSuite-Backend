@@ -10,6 +10,7 @@ import (
 // Create inserts a new inventory item and records the creation in history.
 // SKU uniqueness (case-insensitive, among live rows) is enforced by
 // uq_inventory_item_sku_active; barcode uniqueness by uq_inv_item_barcode_active.
+// Name uniqueness has no index — see checkItemNameFree.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEmployeeID int) (*Item, error) {
 	if err := validateItemInput(&in); err != nil {
 		return nil, err
@@ -27,6 +28,10 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 		return nil, fmt.Errorf("begin create inventory item: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := checkItemNameFree(ctx, tx, in.Name, ""); err != nil {
+		return nil, err
+	}
 
 	var (
 		newUUID string

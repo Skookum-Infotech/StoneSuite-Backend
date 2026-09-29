@@ -14,6 +14,7 @@ import (
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
+	"stonesuite-backend/query"
 	"stonesuite-backend/salesorder"
 	"stonesuite-backend/workflow"
 )
@@ -216,6 +217,57 @@ func crmPendingCountAndOldest(ctx context.Context, st crmstore.Store, pool *pgxp
 	return len(pending), oldest, true, nil
 }
 
+// openStatusIDs filters a workflow's statuses down to the StateIDs of its
+// non-terminal ones -- what "open" means for a KPI like Open Leads: a record
+// whose current status has not reached an end point (crmstore.Store.Statuses'
+// own IsTerminal flag, populated per tenant design version -- DesignV1's
+// stored workflow_states.is_terminal, DesignV2's computed
+// crmStatusIsTerminal). The AI assistant's "how many open leads" answer
+// (controllers/ai_analytical_answer.go) uses this same IsTerminal-based
+// definition, via query.OpIn + crmstore.Store.CountRecordsFiltered. Returned
+// as []any (not []string) because query.Clause.Value must satisfy
+// coerceList's []any type assertion.
+func openStatusIDs(statuses []workflow.StatusInfo) []any {
+	ids := make([]any, 0, len(statuses))
+	for _, s := range statuses {
+		if !s.IsTerminal {
+			ids = append(ids, s.StateID)
+		}
+	}
+	return ids
+}
+
+// openRecordFilters builds the query.Clause list for an open-status count,
+// ANDed with an optional created_at [since, until) window -- a zero
+// since/until omits that bound, mirroring crmstore.Store.CountRecordsBetween's
+// own since/until convention. Dates are formatted as RFC3339 (query's
+// coerceScalar TypeDate parser expects a string, not a time.Time) rather than
+// passed as time.Time directly -- the same convention
+// resolveRoutedFilteredCount already uses for a created_at filter in the AI
+// assistant's routed-count path.
+func openRecordFilters(openIDs []any, since, until time.Time) []query.Clause {
+	filters := []query.Clause{{Field: "status", Op: query.OpIn, Value: openIDs}}
+	if !since.IsZero() {
+		filters = append(filters, query.Clause{Field: "created_at", Op: query.OpGte, Value: since.UTC().Format(time.RFC3339)})
+	}
+	if !until.IsZero() {
+		filters = append(filters, query.Clause{Field: "created_at", Op: query.OpLt, Value: until.UTC().Format(time.RFC3339)})
+	}
+	return filters
+}
+
+// countOpenRecordsFiltered counts key's open (non-terminal-status) records in
+// the optional [since, until) window under scope. Guards the "no non-terminal
+// statuses configured" edge case explicitly: an OpIn filter's coerceList
+// rejects an empty list, but a workflow with no non-terminal status trivially
+// has zero open records, so this never needs to run the query for that case.
+func countOpenRecordsFiltered(ctx context.Context, st crmstore.Store, pool *pgxpool.Pool, key, scope, actorIdentityID string, openIDs []any, since, until time.Time) (int, error) {
+	if len(openIDs) == 0 {
+		return 0, nil
+	}
+	return st.CountRecordsFiltered(ctx, pool, key, scope, actorIdentityID, openRecordFilters(openIDs, since, until))
+}
+
 // kpiMetric is one KPI strip tile's payload. Currency/percent/arrow
 // formatting and the "N this week"-style phrasing stay client-side (see
 // KpiStrip.tsx) -- the backend sends raw numbers, matching Pipeline mix's
@@ -291,24 +343,35 @@ func (h *DashboardUIOps) KpiStrip(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Open Leads.
+	// Open Leads: a lead whose status has not yet reached an end point (e.g.
+	// New, In Progress, Qualified -- not Unqualified/Converted/Dead), per
+	// openStatusIDs. Previously counted every lead ever created regardless of
+	// status -- root-caused as a side effect of an AI-assistant
+	// filtered-count bug fix, which used this same IsTerminal-based approach
+	// (countCRMRecordsOpenClosed) that this now mirrors.
 	if d, err := authz.Check(ctx, pool, payload.ID, authz.ResourceLead, authz.ActionRead); err == nil && d.Allowed {
-		value, err := st.CountRecordsSince(ctx, pool, "lead", string(d.Scope), payload.ID, time.Time{})
+		leadStatuses, err := st.Statuses(ctx, pool, "lead")
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to load open leads.")
 			return
 		}
-		curWindow, err := st.CountRecordsBetween(ctx, pool, "lead", string(d.Scope), payload.ID, curFrom, time.Time{})
+		openIDs := openStatusIDs(leadStatuses)
+		value, err := countOpenRecordsFiltered(ctx, st, pool, "lead", string(d.Scope), payload.ID, openIDs, time.Time{}, time.Time{})
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to load open leads.")
 			return
 		}
-		priorWindow, err := st.CountRecordsBetween(ctx, pool, "lead", string(d.Scope), payload.ID, priorFrom, priorTo)
+		curWindow, err := countOpenRecordsFiltered(ctx, st, pool, "lead", string(d.Scope), payload.ID, openIDs, curFrom, time.Time{})
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to load open leads.")
 			return
 		}
-		sparkline, err := leadsSparkline(ctx, st, pool, string(d.Scope), payload.ID, now)
+		priorWindow, err := countOpenRecordsFiltered(ctx, st, pool, "lead", string(d.Scope), payload.ID, openIDs, priorFrom, priorTo)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to load open leads.")
+			return
+		}
+		sparkline, err := leadsSparkline(ctx, st, pool, string(d.Scope), payload.ID, now, openIDs)
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to load open leads.")
 			return
@@ -402,14 +465,14 @@ func revenueSparkline(ctx context.Context, pool *pgxpool.Pool, scope, identityID
 	return out, nil
 }
 
-// leadsSparkline returns sparklineDays daily new-lead counts for the
-// trailing week, oldest first.
-func leadsSparkline(ctx context.Context, st crmstore.Store, pool *pgxpool.Pool, scope, identityID string, now time.Time) ([]float64, error) {
+// leadsSparkline returns sparklineDays daily new-open-lead counts for the
+// trailing week, oldest first -- see openStatusIDs for what "open" means.
+func leadsSparkline(ctx context.Context, st crmstore.Store, pool *pgxpool.Pool, scope, identityID string, now time.Time, openIDs []any) ([]float64, error) {
 	out := make([]float64, sparklineDays)
 	for i := 0; i < sparklineDays; i++ {
 		end := now.AddDate(0, 0, -(sparklineDays - 1 - i))
 		start := end.AddDate(0, 0, -1)
-		n, err := st.CountRecordsBetween(ctx, pool, "lead", scope, identityID, start, end)
+		n, err := countOpenRecordsFiltered(ctx, st, pool, "lead", scope, identityID, openIDs, start, end)
 		if err != nil {
 			return nil, err
 		}

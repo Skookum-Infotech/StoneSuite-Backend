@@ -91,6 +91,10 @@ button. See `administration.md` for how approval chains are set up.
 
 Vendor Bills, Vendor Credits, and Vendor Payments each have a Send action in
 their Quick Actions panel to email the document as a PDF to the vendor.
+A Purchase Order is emailed with the Send to Vendor button at the top of the
+page: it marks the order Sent and emails the PDF to the vendor in one step
+(using the vendor's contact email), and is refused if the vendor has no email
+on file. There is no separate email action for it in Quick Actions.
 Every purchasing document type — Vendors, Requisitions, Purchase Orders,
 Item Receipts, Vendor Bills, Vendor Payments, Vendor Credits, and Expenses —
 has an Export PDF action to download a copy.

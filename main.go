@@ -1266,7 +1266,7 @@ func main() {
 		// receiving progress + approval), the first Purchases document module —
 		// a sibling of Estimate/Quote/Invoice, addressed to a Vendor. Not served
 		// through the generic JSONB router.
-		poOps := controllers.NewPurchaseOrderOps()
+		poOps := controllers.NewPurchaseOrderOps().WithVendorSender(docOps)
 		mux.Handle("GET /api/tenant/purchase-orders", tenantChain(poOps.List))
 		mux.Handle("POST /api/tenant/purchase-orders/search", tenantChain(poOps.Search))
 		mux.Handle("POST /api/tenant/purchase-orders", tenantChain(poOps.Create))

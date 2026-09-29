@@ -65,3 +65,7 @@ func ValidateTransition(fromCode, toCode string) error {
 	}
 	return nil
 }
+
+// SentStatusCode is the status a purchase order holds once it has been sent to
+// the vendor.
+const SentStatusCode = "SENT"

@@ -30,10 +30,12 @@ import (
 //	GET    /api/tenant/purchase-orders/{uuid}             — get (+ items)
 //	PATCH  /api/tenant/purchase-orders/{uuid}             — update (DRFT only)
 //	DELETE /api/tenant/purchase-orders/{uuid}             — soft delete (DRFT/CANC only)
-//	POST   /api/tenant/purchase-orders/{uuid}/transition  — status change
+//	POST   /api/tenant/purchase-orders/{uuid}/transition  — status change (SENT also emails the vendor)
 //	POST   /api/tenant/purchase-orders/{uuid}/approve     — approval sign-off
 //	GET    /api/tenant/purchase-orders/{uuid}/audit       — audit trail
-type PurchaseOrderOps struct{}
+type PurchaseOrderOps struct {
+	docs *DocumentOps // vendor email on move to SENT; see WithVendorSender
+}
 
 // NewPurchaseOrderOps constructs the handler group.
 func NewPurchaseOrderOps() *PurchaseOrderOps { return &PurchaseOrderOps{} }
@@ -248,48 +250,6 @@ func (h *PurchaseOrderOps) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	auditPODelete(r, pool, identityID, uuid, before)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Purchase order deleted."})
-}
-
-// Transition POST /api/tenant/purchase-orders/{uuid}/transition  body {"toStatusCode":"..."}
-// Any purchase_order:transition holder may move an order to PAPV or SENT; a
-// move to any other status requires a super admin (403 otherwise).
-func (h *PurchaseOrderOps) Transition(w http.ResponseWriter, r *http.Request) {
-	uuid := r.PathValue("uuid")
-	pool, identityID, _, ok := h.authPOByUUID(w, r, uuid, authz.ActionTransition)
-	if !ok {
-		return
-	}
-	var req struct {
-		ToStatusCode string `json:"toStatusCode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ToStatusCode == "" {
-		fail(w, http.StatusBadRequest, "toStatusCode is required.")
-		return
-	}
-	// purchase_order:transition lets anyone submit for approval or send to the
-	// vendor; every other manual move is a super-admin override. Checked before
-	// the store call so a direct API request cannot reach a move the UI hides.
-	if !purchaseorder.NonAdminMayTransitionTo(req.ToStatusCode) {
-		isSuperAdmin, err := authz.IsSuperAdmin(r.Context(), pool, identityID)
-		if err != nil {
-			poFail(w, err, "Failed to apply transition.")
-			return
-		}
-		if !isSuperAdmin {
-			logSecurityEvent(r, "permission_denied",
-				"identity", identityID, "resource", string(authz.ResourcePurchaseOrder),
-				"action", string(authz.ActionTransition), "record", uuid, "to_status", req.ToStatusCode)
-			fail(w, http.StatusForbidden, "Only an administrator can move a purchase order to that status.")
-			return
-		}
-	}
-	po, err := purchaseorder.Transition(r.Context(), pool, uuid, req.ToStatusCode, resolveEmployeeID(r, identityID))
-	if err != nil {
-		poFail(w, err, "Failed to apply transition.")
-		return
-	}
-	auditPO(r, pool, identityID, "transition", uuid, nil, po)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": po})
 }
 
 // Approve POST /api/tenant/purchase-orders/{uuid}/approve

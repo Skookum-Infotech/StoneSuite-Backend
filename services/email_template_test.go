@@ -129,28 +129,19 @@ func TestRenderEmail_OptionalBlocksOmittedWhenEmpty(t *testing.T) {
 
 func TestRenderEmail_BannerIconPerType(t *testing.T) {
 	withTestEmailBrand(t)
-	// One distinctive shape per icon, so a typo in an Icon key (which would
-	// silently fall back to the plain document) is caught.
-	marks := map[EmailIcon]string{
-		IconEnvelope:  `M11 17l21 16 21-16`,
-		IconWorkspace: `stroke-dasharray="4 3.2"`,
-		IconTeam:      `<circle cx="30" cy="16" r="7"`,
-		IconLock:      `M20 28v-7a10 10 0 0 1 20 0v7`,
-		IconPortal:    `M26 54h14M33 44v10`,
-		IconDocPlus:   `M52 41v10M47 46h10`,
-		IconDocCheck:  `M47 46l3.5 3.5 6.5-7`,
-		IconDocArrow:  `M44 38h10v-7l12 12-12 12v-7H44z`,
-		IconDocClock:  `M52 40v6l4 3`,
-		IconWave:      `rotate(-18 36 34)`,
-		IconPlane:     `M8 30L64 10 48 54 36 38z`,
-	}
-	for icon, mark := range marks {
+	// Every icon is a hosted PNG (mail clients strip inline SVG), so each key
+	// must render its own image URL and have an embedded file behind it -- a
+	// typo in an Icon key would otherwise silently fall back to the document.
+	for _, icon := range []EmailIcon{IconEnvelope, IconWorkspace, IconTeam, IconLock, IconPortal, IconDocPlus, IconDocCheck, IconDocArrow, IconDocClock, IconWave, IconPlane} {
 		t.Run(string(icon), func(t *testing.T) {
 			e := sampleEmail()
 			e.Icon = icon
-			assert.Contains(t, mustRender(t, e), mark)
+			assert.Contains(t, mustRender(t, e), EmailIconPathPrefix+string(icon)+".png")
+			_, err := emailIconFS.ReadFile(emailIconDir + string(icon) + ".png")
+			assert.NoError(t, err)
 		})
 	}
+	assert.NotContains(t, mustRender(t, sampleEmail()), "<svg", "no inline SVG anywhere in the email")
 }
 
 func TestRenderEmail_HeaderAndBanner(t *testing.T) {
@@ -184,7 +175,7 @@ func TestRenderEmail_FooterBand(t *testing.T) {
 	assert.Contains(t, out, `href="https://www.linkedin.com/company/stonesuite"`)
 	assert.Contains(t, out, `href="https://x.com/stonesuite"`)
 	for _, name := range []string{"Facebook", "X", "LinkedIn", "Pinterest", "Instagram"} {
-		assert.Contains(t, out, `aria-label="`+name+`"`)
+		assert.Contains(t, out, `alt="`+name+`"`)
 	}
 	assert.Contains(t, out, `href="mailto:support@stonesuite.app"`, "Need help? line")
 	assert.Contains(t, out, `href="https://app.stonesuite.io/settings/notifications"`)

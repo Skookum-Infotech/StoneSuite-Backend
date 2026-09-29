@@ -7548,6 +7548,47 @@
         ]
       }
     },
+    "/api/tenant/fabrication-jobs/{uuid}/materials": {
+      "get": {
+        "operationId": "get_tenant_fabrication_jobs_uuid_materials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.JobMaterials",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/fabrication-jobs/{uuid}/pieces": {
       "post": {
         "operationId": "post_tenant_fabrication_jobs_uuid_pieces",
@@ -11916,37 +11957,6 @@
         ]
       }
     },
-    "/api/tenant/inventory/slabs": {
-      "post": {
-        "operationId": "post_tenant_inventory_slabs",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "invUnit.Create",
-        "tags": [
-          "tenant"
-        ]
-      }
-    },
     "/api/tenant/inventory/slabs/{uuid}": {
       "get": {
         "operationId": "get_tenant_inventory_slabs_uuid",
@@ -12463,35 +12473,6 @@
         "tags": [
           "tenant"
         ]
-      },
-      "post": {
-        "operationId": "post_tenant_inventory_units",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "invUnit.Create",
-        "tags": [
-          "tenant"
-        ]
       }
     },
     "/api/tenant/inventory/units/remnants": {
@@ -12551,6 +12532,37 @@
           }
         ],
         "summary": "invUnit.Search",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/units/summary": {
+      "post": {
+        "operationId": "post_tenant_inventory_units_summary",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnit.Summary",
         "tags": [
           "tenant"
         ]
@@ -15101,6 +15113,47 @@
           }
         ],
         "summary": "poOps.ConvertToBill",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/purchase-orders/{uuid}/next-slab-serial": {
+      "get": {
+        "operationId": "get_tenant_purchase_orders_uuid_next_slab_serial",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "irOps.NextSlabSequence",
         "tags": [
           "tenant"
         ]

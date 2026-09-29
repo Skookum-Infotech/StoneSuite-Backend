@@ -44,7 +44,7 @@ func StockAlertCandidates(ctx context.Context, pool *pgxpool.Pool) ([]StockLevel
 		JOIN inventory_item ii ON ii.inventory_item_id = s.inventory_item_id
 		JOIN lkp_warehouse w ON w.warehouse_id = s.warehouse_id
 		LEFT JOIN (
-			SELECT inventory_item_id, warehouse_id, SUM(allocated_quantity) AS allocated
+			SELECT inventory_item_id, warehouse_id, SUM(allocated_quantity - fulfilled_quantity) AS allocated
 			FROM inventory_allocation
 			WHERE allocation_status IN ('reserved','partially_fulfilled')
 			GROUP BY inventory_item_id, warehouse_id

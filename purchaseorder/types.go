@@ -36,6 +36,9 @@ type LineInput struct {
 	UnitPrice         float64 `json:"unitPrice"`
 	DiscountPercent   float64 `json:"discountPercent"`
 	TaxRateID         *int    `json:"taxRateId"`
+	// ExpectedSlabs is how many slabs a slab-tracked line is expected to bring
+	// (optional, informational). Refused on any other line.
+	ExpectedSlabs *int `json:"expectedSlabs"`
 }
 
 // purchaseOrderFields is the header payload shared by create and update
@@ -101,6 +104,17 @@ type Line struct {
 	LineDiscount    float64 `json:"lineDiscount"`
 	LineTax         float64 `json:"lineTax"`
 	LineTotal       float64 `json:"lineTotal"`
+	// Tracking is the catalogue item's tracking mode ("quantity" or
+	// "serialized"), empty on a free-text line. It tells the receiving screen
+	// which lines are received slab by slab; it is live catalogue data, not part
+	// of the frozen snapshot above.
+	Tracking string `json:"tracking,omitempty"`
+	// ExpectedSlabs is the buyer's slab count for a slab line, when stated.
+	// SlabsReceived is how many slabs live (non-void) receipts have brought in
+	// against it so far. Both are informational: the quantity above is what
+	// drives receiving, pricing and billing.
+	ExpectedSlabs *int `json:"expectedSlabs,omitempty"`
+	SlabsReceived int  `json:"slabsReceived,omitempty"`
 }
 
 // PurchaseOrder is the full API response for a purchase order header (+

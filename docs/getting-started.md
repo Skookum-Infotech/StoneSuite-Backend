@@ -23,7 +23,7 @@ sections:
   Quotes, Sales Orders, Installation / Fabrication, Invoices, Payments,
   Credit Memos, Refunds), Purchases (Vendors, Requisitions, Purchase Orders,
   Item Receipts, Vendor Bills, Vendor Payments, Vendor Credits, Expenses),
-  Inventory (Items, Units / Slabs, Bundles, Bin Management, Warehouses,
+  Inventory (Items, Inventory, Bundles, Bin Management, Warehouses,
   Adjust Inventory, Transfer Inventory, Inventory Count), and Finance
   (Journal Entries, Chart of Accounts, Accounting Periods, Default Accounts).
 - **Configure** — Configuration, where administrators manage Company Info,

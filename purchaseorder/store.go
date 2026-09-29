@@ -195,6 +195,11 @@ func addrColVals(a AddressInput) []colVal {
 	}
 }
 
+// trackingSerialized is inventory_item.inventory_item_tracking for a slab-tracked
+// item (inventory.TrackingSerialized). Restated here rather than imported: this
+// package has no other reason to depend on inventory.
+const trackingSerialized = "serialized"
+
 // itemSnapshot is what a line needs from its catalog item at add time.
 type itemSnapshot struct {
 	internalID int
@@ -205,6 +210,7 @@ type itemSnapshot struct {
 	unitCode   string
 	unitPrice  float64
 	taxRateID  *int
+	tracking   string
 }
 
 // resolveInventoryItem loads a catalog item's snapshot fields by its external
@@ -213,11 +219,12 @@ func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) 
 	var s itemSnapshot
 	err := q.QueryRow(ctx, `
 		SELECT ii.inventory_item_id, ii.inventory_item_sku, ii.inventory_item_name, ii.inventory_item_description,
-		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id
+		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id,
+		       ii.inventory_item_tracking
 		FROM inventory_item ii
 		LEFT JOIN lkp_unit u ON u.unit_id = ii.inventory_item_unit_id
 		WHERE ii.inventory_item_uuid = $1 AND ii.inventory_item_deleted_at IS NULL`, uuid).Scan(
-		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID)
+		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID, &s.tracking)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "Unknown inventory item: " + uuid}
 	}

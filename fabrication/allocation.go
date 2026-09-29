@@ -45,12 +45,12 @@ func AllocateSlab(ctx context.Context, pool *pgxpool.Pool, jobUUID, slabUUID str
 	}
 
 	// Lock the slab and check availability (§4.2, §4.3).
-	var slabID int
+	var slabID, slabItemID int
 	var slabStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT inventory_slab_id, slab_status FROM inventory_slab
+		SELECT inventory_slab_id, inventory_item_id, slab_status FROM inventory_slab
 		WHERE inventory_slab_uuid = $1 AND slab_deleted_at IS NULL
-		FOR UPDATE`, slabUUID).Scan(&slabID, &slabStatus)
+		FOR UPDATE`, slabUUID).Scan(&slabID, &slabItemID, &slabStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClientError{Msg: "Slab not found."}
 	}
@@ -59,6 +59,24 @@ func AllocateSlab(ctx context.Context, pool *pgxpool.Pool, jobUUID, slabUUID str
 	}
 	if slabStatus != "available" {
 		return ClientError{Msg: fmt.Sprintf("Slab is %s and cannot be allocated.", slabStatus)}
+	}
+	// The sales order says what stone the customer bought, so a slab of a
+	// different material cannot be cut for it. An order with no slab-tracked
+	// catalogue line (a free-text stone line, say) names nothing to match, so it
+	// does not restrict which slab is used.
+	var matches bool
+	if err := tx.QueryRow(ctx, `
+		SELECT NOT EXISTS (
+			SELECT 1 FROM sales_order_item soi JOIN inventory_item ii ON ii.inventory_item_id = soi.inventory_item_id
+			WHERE soi.sales_order_id = $1 AND soi.item_deleted_at IS NULL AND ii.inventory_item_tracking = 'serialized'
+		) OR EXISTS (
+			SELECT 1 FROM sales_order_item soi
+			WHERE soi.sales_order_id = $1 AND soi.item_deleted_at IS NULL AND soi.inventory_item_id = $2
+		)`, st.salesOrderID, slabItemID).Scan(&matches); err != nil {
+		return fmt.Errorf("check slab material against order: %w", err)
+	}
+	if !matches {
+		return ClientError{Msg: "That slab is a different material from the ones on this job's sales order."}
 	}
 
 	var pieceID any
@@ -142,7 +160,7 @@ func DeallocateSlab(ctx context.Context, pool *pgxpool.Pool, jobUUID, slabUUID s
 // consumeSlabs marks every reserved slab on a job consumed and decrements stock
 // once per slab via a ledger row — the deduct at CUTG (§4.1). Idempotent: the
 // uq_slab_ledger_consumed index means a re-run cannot double-deduct.
-func consumeSlabs(ctx context.Context, tx pgx.Tx, jobInternalID, actorEmployeeID int) error {
+func consumeSlabs(ctx context.Context, tx pgx.Tx, jobInternalID, salesOrderID, actorEmployeeID int) error {
 	rows, err := tx.Query(ctx, `
 		SELECT fjs.fabrication_job_slab_id, s.inventory_slab_id, s.inventory_item_id, s.warehouse_id, s.slab_area
 		FROM fabrication_job_slab fjs
@@ -182,6 +200,11 @@ func consumeSlabs(ctx context.Context, tx pgx.Tx, jobInternalID, actorEmployeeID
 			return fmt.Errorf("mark slab consumed: %w", err)
 		}
 		if err := ledgerAndStock(ctx, tx, sr.slabID, sr.itemID, sr.whID, ledgerConsumed, -sr.area, &sr.allocID, actorEmployeeID); err != nil {
+			return err
+		}
+		// The stone has left on-hand, so the order's hold on it shrinks by the same
+		// amount — otherwise it would count twice against everyone else's free stock.
+		if err := inventory.ApplyConsumption(ctx, tx, salesOrderID, sr.itemID, sr.area); err != nil {
 			return err
 		}
 	}

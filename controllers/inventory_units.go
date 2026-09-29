@@ -27,12 +27,16 @@ import (
 //
 //	GET    /api/tenant/inventory/units                — list (cursor-paginated)
 //	POST   /api/tenant/inventory/units/search         — filter + sort + search
+//	POST   /api/tenant/inventory/units/summary        — stone per status for a filter
 //	GET    /api/tenant/inventory/units/remnants       — usable offcuts, largest first
-//	POST   /api/tenant/inventory/units                — receive a unit
 //	GET    /api/tenant/inventory/units/{uuid}         — get
 //	PATCH  /api/tenant/inventory/units/{uuid}/bin     — move between bins
 //	POST   /api/tenant/inventory/units/{uuid}/scrap   — write off
 //	GET    /api/tenant/inventory/units/{uuid}/history — movement trail
+//
+// There is deliberately no create route: a new unit enters stock only by posting
+// an item receipt against a purchase order (see itemreceipt/slabs.go), which
+// keeps every slab traceable to the document that brought it in.
 //
 // The older /api/tenant/inventory/slabs/* routes remain live and are served by
 // the same handlers, so the frontend can migrate without a flag day.
@@ -133,6 +137,29 @@ func (h *InventoryUnitOps) search(w http.ResponseWriter, r *http.Request, pool *
 	})
 }
 
+// Summary POST /api/tenant/inventory/units/summary — how much stone is in each
+// status for the units matching a filter/search, grouped by unit of measure.
+// Takes the same body as /search (sort, limit and cursor are ignored).
+func (h *InventoryUnitOps) Summary(w http.ResponseWriter, r *http.Request) {
+	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	var req query.Request
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			fail(w, http.StatusBadRequest, "Invalid request body.")
+			return
+		}
+	}
+	summary, err := inventory.SummarizeUnits(r.Context(), pool, req)
+	if err != nil {
+		inventoryFail(w, err, "Failed to summarize inventory units.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "summary": summary})
+}
+
 // Remnants GET /api/tenant/inventory/units/remnants — the offcut picker.
 func (h *InventoryUnitOps) Remnants(w http.ResponseWriter, r *http.Request) {
 	pool, _, ok := h.auth(w, r, authz.ActionRead)
@@ -146,25 +173,6 @@ func (h *InventoryUnitOps) Remnants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": units})
-}
-
-// Create POST /api/tenant/inventory/units — receive a physical unit.
-func (h *InventoryUnitOps) Create(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := h.auth(w, r, authz.ActionCreate)
-	if !ok {
-		return
-	}
-	var in inventory.CreateUnitInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	u, err := inventory.CreateUnit(r.Context(), pool, in, resolveEmployeeID(r, identityID))
-	if err != nil {
-		inventoryFail(w, err, "Failed to create unit.")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "unit": u})
 }
 
 // Get GET /api/tenant/inventory/units/{uuid}

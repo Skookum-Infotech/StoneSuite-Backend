@@ -36,6 +36,7 @@ import (
 //	GET    /api/tenant/fabrication-jobs/{uuid}/steps            — list checklist steps
 //	PATCH  /api/tenant/fabrication-jobs/{uuid}/steps/{stepCode} — update a step
 //	GET    /api/tenant/fabrication-jobs/{uuid}/slabs            — allocated slabs (needs inventory_item:read)
+//	GET    /api/tenant/fabrication-jobs/{uuid}/materials        — needed vs allocated per material (needs inventory_item:read)
 //	POST   /api/tenant/fabrication-jobs/{uuid}/slabs            — allocate a slab (needs inventory_item:update)
 //	DELETE /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid} — deallocate (needs inventory_item:update)
 //	POST   /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition — declare fate on cancel

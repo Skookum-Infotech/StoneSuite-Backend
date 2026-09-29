@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/workflow"
 )
 
@@ -28,13 +29,50 @@ type resolvedLine struct {
 	// Carried for the tolerance check at post time.
 	ordered     float64
 	alreadyRecv float64
+	// slabs is set only on a serialized line, where it defines qtyReceived.
+	slabs []resolvedSlab
+}
+
+// resolveSlabBins resolves each slab's bin uuid to its id, requiring the bin to
+// sit in the receiving warehouse.
+func resolveSlabBins(ctx context.Context, q workflow.Querier, lineNo int, slabs []resolvedSlab, in []SlabInput, warehouseID int) error {
+	for i := range slabs {
+		binID, err := inventory.ResolveBinForWarehouse(ctx, q, in[i].BinID, warehouseID)
+		if err != nil {
+			if inventory.IsClientError(err) {
+				return ClientError{Msg: fmt.Sprintf("Line %d, slab %d: %s", lineNo, i+1, err.Error())}
+			}
+			return err
+		}
+		slabs[i].binID = binID
+	}
+	return nil
+}
+
+// requireExplicitWarehouse refuses a receipt that brings slabs in without the
+// caller naming where they go. Bulk lines may fall back to the tenant's default
+// warehouse; a slab's location is mandatory information, not a default.
+func requireExplicitWarehouse(lines []resolvedLine, warehouseID *int) error {
+	if warehouseID != nil && *warehouseID > 0 {
+		return nil
+	}
+	for _, l := range lines {
+		if len(l.slabs) > 0 {
+			return ClientError{Msg: "A receiving warehouse is required when receiving slabs."}
+		}
+	}
+	return nil
 }
 
 // resolveLines validates every input line against the source order's live
 // lines. A line may appear at most once per receipt: two arrivals of the same
 // item are two receipts, or one line with the combined quantity — allowing a
 // duplicate would silently double-post through the ledger's per-line uniqueness.
-func resolveLines(ctx context.Context, q workflow.Querier, poInternalID int, items []LineInput) ([]resolvedLine, error) {
+//
+// warehouseID is the receiving warehouse, needed to validate each slab's bin. A
+// serialized item's line is resolved from its slabs (see computeSlabs); any
+// other line from the typed quantities.
+func resolveLines(ctx context.Context, q workflow.Querier, poInternalID, warehouseID int, items []LineInput) ([]resolvedLine, error) {
 	if len(items) == 0 {
 		return nil, ClientError{Msg: "At least one line item is required."}
 	}
@@ -59,21 +97,50 @@ func resolveLines(ctx context.Context, q workflow.Querier, poInternalID int, ite
 		}
 		seenPOItem[in.PurchaseOrderItemUUID] = true
 
-		if in.QtyReceived <= 0 {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: received quantity must be greater than zero.", in.LineNumber)}
-		}
-		if in.QtyRejected < 0 {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: rejected quantity cannot be negative.", in.LineNumber)}
-		}
-		if in.QtyRejected > in.QtyReceived {
-			return nil, ClientError{Msg: fmt.Sprintf(
-				"Line %d: rejected quantity cannot exceed the received quantity.", in.LineNumber)}
-		}
-
 		po, err := resolvePOLine(ctx, q, poInternalID, in.PurchaseOrderItemUUID)
 		if err != nil {
 			return nil, err
 		}
+
+		qtyReceived, qtyRejected := in.QtyReceived, in.QtyRejected
+		var slabs []resolvedSlab
+		serialized := false
+		if po.inventoryItemID != nil {
+			info, err := inventory.ResolveItemUnitByID(ctx, q, *po.inventoryItemID)
+			if err != nil {
+				return nil, fromInventoryErr(err)
+			}
+			serialized = info.IsSerialized()
+			if serialized {
+				if in.QtyRejected != 0 {
+					return nil, ClientError{Msg: fmt.Sprintf(
+						"Line %d: a slab line has no rejected quantity — leave a refused slab out instead.", in.LineNumber)}
+				}
+				if slabs, qtyReceived, err = computeSlabs(in.LineNumber, info, in.Slabs); err != nil {
+					return nil, err
+				}
+				if err := resolveSlabBins(ctx, q, in.LineNumber, slabs, in.Slabs, warehouseID); err != nil {
+					return nil, err
+				}
+				qtyRejected = 0
+			}
+		}
+		if !serialized && len(in.Slabs) > 0 {
+			return nil, ClientError{Msg: fmt.Sprintf(
+				"Line %d: slabs can only be entered for slab-tracked items.", in.LineNumber)}
+		}
+
+		if qtyReceived <= 0 {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: received quantity must be greater than zero.", in.LineNumber)}
+		}
+		if qtyRejected < 0 {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: rejected quantity cannot be negative.", in.LineNumber)}
+		}
+		if qtyRejected > qtyReceived {
+			return nil, ClientError{Msg: fmt.Sprintf(
+				"Line %d: rejected quantity cannot exceed the received quantity.", in.LineNumber)}
+		}
+
 		out = append(out, resolvedLine{
 			lineNumber:      in.LineNumber,
 			poItemID:        po.internalID,
@@ -83,11 +150,12 @@ func resolveLines(ctx context.Context, q workflow.Querier, poInternalID int, ite
 			desc:            po.desc,
 			unitID:          po.unitID,
 			unitCode:        po.unitCode,
-			qtyReceived:     in.QtyReceived,
-			qtyRejected:     in.QtyRejected,
+			qtyReceived:     qtyReceived,
+			qtyRejected:     qtyRejected,
 			notes:           in.LineNotes,
 			ordered:         po.quantity,
 			alreadyRecv:     po.qtyReceived,
+			slabs:           slabs,
 		})
 	}
 	return out, nil
@@ -96,23 +164,28 @@ func resolveLines(ctx context.Context, q workflow.Querier, poInternalID int, ite
 // insertLines bulk-inserts resolved lines as item_receipt_line rows.
 func insertLines(ctx context.Context, tx pgx.Tx, irInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
-		_, err := tx.Exec(ctx, `
+		var lineID int
+		err := tx.QueryRow(ctx, `
 			INSERT INTO item_receipt_line (
 				item_receipt_id, line_number, purchase_order_item_id, inventory_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				qty_received, qty_rejected, line_notes,
 				item_created_by
-			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12, $13)`,
+			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12, $13)
+			RETURNING item_receipt_line_id`,
 			irInternalID, l.lineNumber, l.poItemID, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.qtyReceived, l.qtyRejected, l.notes,
 			nullableInt(actorEmployeeID),
-		)
+		).Scan(&lineID)
 		if err != nil {
 			if isForeignKeyViolation(err) {
 				return ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit or item was referenced.", l.lineNumber)}
 			}
 			return fmt.Errorf("insert item receipt line: %w", err)
+		}
+		if err := insertLineSlabs(ctx, tx, lineID, l.lineNumber, l.slabs); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -170,11 +243,8 @@ func createReceipt(
 		return nil, err
 	}
 
-	lines, err := resolveLines(ctx, tx, src.internalID, in.Items)
-	if err != nil {
-		return nil, err
-	}
-
+	// The warehouse is resolved before the lines: a slab's bin is validated
+	// against it.
 	warehouseID := 0
 	if in.WarehouseID != nil && *in.WarehouseID > 0 {
 		warehouseID = *in.WarehouseID
@@ -183,6 +253,14 @@ func createReceipt(
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	lines, err := resolveLines(ctx, tx, src.internalID, warehouseID, in.Items)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireExplicitWarehouse(lines, in.WarehouseID); err != nil {
+		return nil, err
 	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, irctRecordTypeCode)

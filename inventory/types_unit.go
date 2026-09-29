@@ -39,11 +39,22 @@ type Unit struct {
 	ThicknessMM float64 `json:"thicknessMm"`
 	Area        float64 `json:"area"`
 	AreaUnitID  int     `json:"areaUnitId"`
+	// AreaUnitCode is the code of AreaUnitID (SQFT, SQM...), so a screen can say
+	// what Area is measured in without a second lookup.
+	AreaUnitCode string `json:"areaUnitCode,omitempty"`
 
-	Form         string  `json:"form"`   // full | cut
-	Status       string  `json:"status"` // available|reserved|consumed|scrapped
+	Form   string `json:"form"`   // full | cut
+	Status string `json:"status"` // available|reserved|consumed|scrapped
+	// ParentUnitID/RootUnitID are the uuids; the serials sit beside them so the
+	// lineage can be shown by name, never as a raw id.
 	ParentUnitID *string `json:"parentUnitId,omitempty"`
+	ParentSerial string  `json:"parentSerial,omitempty"`
 	RootUnitID   *string `json:"rootUnitId,omitempty"`
+	RootSerial   string  `json:"rootSerial,omitempty"`
+
+	// Usage is what has become of this unit's stone. It is always present; every
+	// figure is zero and every timestamp nil for a unit nobody has touched.
+	Usage UnitUsage `json:"usage"`
 
 	IsUsableRemnant bool   `json:"isUsableRemnant"`
 	Grade           string `json:"grade,omitempty"`
@@ -51,8 +62,46 @@ type Unit struct {
 	FinishID        *int   `json:"finishId,omitempty"`
 	PhotoKey        string `json:"photoKey,omitempty"`
 
+	// The purchase-order receipt that brought this unit into stock. Nil for a
+	// unit that did not arrive through one (a remnant cut in the yard, or a
+	// legacy unit received before slabs were tied to receipts).
+	ReceiptID     *string `json:"receiptId,omitempty"`
+	ReceiptNumber string  `json:"receiptNumber,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// UnitUsage is the consumption picture for one unit: the job it is (or was)
+// held for, when it left stock, and how its area split when it was cut.
+//
+// A unit is never partly used. It is cut whole, so Area leaves stock in full and
+// RecoveredArea comes back as new offcut units; what is left, UsedArea, is the
+// stone that went into finished product and saw kerf. RecoveredArea and
+// UsedArea are therefore only ever non-zero on a consumed unit.
+type UnitUsage struct {
+	// JobID/JobNumber name the fabrication job holding this unit (reserved) or
+	// that cut it (consumed). Empty for a unit no job has claimed — including one
+	// cut by hand from the Inventory screen.
+	JobID     string `json:"jobId,omitempty"`
+	JobNumber string `json:"jobNumber,omitempty"`
+	// SalesOrderID/SalesOrderNumber name the customer order that job is for, so a
+	// yard screen can say whose stone this is without opening the job. Empty
+	// whenever JobID is.
+	SalesOrderID     string     `json:"salesOrderId,omitempty"`
+	SalesOrderNumber string     `json:"salesOrderNumber,omitempty"`
+	ReservedAt       *time.Time `json:"reservedAt,omitempty"`
+	// ConsumedAt/ScrappedAt come from the slab ledger, the record of when the
+	// stone actually left stock.
+	ConsumedAt *time.Time `json:"consumedAt,omitempty"`
+	ScrappedAt *time.Time `json:"scrappedAt,omitempty"`
+
+	// OffcutCount and RecoveredArea count the offcuts that came back into stock
+	// from this unit when it was cut, whatever became of them afterwards.
+	OffcutCount   int     `json:"offcutCount"`
+	RecoveredArea float64 `json:"recoveredArea"`
+	// UsedArea is Area - RecoveredArea for a consumed unit, 0 otherwise.
+	UsedArea float64 `json:"usedArea"`
 }
 
 // CreateUnitInput receives a full physical piece. Offcuts are never created

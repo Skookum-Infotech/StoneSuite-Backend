@@ -123,7 +123,20 @@ func loadLines(ctx context.Context, q workflow.Querier, uuid string) ([]Line, er
 		}
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// The slab query runs on the same connection, so the line cursor must be
+	// fully drained (and closed) first.
+	rows.Close()
+	slabs, err := loadSlabs(ctx, q, internalID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Slabs = slabs[out[i].ID]
+	}
+	return out, nil
 }
 
 // Get loads a single live item receipt by its external uuid, including its lines.

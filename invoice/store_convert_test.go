@@ -19,6 +19,13 @@ import (
 // on the embedding CreateOrderInput from outside the package.
 func seedSalesOrderWithLine(t *testing.T, pool *pgxpool.Pool, custUUID, itemUUID string) *salesorder.Order {
 	t.Helper()
+	// An order for a catalogue item is checked against stock, so give it some.
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO inventory_stock (inventory_item_id, warehouse_id, quantity_on_hand)
+		SELECT inventory_item_id, 1, 1000 FROM inventory_item WHERE inventory_item_uuid = $1
+		ON CONFLICT (inventory_item_id, warehouse_id) DO UPDATE SET quantity_on_hand = 1000`, itemUUID); err != nil {
+		t.Fatalf("give item stock: %v", err)
+	}
 	in := salesorder.CreateOrderInput{CustomerUUID: custUUID}
 	in.SalesTaxPercent = 8
 	in.Items = []salesorder.LineInput2{

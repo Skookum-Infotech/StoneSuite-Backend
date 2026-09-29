@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/workflow"
 )
 
@@ -157,11 +158,14 @@ func loadQuoteSourceLines(ctx context.Context, tx pgx.Tx, quoteInternalID int) (
 // insertConvertedLines bulk-inserts quote-sourced lines as sales_order_item
 // rows, returning each new row's uuid keyed by the source quote_item's uuid
 // (for the quote_conversion.snapshot line mapping — sales_order_item has no
-// quote_item_id FK column by design; see schema.sql AD-6 comment).
-func insertConvertedLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []quoteSourceLine, actorEmployeeID int) (map[string]string, error) {
+// quote_item_id FK column by design; see schema.sql AD-6 comment) and the new
+// rows' internal ids, in the order of lines (for the stock reservation).
+func insertConvertedLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []quoteSourceLine, actorEmployeeID int) (map[string]string, []int, error) {
 	lineMap := make(map[string]string, len(lines))
+	lineIDs := make([]int, 0, len(lines))
 	for _, l := range lines {
 		var newLineUUID string
+		var newLineID int
 		err := tx.QueryRow(ctx, `
 			INSERT INTO sales_order_item (
 				sales_order_id, line_number, inventory_item_id,
@@ -170,19 +174,20 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, orderInternalID int, l
 				line_subtotal, line_discount, line_tax, line_total,
 				item_created_by
 			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)
-			RETURNING sales_order_item_uuid`,
+			RETURNING sales_order_item_uuid, sales_order_item_id`,
 			orderInternalID, l.lineNumber, l.inventoryItemID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
 			nullableInt(actorEmployeeID),
-		).Scan(&newLineUUID)
+		).Scan(&newLineUUID, &newLineID)
 		if err != nil {
-			return nil, fmt.Errorf("insert converted sales order item: %w", err)
+			return nil, nil, fmt.Errorf("insert converted sales order item: %w", err)
 		}
 		lineMap[l.uuid] = newLineUUID
+		lineIDs = append(lineIDs, newLineID)
 	}
-	return lineMap, nil
+	return lineMap, lineIDs, nil
 }
 
 // ConvertFromQuote creates a new Sales Order as a full snapshot copy of a
@@ -313,8 +318,19 @@ func ConvertFromQuote(ctx context.Context, pool *pgxpool.Pool, quoteUUID string,
 		return nil, false, err
 	}
 
-	lineMap, err := insertConvertedLines(ctx, tx, internalID, lines, actorEmployeeID)
+	lineMap, lineIDs, err := insertConvertedLines(ctx, tx, internalID, lines, actorEmployeeID)
 	if err != nil {
+		return nil, false, err
+	}
+	// A quote can only become an order the stock can cover, exactly as an order
+	// entered by hand: the same check, and the same hold once it passes.
+	reserve := make([]inventory.ReserveLine, 0, len(lines))
+	for i, l := range lines {
+		if l.inventoryItemID != nil {
+			reserve = append(reserve, inventory.ReserveLine{LineID: lineIDs[i], ItemID: *l.inventoryItemID, Quantity: l.quantity})
+		}
+	}
+	if err := asClientError(inventory.ReserveOrder(ctx, tx, internalID, reserve, actorEmployeeID)); err != nil {
 		return nil, false, err
 	}
 

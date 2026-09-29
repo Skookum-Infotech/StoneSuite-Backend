@@ -96,7 +96,7 @@ type Email struct {
 	Badge         string    // banner pill, e.g. "Password Reset" (uppercased)
 	Icon          EmailIcon // banner illustration; empty draws the plain document
 	Heading       string    // banner heading, white line
-	HeadingAccent string    // banner heading, lime second line (optional)
+	HeadingAccent string    // appended to Heading, same line, no lime accent or line break
 	Subtitle      string    // banner sub-line under the heading (optional)
 	Greet         bool      // open with "Hello {RecipientName}," ("Hello," when blank)
 	RecipientName string    // filled per recipient by SendNotification when left blank

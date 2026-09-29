@@ -49,8 +49,7 @@ func TestRenderEmail_EveryBlockCarriesItsContent(t *testing.T) {
 	for _, want := range []string{
 		"<!DOCTYPE html>",
 		">APPROVAL NEEDED<",
-		"Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>",
-		`<span style="color:#c2f589;">needs your approval.</span>`,
+		"Invoice <span style=\"white-space:nowrap;\">INV-000123</span> needs your approval.",
 		">Please review and take action.<",
 		">Hello Alex Approver,<",
 		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="https://app.example/portal"`,

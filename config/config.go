@@ -159,12 +159,16 @@ type Config struct {
 	// these is a placeholder until a real support inbox, preferences page, and
 	// social accounts exist — see CLAUDE.md discussion; swap the env var, not
 	// the template code, once real values are available.
-	EmailBrandName         string
-	SupportEmail           string
-	EmailPreferencesURL    string
-	EmailSocialXURL        string
-	EmailSocialLinkedInURL string
-	EmailSocialYouTubeURL  string
+	EmailBrandName          string
+	SupportEmail            string
+	EmailPreferencesURL     string
+	EmailSocialXURL         string
+	EmailSocialLinkedInURL  string
+	EmailSocialFacebookURL  string
+	EmailSocialPinterestURL string
+	EmailSocialInstagramURL string
+	// EmailFooterAddress is the optional sender/origin line at the very bottom of every email.
+	EmailFooterAddress string
 	// EmailUnsubscribeURL is the footer "Unsubscribe" link; empty falls back
 	// to EmailPreferencesURL (where email notifications are switched off).
 	EmailUnsubscribeURL string
@@ -251,14 +255,17 @@ func Load() {
 		AIRerankBaseURL:    getEnv("AI_RERANK_BASE_URL", ""),
 		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),
 		// Email branding/contact placeholders (see Config field doc comment)
-		EmailBrandName:         getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
-		SupportEmail:           getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
-		EmailPreferencesURL:    getEnv("EMAIL_PREFERENCES_URL", "https://app.stonesuite.io/settings/notifications"),
-		EmailSocialXURL:        getEnv("EMAIL_SOCIAL_X_URL", "https://x.com/stonesuite"),
-		EmailSocialLinkedInURL: getEnv("EMAIL_SOCIAL_LINKEDIN_URL", "https://www.linkedin.com/company/stonesuite"),
-		EmailSocialYouTubeURL:  getEnv("EMAIL_SOCIAL_YOUTUBE_URL", "https://www.youtube.com/@stonesuite"),
-		EmailUnsubscribeURL:    getEnv("EMAIL_UNSUBSCRIBE_URL", ""),
-		EmailViewInBrowserURL:  getEnv("EMAIL_VIEW_IN_BROWSER_URL", getEnv("FRONTEND_URL", "http://localhost:5173")),
+		EmailBrandName:          getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
+		SupportEmail:            getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
+		EmailPreferencesURL:     getEnv("EMAIL_PREFERENCES_URL", "https://app.stonesuite.io/settings/notifications"),
+		EmailSocialXURL:         getEnv("EMAIL_SOCIAL_X_URL", "https://x.com/stonesuite"),
+		EmailSocialLinkedInURL:  getEnv("EMAIL_SOCIAL_LINKEDIN_URL", "https://www.linkedin.com/company/stonesuite"),
+		EmailSocialFacebookURL:  getEnv("EMAIL_SOCIAL_FACEBOOK_URL", "https://www.facebook.com/stonesuite"),
+		EmailSocialPinterestURL: getEnv("EMAIL_SOCIAL_PINTEREST_URL", "https://www.pinterest.com/stonesuite"),
+		EmailSocialInstagramURL: getEnv("EMAIL_SOCIAL_INSTAGRAM_URL", "https://www.instagram.com/stonesuite"),
+		EmailFooterAddress:      getEnv("EMAIL_FOOTER_ADDRESS", ""),
+		EmailUnsubscribeURL:     getEnv("EMAIL_UNSUBSCRIBE_URL", ""),
+		EmailViewInBrowserURL:   getEnv("EMAIL_VIEW_IN_BROWSER_URL", getEnv("FRONTEND_URL", "http://localhost:5173")),
 	}
 }
 

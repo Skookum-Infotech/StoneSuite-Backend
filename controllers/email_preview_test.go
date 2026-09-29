@@ -87,7 +87,9 @@ func TestWriteEmailPreviews(t *testing.T) {
 		config.AppConfig.EmailPreferencesURL = "https://app.stonesuite.io/settings/notifications"
 		config.AppConfig.EmailSocialLinkedInURL = "https://www.linkedin.com/company/stonesuite"
 		config.AppConfig.EmailSocialXURL = "https://x.com/stonesuite"
-		config.AppConfig.EmailSocialYouTubeURL = "https://www.youtube.com/@stonesuite"
+		config.AppConfig.EmailSocialFacebookURL = "https://www.facebook.com/stonesuite"
+		config.AppConfig.EmailSocialPinterestURL = "https://www.pinterest.com/stonesuite"
+		config.AppConfig.EmailSocialInstagramURL = "https://www.instagram.com/stonesuite"
 
 		require.NoError(t, p.send(), p.file)
 		require.Len(t, *got, 1, p.file)

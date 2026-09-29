@@ -215,7 +215,7 @@ func TestRenderEmail_HasOutlookFixedWidthFallback(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `<!--[if mso]><table role="presentation" width="640"`)
+	assert.Contains(t, out, `<!--[if mso]><table role="presentation" width="760"`)
 	assert.Contains(t, out, `<!--[if mso]></td></tr></table><![endif]-->`)
 }
 

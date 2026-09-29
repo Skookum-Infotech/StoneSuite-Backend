@@ -25,17 +25,12 @@ const emailTemplateFile = "templates/email.html"
 // when an Email does not set its own Reason.
 const defaultEmailReason = "you have a StoneSuite account."
 
-// emailTemplateFuncs are the helpers the template calls. msoOpen/msoClose emit
-// Outlook-desktop conditional comments (html/template strips comments written
-// literally in a template): Outlook's Word engine ignores CSS max-width, so
-// without a fixed-width 760px wrapper the card stretches to the reading pane.
+// emailTemplateFuncs are the helpers the template calls. The template has no
+// fixed-width wrapper (it is fluid, full-width on every client including
+// Outlook's Word engine), so no mso conditional pinning is needed here.
 var emailTemplateFuncs = template.FuncMap{
 	"upper":    strings.ToUpper,
 	"keepRefs": keepRefs,
-	"msoOpen": func() template.HTML {
-		return `<!--[if mso]><table role="presentation" width="760" align="center" cellspacing="0" cellpadding="0"><tr><td><![endif]-->`
-	},
-	"msoClose": func() template.HTML { return `<!--[if mso]></td></tr></table><![endif]-->` },
 }
 
 // loadEmailTemplate parses the embedded template once, on first use.

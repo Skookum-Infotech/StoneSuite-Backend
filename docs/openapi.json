@@ -4073,6 +4073,66 @@
         ]
       }
     },
+    "/api/tenant/config/crm-notify-recipients": {
+      "get": {
+        "operationId": "get_tenant_config_crm_notify_recipients",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "crmAdminOps.GetNotifyRecipients",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "put": {
+        "operationId": "put_tenant_config_crm_notify_recipients",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "crmAdminOps.SetNotifyRecipients",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/credit-memos": {
       "get": {
         "operationId": "get_tenant_credit_memos",

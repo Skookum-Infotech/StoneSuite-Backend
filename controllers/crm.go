@@ -12,6 +12,7 @@ import (
 
 	"stonesuite-backend/ai/index"
 	"stonesuite-backend/authz"
+	"stonesuite-backend/crmnotify"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/duplicate"
 	"stonesuite-backend/middleware"
@@ -414,6 +415,7 @@ func (h *CRMOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 	if key == "customer" {
 		notifyCustomerWelcome(r.Context(), services.SendNotification, rec)
 	}
+	crmnotify.NotifyCreated(r.Context(), pool, services.SendNotification, identityID, rec)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "record": rec})
 }
 
@@ -474,6 +476,10 @@ func (h *CRMOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	after, _ := st.GetRecord(r.Context(), pool, id)
 	auditCRM(r, pool, identityID, "update", key, id, before, after)
+	// Editing a rejected customer resubmits it: tell the approvers it needs review again.
+	if resubmitted(before, after) {
+		crmnotify.NotifyApprovalRequestedIfPending(r.Context(), pool, services.SendNotification, identityID, after)
+	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Record updated."})
 }
 
@@ -557,6 +563,7 @@ func (h *CRMOps) TransitionRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditCRM(r, pool, identityID, "transition", key, id, nil, updated)
+	crmnotify.NotifyStatus(r.Context(), pool, services.SendNotification, identityID, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": updated})
 }
 
@@ -645,12 +652,27 @@ func (h *CRMOps) ConvertRecord(w http.ResponseWriter, r *http.Request) {
 	if req.TargetWorkflowKey == "customer" {
 		notifyCustomerWelcome(r.Context(), services.SendNotification, newRec)
 	}
+	crmnotify.NotifyCreated(r.Context(), pool, services.SendNotification, identityID, newRec)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"success":        true,
 		"record":         newRec,
 		"sourceRecordId": sourceID,
 		"created":        true,
 	})
+}
+
+// approvalStatusApproved is customer_approval_status once every approver signed off.
+const approvalStatusApproved = "approved"
+
+// resubmitted reports whether an update moved a record from a non-pending
+// approval status to pending - the resubmit of a rejected customer.
+func resubmitted(before, after *workflow.Record) bool {
+	if before == nil || after == nil {
+		return false
+	}
+	was, _ := before.CoreFields["approval_status"].(string)
+	now, _ := after.CoreFields["approval_status"].(string)
+	return was != "pending" && now == "pending"
 }
 
 // notifyCustomerWelcome best-effort-emails a newly minted customer record's
@@ -755,6 +777,11 @@ func (h *CRMOps) ApproveRecord(w http.ResponseWriter, r *http.Request) {
 	// deciding who gets an external login is a separate one, made per
 	// customer rather than for every approved record.
 	auditCRM(r, pool, identityID, "approve", key, id, nil, rec)
+	// Only the final sign-off settles the customer as Active; a partial approval
+	// leaves it Draft/pending and must not re-send the Draft email.
+	if status, _ := rec.CoreFields["approval_status"].(string); status == approvalStatusApproved {
+		crmnotify.NotifyStatus(r.Context(), pool, services.SendNotification, identityID, rec)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }
 
@@ -793,6 +820,7 @@ func (h *CRMOps) RejectRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditCRM(r, pool, identityID, "reject", key, id, nil, rec)
+	crmnotify.NotifyRejected(r.Context(), pool, services.SendNotification, identityID, rec, req.Reason)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "record": rec})
 }
 

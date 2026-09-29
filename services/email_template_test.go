@@ -209,14 +209,15 @@ func TestRenderEmail_SectionOrder(t *testing.T) {
 	}
 }
 
-func TestRenderEmail_HasOutlookFixedWidthFallback(t *testing.T) {
-	// Outlook desktop (Word engine) ignores CSS max-width; html/template strips
-	// literal comments, so the MSO wrapper must survive via the template funcs.
+func TestRenderEmail_HasNoFixedWidthWrapper(t *testing.T) {
+	// The card is deliberately fluid (fills the available width on desktop),
+	// so there is no CSS max-width to fix for Outlook and no mso conditional
+	// wrapper pinning it to a fixed pixel width.
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `<!--[if mso]><table role="presentation" width="760"`)
-	assert.Contains(t, out, `<!--[if mso]></td></tr></table><![endif]-->`)
+	assert.NotContains(t, out, "max-width")
+	assert.NotContains(t, out, "[if mso]")
 }
 
 func TestRenderEmail_CTALinkOnlyInHref(t *testing.T) {

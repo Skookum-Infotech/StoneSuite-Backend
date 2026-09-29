@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/query"
 	"stonesuite-backend/workflow"
 )
 
@@ -279,3 +282,141 @@ func TestCrmPendingCountAndOldest_PropagatesError(t *testing.T) {
 }
 
 func timePtr(t time.Time) *time.Time { return &t }
+
+// The Open Leads KPI previously counted every lead ever created, unfiltered
+// by status — despite its label — a bug found as a side effect of
+// root-causing the AI assistant's own filtered-count logic
+// (countCRMRecordsOpenClosed in controllers/ai_analytical_answer.go), which
+// uses the same IsTerminal-based approach these tests cover: openStatusIDs
+// narrows to non-terminal statuses, openRecordFilters turns that into a
+// query.OpIn clause (ANDed with an optional created_at window), and
+// countOpenRecordsFiltered wires the two together against the store.
+
+func TestOpenStatusIDs_KeepsOnlyNonTerminal(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses []workflow.StatusInfo
+		want     []any
+	}{
+		{
+			name: "mix of terminal and non-terminal",
+			statuses: []workflow.StatusInfo{
+				{StateID: "1", IsTerminal: false}, // New
+				{StateID: "2", IsTerminal: false}, // In Progress
+				{StateID: "3", IsTerminal: false}, // Qualified
+				{StateID: "4", IsTerminal: true},  // Unqualified
+				{StateID: "5", IsTerminal: true},  // Converted
+				{StateID: "6", IsTerminal: true},  // Dead
+			},
+			want: []any{"1", "2", "3"},
+		},
+		{
+			name:     "all terminal yields empty, not nil",
+			statuses: []workflow.StatusInfo{{StateID: "1", IsTerminal: true}},
+			want:     []any{},
+		},
+		{
+			name:     "no statuses yields empty, not nil",
+			statuses: nil,
+			want:     []any{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := openStatusIDs(tt.statuses)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestOpenRecordFilters(t *testing.T) {
+	openIDs := []any{"1", "2"}
+	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	until := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name         string
+		since, until time.Time
+		want         []query.Clause
+	}{
+		{
+			name:  "no bounds: status filter only",
+			since: time.Time{}, until: time.Time{},
+			want: []query.Clause{{Field: "status", Op: query.OpIn, Value: openIDs}},
+		},
+		{
+			name:  "since only",
+			since: since, until: time.Time{},
+			want: []query.Clause{
+				{Field: "status", Op: query.OpIn, Value: openIDs},
+				{Field: "created_at", Op: query.OpGte, Value: since.UTC().Format(time.RFC3339)},
+			},
+		},
+		{
+			name:  "since and until",
+			since: since, until: until,
+			want: []query.Clause{
+				{Field: "status", Op: query.OpIn, Value: openIDs},
+				{Field: "created_at", Op: query.OpGte, Value: since.UTC().Format(time.RFC3339)},
+				{Field: "created_at", Op: query.OpLt, Value: until.UTC().Format(time.RFC3339)},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := openRecordFilters(openIDs, tt.since, tt.until)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// fakeOpenLeadsStore is a minimal crmstore.Store test double for
+// countOpenRecordsFiltered: embeds Store for every method these tests don't
+// exercise (mirrors fakeApprovalStore above) and records each
+// CountRecordsFiltered call for assertions.
+type fakeOpenLeadsStore struct {
+	crmstore.Store
+	count int
+	err   error
+	calls []filteredCall
+}
+
+func (f *fakeOpenLeadsStore) CountRecordsFiltered(_ context.Context, _ *pgxpool.Pool, key, scope, actorIdentityID string, filters []query.Clause) (int, error) {
+	f.calls = append(f.calls, filteredCall{key, scope, actorIdentityID, filters})
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.count, nil
+}
+
+func TestCountOpenRecordsFiltered_EmptyOpenIDsSkipsQueryEntirely(t *testing.T) {
+	store := &fakeOpenLeadsStore{count: 99} // would be wrong if returned -- proves the store was never called
+	n, err := countOpenRecordsFiltered(context.Background(), store, nil, "lead", "own", "identity-1", []any{}, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Empty(t, store.calls, "a workflow with no non-terminal status must never reach CountRecordsFiltered")
+}
+
+func TestCountOpenRecordsFiltered_PassesOpenFilterAndScopeThrough(t *testing.T) {
+	store := &fakeOpenLeadsStore{count: 4}
+	openIDs := []any{"1", "2"}
+	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+
+	n, err := countOpenRecordsFiltered(context.Background(), store, nil, "lead", "own", "identity-1", openIDs, since, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, 4, n)
+
+	require.Len(t, store.calls, 1)
+	call := store.calls[0]
+	assert.Equal(t, "lead", call.key)
+	assert.Equal(t, "own", call.scope)
+	assert.Equal(t, "identity-1", call.actorIdentityID)
+	assert.Equal(t, openRecordFilters(openIDs, since, time.Time{}), call.filters)
+}
+
+func TestCountOpenRecordsFiltered_PropagatesStoreError(t *testing.T) {
+	boom := errors.New("boom")
+	store := &fakeOpenLeadsStore{err: boom}
+	_, err := countOpenRecordsFiltered(context.Background(), store, nil, "lead", "own", "identity-1", []any{"1"}, time.Time{}, time.Time{})
+	assert.ErrorIs(t, err, boom)
+}

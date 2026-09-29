@@ -317,6 +317,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", health.Healthz)
 	mux.HandleFunc("GET /api/readyz", health.Readyz)
 	mux.HandleFunc("GET "+services.EmailLogoPath, services.EmailLogoHandler)
+	mux.HandleFunc(services.EmailIconRoute, services.EmailIconHandler)
 
 	// /api/metrics — Prometheus exposition. Optionally bearer-token protected
 	// (METRICS_TOKEN); Fly's built-in Prometheus scrapes this for free.
@@ -1555,7 +1556,7 @@ func main() {
 		// NOTE: this is an allowlist. A route registered on the mux under a
 		// prefix that is missing here is unreachable — it 404s before the mux
 		// ever sees it. Add new top-level prefixes here as well as on the mux.
-		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") {
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, services.EmailIconPathPrefix) && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

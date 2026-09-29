@@ -92,7 +92,12 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	// Inventory side-effects of the status being entered.
 	switch toStatusCode {
 	case StatusCutting:
-		if err := consumeSlabs(ctx, tx, st.internalID, actorEmployeeID); err != nil {
+		// Consuming slabs deducts stock for good, so first make sure the job holds
+		// enough material to do the work its blueprint calls for.
+		if err := requireMaterialAllocated(ctx, tx, st.internalID); err != nil {
+			return nil, err
+		}
+		if err := consumeSlabs(ctx, tx, st.internalID, st.salesOrderID, actorEmployeeID); err != nil {
 			return nil, err
 		}
 	case StatusCompleted:
@@ -258,6 +263,7 @@ func Resume(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeI
 // jobState is the locked snapshot the transition paths read.
 type jobState struct {
 	internalID     int
+	salesOrderID   int
 	statusID       int
 	statusCode     string
 	approvalStatus string
@@ -267,11 +273,11 @@ type jobState struct {
 func lockJob(ctx context.Context, tx pgx.Tx, uuid string) (*jobState, error) {
 	var s jobState
 	err := tx.QueryRow(ctx, `
-		SELECT fj.fabrication_job_id, fj.fabrication_job_status, rs.record_status_code, fj.job_approval_status
+		SELECT fj.fabrication_job_id, fj.sales_order_id, fj.fabrication_job_status, rs.record_status_code, fj.job_approval_status
 		FROM fabrication_job fj
 		JOIN lkp_record_status rs ON rs.record_status_id = fj.fabrication_job_status
 		WHERE fj.fabrication_job_uuid = $1 AND fj.fabrication_job_deleted_at IS NULL
-		FOR UPDATE OF fj`, uuid).Scan(&s.internalID, &s.statusID, &s.statusCode, &s.approvalStatus)
+		FOR UPDATE OF fj`, uuid).Scan(&s.internalID, &s.salesOrderID, &s.statusID, &s.statusCode, &s.approvalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -323,6 +329,18 @@ func bumpFulfillment(ctx context.Context, tx pgx.Tx, jobInternalID, actorEmploye
 	}
 
 	for _, lineID := range lineIDs {
+		// A line the sales order reserved stock for is fulfilled by the stone actually
+		// cut for it (consumeSlabs -> inventory.ApplyConsumption), in the line's own
+		// unit. Adding a flat 1 here would corrupt that area figure, so only the lines
+		// with no reservation — orders that predate it — keep the per-piece count.
+		var reserved bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM inventory_allocation WHERE sales_order_item_id = $1)`, lineID).Scan(&reserved); err != nil {
+			return fmt.Errorf("check line reservation: %w", err)
+		}
+		if reserved {
+			continue
+		}
 		// Each completed piece fulfills one unit of its line, clamped at quantity.
 		var qty, fulfilled float64
 		if err := tx.QueryRow(ctx, `

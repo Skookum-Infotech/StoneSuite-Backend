@@ -14,6 +14,12 @@ properties specific to stone). Items are the building block every other
 inventory record — slabs, bundles, adjustments, transfers, counts — refers
 back to.
 
+An item's Track stock setting decides whether a sales order for it is checked
+against stock and holds it. It is on for every item unless you switch it off,
+which you should for anything with no stock to run out of — a delivery,
+installation or labour charge. A slab-tracked item is always tracked, and its
+switch cannot be turned off.
+
 ## Units and Slabs
 
 A Unit is an individual physical slab or piece tracked on its own. Every unit
@@ -30,6 +36,12 @@ you keep come back as new units, and whatever did not come back — the finished
 product and the saw kerf — counts as used. The Inventory list shows this for
 every unit in its Consumption column: a small bar and a line such as
 "Untouched", "Held for FJOB-000012", or "66% used · 15.20 sq ft back".
+
+A slab that a fabrication job has claimed is also marked in the list's Allocated
+To column with the sales order it is for and the fabrication job, each a link to
+that record. It stays there once the slab is cut, so you can always tell whose
+stone it was. The slab's own page shows the same two links in a strip under its
+title on every tab.
 
 Opening a unit takes you to its Usage tab, which is about exactly that. It leads
 with how much of the piece is gone ("Untouched", "66% used", "Fully used"), a bar

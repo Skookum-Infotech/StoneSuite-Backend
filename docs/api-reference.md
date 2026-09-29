@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-543 endpoints across 7 surfaces, read from `main.go`.
+544 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 459 |
+| staff token + tenant | 460 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -320,7 +320,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 458 endpoints
+## `tenant` — 459 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -505,6 +505,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/approve` | staff token + tenant | `fj.Approve` |
 | `PUT` | `/api/tenant/fabrication-jobs/{uuid}/fabrication/status` | staff token + tenant | `fj.Transition` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/hold` | staff token + tenant | `fj.Hold` |
+| `GET` | `/api/tenant/fabrication-jobs/{uuid}/materials` | staff token + tenant | `fj.JobMaterials` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/pieces` | staff token + tenant | `fj.AddPiece` |
 | `DELETE` | `/api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}` | staff token + tenant | `fj.RemovePiece` |
 | `PATCH` | `/api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}` | staff token + tenant | `fj.UpdatePiece` |

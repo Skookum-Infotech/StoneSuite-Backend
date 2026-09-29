@@ -45,6 +45,12 @@ func validateItemInput(in *CreateItemInput) error {
 	if in.Tracking != TrackingQuantity && in.Tracking != TrackingSerialized {
 		return ClientError{Msg: "Tracking must be either 'quantity' or 'serialized'."}
 	}
+	// A slab-tracked item always has stock to run out of, whatever the caller
+	// sent: a sales order for it must be checked and must reserve.
+	if in.Tracking == TrackingSerialized {
+		tracked := true
+		in.TrackStock = &tracked
+	}
 	return nil
 }
 

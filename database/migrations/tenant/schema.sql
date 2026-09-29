@@ -8726,3 +8726,29 @@ CREATE INDEX IF NOT EXISTS idx_cm_source_payment
 -- worker can route a job to the owning module's loader. NULL = a CRM workflow
 -- record (every row enqueued before this column existed).
 ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS record_type TEXT;
+
+-- Tenant-template schema -- sales-order stock reservation.
+--
+-- A sales order now checks and RESERVES the stock it needs when it is saved (see
+-- inventory/allocation.go), so two orders cannot promise the same stone.
+--
+--   inventory_item_track_stock -- whether a sales order line for this item is
+--       checked against, and reserves, stock. TRUE by default: every catalogue
+--       item is checked unless it is switched off (a service, delivery or labour
+--       item has no stock to run out of). A slab-tracked item is always tracked.
+--
+--   uq_alloc_line_open -- an order line holds at most one live reservation. The
+--       reservation is rewritten, never stacked, when the order is edited.
+--
+--   uq_inventory_ledger_src_line_consumed -- filling an order deducts each
+--       quantity-tracked line from a warehouse once. Keyed by warehouse too,
+--       because one line can be drawn from several warehouses.
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_track_stock BOOLEAN NOT NULL DEFAULT TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alloc_line_open
+    ON inventory_allocation (sales_order_item_id)
+    WHERE allocation_status IN ('reserved','partially_fulfilled');
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_consumed
+    ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id, warehouse_id)
+    WHERE event = 'consumed' AND source_line_id IS NOT NULL;

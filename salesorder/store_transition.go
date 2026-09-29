@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/inventory"
 )
 
 // ----- Transition ------------------------------------------------------------
@@ -117,11 +118,18 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 		return nil, fmt.Errorf("transition sales order: %w", err)
 	}
 
-	if toStatusCode == "CANC" {
-		if _, err := tx.Exec(ctx, `
-			UPDATE inventory_allocation SET allocation_status = 'released', allocation_updated_at = NOW()
-			WHERE sales_order_id = $1 AND allocation_status IN ('reserved','partially_fulfilled')`, internalID); err != nil {
-			return nil, fmt.Errorf("release allocations on cancel: %w", err)
+	switch toStatusCode {
+	case "CANC":
+		// A cancelled order gives its stock back to everyone else.
+		if err := inventory.ReleaseOrder(ctx, tx, internalID); err != nil {
+			return nil, err
+		}
+	case "FILL":
+		// A filled order's stock is used: quantity-tracked lines leave on-hand
+		// now, and the reservation closes. Refused (rolling the status change
+		// back) if the stock the order reserved is no longer there.
+		if err := asClientError(inventory.FulfillOrder(ctx, tx, internalID, actorEmployeeID)); err != nil {
+			return nil, err
 		}
 	}
 

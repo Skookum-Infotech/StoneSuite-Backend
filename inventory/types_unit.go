@@ -83,9 +83,14 @@ type UnitUsage struct {
 	// JobID/JobNumber name the fabrication job holding this unit (reserved) or
 	// that cut it (consumed). Empty for a unit no job has claimed — including one
 	// cut by hand from the Inventory screen.
-	JobID      string     `json:"jobId,omitempty"`
-	JobNumber  string     `json:"jobNumber,omitempty"`
-	ReservedAt *time.Time `json:"reservedAt,omitempty"`
+	JobID     string `json:"jobId,omitempty"`
+	JobNumber string `json:"jobNumber,omitempty"`
+	// SalesOrderID/SalesOrderNumber name the customer order that job is for, so a
+	// yard screen can say whose stone this is without opening the job. Empty
+	// whenever JobID is.
+	SalesOrderID     string     `json:"salesOrderId,omitempty"`
+	SalesOrderNumber string     `json:"salesOrderNumber,omitempty"`
+	ReservedAt       *time.Time `json:"reservedAt,omitempty"`
 	// ConsumedAt/ScrappedAt come from the slab ledger, the record of when the
 	// stone actually left stock.
 	ConsumedAt *time.Time `json:"consumedAt,omitempty"`

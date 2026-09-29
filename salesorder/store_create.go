@@ -142,7 +142,13 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 		return nil, err
 	}
 
-	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {
+	lineIDs, err := insertLines(ctx, tx, internalID, lines, actorEmployeeID)
+	if err != nil {
+		return nil, err
+	}
+	// The stock check: an order cannot be saved for more than is free, and what it
+	// needs is held back from every other order from this moment.
+	if err := reserveStock(ctx, tx, internalID, lines, lineIDs, actorEmployeeID); err != nil {
 		return nil, err
 	}
 
@@ -257,34 +263,39 @@ func resolvePaymentDueDate(ctx context.Context, q workflow.Querier, orderDate, e
 	return base.AddDate(0, 0, netDays).Format("2006-01-02"), nil
 }
 
-// insertLines bulk-inserts resolved lines as sales_order_item rows.
-func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []resolvedLine, actorEmployeeID int) error {
+// insertLines bulk-inserts resolved lines as sales_order_item rows and returns
+// their new ids, in the order of lines.
+func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []resolvedLine, actorEmployeeID int) ([]int, error) {
+	ids := make([]int, 0, len(lines))
 	for _, l := range lines {
-		_, err := tx.Exec(ctx, `
+		var id int
+		err := tx.QueryRow(ctx, `
 			INSERT INTO sales_order_item (
 				sales_order_id, line_number, inventory_item_id, warehouse_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
 				item_created_by
-			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19)`,
+			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19)
+			RETURNING sales_order_item_id`,
 			orderInternalID, l.lineNumber, l.inventoryItemID, l.warehouseID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
 			nullableInt(actorEmployeeID),
-		)
+		).Scan(&id)
 		if err != nil {
 			if isForeignKeyViolation(err) {
-				return ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit, tax rate, or warehouse was referenced.", l.lineNumber)}
+				return nil, ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit, tax rate, or warehouse was referenced.", l.lineNumber)}
 			}
 			if isCheckViolation(err) {
-				return ClientError{Msg: fmt.Sprintf("Line %d: one or more values are out of range.", l.lineNumber)}
+				return nil, ClientError{Msg: fmt.Sprintf("Line %d: one or more values are out of range.", l.lineNumber)}
 			}
-			return fmt.Errorf("insert sales order item: %w", err)
+			return nil, fmt.Errorf("insert sales order item: %w", err)
 		}
+		ids = append(ids, id)
 	}
-	return nil
+	return ids, nil
 }
 
 // writeHistory appends a sales_order_history row. Best-effort: failures are

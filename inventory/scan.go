@@ -14,7 +14,7 @@ const itemSelect = `
 	       inventory_item_is_active, inventory_item_custom_fields,
 	       inventory_item_tracking, inventory_item_material_id, inventory_item_color_id,
 	       inventory_item_finish_id, inventory_item_thickness_mm, inventory_item_origin_country_id,
-	       inventory_item_barcode, inventory_item_default_warehouse_id,
+	       inventory_item_barcode, inventory_item_default_warehouse_id, inventory_item_track_stock,
 	       inventory_item_created_at, inventory_item_updated_at
 	FROM inventory_item`
 
@@ -29,7 +29,7 @@ func scanItem(row pgx.Row) (*Item, error) {
 		&it.IsActive, &custom,
 		&it.Tracking, &it.MaterialID, &it.ColorID,
 		&it.FinishID, &it.ThicknessMM, &it.OriginCountryID,
-		&it.Barcode, &it.DefaultWarehouseID,
+		&it.Barcode, &it.DefaultWarehouseID, &it.TrackStock,
 		&it.CreatedAt, &it.UpdatedAt,
 	); err != nil {
 		return nil, err

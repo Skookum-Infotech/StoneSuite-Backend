@@ -7488,6 +7488,47 @@
         ]
       }
     },
+    "/api/tenant/fabrication-jobs/{uuid}/materials": {
+      "get": {
+        "operationId": "get_tenant_fabrication_jobs_uuid_materials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.JobMaterials",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/fabrication-jobs/{uuid}/pieces": {
       "post": {
         "operationId": "post_tenant_fabrication_jobs_uuid_pieces",

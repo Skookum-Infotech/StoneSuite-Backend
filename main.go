@@ -1172,6 +1172,7 @@ func main() {
 		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/steps", tenantChain(fj.Steps))
 		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/steps/{stepCode}", tenantChain(fj.UpdateStep))
 		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.JobSlabs))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/materials", tenantChain(fj.JobMaterials))
 		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs", tenantChain(fj.AllocateSlab))
 		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}", tenantChain(fj.DeallocateSlab))
 		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition", tenantChain(fj.Disposition))

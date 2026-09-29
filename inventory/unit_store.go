@@ -69,7 +69,8 @@ const unitSelect = `
 	       r.inventory_slab_uuid, COALESCE(r.slab_serial,''),
 	       s.slab_is_usable_remnant, s.slab_grade, s.slab_finish, s.slab_finish_id, s.slab_photo_key,
 	       irc.item_receipt_uuid, COALESCE(irc.item_receipt_number,''),
-	       fj.fabrication_job_uuid, COALESCE(fj.fabrication_job_number,''), fjs.reserved_at,
+	       fj.fabrication_job_uuid, COALESCE(fj.fabrication_job_number,''),
+	       so.sales_order_uuid, COALESCE(so.sales_order_number,''), fjs.reserved_at,
 	       lc.occurred_at, ls.occurred_at,
 	       COALESCE(rec.offcut_count, 0), COALESCE(rec.recovered_area, 0),
 	       s.slab_created_at, s.slab_updated_at` +
@@ -82,14 +83,17 @@ const unitSelect = `
 	                                    AND fjs.allocation_status IN ('reserved','consumed')
 	LEFT JOIN fabrication_job fj         ON fj.fabrication_job_id = fjs.fabrication_job_id
 	                                    AND fj.fabrication_job_deleted_at IS NULL
+	LEFT JOIN sales_order so             ON so.sales_order_id = fj.sales_order_id
+	                                    AND so.sales_order_deleted_at IS NULL
 	LEFT JOIN inventory_slab_ledger lc   ON lc.inventory_slab_id = s.inventory_slab_id AND lc.event = 'consumed'
 	LEFT JOIN inventory_slab_ledger ls   ON ls.inventory_slab_id = s.inventory_slab_id AND ls.event = 'scrapped'` +
 	unitRecoveredJoin
 
 func scanUnit(row pgx.Row) (*Unit, error) {
 	var (
-		u     Unit
-		jobID *string
+		u       Unit
+		jobID   *string
+		orderID *string
 	)
 	if err := row.Scan(
 		&u.ID, &u.Serial, &u.Kind,
@@ -105,7 +109,8 @@ func scanUnit(row pgx.Row) (*Unit, error) {
 		&u.RootUnitID, &u.RootSerial,
 		&u.IsUsableRemnant, &u.Grade, &u.Finish, &u.FinishID, &u.PhotoKey,
 		&u.ReceiptID, &u.ReceiptNumber,
-		&jobID, &u.Usage.JobNumber, &u.Usage.ReservedAt,
+		&jobID, &u.Usage.JobNumber,
+		&orderID, &u.Usage.SalesOrderNumber, &u.Usage.ReservedAt,
 		&u.Usage.ConsumedAt, &u.Usage.ScrappedAt,
 		&u.Usage.OffcutCount, &u.Usage.RecoveredArea,
 		&u.CreatedAt, &u.UpdatedAt,
@@ -114,6 +119,9 @@ func scanUnit(row pgx.Row) (*Unit, error) {
 	}
 	if jobID != nil {
 		u.Usage.JobID = *jobID
+	}
+	if orderID != nil {
+		u.Usage.SalesOrderID = *orderID
 	}
 	u.Usage.UsedArea = usedArea(u.Status, u.Area, u.Usage.RecoveredArea)
 	return &u, nil

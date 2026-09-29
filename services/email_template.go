@@ -31,6 +31,7 @@ const defaultEmailReason = "you have a StoneSuite account."
 var emailTemplateFuncs = template.FuncMap{
 	"upper":    strings.ToUpper,
 	"keepRefs": keepRefs,
+	"iconURL":  func(name any) string { return EmailIconURL(fmt.Sprint(name)) },
 }
 
 // loadEmailTemplate parses the embedded template once, on first use.

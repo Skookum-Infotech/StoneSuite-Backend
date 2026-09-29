@@ -53,11 +53,8 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 		return nil, ClientError{Msg: "Only a pending item receipt can be edited."}
 	}
 
-	lines, err := resolveLines(ctx, tx, poInternalID, in.Items)
-	if err != nil {
-		return nil, err
-	}
-
+	// The warehouse is resolved before the lines: a slab's bin is validated
+	// against it.
 	warehouseID := 0
 	if in.WarehouseID != nil && *in.WarehouseID > 0 {
 		warehouseID = *in.WarehouseID
@@ -66,6 +63,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	lines, err := resolveLines(ctx, tx, poInternalID, warehouseID, in.Items)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireExplicitWarehouse(lines, in.WarehouseID); err != nil {
+		return nil, err
 	}
 
 	ownerEmployeeID := 0
@@ -104,6 +109,15 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 		return nil, fmt.Errorf("update item receipt: %w", err)
 	}
 
+	// A pending receipt has posted no slabs, so the replaced lines' slab rows
+	// point at nothing and are dropped with them.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM item_receipt_line_unit
+		WHERE item_receipt_line_id IN (
+			SELECT item_receipt_line_id FROM item_receipt_line
+			WHERE item_receipt_id = $1 AND item_deleted_at IS NULL)`, irInternalID); err != nil {
+		return nil, fmt.Errorf("clear item receipt slabs: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE item_receipt_line SET item_deleted_at = NOW()
 		WHERE item_receipt_id = $1 AND item_deleted_at IS NULL`, irInternalID); err != nil {

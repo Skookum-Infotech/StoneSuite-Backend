@@ -27,7 +27,6 @@ func TestWriteEmailPreviews(t *testing.T) {
 		EmailBrandName: "StoneSuite", SupportEmail: "hello@stonesuite.app",
 		EmailPreferencesURL:    "https://app.stonesuite.io/settings/notifications",
 		EmailSocialLinkedInURL: "https://www.linkedin.com/company/stonesuite", EmailSocialXURL: "https://x.com/stonesuite",
-		EmailSocialYouTubeURL: "https://www.youtube.com/@stonesuite",
 	}
 	t.Cleanup(func() { config.AppConfig = prev })
 

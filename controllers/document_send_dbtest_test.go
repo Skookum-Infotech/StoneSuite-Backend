@@ -71,7 +71,9 @@ func docSendTestTenantDSN(t *testing.T) string {
 
 // seedDocSendCustomerAndItem inserts a minimal live customer + inventory_item,
 // mirroring salesorder/store_test.go's seedCustomerAndItem helper (unexported
-// there, so re-declared here for this package's dbtest).
+// there, so re-declared here for this package's dbtest). The item is not
+// stock-tracked: these tests are about sending a document, and a tracked item
+// would need on-hand stock before salesorder.Create accepts an order for it.
 func seedDocSendCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, itemUUID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -87,8 +89,9 @@ func seedDocSendCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, ite
 		custTypeID, "Doc Send Test Customer "+suffix).Scan(&custUUID))
 
 	require.NoError(t, pool.QueryRow(ctx, `
-		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
-		VALUES ($1, $2, 1, 25.00, 1) RETURNING inventory_item_uuid`,
+		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price,
+			inventory_item_track_stock, inventory_item_created_by)
+		VALUES ($1, $2, 1, 25.00, FALSE, 1) RETURNING inventory_item_uuid`,
 		"DOCSEND-SKU-"+suffix, "Doc Send Test Item "+suffix).Scan(&itemUUID))
 
 	return custUUID, itemUUID

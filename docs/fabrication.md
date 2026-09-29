@@ -41,6 +41,23 @@ Crew Lead, each picked from your employees — the Job Owner defaults to
 whoever created the job, and the others are left for you to assign as the
 work is staffed.
 
+## Materials
+
+A job's Materials tab (shown to users with access to inventory data) is where
+the stone for the job is worked out and allocated. For each slab material on the
+job's sales order it shows what the order calls for, what the blueprint needs —
+the combined area of the pieces drawn for that material, once the fabricators
+have measured the space and added them, or the ordered quantity until then — how
+much slab is allocated, and how much is still short.
+
+Allocate slabs from the tab: it lists the in-stock slabs and offcuts of that
+material with their size and location, and suggests the fewest slabs that cover
+what is short. Only slabs of the material on the sales order can be allocated. A
+job cannot move to Cutting until every material's allocated slab area covers
+what it needs, because cutting is the step that takes the stone out of stock. As
+slabs are cut, the sales order's hold on that stone is released, so it is not
+counted twice against other orders.
+
 ## Pieces, slabs, and checklist
 
 A job's detail page has tabs for Overview, Pieces (the individual pieces

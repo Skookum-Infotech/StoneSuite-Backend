@@ -96,7 +96,7 @@ type Email struct {
 	Badge         string    // banner pill, e.g. "Password Reset" (uppercased)
 	Icon          EmailIcon // banner illustration; empty draws the plain document
 	Heading       string    // banner heading, white line
-	HeadingAccent string    // banner heading, lime second line (optional)
+	HeadingAccent string    // appended to Heading, same line, no lime accent or line break
 	Subtitle      string    // banner sub-line under the heading (optional)
 	Greet         bool      // open with "Hello {RecipientName}," ("Hello," when blank)
 	RecipientName string    // filled per recipient by SendNotification when left blank
@@ -114,7 +114,9 @@ type emailView struct {
 	Email
 	BrandName, SupportEmail                          string
 	PreferencesURL, UnsubscribeURL, ViewInBrowserURL string
-	SocialLinkedInURL, SocialXURL, SocialYouTubeURL  string
+	SocialLinkedInURL, SocialXURL                    string
+	SocialFacebookURL, SocialPinterestURL            string
+	SocialInstagramURL, FooterAddress                string
 	LogoURL                                          string
 }
 
@@ -133,16 +135,19 @@ func RenderEmail(e Email) (string, error) {
 		unsubscribe = cfg.EmailPreferencesURL
 	}
 	v := emailView{
-		Email:             e,
-		BrandName:         cfg.EmailBrandName,
-		SupportEmail:      cfg.SupportEmail,
-		PreferencesURL:    cfg.EmailPreferencesURL,
-		UnsubscribeURL:    unsubscribe,
-		ViewInBrowserURL:  cfg.EmailViewInBrowserURL,
-		SocialLinkedInURL: cfg.EmailSocialLinkedInURL,
-		SocialXURL:        cfg.EmailSocialXURL,
-		SocialYouTubeURL:  cfg.EmailSocialYouTubeURL,
-		LogoURL:           EmailLogoURL(),
+		Email:              e,
+		BrandName:          cfg.EmailBrandName,
+		SupportEmail:       cfg.SupportEmail,
+		PreferencesURL:     cfg.EmailPreferencesURL,
+		UnsubscribeURL:     unsubscribe,
+		ViewInBrowserURL:   cfg.EmailViewInBrowserURL,
+		SocialLinkedInURL:  cfg.EmailSocialLinkedInURL,
+		SocialXURL:         cfg.EmailSocialXURL,
+		SocialFacebookURL:  cfg.EmailSocialFacebookURL,
+		SocialPinterestURL: cfg.EmailSocialPinterestURL,
+		SocialInstagramURL: cfg.EmailSocialInstagramURL,
+		FooterAddress:      cfg.EmailFooterAddress,
+		LogoURL:            EmailLogoURL(),
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, v); err != nil {

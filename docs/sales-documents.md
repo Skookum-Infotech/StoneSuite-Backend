@@ -34,6 +34,20 @@ Filled, it can be converted into an Invoice with the Convert to Invoice
 button. A sales order is also the starting point for a fabrication job — see
 `fabrication.md`.
 
+A sales order checks your stock when you save it. If any line asks for more of
+an item than is free — what is on hand, less what other orders are already
+holding — the order is not saved: a Not enough stock window lists each short
+item with how much is needed, how much is available and how much is missing, and
+offers to start a requisition for the shortfall so you can restock. Otherwise the
+order holds what it needs from that moment, so no other order can promise the
+same stone. Editing the order re-checks it (its own hold is not counted against
+it), and cancelling or deleting it gives the stock back. Filling an order takes
+its quantity-counted lines out of stock; stone is taken out as a fabrication job
+cuts it. Lines with no catalog item (free text) and items marked as not tracking
+stock — a delivery or installation charge, say — are never checked. The
+Inventory tab shows, for each item on the order, what is on hand, what every
+order holds, what this order holds, and what is still free.
+
 ## Invoices
 
 An Invoice is created from Sales → Invoices → New Invoice, or by converting a

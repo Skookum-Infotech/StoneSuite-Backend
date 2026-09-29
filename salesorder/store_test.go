@@ -53,6 +53,9 @@ func seedCustomerAndItem(t *testing.T, pool *pgxpool.Pool) (custUUID, itemUUID s
 		"SKU-"+suffix, "Test Item "+suffix).Scan(&itemUUID); err != nil {
 		t.Fatalf("seed inventory item: %v", err)
 	}
+	// An order for a catalogue item is checked against stock, so the item needs
+	// plenty on hand for the tests that are about something else.
+	giveStock(t, pool, itemUUID, 100000)
 	return custUUID, itemUUID
 }
 

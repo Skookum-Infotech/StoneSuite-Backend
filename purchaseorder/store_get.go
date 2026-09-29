@@ -107,7 +107,20 @@ const itemSelect = `
 	             AND rs.record_status_code <> 'VOID'
 	       ), 0),
 	       poi.unit_price, poi.discount_percent, poi.tax_percent,
-	       poi.line_subtotal, poi.line_discount, poi.line_tax, poi.line_total
+	       poi.line_subtotal, poi.line_discount, poi.line_tax, poi.line_total,
+	       COALESCE(ii.inventory_item_tracking, ''),
+	       poi.expected_slabs,
+	       COALESCE((
+	           SELECT COUNT(*)
+	           FROM item_receipt_line irl
+	           JOIN item_receipt_line_unit iru ON iru.item_receipt_line_id = irl.item_receipt_line_id
+	           JOIN item_receipt ir ON ir.item_receipt_id = irl.item_receipt_id AND ir.item_receipt_deleted_at IS NULL
+	           JOIN lkp_record_status rs ON rs.record_status_id = ir.item_receipt_status
+	           WHERE irl.purchase_order_item_id = poi.purchase_order_item_id
+	             AND irl.item_deleted_at IS NULL
+	             AND iru.inventory_slab_id IS NOT NULL
+	             AND rs.record_status_code <> 'VOID'
+	       ), 0)
 	FROM purchase_order_item poi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = poi.inventory_item_id
 	WHERE poi.purchase_order_id = $1 AND poi.item_deleted_at IS NULL
@@ -120,6 +133,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.QtyReceived, &l.QtyBilled, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
+		&l.Tracking, &l.ExpectedSlabs, &l.SlabsReceived,
 	)
 	return l, err
 }

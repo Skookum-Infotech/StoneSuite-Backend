@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/salesorder"
 )
 
@@ -41,6 +42,12 @@ func (h *QuoteOps) Convert(w http.ResponseWriter, r *http.Request) {
 	empID := resolveEmployeeID(r, identityID)
 	order, created, err := salesorder.ConvertFromQuote(r.Context(), pool, uuid, empID)
 	if err != nil {
+		var shortage *inventory.StockShortageError
+		if errors.As(err, &shortage) {
+			// The quote asks for more than the stock can cover: nothing was created.
+			writeStockShortage(w, shortage)
+			return
+		}
 		switch {
 		case errors.Is(err, salesorder.ErrQuoteNotFound):
 			fail(w, http.StatusNotFound, "Quote not found.")

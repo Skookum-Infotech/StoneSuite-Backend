@@ -33,6 +33,17 @@ Receive Items action to record them (creating an Item Receipt), and once the
 purchase order is Received or Closed you can use the Convert to Bill action
 to create a Vendor Bill from it.
 
+Each line picks an item from Inventory, and its Unit column shows what the
+quantity is measured in — Each for a counted item, Sq ft or Sq m for stone sold
+by area. Stone is priced per square foot (or square metre), so a slab item's
+quantity is the total area you are buying. Because stone is usually ordered by
+the bundle, a slab line also offers a slab estimate: enter how many slabs you
+expect and their average size, and the quantity fills in for you (you can still
+type it directly). The expected slab count is kept on the line so that
+receiving can show, for example, "11 of about 12 slabs" — it is only a count to
+check the delivery against, and the exact area is measured when the slabs
+arrive.
+
 ## Item Receipts
 
 An Item Receipt records goods physically received against a purchase order,
@@ -42,6 +53,25 @@ Partial, Received, or Void. A purchase order can be received in more than
 one shipment, which is why Partial exists alongside Received — a purchase
 order's own status reflects whether it's been fully or only partly
 received.
+
+Slab items are received slab by slab. For a purchase order line whose item is
+tracked as individual slabs, the Item Receipt asks for a receiving warehouse
+and one row per physical slab — its length, width, and thickness in
+millimetres, and optionally the bin it goes to. The received quantity for that
+line is worked out from those slabs' areas, so you don't type it. Each slab is
+given a serial number made from the purchase order number plus a running
+number, shown on the form before you save. Saving the receipt adds those slabs
+to Inventory; voiding the receipt takes them back out, as long as none of them
+has since been used or moved.
+
+To save typing a whole bundle by hand, use Paste from packing list above a
+line's slabs: paste the length, width, and (optionally) thickness columns from
+your supplier's packing list or spreadsheet, one slab per row, choose whether
+the sizes are in millimetres, centimetres, or inches, and the slabs are added
+for you. A trailing lot or bundle label on a row is picked up too. The preview
+shows what was read, and any rows that could not be read are listed and
+skipped. Set lot / block for all fills the same lot or block ID onto every slab
+on the line in one step.
 
 ## Vendor Bills
 

@@ -15,12 +15,33 @@ import "time"
 // is what makes the receiving rollup and the future Vendor Bill 3-way match
 // possible. QtyRejected is the damaged/refused portion of QtyReceived — it is
 // recorded on the document but never enters stock.
+//
+// Slabs is required for a serialized (slab-tracked) item and forbidden for any
+// other: such a line is received slab by slab, its QtyReceived is the computed
+// sum of the slabs' area (whatever the caller sent is ignored) and it has no
+// QtyRejected -- a refused slab is simply not entered.
 type LineInput struct {
-	LineNumber            int     `json:"lineNumber"`
-	PurchaseOrderItemUUID string  `json:"purchaseOrderItemUuid"`
-	QtyReceived           float64 `json:"qtyReceived"`
-	QtyRejected           float64 `json:"qtyRejected"`
-	LineNotes             string  `json:"lineNotes"`
+	LineNumber            int         `json:"lineNumber"`
+	PurchaseOrderItemUUID string      `json:"purchaseOrderItemUuid"`
+	QtyReceived           float64     `json:"qtyReceived"`
+	QtyRejected           float64     `json:"qtyRejected"`
+	LineNotes             string      `json:"lineNotes"`
+	Slabs                 []SlabInput `json:"slabs"`
+}
+
+// SlabInput is one physical slab arriving on a serialized line. Serial and
+// area are deliberately absent: the serial is assigned by the server when the
+// receipt posts (PO number + running suffix) and the area is computed from the
+// millimetres into the item's own unit -- neither is ever taken from a client.
+type SlabInput struct {
+	LengthMM     float64 `json:"lengthMm"`
+	WidthMM      float64 `json:"widthMm"`
+	ThicknessMM  float64 `json:"thicknessMm"`
+	BinID        string  `json:"binId"` // bin uuid; blank = not binned yet
+	BlockID      string  `json:"blockId"`
+	Lot          string  `json:"lot"`
+	Grade        string  `json:"grade"`
+	SupplierCode string  `json:"supplierCode"`
 }
 
 // itemReceiptFields is the header payload shared by create and update
@@ -106,6 +127,36 @@ type Line struct {
 	QtyOrdered          float64 `json:"qtyOrdered"`
 	QtyReceivedToDate   float64 `json:"qtyReceivedToDate"`
 	LineNotes           string  `json:"lineNotes,omitempty"`
+	// Slabs is set only on a serialized line.
+	Slabs []LineSlab `json:"slabs,omitempty"`
+}
+
+// LineSlab is one slab on a received line. Serial, UnitID and UnitStatus stay
+// empty until the receipt posts and the slab exists in inventory; UnitStatus is
+// then the slab's LIVE status (it may have been reserved or cut since).
+type LineSlab struct {
+	Serial       string  `json:"serial,omitempty"`
+	LengthMM     float64 `json:"lengthMm"`
+	WidthMM      float64 `json:"widthMm"`
+	ThicknessMM  float64 `json:"thicknessMm"`
+	Area         float64 `json:"area"`
+	BinID        *string `json:"binId,omitempty"`
+	BinPath      string  `json:"binPath,omitempty"`
+	BlockID      string  `json:"blockId,omitempty"`
+	Lot          string  `json:"lot,omitempty"`
+	Grade        string  `json:"grade,omitempty"`
+	SupplierCode string  `json:"supplierCode,omitempty"`
+	UnitID       *string `json:"unitId,omitempty"`
+	UnitStatus   string  `json:"unitStatus,omitempty"`
+}
+
+// SlabSequence is the preview of how the next slabs received against a
+// purchase order will be numbered: Prefix + a zero-padded running number
+// starting at Next. It is advisory -- the real serials are assigned under the
+// order's row lock when the receipt posts.
+type SlabSequence struct {
+	Prefix string `json:"prefix"`
+	Next   int    `json:"next"`
 }
 
 // ItemReceipt is the full API response for a receipt header (+ lines, when

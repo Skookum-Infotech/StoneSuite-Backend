@@ -27,6 +27,27 @@ func (h *FabricationOps) JobSlabs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "slabs": slabs})
 }
 
+// JobMaterials GET /api/tenant/fabrication-jobs/{uuid}/materials — for each
+// slab-tracked material on the job: what the order calls for, what the blueprint
+// needs, what is allocated and what is still short. Needs installation:read AND
+// inventory_item:read, like the slab list it sits beside.
+func (h *FabricationOps) JobMaterials(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	pool, identityID, _, ok := h.authFJByUUID(w, r, uuid, authz.ActionRead)
+	if !ok {
+		return
+	}
+	if !h.requireInventory(w, r, pool, identityID, authz.ActionRead) {
+		return
+	}
+	materials, err := fabrication.LoadMaterials(r.Context(), pool, uuid)
+	if err != nil {
+		fjFail(w, err, "Failed to load job materials.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "materials": materials})
+}
+
 // AllocateSlab POST /api/tenant/fabrication-jobs/{uuid}/slabs
 // body {"slabUuid":"...","pieceUuid":"..."}. Needs installation:update AND
 // inventory_item:update.

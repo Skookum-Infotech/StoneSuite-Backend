@@ -39,6 +39,11 @@ type Item struct {
 	Barcode            string  `json:"barcode"`
 	DefaultWarehouseID *int    `json:"defaultWarehouseId,omitempty"`
 
+	// TrackStock says whether a sales order line for this item is checked against
+	// stock and reserves it. False for an item with no stock to run out of (a
+	// service, delivery or labour charge). Always true for a slab-tracked item.
+	TrackStock bool `json:"trackStock"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -68,6 +73,11 @@ type CreateItemInput struct {
 	OriginCountryID    *int    `json:"originCountryId,omitempty"`
 	Barcode            string  `json:"barcode"`
 	DefaultWarehouseID *int    `json:"defaultWarehouseId,omitempty"`
+
+	// TrackStock is a pointer so an omitted field means "leave as it is" — a
+	// plain bool would read a client that predates the field as "turn off".
+	// Nil on create means tracked.
+	TrackStock *bool `json:"trackStock,omitempty"`
 }
 
 // Page is one page of a keyset-paginated item search.

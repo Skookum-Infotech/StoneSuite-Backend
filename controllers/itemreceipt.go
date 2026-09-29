@@ -34,6 +34,8 @@ import (
 //	POST   /api/tenant/item-receipts/{uuid}/void        — void: reverse the posting
 //	POST   /api/tenant/item-receipts/{uuid}/transition  — status change
 //	GET    /api/tenant/item-receipts/{uuid}/audit       — audit trail
+//	GET    /api/tenant/purchase-orders/{uuid}/receipts          — receipts for one order
+//	GET    /api/tenant/purchase-orders/{uuid}/next-slab-serial  — preview slab serial numbering
 type ItemReceiptOps struct{}
 
 // NewItemReceiptOps constructs the handler group.

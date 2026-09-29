@@ -42,12 +42,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT inventory_item_id, inventory_item_sku, inventory_item_name, inventory_item_unit_price,
-		       inventory_item_tracking, inventory_item_thickness_mm, inventory_item_is_active
+		       inventory_item_tracking, inventory_item_thickness_mm, inventory_item_is_active,
+		       inventory_item_track_stock
 		FROM inventory_item
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL
 		FOR UPDATE`, uuid).Scan(
 		&itemID, &before.SKU, &before.Name, &before.UnitPrice,
-		&before.Tracking, &before.ThicknessMM, &before.IsActive)
+		&before.Tracking, &before.ThicknessMM, &before.IsActive, &before.TrackStock)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -66,6 +67,16 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 		}
 	}
 
+	// An omitted trackStock leaves the item as it is: this is a whole-object
+	// write, so reading "absent" as "off" would silently switch tracking off for
+	// every client that predates the field. (A slab-tracked item was already
+	// forced on by validateItemInput.)
+	trackStock := before.TrackStock
+	if in.TrackStock != nil {
+		trackStock = *in.TrackStock
+	}
+	in.TrackStock = &trackStock
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE inventory_item SET
 			inventory_item_sku = $2, inventory_item_name = $3, inventory_item_description = $4,
@@ -76,14 +87,15 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 			inventory_item_color_id = $12, inventory_item_finish_id = $13,
 			inventory_item_thickness_mm = $14, inventory_item_origin_country_id = $15,
 			inventory_item_barcode = $16, inventory_item_default_warehouse_id = $17,
-			inventory_item_updated_at = NOW(), inventory_item_updated_by = $18,
+			inventory_item_track_stock = $18,
+			inventory_item_updated_at = NOW(), inventory_item_updated_by = $19,
 			inventory_item_record_version = inventory_item_record_version + 1
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL`,
 		uuid, in.SKU, in.Name, in.Description, in.UnitID, in.UnitPrice,
 		nullableIntPtr(in.CurrencyID), nullableIntPtr(in.TaxRateID), custom,
 		in.Tracking, nullableIntPtr(in.MaterialID), nullableIntPtr(in.ColorID),
 		nullableIntPtr(in.FinishID), in.ThicknessMM, nullableIntPtr(in.OriginCountryID),
-		in.Barcode, nullableIntPtr(in.DefaultWarehouseID),
+		in.Barcode, nullableIntPtr(in.DefaultWarehouseID), trackStock,
 		nullableInt(actorEmployeeID))
 	if err != nil {
 		return mapItemWriteErr(err, "update")
@@ -120,6 +132,9 @@ func itemDiff(before Item, in CreateItemInput) []fieldDiff {
 	add("unitPrice", strconv.FormatFloat(before.UnitPrice, 'f', 2, 64),
 		strconv.FormatFloat(in.UnitPrice, 'f', 2, 64))
 	add("tracking", before.Tracking, in.Tracking)
+	if in.TrackStock != nil {
+		add("trackStock", strconv.FormatBool(before.TrackStock), strconv.FormatBool(*in.TrackStock))
+	}
 	add("thicknessMm", strconv.FormatFloat(before.ThicknessMM, 'f', 2, 64),
 		strconv.FormatFloat(in.ThicknessMM, 'f', 2, 64))
 	return out

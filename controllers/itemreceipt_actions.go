@@ -98,6 +98,28 @@ func (h *ItemReceiptOps) createAndPost(
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "itemReceipt": ir})
 }
 
+// NextSlabSequence GET /api/tenant/purchase-orders/{uuid}/next-slab-serial
+//
+// Previews the serial prefix and next running number for slabs received against
+// this order, so the receiving form can show them before posting. Like
+// ForPurchaseOrder it hangs off the order and is gated by the order's own
+// permission and IDOR guard. The numbers are advisory: posting assigns the real
+// serials under the order's row lock.
+func (h *ItemReceiptOps) NextSlabSequence(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	poOps := NewPurchaseOrderOps()
+	pool, _, _, ok := poOps.authPOByUUID(w, r, uuid, authz.ActionRead)
+	if !ok {
+		return
+	}
+	seq, err := itemreceipt.NextSlabSequence(r.Context(), pool, uuid)
+	if err != nil {
+		irFail(w, err, "Failed to preview slab serials.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "prefix": seq.Prefix, "next": seq.Next})
+}
+
 // Void POST /api/tenant/item-receipts/{uuid}/void  body {"voidReason":"..."}
 func (h *ItemReceiptOps) Void(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")

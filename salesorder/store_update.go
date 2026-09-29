@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/workflow"
 )
 
@@ -127,7 +128,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 		internalID); err != nil {
 		return nil, fmt.Errorf("clear previous sales order items: %w", err)
 	}
-	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {
+	lineIDs, err := insertLines(ctx, tx, internalID, lines, actorEmployeeID)
+	if err != nil {
+		return nil, err
+	}
+	// Re-check and re-reserve for the edited lines. The order's earlier hold is
+	// released first, so it does not compete with itself.
+	if err := reserveStock(ctx, tx, internalID, lines, lineIDs, actorEmployeeID); err != nil {
 		return nil, err
 	}
 
@@ -152,18 +159,33 @@ func customerSnapshotByInternalID(ctx context.Context, q workflow.Querier, custI
 
 // ----- SoftDelete ------------------------------------------------------------
 
-// SoftDelete marks a live order deleted.
+// SoftDelete marks a live order deleted and releases the stock it was holding,
+// so a deleted draft does not keep stone back from other orders.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	tag, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete sales order: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var internalID int
+	err = tx.QueryRow(ctx, `
 		UPDATE sales_order
 		SET sales_order_deleted_at = NOW(), sales_order_deleted_by = $2
-		WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL`,
-		uuid, actorOrSystem(actorEmployeeID))
+		WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL
+		RETURNING sales_order_id`,
+		uuid, actorOrSystem(actorEmployeeID)).Scan(&internalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("delete sales order: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := inventory.ReleaseOrder(ctx, tx, internalID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete sales order: %w", err)
 	}
 	return nil
 }

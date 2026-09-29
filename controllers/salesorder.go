@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
 	"stonesuite-backend/salesorder"
@@ -106,6 +107,11 @@ func (h *SalesOrderOps) authSOByUUID(w http.ResponseWriter, r *http.Request, uui
 func soFail(w http.ResponseWriter, err error, serverMsg string) {
 	if status, ok := approvalRejectStatus(err); ok {
 		fail(w, status, err.Error())
+		return
+	}
+	var shortage *inventory.StockShortageError
+	if errors.As(err, &shortage) {
+		writeStockShortage(w, shortage)
 		return
 	}
 	switch {

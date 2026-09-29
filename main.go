@@ -977,6 +977,8 @@ func main() {
 		mux.Handle("GET /api/tenant/config/approvers", tenantChain(crmAdminOps.ListApprovers))
 		mux.Handle("POST /api/tenant/config/approvers", tenantChain(crmAdminOps.CreateApprover))
 		mux.Handle("DELETE /api/tenant/config/approvers/{id}", tenantChain(crmAdminOps.DeleteApprover))
+		mux.Handle("GET /api/tenant/config/crm-notify-recipients", tenantChain(crmAdminOps.GetNotifyRecipients))
+		mux.Handle("PUT /api/tenant/config/crm-notify-recipients", tenantChain(crmAdminOps.SetNotifyRecipients))
 
 		// Inventory: shared item catalog (Sales Order line items reference it).
 		inv := controllers.NewInventoryOps()

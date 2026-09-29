@@ -50,7 +50,7 @@ type VendorPayment struct {
 
 	Vendor VendorRef `json:"vendor"`
 
-	OwnerUserID     string `json:"-"`
+	OwnerUserID string `json:"-"`
 
 	MethodID   int    `json:"methodId"`
 	MethodName string `json:"method"`

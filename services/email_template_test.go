@@ -164,8 +164,8 @@ func TestRenderEmail_HeaderAndBanner(t *testing.T) {
 	// The logo strip and the banner below it share the same gradient (matching
 	// the app nav bar), so both must carry it -- once as the logo strip's dark
 	// header (light logo stays legible), once as the banner itself.
-	assert.Equal(t, 2, strings.Count(out, referenceBannerGradient), "logo strip and banner both carry the gradient")
-	assert.Equal(t, 2, strings.Count(out, `bgcolor="#0a2943"`), "solid fallback on both rows for clients that drop CSS gradients")
+	assert.Equal(t, 1, strings.Count(out, referenceBannerGradient), "logo and banner are one combined gradient block")
+	assert.Equal(t, 1, strings.Count(out, `bgcolor="#0a2943"`), "solid fallback for clients that drop CSS gradients")
 	assert.Contains(t, out, "background:#1f6b45;border-radius:999px", "filled green pill")
 }
 
@@ -180,10 +180,12 @@ func TestRenderEmail_FooterBand(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, "FOLLOW STONESUITE")
+	assert.Contains(t, out, "Follow Us On")
 	assert.Contains(t, out, `href="https://www.linkedin.com/company/stonesuite"`)
 	assert.Contains(t, out, `href="https://x.com/stonesuite"`)
-	assert.Contains(t, out, `href="https://www.youtube.com/@stonesuite"`)
+	for _, name := range []string{"Facebook", "X", "LinkedIn", "Pinterest", "Instagram"} {
+		assert.Contains(t, out, `aria-label="`+name+`"`)
+	}
 	assert.Contains(t, out, `href="mailto:support@stonesuite.app"`, "Need help? line")
 	assert.Contains(t, out, `href="https://app.stonesuite.io/settings/notifications"`)
 	assert.Contains(t, out, `href="https://app.stonesuite.io/unsubscribe"`)
@@ -204,7 +206,7 @@ func TestRenderEmail_SectionOrder(t *testing.T) {
 
 	// referenceBannerGradient is deliberately not in this list: the logo strip
 	// and the banner now share it, so it is no longer a unique ordering marker.
-	order := []string{`alt="StoneSuite"`, "Invoice <span style=\"white-space:nowrap;\">INV-000123</span>", "Hello Alex Approver", ">Invoice Number<", "INV-0042.pdf", ">Review invoice<", "This link expires", "Need help?", "FOLLOW STONESUITE", ">Unsubscribe<"}
+	order := []string{`alt="StoneSuite"`, "Invoice <span style=\"white-space:nowrap;\">INV-000123</span>", "Hello Alex Approver", ">Invoice Number<", "INV-0042.pdf", ">Review invoice<", "This link expires", "Need help?", "Follow Us On", ">Unsubscribe<"}
 	last := -1
 	for _, mark := range order {
 		i := strings.Index(out, mark)
@@ -257,16 +259,16 @@ func TestRenderEmail_EqualGapBetweenEveryBodyBlock(t *testing.T) {
 
 	// Text blocks carry ~4px of line leading above and below, so a 12px margin
 	// reads as the same visible gap as the 16px around a box (card, button).
-	// greeting, paragraph, fallback link, fine print
-	assert.Equal(t, 4, strings.Count(out, "margin:0 0 12px;"), "text blocks share one gap")
+	// greeting, paragraph, fallback link, fine print, need-help
+	assert.Equal(t, 5, strings.Count(out, "margin:0 0 12px;"), "text blocks share one gap")
 	assert.Contains(t, out, `style="margin:16px 0;"`, "details box: 16px above and below")
 	assert.Equal(t, 2, strings.Count(out, "margin:20px 0 16px;"), "a box that follows another box gets 20px above")
-	assert.Contains(t, out, `<p style="margin:0;font-size:13px;color:#52525b;">Need help?`, "the last block adds no trailing gap")
+	assert.Contains(t, out, `<p style="margin:0;">Regards,<br>`, "the signature is the last block and adds no trailing gap")
 	assert.Contains(t, out, "This link expires in 1 hour.<br>If you didn", "fine-print lines share one block")
 	for _, uneven := range []string{"margin:4px 0 18px", "margin:18px 0 0", "margin:6px 0 16px", "margin:0 0 14px", "margin:0 0 4px", "margin:0 0 10px"} {
 		assert.NotContains(t, out, uneven)
 	}
-	assert.Contains(t, out, `<tr><td style="padding:24px;`, "card body padded equally on every side")
+	assert.Contains(t, out, `<tr><td style="padding:32px 35px 24px;`, "card body uses the reference side padding")
 }
 
 func TestKeepRefs(t *testing.T) {
@@ -318,5 +320,5 @@ func TestRenderEmail_LogoStripAndBannerShareTheSamePadding(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `style="padding:24px;background:linear-gradient`, "logo strip padded the same as the banner")
+	assert.Contains(t, out, `style="padding:24px 35px 40px;background:linear-gradient`, "combined header/banner uses the reference side padding")
 }

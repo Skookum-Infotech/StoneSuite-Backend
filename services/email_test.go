@@ -204,7 +204,6 @@ func withTestEmailBrand(t *testing.T) {
 		EmailPreferencesURL:    "https://app.stonesuite.io/settings/notifications",
 		EmailSocialXURL:        "https://x.com/stonesuite",
 		EmailSocialLinkedInURL: "https://www.linkedin.com/company/stonesuite",
-		EmailSocialYouTubeURL:  "https://www.youtube.com/@stonesuite",
 		EmailUnsubscribeURL:    "https://app.stonesuite.io/unsubscribe",
 		EmailViewInBrowserURL:  "https://app.stonesuite.io/view",
 		FrontendURL:            "https://app.stonesuite.io/",

@@ -114,7 +114,9 @@ type emailView struct {
 	Email
 	BrandName, SupportEmail                          string
 	PreferencesURL, UnsubscribeURL, ViewInBrowserURL string
-	SocialLinkedInURL, SocialXURL, SocialYouTubeURL  string
+	SocialLinkedInURL, SocialXURL                    string
+	SocialFacebookURL, SocialPinterestURL            string
+	SocialInstagramURL, FooterAddress                string
 	LogoURL                                          string
 }
 
@@ -133,16 +135,19 @@ func RenderEmail(e Email) (string, error) {
 		unsubscribe = cfg.EmailPreferencesURL
 	}
 	v := emailView{
-		Email:             e,
-		BrandName:         cfg.EmailBrandName,
-		SupportEmail:      cfg.SupportEmail,
-		PreferencesURL:    cfg.EmailPreferencesURL,
-		UnsubscribeURL:    unsubscribe,
-		ViewInBrowserURL:  cfg.EmailViewInBrowserURL,
-		SocialLinkedInURL: cfg.EmailSocialLinkedInURL,
-		SocialXURL:        cfg.EmailSocialXURL,
-		SocialYouTubeURL:  cfg.EmailSocialYouTubeURL,
-		LogoURL:           EmailLogoURL(),
+		Email:              e,
+		BrandName:          cfg.EmailBrandName,
+		SupportEmail:       cfg.SupportEmail,
+		PreferencesURL:     cfg.EmailPreferencesURL,
+		UnsubscribeURL:     unsubscribe,
+		ViewInBrowserURL:   cfg.EmailViewInBrowserURL,
+		SocialLinkedInURL:  cfg.EmailSocialLinkedInURL,
+		SocialXURL:         cfg.EmailSocialXURL,
+		SocialFacebookURL:  cfg.EmailSocialFacebookURL,
+		SocialPinterestURL: cfg.EmailSocialPinterestURL,
+		SocialInstagramURL: cfg.EmailSocialInstagramURL,
+		FooterAddress:      cfg.EmailFooterAddress,
+		LogoURL:            EmailLogoURL(),
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, v); err != nil {

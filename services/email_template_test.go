@@ -1,6 +1,7 @@
 package services
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -294,4 +295,28 @@ func TestRenderEmail_AttachmentCardLink(t *testing.T) {
 	out := mustRender(t, e)
 	assert.Contains(t, out, "INV-0042.pdf")
 	assert.NotContains(t, out, "/dl/tok")
+}
+
+// TestRenderEmail_NoDefaultTableBorders guards against Outlook/legacy clients
+// drawing a default 1px border on any <table> that omits the HTML border
+// attribute (CSS alone does not suppress it in every client).
+func TestRenderEmail_NoDefaultTableBorders(t *testing.T) {
+	withTestEmailBrand(t)
+	out := mustRender(t, sampleEmail())
+
+	tables := regexp.MustCompile(`<table[^>]*>`).FindAllString(out, -1)
+	require.NotEmpty(t, tables)
+	for _, tbl := range tables {
+		assert.Contains(t, tbl, `border="0"`, tbl)
+	}
+}
+
+// TestRenderEmail_LogoStripAndBannerShareTheSamePadding guards the two rows
+// looking like one continuous band (same gradient, same vertical padding)
+// rather than a cramped strip on top of a roomier one.
+func TestRenderEmail_LogoStripAndBannerShareTheSamePadding(t *testing.T) {
+	withTestEmailBrand(t)
+	out := mustRender(t, sampleEmail())
+
+	assert.Contains(t, out, `style="padding:24px;background:linear-gradient`, "logo strip padded the same as the banner")
 }

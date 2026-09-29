@@ -49,8 +49,7 @@ func TestRenderEmail_EveryBlockCarriesItsContent(t *testing.T) {
 	for _, want := range []string{
 		"<!DOCTYPE html>",
 		">APPROVAL NEEDED<",
-		"Invoice <span style=\"white-space:nowrap;\">INV-000123</span><br>",
-		`<span style="color:#c2f589;">needs your approval.</span>`,
+		"Invoice <span style=\"white-space:nowrap;\">INV-000123</span> needs your approval.",
 		">Please review and take action.<",
 		">Hello Alex Approver,<",
 		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="https://app.example/portal"`,
@@ -161,11 +160,12 @@ func TestRenderEmail_HeaderAndBanner(t *testing.T) {
 	assert.Contains(t, out, `alt="StoneSuite"`, "brand logo")
 	assert.Contains(t, out, `<img src="`+EmailLogoURL()+`"`, "logo is a hosted image; Gmail strips inline SVG")
 	assert.Contains(t, out, `<a href="https://app.stonesuite.io/view"`, "view-in-browser target comes from config")
-	// The logo strip and the banner below it share the same gradient (matching
-	// the app nav bar), so both must carry it -- once as the logo strip's dark
-	// header (light logo stays legible), once as the banner itself.
-	assert.Equal(t, 2, strings.Count(out, referenceBannerGradient), "logo strip and banner both carry the gradient")
-	assert.Equal(t, 2, strings.Count(out, `bgcolor="#0a2943"`), "solid fallback on both rows for clients that drop CSS gradients")
+	// The logo strip and the banner below it are one merged cell with one
+	// background (matching the app nav bar): a single gradient painted once
+	// across the whole combined height, not two per-row gradients that would
+	// each restart from 0% and visibly seam at the boundary.
+	assert.Equal(t, 1, strings.Count(out, referenceBannerGradient), "logo strip and banner are one cell, one gradient")
+	assert.Equal(t, 1, strings.Count(out, `bgcolor="#0a2943"`), "one solid fallback for clients that drop CSS gradients")
 	assert.Contains(t, out, "background:#1f6b45;border-radius:999px", "filled green pill")
 }
 
@@ -311,12 +311,19 @@ func TestRenderEmail_NoDefaultTableBorders(t *testing.T) {
 	}
 }
 
-// TestRenderEmail_LogoStripAndBannerShareTheSamePadding guards the two rows
-// looking like one continuous band (same gradient, same vertical padding)
-// rather than a cramped strip on top of a roomier one.
-func TestRenderEmail_LogoStripAndBannerShareTheSamePadding(t *testing.T) {
+// TestRenderEmail_HeaderIsOneMergedCell guards against the logo strip and the
+// banner going back to being two separate cells: that would give each its
+// own 0%-100% gradient over a different height and reintroduce a visible
+// seam at the boundary, even with identical gradient CSS on both.
+func TestRenderEmail_HeaderIsOneMergedCell(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `style="padding:24px;background:linear-gradient`, "logo strip padded the same as the banner")
+	logo := strings.Index(out, `alt="StoneSuite"`)
+	badge := strings.Index(out, ">APPROVAL NEEDED<")
+	require.GreaterOrEqual(t, logo, 0)
+	require.GreaterOrEqual(t, badge, 0)
+	between := out[logo:badge]
+	assert.NotContains(t, between, "background:linear-gradient", "no second gradient between the logo and the badge -- one cell, one background")
+	assert.NotContains(t, between, `bgcolor="#0a2943"`, "no second bgcolor between the logo and the badge")
 }

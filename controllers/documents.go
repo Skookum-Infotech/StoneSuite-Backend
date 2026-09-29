@@ -56,9 +56,10 @@ type DocumentLoader func(ctx context.Context, pool *pgxpool.Pool, uuid string, s
 type DocumentOps struct {
 	loaders map[string]DocumentLoader
 	// sendDisabled marks workflow keys that may still render/export a PDF
-	// (GetPDF) but must not be emailed via Send -- e.g. purchase_order, where
-	// "Send to Vendor" belongs on the vendor-facing AP documents (bill,
-	// payment, credit, vendor profile) rather than the internal PO itself.
+	// (GetPDF) but must not be emailed via the generic Send endpoint -- e.g.
+	// purchase_order, whose only email path is the "Send to Vendor" status
+	// transition (PurchaseOrderOps.Transition), so an unapproved order can
+	// never be mailed to a vendor outside the workflow.
 	sendDisabled map[string]bool
 	// renderPDF is injectable for tests; defaults to docpdf.Render.
 	renderPDF func(docpdf.PrintableDoc) ([]byte, error)
@@ -217,9 +218,6 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Needed up front (not just for the owner ping, as before): the
-	// customer email itself is now a Notify create-request, which requires
-	// a real tenantId.
 	tenant, tErr := tenancy.TenantFromContext(r.Context())
 	if tErr != nil {
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
@@ -231,76 +229,18 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	to := normalizeRecipients(req.To)
-	if len(to) == 0 && meta.DefaultRecipientEmail != "" {
-		to = []string{meta.DefaultRecipientEmail}
-	}
-	if len(to) == 0 {
-		fail(w, http.StatusBadRequest, "At least one recipient is required.")
+	p, serr := prepareSend(tenant.ID, recordID, doc, meta, req)
+	if serr != nil {
+		fail(w, serr.Status, serr.Msg)
 		return
 	}
-	cc := normalizeRecipients(req.CC)
-	for _, addr := range append(append([]string{}, to...), cc...) {
-		if !looksLikeEmail(addr) {
-			fail(w, http.StatusBadRequest, "Invalid recipient email: "+addr)
-			return
-		}
-	}
-	subject := req.Subject
-	if subject == "" {
-		subject = meta.DefaultSubject
-	}
-	if hasHeaderInjection(subject) {
-		fail(w, http.StatusBadRequest, "Invalid subject.")
+	sendID, serr := h.deliver(r.Context(), pool, identityID, ownerUserID, p)
+	if serr != nil {
+		fail(w, serr.Status, serr.Msg)
 		return
 	}
-
-	// 1. Render.
-	pdf, err := h.renderPDF(doc)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to render PDF.")
-		return
-	}
-	fileName := workflow.SanitizeFileName(meta.Number + ".pdf")
-	meta.DownloadURL = DocLinkURL(tenant.ID, recordID)
-	// actorUserID (tenant users.id) is for the document_sends row and the
-	// tenant audit log below. Notify, by contrast, scopes by the control-plane
-	// identity id — so identityID is what goes on the notification requests.
-	actorUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
-
-	// 2. Email with the PDF attached, via Notify — gets the same
-	// queue/retry/audit reliability layer the owner ping below already
-	// uses, instead of a direct, unretried Resend/SMTP call. The returned
-	// notification ids are stored on the send row (step 3) so the async
-	// delivery outcome can be looked back up from notify later.
-	notifyResult, err := services.SendNotificationWithResult(r.Context(),
-		customerSendRequest(tenant.ID, identityID, meta, recordID, subject, doc, req.Message, to, cc, fileName, pdf),
-	)
-	if err != nil {
-		fail(w, http.StatusBadGateway, "Failed to send email.")
-		return
-	}
-
-	// 3. Record the send + audit (best-effort audit).
-	sendID, err := workflow.InsertDocumentSend(r.Context(), pool, workflow.DocumentSend{
-		RecordID: recordID, WorkflowKey: meta.WorkflowKey,
-		SentTo: joinRecipients(to), CC: joinRecipients(cc),
-		Subject: subject, SentByUserID: actorUserID,
-		NotifyNotificationIDs: notifyResult.NotificationIDs,
-	})
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to record send.")
-		return
-	}
-	_ = workflow.LogAudit(r.Context(), pool, actorUserID, "document.sent", "document_send", sendID,
-		map[string]any{"recordId": recordID, "workflowKey": meta.WorkflowKey, "to": to})
-
-	ownerAddr, ownerIdentityID, ownerName := ownerSendContact(r.Context(), pool, ownerUserID)
-	notifyOwnerOfSend(r.Context(), services.SendNotification, sendOwner{Email: ownerAddr, IdentityID: ownerIdentityID, Name: ownerName},
-		tenant.ID, identityID, doc, meta.Number, meta.WorkflowKey, recordID, to, pdf, fileName)
-
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "sendId": sendID, "sentTo": to,
+		"success": true, "sendId": sendID, "sentTo": p.to,
 	})
 }
 

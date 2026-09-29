@@ -159,10 +159,12 @@ func TestRenderEmail_HeaderAndBanner(t *testing.T) {
 
 	assert.Contains(t, out, `alt="StoneSuite"`, "brand logo")
 	assert.Contains(t, out, `<img src="`+EmailLogoURL()+`"`, "logo is a hosted image; Gmail strips inline SVG")
-	assert.Contains(t, out, `bgcolor="#001219"`, "dark header so the light logo stays legible")
 	assert.Contains(t, out, `<a href="https://app.stonesuite.io/view"`, "view-in-browser target comes from config")
-	assert.Contains(t, out, referenceBannerGradient)
-	assert.Contains(t, out, `bgcolor="#0a2943"`, "solid fallback for clients that drop CSS gradients")
+	// The logo strip and the banner below it share the same gradient (matching
+	// the app nav bar), so both must carry it -- once as the logo strip's dark
+	// header (light logo stays legible), once as the banner itself.
+	assert.Equal(t, 2, strings.Count(out, referenceBannerGradient), "logo strip and banner both carry the gradient")
+	assert.Equal(t, 2, strings.Count(out, `bgcolor="#0a2943"`), "solid fallback on both rows for clients that drop CSS gradients")
 	assert.Contains(t, out, "background:#1f6b45;border-radius:999px", "filled green pill")
 }
 
@@ -199,7 +201,9 @@ func TestRenderEmail_SectionOrder(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	order := []string{`alt="StoneSuite"`, referenceBannerGradient, "Hello Alex Approver", ">Invoice Number<", "INV-0042.pdf", ">Review invoice<", "This link expires", "Need help?", "FOLLOW STONESUITE", ">Unsubscribe<"}
+	// referenceBannerGradient is deliberately not in this list: the logo strip
+	// and the banner now share it, so it is no longer a unique ordering marker.
+	order := []string{`alt="StoneSuite"`, "Invoice <span style=\"white-space:nowrap;\">INV-000123</span>", "Hello Alex Approver", ">Invoice Number<", "INV-0042.pdf", ">Review invoice<", "This link expires", "Need help?", "FOLLOW STONESUITE", ">Unsubscribe<"}
 	last := -1
 	for _, mark := range order {
 		i := strings.Index(out, mark)
@@ -209,14 +213,15 @@ func TestRenderEmail_SectionOrder(t *testing.T) {
 	}
 }
 
-func TestRenderEmail_HasOutlookFixedWidthFallback(t *testing.T) {
-	// Outlook desktop (Word engine) ignores CSS max-width; html/template strips
-	// literal comments, so the MSO wrapper must survive via the template funcs.
+func TestRenderEmail_HasNoFixedWidthWrapper(t *testing.T) {
+	// The card is deliberately fluid (fills the available width on desktop),
+	// so there is no CSS max-width to fix for Outlook and no mso conditional
+	// wrapper pinning it to a fixed pixel width.
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())
 
-	assert.Contains(t, out, `<!--[if mso]><table role="presentation" width="760"`)
-	assert.Contains(t, out, `<!--[if mso]></td></tr></table><![endif]-->`)
+	assert.NotContains(t, out, "max-width")
+	assert.NotContains(t, out, "[if mso]")
 }
 
 func TestRenderEmail_CTALinkOnlyInHref(t *testing.T) {

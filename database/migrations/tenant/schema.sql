@@ -8672,3 +8672,15 @@ CREATE INDEX IF NOT EXISTS idx_cm_source_payment
 -- worker can route a job to the owning module's loader. NULL = a CRM workflow
 -- record (every row enqueued before this column existed).
 ALTER TABLE rag_index_queue ADD COLUMN IF NOT EXISTS record_type TEXT;
+
+-- Tenant-template schema -- CRM lifecycle emails: which roles count as the
+-- "Manager" and "Finance" recipient groups. The data model has no manager /
+-- reports-to relation, so a tenant names the roles instead; every active user
+-- holding one of them is emailed for the events the CRM email diagram
+-- addresses to that group (crmnotify/). An empty group emails nobody.
+CREATE TABLE IF NOT EXISTS crm_notify_recipient_role (
+    recipient_group VARCHAR(16) NOT NULL CHECK (recipient_group IN ('manager', 'finance')),
+    role_id         UUID        NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (recipient_group, role_id)
+);

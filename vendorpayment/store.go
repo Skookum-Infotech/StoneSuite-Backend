@@ -90,7 +90,6 @@ func scanVendorPayment(row pgx.Row) (*VendorPayment, paymentMeta, error) {
 	if err != nil {
 		return nil, paymentMeta{}, err
 	}
-	p.OwnerEmployeeID = ownerEmpID
 	p.ScheduledDate = scheduledDate
 	p.CurrencyID = currencyID
 	p.ApprovedByEmployeeID = approvedByID

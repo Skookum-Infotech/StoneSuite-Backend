@@ -30,7 +30,6 @@ var systemFields = map[string]resolved{
 	"applied_total":    {"vp.vendor_payment_applied_total", query.TypeNumber},
 	"unapplied_amount": {"vp.vendor_payment_unapplied_amount", query.TypeNumber},
 	"approval_status":  {"vp.vendor_payment_approval_status", query.TypeString},
-	"owner_id":         {"vp.vendor_payment_owner_id::text", query.TypeString},
 	"created_by":       {"vp.vendor_payment_created_by::text", query.TypeString},
 	"updated_by":       {"vp.vendor_payment_updated_by::text", query.TypeString},
 	"created_at":       {"vp.vendor_payment_created_at", query.TypeDate},

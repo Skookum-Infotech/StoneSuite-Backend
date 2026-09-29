@@ -60,6 +60,26 @@ approval again. An edit to an approved customer also sends it for approval
 again, so it becomes Active only when its approvers approve it. If no
 approvers are configured, Make Active is used instead.
 
+## Email notifications
+
+StoneSuite emails the right people as a lead, prospect or customer moves
+through its statuses. The owner is the person the record is assigned to.
+Managers and Finance are the members of the roles your administrator has
+chosen for them; if no role is chosen for a group, that group is simply not
+emailed.
+
+- **Lead:** the owner is emailed when the lead is created and when it is
+  marked Qualified. Managers are emailed when it is marked Unqualified.
+- **Prospect:** the owner and managers are emailed when a prospect is created,
+  including when a lead is converted, and when it reaches Decision Pending.
+  Managers alone are emailed for Proposal Sent, In Negotiation and Lost. The
+  owner is emailed when it reaches Pending Conversion.
+- **Customer:** the owner and managers are emailed when a customer is created
+  as a Draft. If approvers are configured, the approvers are emailed to review
+  it, and the person who submitted it is emailed if it is rejected and sent
+  back to Draft. The owner, managers and Finance are emailed when the customer
+  becomes Active, goes on Credit Hold, or becomes Inactive.
+
 ## Custom fields
 
 Each of the three pipelines (lead, prospect, customer) can have up to 15

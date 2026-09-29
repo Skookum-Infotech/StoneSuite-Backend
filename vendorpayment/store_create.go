@@ -89,8 +89,10 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 		return nil, err
 	}
 
-	ownerEmp := in.OwnerEmployeeID
-	if ownerEmp == nil && actorEmployeeID != 0 {
+	// Owner is not client-settable: the creating employee owns the payment
+	// (drives own-scope visibility and approval notifications).
+	var ownerEmp *int
+	if actorEmployeeID != 0 {
 		ownerEmp = &actorEmployeeID
 	}
 

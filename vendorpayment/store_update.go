@@ -51,11 +51,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorP
 	_, err = pool.Exec(ctx, `
 		UPDATE vendor_payment SET
 			vendor_payment_method = $1, vendor_payment_reference_number = $2, vendor_payment_date = COALESCE($3, vendor_payment_date),
-			vendor_payment_scheduled_date = $4, vendor_payment_currency = $5, vendor_payment_owner_id = COALESCE($6, vendor_payment_owner_id),
-			vendor_payment_memo = $7, vendor_payment_internal_notes = $8, vendor_payment_custom_fields = $9,
-			vendor_payment_updated_at = NOW(), vendor_payment_updated_by = $10, vendor_payment_record_version = vendor_payment_record_version + 1
-		WHERE vendor_payment_id = $11`,
-		in.MethodID, in.ReferenceNumber, in.PaymentDate, in.ScheduledDate, in.CurrencyID, in.OwnerEmployeeID,
+			vendor_payment_scheduled_date = $4, vendor_payment_currency = $5,
+			vendor_payment_memo = $6, vendor_payment_internal_notes = $7, vendor_payment_custom_fields = $8,
+			vendor_payment_updated_at = NOW(), vendor_payment_updated_by = $9, vendor_payment_record_version = vendor_payment_record_version + 1
+		WHERE vendor_payment_id = $10`,
+		in.MethodID, in.ReferenceNumber, in.PaymentDate, in.ScheduledDate, in.CurrencyID,
 		in.Memo, in.InternalNotes, custom, nullableInt(actorEmployeeID), internalID)
 	if err != nil {
 		return nil, fmt.Errorf("update vendor payment: %w", err)

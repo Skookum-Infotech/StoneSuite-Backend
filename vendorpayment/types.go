@@ -51,7 +51,6 @@ type VendorPayment struct {
 	Vendor VendorRef `json:"vendor"`
 
 	OwnerUserID     string `json:"-"`
-	OwnerEmployeeID *int   `json:"ownerEmployeeId,omitempty"`
 
 	MethodID   int    `json:"methodId"`
 	MethodName string `json:"method"`
@@ -98,7 +97,6 @@ type CreateVendorPaymentInput struct {
 	PaymentDate     *time.Time         `json:"paymentDate,omitempty"`
 	ScheduledDate   *time.Time         `json:"scheduledDate,omitempty"`
 	CurrencyID      *int               `json:"currencyId,omitempty"`
-	OwnerEmployeeID *int               `json:"ownerEmployeeId,omitempty"`
 	Amount          float64            `json:"amount"`
 	Memo            string             `json:"memo"`
 	InternalNotes   string             `json:"internalNotes"`
@@ -116,7 +114,6 @@ type UpdateVendorPaymentInput struct {
 	PaymentDate     *time.Time     `json:"paymentDate,omitempty"`
 	ScheduledDate   *time.Time     `json:"scheduledDate,omitempty"`
 	CurrencyID      *int           `json:"currencyId,omitempty"`
-	OwnerEmployeeID *int           `json:"ownerEmployeeId,omitempty"`
 	Memo            string         `json:"memo"`
 	InternalNotes   string         `json:"internalNotes"`
 	CustomFields    map[string]any `json:"customFields"`

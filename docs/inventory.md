@@ -16,10 +16,29 @@ back to.
 
 ## Units and Slabs
 
-A Unit (shown as Units / Slabs in the sidebar) is an individual physical
-slab or piece tracked on its own, received with the Receive Slab action from
-Inventory → Units / Slabs. Its detail page records the item it belongs to,
-its location, dimensions, attributes, and its lineage (where it came from).
+A Unit is an individual physical slab or piece tracked on its own. Every unit
+is listed under Inventory → Inventory in the sidebar. You don't add units
+there: a slab enters inventory when it is received against a purchase order —
+see Item Receipts in the Purchasing guide — and it takes the serial number
+assigned during that receipt. Its detail page records the item it belongs to,
+the receipt it arrived on, its location, dimensions, attributes, and its
+lineage (where it came from).
+
+A slab is never partly used: it is either still whole, held for a fabrication
+job, cut, or scrapped. When a slab is cut, all of it leaves stock, the offcuts
+you keep come back as new units, and whatever did not come back — the finished
+product and the saw kerf — counts as used. The Inventory list shows this for
+every unit in its Consumption column: a small bar and a line such as
+"Untouched", "Held for FJOB-000012", or "66% used · 15.20 sq ft back".
+
+Opening a unit takes you to its Usage tab, which is about exactly that. It leads
+with how much of the piece is gone ("Untouched", "66% used", "Fully used"), a bar
+and the numbers behind it — the size before cutting, what was used, and what came
+back as offcuts. Below that is the unit's lifecycle: where it was received (or
+which slab it was cut from), the fabrication job that held it, when it was cut or
+scrapped, and where it is now. A cut slab also lists its offcuts, each linked to
+its own page. The unit's fixed facts — item, dimensions, grade, location and
+lineage — are on the Details tab, and its movement trail on the History tab.
 
 ## Bundles
 

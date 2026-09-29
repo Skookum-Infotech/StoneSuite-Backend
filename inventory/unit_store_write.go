@@ -12,9 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// CreateUnit receives a physical piece into stock: resolves its parent item,
-// computes the area in the ITEM's unit, inserts the unit, and increments stock
-// through a 'received' ledger row — the only external way serialized stock grows.
+// CreateUnit receives a physical piece into stock outside a purchase-order
+// receipt: it resolves the piece's item, bin, bundle and vendor from their
+// uuids, then delegates to ReceiveUnitTx in its own transaction.
+//
+// It is no longer reachable over HTTP -- a receipt against a purchase order is
+// the only way new slabs enter stock through the app -- and remains for
+// fixtures and any future non-HTTP caller such as a data importer.
 func CreateUnit(ctx context.Context, pool *pgxpool.Pool, in CreateUnitInput, actorEmployeeID int) (*Unit, error) {
 	if strings.TrimSpace(in.Serial) == "" {
 		return nil, ClientError{Msg: "A unit serial is required."}
@@ -33,19 +37,6 @@ func CreateUnit(ctx context.Context, pool *pgxpool.Pool, in CreateUnitInput, act
 	if err != nil {
 		return nil, err
 	}
-	// A count unit like SLAB would make offcut recovery produce a fractional
-	// count, so serialized stock must be area-denominated.
-	if item.unitCategory != UnitCategoryArea {
-		return nil, ClientError{Msg: fmt.Sprintf(
-			"Serialized items must use an area unit; %s is a %s unit.", item.unitCode, item.unitCategory)}
-	}
-	// Computed from the millimetres into the item's own unit. in.Area is
-	// deliberately not used — see the note on CreateUnitInput.Area.
-	area, err := AreaFor(in.LengthMM, in.WidthMM, item.unitCode, item.unitCategory)
-	if err != nil {
-		return nil, err
-	}
-
 	binID, err := resolveUnitBin(ctx, tx, in.BinUUID, in.WarehouseID)
 	if err != nil {
 		return nil, err
@@ -59,52 +50,43 @@ func CreateUnit(ctx context.Context, pool *pgxpool.Pool, in CreateUnitInput, act
 		return nil, err
 	}
 
-	var (
-		unitID  int
-		newUUID string
-	)
-	err = tx.QueryRow(ctx, `
-		INSERT INTO inventory_slab (
-			slab_serial, slab_unit_kind, slab_vendor_id, slab_supplier_code, slab_barcode,
-			slab_received_at, slab_received_by,
-			inventory_item_id, warehouse_id, inventory_bin_id, inventory_bundle_id,
-			slab_bundle_id, slab_block_id, slab_lot,
-			slab_length_mm, slab_width_mm, slab_thickness_mm, slab_area, slab_area_unit_id,
-			slab_form, slab_status, slab_grade, slab_finish, slab_finish_id, slab_created_by)
-		VALUES ($1,$2,$3,$4,$5, CURRENT_DATE,$6, $7,$8,$9,$10, $11,$12,$13,
-			$14,$15,$16,$17,$18, 'full','available',$19,$20,$21,$6)
-		RETURNING inventory_slab_id, inventory_slab_uuid`,
-		in.Serial, UnitKindSlab, vendorID, in.SupplierCode, in.Barcode,
-		nullableInt(actorEmployeeID),
-		item.itemID, in.WarehouseID, binID, bundleID,
-		in.BundleID, in.BlockID, in.Lot,
-		in.LengthMM, in.WidthMM, in.ThicknessMM, area, item.unitID,
-		in.Grade, in.Finish, nullableIntPtr(in.FinishID),
-	).Scan(&unitID, &newUUID)
+	rec, err := ReceiveUnitTx(ctx, tx, ReceiveUnitParams{
+		Serial:       in.Serial,
+		VendorID:     vendorID,
+		SupplierCode: in.SupplierCode,
+		Barcode:      in.Barcode,
+		Item: ItemUnitInfo{
+			ItemID: item.itemID, UnitID: item.unitID, UnitCode: item.unitCode,
+			UnitCategory: item.unitCategory, Tracking: item.tracking,
+		},
+		WarehouseID: in.WarehouseID,
+		BinID:       binID,
+		BundleID:    bundleID,
+		BundleLabel: in.BundleID,
+		BlockID:     in.BlockID,
+		Lot:         in.Lot,
+		LengthMM:    in.LengthMM,
+		WidthMM:     in.WidthMM,
+		ThicknessMM: in.ThicknessMM,
+		Grade:       in.Grade,
+		Finish:      in.Finish,
+		FinishID:    in.FinishID,
+	}, actorEmployeeID)
 	if err != nil {
-		return nil, mapUnitWriteErr(err, "insert")
-	}
-
-	if err := SlabLedgerAndStock(ctx, tx, unitID, item.itemID, in.WarehouseID,
-		EventReceived, area, nil, actorEmployeeID); err != nil {
-		return nil, err
-	}
-	if err := writeUnitHistory(ctx, tx, unitID, "create", "", "", in.Serial,
-		nil, binID, nil, "", actorEmployeeID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create inventory unit: %w", err)
 	}
-	return GetUnit(ctx, pool, newUUID)
+	return GetUnit(ctx, pool, rec.UUID)
 }
 
 // resolveUnitBin validates a bin belongs to the unit's warehouse.
-func resolveUnitBin(ctx context.Context, tx pgx.Tx, binUUID *string, warehouseID int) (*int, error) {
+func resolveUnitBin(ctx context.Context, q pgxQuerier, binUUID *string, warehouseID int) (*int, error) {
 	if binUUID == nil || strings.TrimSpace(*binUUID) == "" {
 		return nil, nil
 	}
-	b, err := binByUUID(ctx, tx, *binUUID, false)
+	b, err := binByUUID(ctx, q, *binUUID, false)
 	if err != nil {
 		if err == ErrNotFound {
 			return nil, ClientError{Msg: "Unknown bin."}

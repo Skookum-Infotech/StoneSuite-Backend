@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/purchaseorder"
 )
 
@@ -38,15 +39,15 @@ func Void(ctx context.Context, pool *pgxpool.Pool, uuid string, in VoidInput, ac
 
 	// Same lock order as Post: receipt, then order.
 	var irInternalID, curStatusID, poInternalID, warehouseID int
-	var curStatusCode string
+	var curStatusCode, receiptNumber string
 	err = tx.QueryRow(ctx, `
 		SELECT ir.item_receipt_id, ir.item_receipt_status, rs.record_status_code,
-		       ir.purchase_order_id, ir.warehouse_id
+		       ir.purchase_order_id, ir.warehouse_id, COALESCE(ir.item_receipt_number, '')
 		FROM item_receipt ir
 		JOIN lkp_record_status rs ON rs.record_status_id = ir.item_receipt_status
 		WHERE ir.item_receipt_uuid = $1 AND ir.item_receipt_deleted_at IS NULL
 		FOR UPDATE OF ir`, uuid,
-	).Scan(&irInternalID, &curStatusID, &curStatusCode, &poInternalID, &warehouseID)
+	).Scan(&irInternalID, &curStatusID, &curStatusCode, &poInternalID, &warehouseID, &receiptNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -73,7 +74,7 @@ func Void(ctx context.Context, pool *pgxpool.Pool, uuid string, in VoidInput, ac
 		if err != nil {
 			return nil, fmt.Errorf("lock purchase order for void: %w", err)
 		}
-		if err := reverseLines(ctx, tx, irInternalID, warehouseID, actorEmployeeID); err != nil {
+		if err := reverseLines(ctx, tx, irInternalID, warehouseID, receiptNumber, actorEmployeeID); err != nil {
 			return nil, err
 		}
 	}
@@ -116,7 +117,12 @@ func Void(ctx context.Context, pool *pgxpool.Pool, uuid string, in VoidInput, ac
 // reverseLines undoes a posting's quantity and stock effects. It mirrors the
 // forward loop in Post exactly — same lines, same accepted quantities, opposite
 // sign — so the two can only ever disagree if this loop is edited alone.
-func reverseLines(ctx context.Context, tx pgx.Tx, irInternalID, warehouseID, actorEmployeeID int) error {
+//
+// A slab-tracked line is reversed through its slabs (see
+// inventory.ReverseReceivedUnitsTx), which refuses if any has since been used.
+// A serialized line with no slab rows is a receipt posted before slabs were tied
+// to receipts: it was booked as a bulk quantity, so it reverses as one.
+func reverseLines(ctx context.Context, tx pgx.Tx, irInternalID, warehouseID int, receiptNumber string, actorEmployeeID int) error {
 	rows, err := tx.Query(ctx, `
 		SELECT irl.item_receipt_line_id, irl.purchase_order_item_id, irl.inventory_item_id,
 		       irl.qty_received - irl.qty_rejected
@@ -169,6 +175,17 @@ func reverseLines(ctx context.Context, tx pgx.Tx, irInternalID, warehouseID, act
 			return fmt.Errorf("reverse ordered line received quantity: %w", err)
 		}
 		if l.itemID == nil {
+			continue
+		}
+		slabIDs, err := postedSlabIDs(ctx, tx, l.lineID)
+		if err != nil {
+			return err
+		}
+		if len(slabIDs) > 0 {
+			if err := inventory.ReverseReceivedUnitsTx(ctx, tx, slabIDs, warehouseID,
+				"Receipt "+receiptNumber+" voided", actorEmployeeID); err != nil {
+				return fromInventoryErr(err)
+			}
 			continue
 		}
 		if err := ledgerAndStock(ctx, tx, *l.itemID, warehouseID,

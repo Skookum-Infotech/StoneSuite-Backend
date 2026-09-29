@@ -4204,6 +4204,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_received  ON inventory_slab_led
 CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_consumed  ON inventory_slab_ledger (inventory_slab_id) WHERE event = 'consumed';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_slab_ledger_scrapped  ON inventory_slab_ledger (inventory_slab_id) WHERE event = 'scrapped';
 CREATE INDEX IF NOT EXISTS idx_slab_ledger_item ON inventory_slab_ledger (inventory_item_id);
+-- Per-slab lookups: the Inventory list reads each cut slab's 'recovered' offcut
+-- rows to show how much of it came back. The once-only partial indexes above
+-- cover received/consumed/scrapped but not recovered.
+CREATE INDEX IF NOT EXISTS idx_slab_ledger_slab ON inventory_slab_ledger (inventory_slab_id);
 
 -- fabrication_job -- header -------------------------------------------------
 CREATE TABLE IF NOT EXISTS fabrication_job (
@@ -5922,6 +5926,56 @@ CREATE TABLE IF NOT EXISTS inventory_unit_history (
 );
 CREATE INDEX IF NOT EXISTS idx_inv_unit_history     ON inventory_unit_history (inventory_slab_id, history_at DESC);
 CREATE INDEX IF NOT EXISTS idx_inv_unit_history_bin ON inventory_unit_history (to_bin_id, history_at DESC);
+
+-- ---------------------------------------------------------------------
+-- 6b. item_receipt_line_unit -- the physical slabs one receipt line brings in.
+--
+-- A receipt line for a SERIALIZED item carries one row here per slab instead of
+-- a free-typed quantity: the line's qty_received is the SUM of these rows' area,
+-- and posting the receipt turns each row into an inventory_slab (stock is then
+-- written through inventory_slab_ledger only, never the bulk inventory_ledger).
+-- This is what makes a purchase-order receipt the ONLY way new slabs enter stock.
+--
+-- The row is the receiver's intent captured BEFORE posting (dimensions, bin,
+-- optional attributes). slab_serial and inventory_slab_id stay empty until the
+-- post assigns the serial under the purchase order's row lock, so two receipts
+-- against one order can never mint the same serial.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS item_receipt_line_unit (
+    item_receipt_line_unit_id SERIAL        PRIMARY KEY,
+    item_receipt_line_id      INTEGER       NOT NULL REFERENCES item_receipt_line(item_receipt_line_id) ON DELETE CASCADE,
+    unit_seq                  INTEGER       NOT NULL,                  -- row order within the line
+    slab_length_mm            DECIMAL(10,2) NOT NULL,
+    slab_width_mm             DECIMAL(10,2) NOT NULL,
+    slab_thickness_mm         DECIMAL(10,2) NOT NULL,
+    slab_area                 DECIMAL(14,3) NOT NULL,                  -- in the item's own unit, computed server-side
+    inventory_bin_id          INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id),
+    slab_block_id             VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_lot                  VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_grade                VARCHAR(50)   NOT NULL DEFAULT '',
+    slab_supplier_code        VARCHAR(80)   NOT NULL DEFAULT '',
+    slab_serial               VARCHAR(50)   NOT NULL DEFAULT '',       -- assigned at post
+    inventory_slab_id         INTEGER           NULL REFERENCES inventory_slab(inventory_slab_id),
+    unit_created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_irlu_line_seq UNIQUE (item_receipt_line_id, unit_seq),
+    CONSTRAINT chk_irlu_dims    CHECK (slab_length_mm > 0 AND slab_width_mm > 0 AND slab_thickness_mm > 0),
+    CONSTRAINT chk_irlu_area    CHECK (slab_area > 0)
+);
+-- One slab traces back to at most one receipt row.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_irlu_slab
+    ON item_receipt_line_unit (inventory_slab_id) WHERE inventory_slab_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_irlu_line ON item_receipt_line_unit (item_receipt_line_id);
+
+-- ---------------------------------------------------------------------
+-- 6c. purchase_order_item.expected_slabs -- how many slabs the buyer expects a
+-- slab line to bring. Stone is bought by area (the line quantity, priced per
+-- sq ft) but ordered by bundle/lot, so the buyer knows a slab COUNT while the
+-- exact area is only known once the slabs are measured. Purely informational:
+-- it never gates ordering or receiving, it lets the receiving screen and the
+-- order show "11 of about 12 slabs". NULL = not stated.
+-- ---------------------------------------------------------------------
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS
+    expected_slabs INTEGER NULL CHECK (expected_slabs IS NULL OR expected_slabs > 0);
 
 -- ---------------------------------------------------------------------
 -- 7. Repair uq_inventory_ledger_receipt_line / _return_line (line 4835).

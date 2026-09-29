@@ -643,7 +643,6 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/inventory/lookups/{kind}` | staff token + tenant | `invLookup.Create` |
 | `DELETE` | `/api/tenant/inventory/lookups/{kind}/{id}` | staff token + tenant | `invLookup.Delete` |
 | `PATCH` | `/api/tenant/inventory/lookups/{kind}/{id}` | staff token + tenant | `invLookup.Update` |
-| `POST` | `/api/tenant/inventory/slabs` | staff token + tenant | `invUnit.Create` |
 | `GET` | `/api/tenant/inventory/slabs/{uuid}` | staff token + tenant | `invUnit.Get` |
 | `POST` | `/api/tenant/inventory/slabs/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
 | `GET` | `/api/tenant/inventory/transfers` | staff token + tenant | `invTrf.List` |
@@ -658,9 +657,9 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/inventory/transfers/{uuid}/ship` | staff token + tenant | `invTrf.Ship` |
 | `POST` | `/api/tenant/inventory/transfers/{uuid}/transition` | staff token + tenant | `invTrf.Transition` |
 | `GET` | `/api/tenant/inventory/units` | staff token + tenant | `invUnit.List` |
-| `POST` | `/api/tenant/inventory/units` | staff token + tenant | `invUnit.Create` |
 | `GET` | `/api/tenant/inventory/units/remnants` | staff token + tenant | `invUnit.Remnants` |
 | `POST` | `/api/tenant/inventory/units/search` | staff token + tenant | `invUnit.Search` |
+| `POST` | `/api/tenant/inventory/units/summary` | staff token + tenant | `invUnit.Summary` |
 | `GET` | `/api/tenant/inventory/units/{uuid}` | staff token + tenant | `invUnit.Get` |
 | `PATCH` | `/api/tenant/inventory/units/{uuid}/bin` | staff token + tenant | `invUnit.MoveBin` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/cut` | staff token + tenant | `invUnit.Cut` |
@@ -765,6 +764,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/purchase-orders/{uuid}/approve` | staff token + tenant | `poOps.Approve` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/audit` | staff token + tenant | `poOps.Audit` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/convert-to-bill` | staff token + tenant | `poOps.ConvertToBill` |
+| `GET` | `/api/tenant/purchase-orders/{uuid}/next-slab-serial` | staff token + tenant | `irOps.NextSlabSequence` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/receipts` | staff token + tenant | `irOps.ForPurchaseOrder` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/reject` | staff token + tenant | `poOps.Reject` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/transition` | staff token + tenant | `poOps.Transition` |

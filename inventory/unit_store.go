@@ -9,13 +9,52 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// unitFilterFrom is the FROM clause every unit query shares: the unit plus the
+// tables its filter, sort and search expressions (unitResolver) refer to. It is
+// its own constant so SummarizeUnits can filter through exactly the same joins
+// as SearchUnits without dragging in the display-only ones below.
+const unitFilterFrom = `
+	FROM inventory_slab s
+	JOIN inventory_item ii ON ii.inventory_item_id = s.inventory_item_id
+	JOIN lkp_warehouse w   ON w.warehouse_id = s.warehouse_id
+	JOIN lkp_unit au       ON au.unit_id = s.slab_area_unit_id
+	LEFT JOIN inventory_bin b     ON b.inventory_bin_id = s.inventory_bin_id
+	LEFT JOIN inventory_bundle bu ON bu.inventory_bundle_id = s.inventory_bundle_id
+	LEFT JOIN inventory_slab p    ON p.inventory_slab_id = s.slab_parent_slab_id
+	LEFT JOIN inventory_slab r    ON r.inventory_slab_id = s.slab_root_slab_id`
+
+// unitRecoveredJoin adds, for a CONSUMED unit, how many offcuts came back from
+// cutting it and their total area (rec.offcut_count, rec.recovered_area).
+//
+// The slab ledger is the source of truth: a 'recovered' row is written for an
+// offcut that re-entered stock, by both the manual cut and a job's disposition,
+// while an offcut too small to keep is born scrapped and never gets one. Reading
+// the ledger — not the offcut's own flags — is what keeps the two paths, which
+// stamp those flags differently, in agreement. The lateral term is skipped for
+// any unit that has not been cut.
+const unitRecoveredJoin = `
+	LEFT JOIN LATERAL (
+		SELECT COUNT(*) AS offcut_count, COALESCE(SUM(l.quantity_delta), 0) AS recovered_area
+		FROM inventory_slab c
+		JOIN inventory_slab_ledger l ON l.inventory_slab_id = c.inventory_slab_id AND l.event = 'recovered'
+		WHERE s.slab_status = 'consumed'
+		  AND c.slab_parent_slab_id = s.inventory_slab_id
+		  AND c.slab_deleted_at IS NULL
+	) rec ON TRUE`
+
 // unitSelect is the canonical unit projection, joined to everything a yard
 // screen needs to render a row without a second round trip.
+//
+// The fabrication and ledger joins are each at most one row per unit: a unit has
+// one live job allocation (uq_fab_slab_live) and one 'consumed' and one
+// 'scrapped' ledger row (uq_slab_ledger_consumed / _scrapped), so none of them
+// can multiply the result.
 const unitSelect = `
 	SELECT s.inventory_slab_uuid, s.slab_serial, s.slab_unit_kind,
 	       s.slab_vendor_id, s.slab_supplier_code, s.slab_barcode,
@@ -24,19 +63,34 @@ const unitSelect = `
 	       b.inventory_bin_uuid, COALESCE(b.bin_path,''),
 	       s.slab_bundle_id, bu.inventory_bundle_uuid, s.slab_block_id, s.slab_lot,
 	       s.slab_length_mm, s.slab_width_mm, s.slab_thickness_mm, s.slab_area, s.slab_area_unit_id,
-	       s.slab_form, s.slab_status, p.inventory_slab_uuid, r.inventory_slab_uuid,
+	       au.unit_code,
+	       s.slab_form, s.slab_status,
+	       p.inventory_slab_uuid, COALESCE(p.slab_serial,''),
+	       r.inventory_slab_uuid, COALESCE(r.slab_serial,''),
 	       s.slab_is_usable_remnant, s.slab_grade, s.slab_finish, s.slab_finish_id, s.slab_photo_key,
-	       s.slab_created_at, s.slab_updated_at
-	FROM inventory_slab s
-	JOIN inventory_item ii ON ii.inventory_item_id = s.inventory_item_id
-	JOIN lkp_warehouse w   ON w.warehouse_id = s.warehouse_id
-	LEFT JOIN inventory_bin b     ON b.inventory_bin_id = s.inventory_bin_id
-	LEFT JOIN inventory_bundle bu ON bu.inventory_bundle_id = s.inventory_bundle_id
-	LEFT JOIN inventory_slab p    ON p.inventory_slab_id = s.slab_parent_slab_id
-	LEFT JOIN inventory_slab r    ON r.inventory_slab_id = s.slab_root_slab_id`
+	       irc.item_receipt_uuid, COALESCE(irc.item_receipt_number,''),
+	       fj.fabrication_job_uuid, COALESCE(fj.fabrication_job_number,''), fjs.reserved_at,
+	       lc.occurred_at, ls.occurred_at,
+	       COALESCE(rec.offcut_count, 0), COALESCE(rec.recovered_area, 0),
+	       s.slab_created_at, s.slab_updated_at` +
+	unitFilterFrom + `
+	LEFT JOIN item_receipt_line_unit iru ON iru.inventory_slab_id = s.inventory_slab_id
+	LEFT JOIN item_receipt_line irl      ON irl.item_receipt_line_id = iru.item_receipt_line_id
+	LEFT JOIN item_receipt irc           ON irc.item_receipt_id = irl.item_receipt_id
+	                                    AND irc.item_receipt_deleted_at IS NULL
+	LEFT JOIN fabrication_job_slab fjs   ON fjs.inventory_slab_id = s.inventory_slab_id
+	                                    AND fjs.allocation_status IN ('reserved','consumed')
+	LEFT JOIN fabrication_job fj         ON fj.fabrication_job_id = fjs.fabrication_job_id
+	                                    AND fj.fabrication_job_deleted_at IS NULL
+	LEFT JOIN inventory_slab_ledger lc   ON lc.inventory_slab_id = s.inventory_slab_id AND lc.event = 'consumed'
+	LEFT JOIN inventory_slab_ledger ls   ON ls.inventory_slab_id = s.inventory_slab_id AND ls.event = 'scrapped'` +
+	unitRecoveredJoin
 
 func scanUnit(row pgx.Row) (*Unit, error) {
-	var u Unit
+	var (
+		u     Unit
+		jobID *string
+	)
 	if err := row.Scan(
 		&u.ID, &u.Serial, &u.Kind,
 		&u.VendorID, &u.SupplierCode, &u.Barcode,
@@ -45,13 +99,34 @@ func scanUnit(row pgx.Row) (*Unit, error) {
 		&u.BinID, &u.BinPath,
 		&u.BundleID, &u.BundleUUID, &u.BlockID, &u.Lot,
 		&u.LengthMM, &u.WidthMM, &u.ThicknessMM, &u.Area, &u.AreaUnitID,
-		&u.Form, &u.Status, &u.ParentUnitID, &u.RootUnitID,
+		&u.AreaUnitCode,
+		&u.Form, &u.Status,
+		&u.ParentUnitID, &u.ParentSerial,
+		&u.RootUnitID, &u.RootSerial,
 		&u.IsUsableRemnant, &u.Grade, &u.Finish, &u.FinishID, &u.PhotoKey,
+		&u.ReceiptID, &u.ReceiptNumber,
+		&jobID, &u.Usage.JobNumber, &u.Usage.ReservedAt,
+		&u.Usage.ConsumedAt, &u.Usage.ScrappedAt,
+		&u.Usage.OffcutCount, &u.Usage.RecoveredArea,
 		&u.CreatedAt, &u.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	if jobID != nil {
+		u.Usage.JobID = *jobID
+	}
+	u.Usage.UsedArea = usedArea(u.Status, u.Area, u.Usage.RecoveredArea)
 	return &u, nil
+}
+
+// usedArea is the stone a consumed unit lost to product and kerf: everything
+// that was not recovered as an offcut. Zero for any unit still in stock (or
+// scrapped), and clamped so a rounding sliver can never read as negative.
+func usedArea(status string, area, recovered float64) float64 {
+	if status != "consumed" {
+		return 0
+	}
+	return roundTo(math.Max(area-recovered, 0), areaScale)
 }
 
 // GetUnit loads one live unit by uuid.

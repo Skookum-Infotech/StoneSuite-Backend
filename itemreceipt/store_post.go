@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/inventory"
 	"stonesuite-backend/purchaseorder"
 )
 
@@ -27,6 +28,9 @@ type postLine struct {
 	// neither enter stock nor satisfy the order — the line stays outstanding
 	// for them, which is what lets a replacement shipment be received later.
 	accepted float64
+	// serialized marks a slab-tracked item's line: its stock enters as
+	// individual units (see slabPost), never as a bulk quantity.
+	serialized bool
 }
 
 // loadPostLines re-reads this receipt's lines together with their ordered
@@ -37,12 +41,14 @@ func loadPostLines(ctx context.Context, tx pgx.Tx, irInternalID int) ([]postLine
 		SELECT irl.item_receipt_line_id, irl.line_number, irl.purchase_order_item_id,
 		       irl.inventory_item_id,
 		       poi.quantity, poi.qty_received,
-		       irl.qty_received - irl.qty_rejected
+		       irl.qty_received - irl.qty_rejected,
+		       COALESCE(ii.inventory_item_tracking, '') = $2
 		FROM item_receipt_line irl
 		JOIN purchase_order_item poi ON poi.purchase_order_item_id = irl.purchase_order_item_id
+		LEFT JOIN inventory_item ii ON ii.inventory_item_id = irl.inventory_item_id
 		WHERE irl.item_receipt_id = $1 AND irl.item_deleted_at IS NULL
 		ORDER BY irl.line_number
-		FOR UPDATE OF poi`, irInternalID)
+		FOR UPDATE OF poi`, irInternalID, inventory.TrackingSerialized)
 	if err != nil {
 		return nil, fmt.Errorf("load receipt lines for posting: %w", err)
 	}
@@ -51,7 +57,7 @@ func loadPostLines(ctx context.Context, tx pgx.Tx, irInternalID int) ([]postLine
 	for rows.Next() {
 		var l postLine
 		if err := rows.Scan(&l.lineID, &l.lineNumber, &l.poItemID, &l.inventoryItemID,
-			&l.ordered, &l.alreadyRecv, &l.accepted); err != nil {
+			&l.ordered, &l.alreadyRecv, &l.accepted, &l.serialized); err != nil {
 			return nil, fmt.Errorf("scan receipt line for posting: %w", err)
 		}
 		out = append(out, l)
@@ -146,16 +152,17 @@ func postReceipt(
 	// Lock the receipt, then its order, always in that order — every writer in
 	// this module takes the same sequence, so concurrent posts queue instead of
 	// deadlocking.
-	var irInternalID, curStatusID, poInternalID, warehouseID int
-	var curStatusCode string
+	var irInternalID, curStatusID, poInternalID, warehouseID, vendorID int
+	var curStatusCode, receiptDate string
 	err := tx.QueryRow(ctx, `
 		SELECT ir.item_receipt_id, ir.item_receipt_status, rs.record_status_code,
-		       ir.purchase_order_id, ir.warehouse_id
+		       ir.purchase_order_id, ir.warehouse_id,
+		       ir.item_receipt_vendor_id, to_char(ir.item_receipt_date, 'YYYY-MM-DD')
 		FROM item_receipt ir
 		JOIN lkp_record_status rs ON rs.record_status_id = ir.item_receipt_status
 		WHERE ir.item_receipt_uuid = $1 AND ir.item_receipt_deleted_at IS NULL
 		FOR UPDATE OF ir`, uuid,
-	).Scan(&irInternalID, &curStatusID, &curStatusCode, &poInternalID, &warehouseID)
+	).Scan(&irInternalID, &curStatusID, &curStatusCode, &poInternalID, &warehouseID, &vendorID, &receiptDate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -169,13 +176,13 @@ func postReceipt(
 		return ErrInvalidTransition
 	}
 
-	var poStatusCode string
+	var poStatusCode, poNumber string
 	if err := tx.QueryRow(ctx, `
-		SELECT rs.record_status_code
+		SELECT rs.record_status_code, COALESCE(po.purchase_order_number, '')
 		FROM purchase_order po
 		JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 		WHERE po.purchase_order_id = $1 AND po.purchase_order_deleted_at IS NULL
-		FOR UPDATE OF po`, poInternalID).Scan(&poStatusCode); err != nil {
+		FOR UPDATE OF po`, poInternalID).Scan(&poStatusCode, &poNumber); err != nil {
 		return fmt.Errorf("lock purchase order for posting: %w", err)
 	}
 	if !receivableStatusCodes[poStatusCode] {
@@ -195,6 +202,13 @@ func postReceipt(
 		return fmt.Errorf("resolve IRCT record type: %w", err)
 	}
 
+	// Slab serials are minted from the order's number under the order's row lock
+	// taken above, so concurrent receipts against one order cannot collide.
+	sp := &slabPost{
+		poNumber: poNumber, vendorID: vendorID, warehouseID: warehouseID,
+		receiptDate: receiptDate, actor: actorEmployeeID,
+	}
+
 	for _, l := range lines {
 		if l.accepted <= 0 {
 			continue // everything on this line was rejected; nothing to post
@@ -210,6 +224,15 @@ func postReceipt(
 		// Free-text purchase order lines carry no catalog item, so there is no
 		// stock to move — the receipt still records their arrival.
 		if l.inventoryItemID == nil {
+			continue
+		}
+		// A slab-tracked item's stock is its individual slabs: they are created
+		// (and ledgered through inventory_slab_ledger) here, and the bulk ledger
+		// is skipped -- writing both is exactly the double count this avoids.
+		if l.serialized {
+			if err := sp.receiveLine(ctx, tx, l); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := ledgerAndStock(ctx, tx, *l.inventoryItemID, warehouseID,

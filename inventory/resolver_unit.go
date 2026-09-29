@@ -30,6 +30,10 @@ var unitSystemFields = map[string]resolved{
 	"finish_id":      {"s.slab_finish_id", query.TypeNumber},
 	"usable_remnant": {"s.slab_is_usable_remnant", query.TypeBool},
 
+	// Lineage: the offcuts of a unit are the units whose parent_id is its id.
+	"parent_id": {"p.inventory_slab_uuid::text", query.TypeString},
+	"root_id":   {"r.inventory_slab_uuid::text", query.TypeString},
+
 	// Numeric so the yard can ask for "anything over 20 sq ft" or "3cm stone" —
 	// a range query, which is the whole reason these are typed columns.
 	"area":         {"s.slab_area", query.TypeNumber},

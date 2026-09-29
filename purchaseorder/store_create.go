@@ -26,6 +26,7 @@ type resolvedLine struct {
 	taxRateID       *int
 	taxPercent      float64
 	money           LineMoney
+	expectedSlabs   *int
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -75,6 +76,12 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			if rl.taxRateID == nil {
 				rl.taxRateID = item.taxRateID
 			}
+			if err := validateExpectedSlabs(in.LineNumber, in.ExpectedSlabs, item.tracking); err != nil {
+				return nil, err
+			}
+			rl.expectedSlabs = in.ExpectedSlabs
+		} else if in.ExpectedSlabs != nil {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: expected slabs only apply to a slab-tracked inventory item.", in.LineNumber)}
 		} else if strings.TrimSpace(in.Description) == "" {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: either an inventory item or a description is required.", in.LineNumber)}
 		} else {
@@ -106,6 +113,25 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 	return out, nil
 }
 
+// maxExpectedSlabs bounds the informational slab count so an absurd value is a
+// 400 rather than a meaningless number on the order.
+const maxExpectedSlabs = 10000
+
+// validateExpectedSlabs checks a line's optional expected slab count. It is only
+// meaningful for a slab-tracked item, and must be a positive whole number.
+func validateExpectedSlabs(lineNo int, expected *int, tracking string) error {
+	if expected == nil {
+		return nil
+	}
+	if tracking != trackingSerialized {
+		return ClientError{Msg: fmt.Sprintf("Line %d: expected slabs only apply to a slab-tracked inventory item.", lineNo)}
+	}
+	if *expected <= 0 || *expected > maxExpectedSlabs {
+		return ClientError{Msg: fmt.Sprintf("Line %d: expected slabs must be between 1 and %d.", lineNo, maxExpectedSlabs)}
+	}
+	return nil
+}
+
 // insertLines bulk-inserts resolved lines as purchase_order_item rows.
 func insertLines(ctx context.Context, tx pgx.Tx, poInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
@@ -115,13 +141,13 @@ func insertLines(ctx context.Context, tx pgx.Tx, poInternalID int, lines []resol
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)`,
+				item_created_by, expected_slabs
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19)`,
 			poInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), l.expectedSlabs,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

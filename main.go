@@ -1185,8 +1185,8 @@ func main() {
 		invUnit := controllers.NewInventoryUnitOps()
 		mux.Handle("GET /api/tenant/inventory/units", tenantChain(invUnit.List))
 		mux.Handle("POST /api/tenant/inventory/units/search", tenantChain(invUnit.Search))
+		mux.Handle("POST /api/tenant/inventory/units/summary", tenantChain(invUnit.Summary))
 		mux.Handle("GET /api/tenant/inventory/units/remnants", tenantChain(invUnit.Remnants))
-		mux.Handle("POST /api/tenant/inventory/units", tenantChain(invUnit.Create))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}", tenantChain(invUnit.Get))
 		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
@@ -1196,7 +1196,6 @@ func main() {
 		// The original /inventory/slabs/* paths, served by the same handlers so
 		// the frontend can migrate to /units without a flag day. Remove once it
 		// has.
-		mux.Handle("POST /api/tenant/inventory/slabs", tenantChain(invUnit.Create))
 		mux.Handle("GET /api/tenant/inventory/slabs/{uuid}", tenantChain(invUnit.Get))
 		mux.Handle("POST /api/tenant/inventory/slabs/{uuid}/scrap", tenantChain(invUnit.Scrap))
 
@@ -1297,6 +1296,8 @@ func main() {
 		mux.Handle("GET /api/tenant/item-receipts/{uuid}/audit", tenantChain(irOps.Audit))
 		// Receipts for one order — gated by the purchase order's own permission.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
+		// Preview of the serials the next received slabs will get -- same gate.
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/next-slab-serial", tenantChain(irOps.NextSlabSequence))
 
 		// Vendor Bill: dedicated v2 relational module (header + line items +
 		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror

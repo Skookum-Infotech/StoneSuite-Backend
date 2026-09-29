@@ -46,14 +46,14 @@ const (
 	titleGap    = 8.0 // minimum space between the logos and the document title
 )
 
-// drawMasthead paints the full-width ink band across the top of the current
-// page: the StoneSuite logo and, beside it, the tenant's own logo (when it has
-// one), both drawn directly on the band, then the document kind and number at
-// the right, with a lime rule underneath. It returns the y just below the
-// band.
+// drawMasthead paints the full-width band across the top of the current
+// page -- the same teal-to-ink gradient as the app nav bar and the email
+// banner (mastheadGradientStops) -- then the StoneSuite logo and, beside it,
+// the tenant's own logo (when it has one), both drawn directly on the band,
+// then the document kind and number at the right, with a lime rule
+// underneath. It returns the y just below the band.
 func drawMasthead(pdf *fpdf.Fpdf, d PrintableDoc) float64 {
-	setFill(pdf, colInk)
-	pdf.Rect(0, 0, pageW, bandH, "F")
+	drawMastheadGradient(pdf, pageW, bandH)
 	setFill(pdf, colLime)
 	pdf.Rect(0, bandH, pageW, accentH, "F")
 

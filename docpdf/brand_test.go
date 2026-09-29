@@ -165,3 +165,16 @@ func TestFitFontSize(t *testing.T) {
 		})
 	}
 }
+
+// TestMastheadGradientStops guards the gradient the masthead band and the
+// app nav bar / email banner share a palette with: it must run edge to edge
+// (0 to 1) and its positions must strictly increase, or drawMastheadGradient
+// would skip a segment or double-paint one.
+func TestMastheadGradientStops(t *testing.T) {
+	require.NotEmpty(t, mastheadGradientStops)
+	assert.Equal(t, 0.0, mastheadGradientStops[0].pos, "starts at the band's left edge")
+	assert.Equal(t, 1.0, mastheadGradientStops[len(mastheadGradientStops)-1].pos, "ends at the band's right edge")
+	for i := 1; i < len(mastheadGradientStops); i++ {
+		assert.Greater(t, mastheadGradientStops[i].pos, mastheadGradientStops[i-1].pos, "stop %d out of order", i)
+	}
+}

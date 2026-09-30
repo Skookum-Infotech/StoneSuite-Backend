@@ -15,3 +15,12 @@ type APIResponse struct {
 // CodeRateLimited marks a 429 from a request-rate limiter: the caller should
 // slow down, not merely retry.
 const CodeRateLimited = "rate_limited"
+
+// Codes on a 403 that means "this workspace cannot be used right now" — its
+// users are refused at sign-in and on every API call. A client ends the session
+// and shows the message instead of leaving a signed-in user on a blank page.
+const (
+	CodeWorkspaceSuspended   = "workspace_suspended"
+	CodeWorkspaceDeleted     = "workspace_deleted"
+	CodeWorkspaceUnavailable = "workspace_unavailable"
+)

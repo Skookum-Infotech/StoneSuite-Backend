@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/dbtestutil"
+
 	"stonesuite-backend/inventory"
 )
 
@@ -28,21 +30,26 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("connect test db: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	dbtestutil.EnsureLocation(t, pool)
 	return pool
 }
 
-// secondWarehouse returns a destination warehouse, creating it once.
+// secondWarehouse returns a destination location, creating it once. Locations
+// have no unique key to conflict on, so an existing one is looked up by name.
 func secondWarehouse(t *testing.T, pool *pgxpool.Pool) int {
 	t.Helper()
 	ctx := context.Background()
+	const name = "Transfer Destination"
 	var id int
 	err := pool.QueryRow(ctx, `
-		INSERT INTO lkp_warehouse (warehouse_code, warehouse_name, warehouse_created_by)
-		VALUES ('XFER-DEST','Transfer Destination', 1)
-		ON CONFLICT (warehouse_code) DO UPDATE SET warehouse_name = EXCLUDED.warehouse_name
-		RETURNING warehouse_id`).Scan(&id)
-	if err != nil {
-		t.Fatalf("seed destination warehouse: %v", err)
+		SELECT company_location_id FROM company_location
+		WHERE name = $1 AND deleted_at IS NULL ORDER BY company_location_id LIMIT 1`, name).Scan(&id)
+	if err == nil {
+		return id
+	}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO company_location (name) VALUES ($1) RETURNING company_location_id`, name).Scan(&id); err != nil {
+		t.Fatalf("seed destination location: %v", err)
 	}
 	return id
 }

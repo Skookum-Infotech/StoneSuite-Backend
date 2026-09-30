@@ -62,38 +62,40 @@ it's associated with.
 
 ## Bin Management
 
-Bins are the specific storage locations within a warehouse — the shelf,
+Bins are the specific storage spots within a location — the shelf,
 rack, or slot something actually sits in, one level more specific than the
-warehouse itself. Manage them from Inventory → Bin Management, so your
+location itself. Manage them from Inventory → Bin Management, so your
 units and items can be tracked down to exactly where they're stored.
 
-## Warehouses
+## Locations
 
-A Warehouse is a stocking location — a yard, shop, or facility where you
-hold inventory. Manage them from Inventory → Warehouses, where you can add
-new warehouses and mark one as the default with the Set as Default action,
-shown with a star next to that warehouse's name.
+A Location is a place where you hold inventory — a yard, shop, or facility.
+Locations are the same ones you set up under Configuration → Company Info →
+Locations, which is the only place they are added, edited, marked as the
+default, or deleted. Inventory → Locations lists them read-only, with a star
+badge on the default. A location that still holds stock or bins cannot be
+deleted until it is emptied.
 
 ## Adjusting Inventory
 
 An Adjustment corrects the recorded quantity of an item — for damage, loss,
 or a count correction — created from Inventory → Adjust Inventory → New
-Adjustment. Give it a warehouse and header information, then add the item
+Adjustment. Give it a location and header information, then add the item
 lines being adjusted, each with the corrected quantity and a reason. Once
-saved, the adjustment's own record shows the warehouse it applied to in its
+saved, the adjustment's own record shows the location it applied to in its
 title.
 
 ## Transferring Inventory
 
-A Transfer moves inventory from one warehouse to another, created from
+A Transfer moves inventory from one location to another, created from
 Inventory → Transfer Inventory → New Transfer. Set the header (including the
-from and to warehouses) and the item lines being moved; the transfer's detail
-page shows both warehouses in its title, so you can see the move direction
+from and to locations) and the item lines being moved; the transfer's detail
+page shows both locations in its title, so you can see the move direction
 at a glance without opening the line detail.
 
 ## Inventory Counts
 
-An Inventory Count is a physical count of what's in a warehouse, created from
+An Inventory Count is a physical count of what's in a location, created from
 Inventory → Inventory Count → New Count by choosing its scope. A count starts
 without lines — use Freeze & Start Counting on the count to lock in the
 system's current on-hand quantities and generate the lines to count against.
@@ -109,10 +111,12 @@ lists that show up in dropdowns elsewhere in Inventory — for example, the
 Reasons list here is what populates the reason field when someone creates
 an adjustment.
 
-## Default warehouse
+## Default location
 
-Warehouses can have one marked as the default with the Set as Default
-action on Inventory → Warehouses, shown with a star. Records that need a
-warehouse — like an item receipt — default to this warehouse so you don't
-have to pick one every time, though you can always change it on a
-particular record if that one belongs somewhere else.
+One location can be marked as the default with the Set as Default action on
+Configuration → Company Info → Locations. Records that need a location —
+like an item receipt, an adjustment, a transfer's From location, a count or
+a new bundle — start on the default location so you don't have to pick one
+every time, though you can always choose another location on a particular
+record if it belongs somewhere else. If the company has only one location,
+that is the one offered.

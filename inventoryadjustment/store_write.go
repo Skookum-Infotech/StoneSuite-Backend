@@ -13,7 +13,7 @@ import (
 
 func validateHeader(in *Input) error {
 	if in.WarehouseID <= 0 {
-		return ClientError{Msg: "An adjustment needs a warehouse."}
+		return ClientError{Msg: "An adjustment needs a location."}
 	}
 	return nil
 }

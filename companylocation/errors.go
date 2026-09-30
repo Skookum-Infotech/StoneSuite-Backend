@@ -46,7 +46,7 @@ func isUniqueViolation(err error) bool { return sqlState(err, "23505") }
 
 // nullableInt returns nil for a zero actor id (no resolvable employee),
 // else v — company_location.created_by/deleted_by are nullable, unlike
-// lkp_warehouse's NOT NULL columns, since this feature has no "system actor"
+// the old lkp_warehouse's NOT NULL columns, since this feature has no "system actor"
 // concept to fall back to.
 func nullableInt(v int) any {
 	if v == 0 {

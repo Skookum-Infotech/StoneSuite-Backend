@@ -185,7 +185,8 @@ func AllLookups(ctx context.Context, pool *pgxpool.Pool) (map[string]any, error)
 		}
 		out[kind] = items
 	}
-	warehouses, err := ListWarehouses(ctx, pool, false)
+	// "warehouses" is the tenant's Company Info locations (see warehouse_store.go).
+	warehouses, err := ListWarehouses(ctx, pool)
 	if err != nil {
 		return nil, err
 	}

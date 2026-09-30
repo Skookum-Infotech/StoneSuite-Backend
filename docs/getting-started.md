@@ -23,7 +23,7 @@ sections:
   Quotes, Sales Orders, Installation / Fabrication, Invoices, Payments,
   Credit Memos, Refunds), Purchases (Vendors, Requisitions, Purchase Orders,
   Item Receipts, Vendor Bills, Vendor Payments, Vendor Credits, Expenses),
-  Inventory (Items, Inventory, Bundles, Bin Management, Warehouses,
+  Inventory (Items, Inventory, Bundles, Bin Management, Locations,
   Adjust Inventory, Transfer Inventory, Inventory Count), and Finance
   (Journal Entries, Chart of Accounts, Accounting Periods, Default Accounts).
 - **Configure** — Configuration, where administrators manage Company Info,
@@ -84,7 +84,7 @@ in as.
   order. See `fabrication.md`.
 - **Purchasing** — vendors, requisitions, purchase orders, item receipts,
   vendor bills, payments, and credits. See `purchasing.md`.
-- **Inventory** — items, slabs, bundles, bins, warehouses, adjustments,
+- **Inventory** — items, slabs, bundles, bins, locations, adjustments,
   transfers, and counts. See `inventory.md`.
 - **Accounting** — chart of accounts, journal entries, accounting periods,
   and expenses. See `accounting.md`.

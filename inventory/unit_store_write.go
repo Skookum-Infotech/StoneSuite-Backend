@@ -94,7 +94,7 @@ func resolveUnitBin(ctx context.Context, q pgxQuerier, binUUID *string, warehous
 		return nil, err
 	}
 	if b.warehouseID != warehouseID {
-		return nil, ClientError{Msg: "That bin is in a different warehouse."}
+		return nil, ClientError{Msg: "That bin is in a different location."}
 	}
 	return &b.id, nil
 }

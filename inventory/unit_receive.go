@@ -207,7 +207,7 @@ func ReverseReceivedUnitsTx(ctx context.Context, tx pgx.Tx, slabIDs []int, wareh
 		case status != StatusAvailable:
 			blockers = append(blockers, fmt.Sprintf("%s (%s)", serial, status))
 		case whID != warehouseID:
-			blockers = append(blockers, fmt.Sprintf("%s (moved to another warehouse)", serial))
+			blockers = append(blockers, fmt.Sprintf("%s (moved to another location)", serial))
 		case bundleID != nil:
 			blockers = append(blockers, fmt.Sprintf("%s (in a bundle)", serial))
 		default:

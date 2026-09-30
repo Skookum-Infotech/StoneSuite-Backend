@@ -96,6 +96,19 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -race ./...
+      # Deterministic and zero-cost. Deploys now happen from a vendored build
+      # (Azure DevOps, not this workflow -- see deploy-backend.yml's removal),
+      # so a go.mod/go.sum/vendor drift that only "go build" papers over
+      # locally would otherwise ship untested to the deploy pipeline's own
+      # module resolution.
+      - name: Verify go.mod / go.sum / vendor are tidy
+        run: |
+          go mod tidy
+          go mod vendor
+          if ! git diff --exit-code -- go.mod go.sum vendor/modules.txt; then
+            echo "::error::go.mod/go.sum/vendor/modules.txt are out of date. Run 'go mod tidy && go mod vendor' and commit the result."
+            exit 1
+          fi
 
   schema-apply:
     name: Schema apply · Idempotency · DB tests

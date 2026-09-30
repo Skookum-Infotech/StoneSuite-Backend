@@ -8752,15 +8752,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_alloc_line_open
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_consumed
     ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id, warehouse_id)
     WHERE event = 'consumed' AND source_line_id IS NOT NULL;
-
--- Tenant-template schema -- CRM lifecycle emails: which roles count as the
--- "Manager" and "Finance" recipient groups. The data model has no manager /
--- reports-to relation, so a tenant names the roles instead; every active user
--- holding one of them is emailed for the events the CRM email diagram
--- addresses to that group (crmnotify/). An empty group emails nobody.
-CREATE TABLE IF NOT EXISTS crm_notify_recipient_role (
-    recipient_group VARCHAR(16) NOT NULL CHECK (recipient_group IN ('manager', 'finance')),
-    role_id         UUID        NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (recipient_group, role_id)
-);

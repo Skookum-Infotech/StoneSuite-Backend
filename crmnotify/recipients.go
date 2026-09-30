@@ -6,14 +6,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"stonesuite-backend/authz"
 	"stonesuite-backend/services"
 	"stonesuite-backend/workflow"
-)
-
-// Recipient-group values stored in crm_notify_recipient_role.recipient_group.
-const (
-	roleGroupManager = string(GroupManager)
-	roleGroupFinance = string(GroupFinance)
 )
 
 // contactCols selects a user's notifiable identity: users.identity_id is the id
@@ -48,9 +43,9 @@ func resolveGroup(ctx context.Context, q workflow.Querier, g Group, rec *workflo
 	case GroupOwner:
 		return ownerTargets(ctx, q, rec.OwnerUserID)
 	case GroupManager:
-		return roleGroupTargets(ctx, q, roleGroupManager)
+		return adminTargets(ctx, q)
 	case GroupFinance:
-		return roleGroupTargets(ctx, q, roleGroupFinance)
+		return adminTargets(ctx, q)
 	case GroupApprovers:
 		return approverTargets(ctx, q, rec.ID)
 	case GroupSubmitter:
@@ -73,17 +68,18 @@ func ownerTargets(ctx context.Context, q workflow.Querier, ownerUserID string) (
 	return scanTargets(rows)
 }
 
-// roleGroupTargets resolves every active user holding a role the tenant mapped
-// to group (manager or finance) in crm_notify_recipient_role.
-func roleGroupTargets(ctx context.Context, q workflow.Querier, group string) ([]services.RecipientTarget, error) {
+// adminTargets resolves the workspace's active super admins, who stand in for
+// the diagram's "Manager" and "Finance" recipients: the data model has no
+// manager or finance concept to resolve them from.
+func adminTargets(ctx context.Context, q workflow.Querier) ([]services.RecipientTarget, error) {
 	rows, err := q.Query(ctx, `
-		SELECT DISTINCT `+contactCols+`
-		FROM crm_notify_recipient_role r
-		JOIN user_roles ur ON ur.role_id = r.role_id
-		JOIN users u ON u.id = ur.user_id
-		WHERE r.recipient_group = $1 AND u.status = 'active'`, group)
+		SELECT DISTINCT ` + contactCols + `
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles r ON r.id = ur.role_id
+		WHERE r.key = $1 AND u.status = 'active'`, authz.RoleSuperAdmin)
 	if err != nil {
-		return nil, fmt.Errorf("load %s recipients: %w", group, err)
+		return nil, fmt.Errorf("load admin recipients: %w", err)
 	}
 	return scanTargets(rows)
 }

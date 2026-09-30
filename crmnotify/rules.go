@@ -10,7 +10,7 @@ import "stonesuite-backend/services"
 type Group string
 
 // Recipient groups. Owner, Approvers and Submitter are resolved from the record;
-// Manager and Finance are resolved from the tenant's crm_notify_recipient_role config.
+// Manager and Finance both resolve to the workspace's super admins (see adminTargets).
 const (
 	GroupOwner     Group = "owner"
 	GroupManager   Group = "manager"

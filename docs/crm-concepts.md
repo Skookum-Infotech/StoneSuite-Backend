@@ -64,9 +64,7 @@ approvers are configured, Make Active is used instead.
 
 StoneSuite emails the right people as a lead, prospect or customer moves
 through its statuses. The owner is the person the record is assigned to.
-Managers and Finance are the members of the roles your administrator has
-chosen for them; if no role is chosen for a group, that group is simply not
-emailed.
+Managers and Finance are your workspace administrators (super admins).
 
 - **Lead:** the owner is emailed when the lead is created and when it is
   marked Qualified. Managers are emailed when it is marked Unqualified.

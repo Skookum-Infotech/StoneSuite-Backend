@@ -35,6 +35,9 @@ const vbilRecordTypeCode = "VBIL"
 // draftStatusCode is the status every new vendor bill starts at (AD-5).
 const draftStatusCode = "DRFT"
 
+// paidStatusCode is the terminal fully-settled vendor bill status.
+const paidStatusCode = "PAID"
+
 // nullableInt converts a non-positive id to SQL NULL.
 func nullableInt(v int) any {
 	if v <= 0 {

@@ -64,6 +64,17 @@ func List(ctx context.Context, pool *pgxpool.Pool) ([]Location, error) {
 	return out, nil
 }
 
+// HasAny reports whether the tenant has ever had a location, soft-deleted ones
+// included -- so a one-time seed (see onboardingseed) never resurrects a
+// location the tenant deliberately deleted.
+func HasAny(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM company_location)`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check company locations: %w", err)
+	}
+	return exists, nil
+}
+
 // Get loads one live location by uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Location, error) {
 	l, err := scanLocation(pool.QueryRow(ctx, locationSelect+`

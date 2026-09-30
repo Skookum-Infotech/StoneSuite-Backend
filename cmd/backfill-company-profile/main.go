@@ -1,18 +1,20 @@
-// Command backfill-company-profile seeds each active tenant's new
-// company_profile row (see companyprofile/) from whatever company name/
-// address it already gave at onboarding.
+// Command backfill-company-profile seeds each active tenant's Company Info
+// profile (see companyprofile/) and first Location (see companylocation/)
+// from whatever it already gave at onboarding.
 //
 // Onboarding (OnboardingForm.tsx) collects this into the control-plane
-// tenants.metadata JSON blob for the platform-admin approval review — it was
-// never written to the tenant's own database, since company_profile did not
-// exist until now. This is a one-time catch-up for tenants that already went
-// through onboarding before that table existed; it does not run on every
+// tenants.metadata JSON blob for the platform-admin approval review. New
+// tenants have it copied into their own database automatically when they are
+// provisioned (see onboardingseed/); this is the one-time catch-up for tenants
+// that were provisioned before that step existed. It does not run on every
 // boot and nothing calls it automatically.
 //
-// A tenant is left untouched (not overwritten) when:
-//   - its metadata has no usable company_name (nothing to write), or
-//   - its company_profile row is already non-empty (never clobber real data,
-//     including anything already saved by hand via the Company Info page).
+// Each half is left untouched (not overwritten) when:
+//   - the metadata has no usable company_name / location_name (nothing to
+//     write), or
+//   - the company_profile row is already non-empty, or the tenant has ever had
+//     a location (never clobber real data, including anything saved by hand
+//     from the Company Info page, and never resurrect a deleted location).
 //
 // Usage:
 //
@@ -31,8 +33,8 @@ import (
 	"fmt"
 	"log"
 
-	"stonesuite-backend/companyprofile"
 	"stonesuite-backend/config"
+	"stonesuite-backend/onboardingseed"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/tenancy"
 )
@@ -100,18 +102,18 @@ func main() {
 			skipped++
 			continue
 		}
-		did, reason, err := backfillTenant(ctx, router, t, dryRun)
+		res, err := backfillTenant(ctx, router, t, dryRun)
 		if err != nil {
 			log.Printf("tenant %s: ERROR: %v", t.Slug, err)
 			skipped++
 			continue
 		}
-		if !did {
-			log.Printf("tenant %s: skipped (%s)", t.Slug, reason)
+		if !res.Any() {
+			log.Printf("tenant %s: skipped (nothing to seed: no usable onboarding data, or already set)", t.Slug)
 			skipped++
 			continue
 		}
-		log.Printf("tenant %s: company profile %s", t.Slug, verb(dryRun))
+		log.Printf("tenant %s: %s %s", t.Slug, describe(res), verb(dryRun))
 		written++
 	}
 	log.Printf("done: %d %s, %d skipped, %d tenant(s) total", written, verb(dryRun), skipped, len(targets))
@@ -139,33 +141,30 @@ func resolveTenants(ctx context.Context, cp *tenancy.ControlPlane, slugs tenantF
 	return out, nil
 }
 
-// backfillTenant writes t's onboarding-metadata company profile into its own
-// database. did is true only when a row was actually (or, on dry-run, would
-// be) written; reason explains a false without error.
-func backfillTenant(ctx context.Context, router *tenancy.Router, t tenancy.Tenant, dryRun bool) (did bool, reason string, err error) {
-	profile, ok := parseMetadataProfile(t.Metadata)
-	if !ok {
-		return false, "no company_name in onboarding metadata", nil
+// describe names what a Result covers, for the per-tenant log line.
+func describe(res onboardingseed.Result) string {
+	switch {
+	case res.Profile && res.Location:
+		return "company profile + location"
+	case res.Profile:
+		return "company profile"
+	default:
+		return "location"
 	}
+}
 
+// backfillTenant writes t's onboarding-metadata company profile and location
+// into its own database. The Result says what was actually (or, on dry-run,
+// would be) written; an empty Result with a nil error means there was nothing
+// to do.
+func backfillTenant(ctx context.Context, router *tenancy.Router, t tenancy.Tenant, dryRun bool) (onboardingseed.Result, error) {
 	pool, err := router.PoolFor(ctx, &t)
 	if err != nil {
-		return false, "", fmt.Errorf("tenant pool: %w", err)
+		return onboardingseed.Result{}, fmt.Errorf("tenant pool: %w", err)
 	}
-
-	existing, err := companyprofile.Get(ctx, pool)
+	res, err := onboardingseed.Seed(ctx, pool, t.Metadata, dryRun)
 	if err != nil {
-		return false, "", fmt.Errorf("check existing company profile: %w", err)
+		return res, fmt.Errorf("seed company info: %w", err)
 	}
-	if *existing != (companyprofile.Profile{}) {
-		return false, "company profile already set", nil
-	}
-
-	if dryRun {
-		return true, "", nil
-	}
-	if err := companyprofile.Upsert(ctx, pool, profile); err != nil {
-		return false, "", fmt.Errorf("upsert company profile: %w", err)
-	}
-	return true, "", nil
+	return res, nil
 }

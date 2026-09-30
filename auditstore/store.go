@@ -60,6 +60,15 @@ type Filter struct {
 	CallerUserID string
 }
 
+// detailsWithOldSQL selects the details column with the row's before-snapshot
+// folded in under "old". LogAuditFull stores the before-snapshot in the
+// old_value column and only "new" in details, so without this the browse view
+// could never show what an update changed — the client diffs details.old
+// against details.new. Rows with no old_value (creates, legacy rows) come back
+// unchanged.
+const detailsWithOldSQL = `CASE WHEN old_value IS NULL THEN details
+			ELSE COALESCE(details, '{}'::jsonb) || jsonb_build_object('old', old_value) END AS details`
+
 // List returns a page of audit entries newest-first and an opaque cursor for the
 // next page ("" when the page is the last one).
 func List(ctx context.Context, pool *pgxpool.Pool, f Filter) ([]Entry, string, error) {
@@ -115,7 +124,7 @@ func List(ctx context.Context, pool *pgxpool.Pool, f Filter) ([]Entry, string, e
 		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 	// Fetch limit+1 to detect whether another page follows.
-	sql := `SELECT id, actor_user_id, action, resource, resource_id, details, created_at
+	sql := `SELECT id, actor_user_id, action, resource, resource_id, ` + detailsWithOldSQL + `, created_at
 		FROM audit_logs ` + where + `
 		ORDER BY created_at DESC, id DESC
 		LIMIT ` + param(limit+1)

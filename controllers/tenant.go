@@ -346,12 +346,8 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	// already claimed elsewhere — finalizeOnboarding's create-or-reuse fallback
 	// cannot safely tell "retry of this same tenant" apart from "belongs to a
 	// different tenant" without this check, and used to silently misattach.
-	if existing, err := h.CP.IdentityByEmail(r.Context(), superAdminEmail); err == nil && existing != nil {
-		fail(w, http.StatusConflict, fmt.Sprintf(
-			"%q is already registered on another workspace. Use a different admin email.", superAdminEmail))
-		return
-	} else if err != nil && !errors.Is(err, tenancy.ErrIdentityNotFound) {
-		fail(w, http.StatusInternalServerError, "Failed to validate admin email.")
+	if status, msg := h.emailClaimedElsewhere(r.Context(), superAdminEmail, ""); status != 0 {
+		fail(w, status, msg)
 		return
 	}
 
@@ -412,6 +408,12 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	slug := slugify(req.CompanyName)
 	if slug == "" || req.ContactEmail == "" {
 		fail(w, http.StatusBadRequest, "A company name and a contact email are required.")
+		return
+	}
+
+	// Reject before creating the tenant shell so a taken email leaves no debris.
+	if status, msg := h.emailClaimedElsewhere(r.Context(), req.ContactEmail, ""); status != 0 {
+		fail(w, status, msg)
 		return
 	}
 
@@ -693,6 +695,10 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		}
 		if contactEmail == "" {
 			fail(w, http.StatusBadRequest, "A contact email is required to send an invite.")
+			return
+		}
+		if status, msg := h.emailClaimedElsewhere(r.Context(), contactEmail, tenantID); status != 0 {
+			fail(w, status, msg)
 			return
 		}
 

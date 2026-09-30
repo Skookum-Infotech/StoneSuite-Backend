@@ -8,11 +8,13 @@
 //   - PresignGet: download URL with Content-Disposition:attachment (TTL ~60 s)
 //   - Delete:     server-side object removal (best-effort)
 //   - Put:        server-side authenticated PUT for generated documents
+//   - EmptyBucket: delete every object in the bucket (precedes bucket deletion)
 package storage
 
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -242,6 +244,121 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("object exceeds the %d byte limit", maxGetBytes)
 	}
 	return body, nil
+}
+
+// maxListResponseBytes bounds how much of a ListObjectsV2 response EmptyBucket
+// will read — a page is at most 1000 keys, so this is generous.
+const maxListResponseBytes = 10 * 1024 * 1024
+
+// listPage is one parsed ListObjectsV2 response.
+type listPage struct {
+	keys      []string
+	truncated bool
+	nextToken string
+}
+
+// EmptyBucket deletes every object in the client's bucket and returns how many
+// it removed. R2 refuses to delete a non-empty bucket, so this precedes
+// CFClient.DeleteBucket when a tenant is purged. It stops at the first failure;
+// deletes are idempotent, so calling it again resumes where it left off.
+func (c *Client) EmptyBucket(ctx context.Context) (int, error) {
+	if c == nil {
+		return 0, ErrStorageNotConfigured
+	}
+	if c.bucket == "" {
+		return 0, errors.New("empty r2 bucket: no bucket selected (use WithBucket)")
+	}
+	deleted := 0
+	token := ""
+	for {
+		page, err := c.listPage(ctx, token)
+		if err != nil {
+			return deleted, err
+		}
+		for _, key := range page.keys {
+			if err := c.signedDelete(ctx, key); err != nil {
+				return deleted, fmt.Errorf("delete %q: %w", key, err)
+			}
+			deleted++
+		}
+		if !page.truncated || page.nextToken == "" {
+			return deleted, nil
+		}
+		token = page.nextToken
+	}
+}
+
+// listPage fetches one page of keys via an authenticated SigV4 ListObjectsV2.
+func (c *Client) listPage(ctx context.Context, continuationToken string) (listPage, error) {
+	now := time.Now().UTC()
+	dateStamp := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+
+	credScope := dateStamp + "/" + awsRegion + "/" + awsService + "/aws4_request"
+	signedHdrs := "host;x-amz-content-sha256;x-amz-date"
+
+	q := url.Values{}
+	q.Set("list-type", "2")
+	if continuationToken != "" {
+		q.Set("continuation-token", continuationToken)
+	}
+	canonQS := canonicalQueryString(q)
+	bucketPath := "/" + awsEncodeSegment(c.bucket)
+
+	canonHeaders := "host:" + c.host + "\n" +
+		"x-amz-content-sha256:" + emptyBodySHA256 + "\n" +
+		"x-amz-date:" + amzDate + "\n"
+
+	canonReq := strings.Join([]string{
+		"GET", bucketPath, canonQS, canonHeaders, signedHdrs, emptyBodySHA256,
+	}, "\n")
+
+	s2s := strings.Join([]string{
+		awsAlgorithm, amzDate, credScope, hexSHA256([]byte(canonReq)),
+	}, "\n")
+	sig := hexHMAC(signingKey(c.secretKey, dateStamp, awsRegion, awsService), []byte(s2s))
+
+	authHeader := fmt.Sprintf(
+		"%s Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
+	)
+
+	listURL := "https://" + c.host + bucketPath + "?" + canonQS
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
+	if err != nil {
+		return listPage{}, fmt.Errorf("build r2 list request: %w", err)
+	}
+	req.Header.Set("Host", c.host)
+	req.Header.Set("x-amz-date", amzDate)
+	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return listPage{}, fmt.Errorf("execute r2 list: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return listPage{}, fmt.Errorf("r2 list returned HTTP %d", resp.StatusCode)
+	}
+
+	var out struct {
+		IsTruncated           bool   `xml:"IsTruncated"`
+		NextContinuationToken string `xml:"NextContinuationToken"`
+		Contents              []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+	}
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxListResponseBytes)).Decode(&out); err != nil {
+		return listPage{}, fmt.Errorf("decode r2 list response: %w", err)
+	}
+	page := listPage{truncated: out.IsTruncated, nextToken: out.NextContinuationToken}
+	for _, obj := range out.Contents {
+		page.keys = append(page.keys, obj.Key)
+	}
+	return page, nil
 }
 
 // ---- presigning (AWS SigV4 query-parameter auth) ----------------------------

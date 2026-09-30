@@ -36,9 +36,19 @@ func buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recip
 	}
 }
 
+// SendOnboardingInviteEmailWithResult sends an invitation email for customer
+// onboarding and returns the notify notification ids, so the caller can check
+// what actually happened to the email (see ConfirmEmailDelivery).
+func SendOnboardingInviteEmailWithResult(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, inviteLink string) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink))
+}
+
 // SendOnboardingInviteEmail sends an invitation email for customer onboarding.
+// Thin wrapper over SendOnboardingInviteEmailWithResult for callers that do not
+// need the notification ids.
 func SendOnboardingInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, inviteLink string) error {
-	return SendNotification(ctx, buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink))
+	_, err := SendOnboardingInviteEmailWithResult(ctx, tenantID, inviteID, recipientEmail, recipientName, inviteLink)
+	return err
 }
 
 // buildPasswordSetupNotification builds the Notify request for a
@@ -179,11 +189,21 @@ func buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipient
 	}
 }
 
+// SendPortalInviteEmailWithResult invites an approved customer to set up their
+// portal login and returns the notify notification ids, so the caller can check
+// what actually happened to the email (see ConfirmEmailDelivery).
+func SendPortalInviteEmailWithResult(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink, expiryHours))
+}
+
 // SendPortalInviteEmail invites an approved customer to set up their portal
 // login. Distinct from SendUserInviteEmail: the recipient is a customer, not a
 // colleague joining the workspace, so the copy must not imply staff access.
+// Thin wrapper over SendPortalInviteEmailWithResult for callers that do not
+// need the notification ids.
 func SendPortalInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) error {
-	return SendNotification(ctx, buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink, expiryHours))
+	_, err := SendPortalInviteEmailWithResult(ctx, tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink, expiryHours)
+	return err
 }
 
 // buildCustomerPortalInviteNotification builds the Notify request for an
@@ -213,10 +233,21 @@ func buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail,
 	}
 }
 
+// SendCustomerPortalInviteEmailWithResult invites an external customer to set a
+// password and activate their customer-portal login, and returns the notify
+// notification ids so the caller can check what actually happened to the email
+// (see ConfirmEmailDelivery).
+func SendCustomerPortalInviteEmailWithResult(ctx context.Context, tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink))
+}
+
 // SendCustomerPortalInviteEmail invites an external customer to set a
-// password and activate their customer-portal login.
+// password and activate their customer-portal login. Thin wrapper over
+// SendCustomerPortalInviteEmailWithResult for callers that do not need the
+// notification ids.
 func SendCustomerPortalInviteEmail(ctx context.Context, tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) error {
-	return SendNotification(ctx, buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink))
+	_, err := SendCustomerPortalInviteEmailWithResult(ctx, tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink)
+	return err
 }
 
 // buildCustomerNoteConfirmationNotification builds the Notify request

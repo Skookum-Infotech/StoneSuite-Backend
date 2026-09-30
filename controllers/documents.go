@@ -234,14 +234,17 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		fail(w, serr.Status, serr.Msg)
 		return
 	}
-	sendID, serr := h.deliver(r.Context(), pool, identityID, ownerUserID, p)
+	sendID, outcome, serr := h.deliver(r.Context(), pool, identityID, ownerUserID, p)
 	if serr != nil {
 		fail(w, serr.Status, serr.Msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "sendId": sendID, "sentTo": p.to,
-	})
+	// The send is recorded either way; emailSent/emailError say whether the
+	// email itself went, so the UI never reports a failed delivery as sent.
+	resp := map[string]any{"success": true, "sendId": sendID, "sentTo": p.to}
+	applyEmailOutcome(r.Context(), resp, outcome, "document send: email not delivered",
+		"workflow", meta.WorkflowKey, "record", recordID, "send_id", sendID)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // customerSendRequest builds the Notify create request for a document-send's

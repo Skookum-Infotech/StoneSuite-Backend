@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 const cfAPIBase = "https://api.cloudflare.com/client/v4"
@@ -16,6 +17,7 @@ const cfAPIBase = "https://api.cloudflare.com/client/v4"
 type CFClientIface interface {
 	IsConfigured() bool
 	CreateBucket(ctx context.Context, name string) error
+	DeleteBucket(ctx context.Context, name string) error
 	SetBucketCORS(ctx context.Context, bucket string, origins []string) error
 }
 
@@ -73,6 +75,38 @@ func (c *CFClient) CreateBucket(ctx context.Context, name string) error {
 	// 200 = created; 409 = already exists (idempotent).
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
 		return fmt.Errorf("create r2 bucket: HTTP %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
+}
+
+// DeleteBucket deletes an R2 bucket. Cloudflare refuses to delete a bucket that
+// still holds objects (409), so callers empty it first — see Client.EmptyBucket.
+// Idempotent: a bucket that no longer exists (404) counts as success, so a
+// purge that failed after this step can be retried.
+func (c *CFClient) DeleteBucket(ctx context.Context, name string) error {
+	if c == nil {
+		return fmt.Errorf("cloudflare client not configured")
+	}
+	if name == "" {
+		return fmt.Errorf("delete r2 bucket: name is empty")
+	}
+	endpoint := fmt.Sprintf("%s/accounts/%s/r2/buckets/%s", cfAPIBase, c.accountID, url.PathEscape(name))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build delete-bucket request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiToken)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete r2 bucket %q: %w", name, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// 200 = deleted; 404 = already gone (idempotent).
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("delete r2 bucket %q: HTTP %d: %s", name, resp.StatusCode, respBody)
 	}
 	return nil
 }

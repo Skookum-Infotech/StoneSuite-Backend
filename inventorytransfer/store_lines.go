@@ -80,7 +80,7 @@ func resolveLines(ctx context.Context, q pgxQuerier, fromWarehouseID int, in []L
 		}
 		if unit.WarehouseID != fromWarehouseID {
 			return nil, ClientError{Msg: fmt.Sprintf(
-				"Line %d: unit %s is not in the source warehouse.", i+1, unit.Serial)}
+				"Line %d: unit %s is not in the source location.", i+1, unit.Serial)}
 		}
 		if unit.Status != inventory.StatusAvailable {
 			return nil, ClientError{Msg: fmt.Sprintf(

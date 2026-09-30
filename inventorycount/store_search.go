@@ -64,7 +64,7 @@ func (countResolver) SortExpr(key string) (string, query.DataType, bool) {
 // or the bin being counted.
 func (countResolver) SearchPredicate(ph string) string {
 	return "(COALESCE(c.count_number,'') ILIKE '%'||" + ph + "||'%' OR c.count_notes ILIKE '%'||" + ph +
-		"||'%' OR w.warehouse_name ILIKE '%'||" + ph + "||'%' OR COALESCE(b.bin_path,'') ILIKE '%'||" + ph + "||'%')"
+		"||'%' OR w.name ILIKE '%'||" + ph + "||'%' OR COALESCE(b.bin_path,'') ILIKE '%'||" + ph + "||'%')"
 }
 
 var _ query.FieldResolver = countResolver{}

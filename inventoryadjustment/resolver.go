@@ -58,7 +58,7 @@ func (adjustmentResolver) SortExpr(key string) (string, query.DataType, bool) {
 // warehouse it corrects.
 func (adjustmentResolver) SearchPredicate(ph string) string {
 	return "(COALESCE(a.adjustment_number,'') ILIKE '%'||" + ph + "||'%' OR a.adjustment_notes ILIKE '%'||" + ph +
-		"||'%' OR w.warehouse_name ILIKE '%'||" + ph + "||'%')"
+		"||'%' OR w.name ILIKE '%'||" + ph + "||'%')"
 }
 
 var _ query.FieldResolver = adjustmentResolver{}

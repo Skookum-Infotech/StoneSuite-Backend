@@ -624,6 +624,9 @@ func main() {
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
 		// No permission gate (unlike ListUsers below) -- see ListAssignableUsers.
 		mux.Handle("GET /api/tenant/users/assignable", tenantChain(userOps.ListAssignableUsers))
+		// Self-service, like /assignable: any active member edits their own name.
+		// Literal path, so it wins over PATCH /api/tenant/users/{id} below.
+		mux.Handle("PATCH /api/tenant/users/me", tenantChain(userOps.UpdateMyProfile))
 		mux.Handle("GET /api/tenant/users", tenantChain(userOps.ListUsers))
 		mux.Handle("POST /api/tenant/users/invite", tenantChain(userOps.InviteUser))
 		mux.Handle("GET /api/tenant/users/{id}", tenantChain(userOps.GetUser))
@@ -685,6 +688,8 @@ func main() {
 		} else {
 			log.Println("R2 storage: not configured (R2-backed upload/download endpoints will return 503).")
 		}
+		// Lets a platform-admin tenant purge empty the tenant's bucket first.
+		tenantOps.WithR2Client(r2Client)
 
 		// Tenant's own Company Info (name/address -- Configuration -> Company Info).
 		companyProfileOps := controllers.NewCompanyProfileOps(r2Client)
@@ -1003,15 +1008,11 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Update))
 		mux.Handle("DELETE /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Delete))
 
-		// Warehouses: master data that has existed in lkp_warehouse since the
-		// sales-order migration but never had a route.
+		// Locations inventory can hold stock in (read-only): a warehouse IS a
+		// company_location, managed only from Configuration -> Company Info.
 		invWh := controllers.NewInventoryWarehouseOps()
 		mux.Handle("GET /api/tenant/inventory/warehouses", tenantChain(invWh.List))
-		mux.Handle("POST /api/tenant/inventory/warehouses", tenantChain(invWh.Create))
 		mux.Handle("GET /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Get))
-		mux.Handle("PATCH /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Update))
-		mux.Handle("DELETE /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Delete))
-		mux.Handle("POST /api/tenant/inventory/warehouses/{uuid}/set-default", tenantChain(invWh.SetDefault))
 
 		// Bins: yards, racks, A-frames, aisles and shelves inside a warehouse.
 		invBin := controllers.NewInventoryBinOps()

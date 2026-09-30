@@ -58,7 +58,7 @@ func requireExplicitWarehouse(lines []resolvedLine, warehouseID *int) error {
 	}
 	for _, l := range lines {
 		if len(l.slabs) > 0 {
-			return ClientError{Msg: "A receiving warehouse is required when receiving slabs."}
+			return ClientError{Msg: "A receiving location is required when receiving slabs."}
 		}
 	}
 	return nil
@@ -302,7 +302,7 @@ func createReceipt(
 	).Scan(&internalID, &newUUID)
 	if err != nil {
 		if isForeignKeyViolation(err) {
-			return nil, ClientError{Msg: "One of the referenced ids (warehouse or owner) does not exist."}
+			return nil, ClientError{Msg: "One of the referenced ids (location or owner) does not exist."}
 		}
 		return nil, fmt.Errorf("insert item receipt: %w", err)
 	}

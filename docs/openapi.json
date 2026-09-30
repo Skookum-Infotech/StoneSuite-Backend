@@ -12802,77 +12802,9 @@
         "tags": [
           "tenant"
         ]
-      },
-      "post": {
-        "operationId": "post_tenant_inventory_warehouses",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "invWh.Create",
-        "tags": [
-          "tenant"
-        ]
       }
     },
     "/api/tenant/inventory/warehouses/{uuid}": {
-      "delete": {
-        "operationId": "delete_tenant_inventory_warehouses_uuid",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "uuid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "invWh.Delete",
-        "tags": [
-          "tenant"
-        ]
-      },
       "get": {
         "operationId": "get_tenant_inventory_warehouses_uuid",
         "parameters": [
@@ -12908,86 +12840,6 @@
           }
         ],
         "summary": "invWh.Get",
-        "tags": [
-          "tenant"
-        ]
-      },
-      "patch": {
-        "operationId": "patch_tenant_inventory_warehouses_uuid",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "uuid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "invWh.Update",
-        "tags": [
-          "tenant"
-        ]
-      }
-    },
-    "/api/tenant/inventory/warehouses/{uuid}/set-default": {
-      "post": {
-        "operationId": "post_tenant_inventory_warehouses_uuid_set_default",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "uuid",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "invWh.SetDefault",
         "tags": [
           "tenant"
         ]
@@ -18408,6 +18260,37 @@
           }
         ],
         "summary": "userOps.InviteUser",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/users/me": {
+      "patch": {
+        "operationId": "patch_tenant_users_me",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "userOps.UpdateMyProfile",
         "tags": [
           "tenant"
         ]

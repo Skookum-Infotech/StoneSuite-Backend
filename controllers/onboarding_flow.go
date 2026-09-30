@@ -228,14 +228,15 @@ func (h *TenantOps) FormSchema(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fields": def.Fields})
 }
 
-// OnboardingLookups returns the read-only country + currency reference
-// lists from the owner workspace's own lkp_country/lkp_currency tables --
-// the same seed data every tenant's Company Profile country/currency
-// dropdowns are built from (see CRMLookups.GetLookups) -- so the public
-// onboarding form's Country/Currency fields can render real dropdowns
-// sourced from the lookup table instead of hardcoded guesses that can
-// silently drift from it. No auth: this is static reference data, not
-// tenant- or applicant-specific.
+// OnboardingLookups returns the read-only country + state + currency
+// reference lists from the owner workspace's own lkp_country/lkp_state/
+// lkp_currency tables -- the same seed data every tenant's Company Profile
+// country/state/currency dropdowns are built from (see
+// CRMLookups.GetLookups) -- so the public onboarding form's Country/State/
+// Currency fields can render real dropdowns sourced from the lookup table
+// instead of hardcoded guesses that can silently drift from it. States carry
+// their countryId so the form can filter them to the chosen country. No
+// auth: this is static reference data, not tenant- or applicant-specific.
 // Path: GET /api/onboarding/lookups
 func (h *TenantOps) OnboardingLookups(w http.ResponseWriter, r *http.Request) {
 	_, pool, err := h.ownerPool(r.Context())
@@ -243,7 +244,7 @@ func (h *TenantOps) OnboardingLookups(w http.ResponseWriter, r *http.Request) {
 		// Degrade gracefully, same as FormSchema: empty lists let the form
 		// fall back to its own static defaults rather than failing.
 		writeJSON(w, http.StatusOK, map[string]any{
-			"success": true, "countries": []LookupItem{}, "currencies": []CurrencyLookupItem{},
+			"success": true, "countries": []LookupItem{}, "states": []StateLookupItem{}, "currencies": []CurrencyLookupItem{},
 		})
 		return
 	}
@@ -254,12 +255,19 @@ func (h *TenantOps) OnboardingLookups(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load countries.")
 		return
 	}
+	states, err := queryStateLookupItems(r.Context(), pool)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load states.")
+		return
+	}
 	currencies, err := queryCurrencyLookupItems(r.Context(), pool)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load currencies.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "countries": countries, "currencies": currencies})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "countries": countries, "states": states, "currencies": currencies,
+	})
 }
 
 // GetApply returns invite validity + any prefilled data for the public form.
@@ -296,6 +304,37 @@ func (h *TenantOps) GetApply(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// requiredApplyFields are the onboarding-form fields SubmitApply refuses to
+// accept blank -- the `required` flags in OnboardingForm.tsx, enforced here
+// too so a hand-built request can't submit an application the form itself
+// would have blocked. The location_* keys are the applicant's primary
+// location, which provisioning seeds as the tenant's first Company Info
+// location (see onboardingseed).
+var requiredApplyFields = []struct{ key, label string }{
+	{"company_name", "Company name"},
+	{"country", "Company country"},
+	{"currency", "Company currency"},
+	{"location_name", "Location name"},
+	{"location_address_line1", "Location address line 1"},
+	{"location_address_city", "Location city"},
+	{"location_address_country", "Location country"},
+	{"location_address_state", "Location state"},
+	{"location_address_zip", "Location zip / postal code"},
+	{"super_admin_email", "Super admin email"},
+}
+
+// missingApplyFields returns the labels of every requiredApplyFields entry
+// that is absent or blank in formData, in form order.
+func missingApplyFields(formData map[string]any) []string {
+	var missing []string
+	for _, f := range requiredApplyFields {
+		if formStr(formData, f.key) == "" {
+			missing = append(missing, f.label)
+		}
+	}
+	return missing
+}
+
 type submitApplyRequest struct {
 	Token    string         `json:"token"`
 	FormData map[string]any `json:"formData"`
@@ -326,8 +365,8 @@ func (h *TenantOps) SubmitApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "This invite is no longer valid.")
 		return
 	}
-	if formStr(req.FormData, "company_name") == "" || formStr(req.FormData, "super_admin_email") == "" {
-		fail(w, http.StatusBadRequest, "Company name and super-admin email are required.")
+	if missing := missingApplyFields(req.FormData); len(missing) > 0 {
+		fail(w, http.StatusBadRequest, "Please fill in the required fields: "+strings.Join(missing, ", ")+".")
 		return
 	}
 	// The customer may change the email from the invited one, so re-check here.

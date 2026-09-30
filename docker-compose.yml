@@ -37,6 +37,15 @@ services:
       # Must match the origin your frontend's `npm run dev` serves from.
       CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:5176
       FRONTEND_URL: http://localhost:5173
+      # stonesuite-notify runs from its own repo's docker-compose.yml and
+      # publishes :8090 on the host; from inside this container the host is
+      # host.docker.internal (.env keeps NOTIFY_URL=http://localhost:8090 for
+      # a host-run `go run .`). NOTIFY_API_KEY comes from .env.
+      NOTIFY_URL: http://host.docker.internal:8090
+    # Resolves host.docker.internal on Linux too (Docker Desktop adds it
+    # itself on Windows/macOS).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
     depends_on:

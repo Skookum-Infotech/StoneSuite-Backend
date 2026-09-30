@@ -30,7 +30,7 @@ const (
 func ShipSlabForTransfer(ctx context.Context, tx pgx.Tx, u UnitRef,
 	fromWarehouseID int, src DocSource, actorEmployeeID int) error {
 	if u.WarehouseID != fromWarehouseID {
-		return ClientError{Msg: fmt.Sprintf("Unit %s is not in the source warehouse.", u.Serial)}
+		return ClientError{Msg: fmt.Sprintf("Unit %s is not in the source location.", u.Serial)}
 	}
 	switch u.Status {
 	case StatusInTransit:

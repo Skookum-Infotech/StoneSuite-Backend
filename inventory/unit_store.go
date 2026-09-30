@@ -22,7 +22,7 @@ import (
 const unitFilterFrom = `
 	FROM inventory_slab s
 	JOIN inventory_item ii ON ii.inventory_item_id = s.inventory_item_id
-	JOIN lkp_warehouse w   ON w.warehouse_id = s.warehouse_id
+	JOIN company_location w ON w.company_location_id = s.warehouse_id
 	JOIN lkp_unit au       ON au.unit_id = s.slab_area_unit_id
 	LEFT JOIN inventory_bin b     ON b.inventory_bin_id = s.inventory_bin_id
 	LEFT JOIN inventory_bundle bu ON bu.inventory_bundle_id = s.inventory_bundle_id
@@ -59,7 +59,7 @@ const unitSelect = `
 	SELECT s.inventory_slab_uuid, s.slab_serial, s.slab_unit_kind,
 	       s.slab_vendor_id, s.slab_supplier_code, s.slab_barcode,
 	       ii.inventory_item_uuid, ii.inventory_item_name, ii.inventory_item_sku,
-	       s.warehouse_id, w.warehouse_name,
+	       s.warehouse_id, w.name,
 	       b.inventory_bin_uuid, COALESCE(b.bin_path,''),
 	       s.slab_bundle_id, bu.inventory_bundle_uuid, s.slab_block_id, s.slab_lot,
 	       s.slab_length_mm, s.slab_width_mm, s.slab_thickness_mm, s.slab_area, s.slab_area_unit_id,
@@ -232,7 +232,7 @@ func mapUnitWriteErr(err error, verb string) error {
 	case isUniqueViolation(err):
 		return ClientError{Msg: "A live unit with that serial, barcode, or vendor and supplier code already exists."}
 	case isFKViolation(err):
-		return ClientError{Msg: "An invalid item, vendor, warehouse, bin or bundle was referenced."}
+		return ClientError{Msg: "An invalid item, vendor, location, bin or bundle was referenced."}
 	case isCheckViolation(err):
 		return ClientError{Msg: "One or more unit values are out of range."}
 	}

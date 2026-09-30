@@ -83,8 +83,8 @@ func FormatNumber(serialID int64) string { return fmt.Sprintf("%s-%06d", recordT
 const headerSelect = `
 	SELECT t.inventory_transfer_uuid, COALESCE(t.transfer_number,''),
 	       t.transfer_status, rs.record_status_code, rs.record_status_name,
-	       t.from_warehouse_id, fw.warehouse_name,
-	       t.to_warehouse_id,   tw.warehouse_name,
+	       t.from_warehouse_id, fw.name,
+	       t.to_warehouse_id,   tw.name,
 	       b.inventory_bin_uuid, COALESCE(b.bin_path,''),
 	       to_char(t.transfer_date, 'YYYY-MM-DD'),
 	       to_char(t.transfer_expected_date, 'YYYY-MM-DD'),
@@ -100,8 +100,8 @@ const headerSelect = `
 	       t.transfer_created_at, t.transfer_updated_at
 	FROM inventory_transfer t
 	JOIN lkp_record_status rs  ON rs.record_status_id = t.transfer_status
-	JOIN lkp_warehouse fw      ON fw.warehouse_id = t.from_warehouse_id
-	JOIN lkp_warehouse tw      ON tw.warehouse_id = t.to_warehouse_id
+	JOIN company_location fw   ON fw.company_location_id = t.from_warehouse_id
+	JOIN company_location tw   ON tw.company_location_id = t.to_warehouse_id
 	LEFT JOIN inventory_bin b  ON b.inventory_bin_id = t.to_bin_id`
 
 func scanHeader(row pgx.Row) (*Transfer, error) {
@@ -219,9 +219,9 @@ func mapWriteErr(err error, verb string) error {
 	case isUniqueViolation(err):
 		return ClientError{Msg: "This unit is already on a line of this transfer."}
 	case isFKViolation(err):
-		return ClientError{Msg: "Unknown item, unit, warehouse or bin."}
+		return ClientError{Msg: "Unknown item, unit, location or bin."}
 	case isCheckViolation(err):
-		return ClientError{Msg: "A transfer needs two different warehouses and positive line quantities."}
+		return ClientError{Msg: "A transfer needs two different locations and positive line quantities."}
 	}
 	return fmt.Errorf("%s inventory transfer: %w", verb, err)
 }

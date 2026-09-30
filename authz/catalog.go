@@ -88,7 +88,7 @@ const (
 	ResourceInventoryUnit   Resource = "inventory_unit"   // serialized units: slabs and remnants
 	ResourceInventoryBin    Resource = "inventory_bin"    // bin/location master
 	ResourceInventoryBundle Resource = "inventory_bundle" // bundles that move as a set
-	ResourceWarehouse       Resource = "warehouse"        // lkp_warehouse master
+	ResourceWarehouse       Resource = "warehouse"        // inventory locations (read-only view of Company Info locations; create/update/delete no longer used)
 	ResourceInventoryLookup Resource = "inventory_lookup" // material/colour/finish/reason vocabularies
 
 	// Phase 3 stock documents. Each is a status document, so each carries

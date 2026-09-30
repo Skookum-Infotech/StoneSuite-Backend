@@ -154,7 +154,7 @@ func SlabLedgerAndStockFromDoc(
 	case errors.Is(err, errStockWouldGoNegative):
 		return ClientError{Msg: "This would drive stock below zero. Reconcile the item's on-hand quantity before posting."}
 	case errors.Is(err, errNoStockRow):
-		return ClientError{Msg: "No stock on hand for this item at this warehouse."}
+		return ClientError{Msg: "No stock on hand for this item at this location."}
 	case err != nil:
 		return err
 	}

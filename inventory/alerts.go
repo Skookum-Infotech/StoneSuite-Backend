@@ -38,11 +38,11 @@ type StockLevel struct {
 // once by the controller, not per row.
 func StockAlertCandidates(ctx context.Context, pool *pgxpool.Pool) ([]StockLevel, error) {
 	q := `
-		SELECT ii.inventory_item_uuid, ii.inventory_item_name, w.warehouse_name,
+		SELECT ii.inventory_item_uuid, ii.inventory_item_name, w.name,
 		       s.quantity_on_hand, COALESCE(alloc.allocated, 0), s.reorder_point
 		FROM inventory_stock s
 		JOIN inventory_item ii ON ii.inventory_item_id = s.inventory_item_id
-		JOIN lkp_warehouse w ON w.warehouse_id = s.warehouse_id
+		JOIN company_location w ON w.company_location_id = s.warehouse_id
 		LEFT JOIN (
 			SELECT inventory_item_id, warehouse_id, SUM(allocated_quantity - fulfilled_quantity) AS allocated
 			FROM inventory_allocation

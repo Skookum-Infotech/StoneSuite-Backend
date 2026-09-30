@@ -57,7 +57,7 @@ func (rs *Resolver) Middleware(next http.Handler) http.Handler {
 		}
 
 		if !tenant.Servable() {
-			writeErr(w, http.StatusForbidden, tenantUnservableMessage(tenant))
+			writeUnservable(w, tenant)
 			return
 		}
 
@@ -94,7 +94,7 @@ func PoolFromContext(ctx context.Context) (*pgxpool.Pool, error) {
 func tenantUnservableMessage(t *Tenant) string {
 	switch {
 	case t.Status == StatusSuspended:
-		return "This workspace is suspended."
+		return "This workspace is suspended. Please contact your account administrator."
 	case t.Status == StatusDeleted:
 		return "This workspace has been deleted."
 	case t.Status == StatusRejected:
@@ -112,6 +112,16 @@ func tenantUnservableMessage(t *Tenant) string {
 	default:
 		return "This workspace is not available."
 	}
+}
+
+// writeUnservable refuses a request for a tenant that cannot be served. The
+// body carries a machine-readable code so the web app can end the session and
+// explain why, instead of leaving a signed-in user on a page whose every
+// request fails.
+func writeUnservable(w http.ResponseWriter, t *Tenant) {
+	code, msg := UnservableReason(t)
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(models.APIResponse{Success: false, Message: msg, Code: code})
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {

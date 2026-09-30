@@ -91,14 +91,18 @@ func (h *PurchaseOrderOps) Transition(w http.ResponseWriter, r *http.Request) {
 	// mailed (a gate may have parked it elsewhere).
 	if emailVendor && updated.StatusCode == purchaseorder.SentStatusCode {
 		// The PDF is rendered after the move so it shows the Sent status.
-		sendID, serr := h.docs.sendRecord(r.Context(), pool, tenant, identityID, po.OwnerUserID, uuid, poWorkflowKey, req.Send)
-		resp["emailSent"] = serr == nil
+		sendID, outcome, serr := h.docs.sendRecord(r.Context(), pool, tenant, identityID, po.OwnerUserID, uuid, poWorkflowKey, req.Send)
 		if serr != nil {
 			slog.WarnContext(r.Context(), "purchase order send to vendor: email failed",
 				"record", uuid, "status", serr.Status, "error", serr.Msg)
+			resp["emailSent"] = false
 			resp["emailError"] = serr.Msg
 		} else {
 			resp["sendId"] = sendID
+			// The order is SENT either way; this says whether the vendor email
+			// really went (Notify accepts before it sends, so it is confirmed).
+			applyEmailOutcome(r.Context(), resp, outcome, "purchase order send to vendor: email not delivered",
+				"record", uuid, "send_id", sendID)
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

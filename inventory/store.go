@@ -64,7 +64,7 @@ func mapItemWriteErr(err error, verb string) error {
 		// re-using an identifier, so one clear message covers it.
 		return ClientError{Msg: "An active item with this SKU or barcode already exists."}
 	case isFKViolation(err):
-		return ClientError{Msg: "Unknown unit, material, colour, finish, country or warehouse."}
+		return ClientError{Msg: "Unknown unit, material, colour, finish, country or location."}
 	case isCheckViolation(err):
 		return ClientError{Msg: "One or more item fields failed validation."}
 	}

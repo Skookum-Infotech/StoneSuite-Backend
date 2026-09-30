@@ -96,6 +96,20 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test -race ./...
+      # go build/vet/test below already fail on go.mod/vendor drift for free
+      # (Go's automatic "inconsistent vendoring" check whenever vendor/ +
+      # vendor/modules.txt are present) -- verified by deliberately breaking
+      # go.mod locally and confirming `go build` rejects it.
+      #
+      # Deliberately NOT `go mod tidy`/`go mod vendor`/`go mod verify` here:
+      # on a cold module cache (a fresh CI runner has one every time) all
+      # three need to reach the private go-rag repo directly over git (it
+      # isn't on the public proxy), which needs credentials this runner
+      # doesn't have for a second private repo -- tried both, and each broke
+      # CI with "terminal prompts disabled" on `git ls-remote`. That gap is
+      # real (nothing here catches go.sum content-hash drift) but fixing it
+      # needs a scoped PAT/deploy key added as a secret, which is a call for
+      # whoever owns repo secrets, not something to add unilaterally from CI.
 
   schema-apply:
     name: Schema apply · Idempotency · DB tests

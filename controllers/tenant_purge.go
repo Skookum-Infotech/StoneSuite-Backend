@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -208,7 +208,7 @@ func readPurgeConfirmation(w http.ResponseWriter, r *http.Request) (confirmSlug 
 func (h *TenantOps) purgeTenant(w http.ResponseWriter, r *http.Request, admin middleware.UserContextPayload, tenant *tenancy.Tenant) {
 	step, err := runPurge(r.Context(), tenant, h.purgeOps())
 	if err != nil {
-		log.Printf("ERROR: purge of tenant %s (%s) stopped at step %s: %v", tenant.Slug, tenant.ID, step, err)
+		slog.Error("tenant purge stopped", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "slug", tenant.Slug, "step", step, "err", err)
 		if errors.Is(err, errPurgeUnsafeDatabase) {
 			fail(w, http.StatusConflict,
 				"This customer's database name doesn't look like a provisioned tenant database, so it won't be dropped automatically. Nothing was changed.")
@@ -226,7 +226,7 @@ func (h *TenantOps) purgeTenant(w http.ResponseWriter, r *http.Request, admin mi
 	// The tenant is gone, so the audit row carries no tenant_id; its details
 	// are the surviving record of what was removed.
 	if err := h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, "", "tenant.purge", purgeAuditDetails(tenant)); err != nil {
-		log.Printf("WARNING: audit log for purge of tenant %s failed: %v", tenant.Slug, err)
+		slog.Warn("tenant purge audit log failed", "request_id", middleware.RequestIDFromContext(r.Context()), "tenant_id", tenant.ID, "slug", tenant.Slug, "err", err)
 	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Tenant purge applied."})
 }

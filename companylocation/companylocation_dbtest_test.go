@@ -24,9 +24,12 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	// Every test in this package shares the same table with no per-tenant id
 	// to scope by -- reset it up front so tests don't inherit state left
 	// behind by whichever test ran before them (Go does not guarantee
-	// execution order across test functions).
-	if _, err := pool.Exec(context.Background(), `DELETE FROM company_location`); err != nil {
-		t.Fatalf("reset company_location: %v", err)
+	// execution order across test functions). Inventory rows point at
+	// locations by foreign key, so the ones the delete-guard tests create go first.
+	for _, table := range []string{"inventory_stock", "inventory_bin", "company_location"} {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM `+table); err != nil {
+			t.Fatalf("reset %s: %v", table, err)
+		}
 	}
 	return pool
 }

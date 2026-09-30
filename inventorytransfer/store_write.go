@@ -14,12 +14,12 @@ import (
 
 func validateHeader(in *Input) error {
 	if in.FromWarehouseID <= 0 || in.ToWarehouseID <= 0 {
-		return ClientError{Msg: "A transfer needs a source and a destination warehouse."}
+		return ClientError{Msg: "A transfer needs a source and a destination location."}
 	}
 	if in.FromWarehouseID == in.ToWarehouseID {
 		// Mirrors chk_itrf_distinct_wh, so the caller gets a sentence rather than
 		// a constraint name.
-		return ClientError{Msg: "A transfer's source and destination must be different warehouses."}
+		return ClientError{Msg: "A transfer's source and destination must be different locations."}
 	}
 	return nil
 }
@@ -41,7 +41,7 @@ func resolveToBin(ctx context.Context, q pgxQuerier, binUUID *string, toWarehous
 		return nil, ClientError{Msg: "Unknown destination bin."}
 	}
 	if whID != toWarehouseID {
-		return nil, ClientError{Msg: "The destination bin is not in the destination warehouse."}
+		return nil, ClientError{Msg: "The destination bin is not in the destination location."}
 	}
 	return &id, nil
 }

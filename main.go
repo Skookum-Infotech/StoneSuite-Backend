@@ -1005,15 +1005,11 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Update))
 		mux.Handle("DELETE /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Delete))
 
-		// Warehouses: master data that has existed in lkp_warehouse since the
-		// sales-order migration but never had a route.
+		// Locations inventory can hold stock in (read-only): a warehouse IS a
+		// company_location, managed only from Configuration -> Company Info.
 		invWh := controllers.NewInventoryWarehouseOps()
 		mux.Handle("GET /api/tenant/inventory/warehouses", tenantChain(invWh.List))
-		mux.Handle("POST /api/tenant/inventory/warehouses", tenantChain(invWh.Create))
 		mux.Handle("GET /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Get))
-		mux.Handle("PATCH /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Update))
-		mux.Handle("DELETE /api/tenant/inventory/warehouses/{uuid}", tenantChain(invWh.Delete))
-		mux.Handle("POST /api/tenant/inventory/warehouses/{uuid}/set-default", tenantChain(invWh.SetDefault))
 
 		// Bins: yards, racks, A-frames, aisles and shelves inside a warehouse.
 		invBin := controllers.NewInventoryBinOps()

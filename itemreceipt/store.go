@@ -133,19 +133,19 @@ func statusIDByCode(ctx context.Context, q workflow.Querier, recordTypeID int, c
 	return id, nil
 }
 
-// defaultWarehouseID resolves the tenant's default warehouse, used when the
-// caller does not name one (AD-4). lkp_warehouse has a partial unique index on
-// warehouse_is_default, so at most one row can match.
+// defaultWarehouseID resolves the tenant's default location, used when the
+// caller does not name one (AD-4). company_location has a partial unique index on
+// is_default, so at most one live row can match.
 func defaultWarehouseID(ctx context.Context, q workflow.Querier) (int, error) {
 	var id int
 	err := q.QueryRow(ctx, `
-		SELECT warehouse_id FROM lkp_warehouse
-		WHERE warehouse_is_default AND warehouse_deleted_at IS NULL`).Scan(&id)
+		SELECT company_location_id FROM company_location
+		WHERE is_default AND deleted_at IS NULL`).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ClientError{Msg: "No default warehouse is configured; specify warehouseId explicitly."}
+		return 0, ClientError{Msg: "No default location is configured; pick a location, or set a default under Configuration → Company Info → Locations."}
 	}
 	if err != nil {
-		return 0, fmt.Errorf("resolve default warehouse: %w", err)
+		return 0, fmt.Errorf("resolve default location: %w", err)
 	}
 	return id, nil
 }

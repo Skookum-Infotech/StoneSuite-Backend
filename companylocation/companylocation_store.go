@@ -11,10 +11,12 @@ package companylocation
 //     tenant's location list starts empty, and requiring a separate
 //     "now set it default" step right after adding your only location would
 //     leave the Locations tab looking like nothing was saved.
-//   - Delete only blocks on the default when another live location would be
-//     left defaultless ("make another the default first"). Deleting a
-//     tenant's one and only location is allowed — that just returns them to
-//     the zero-locations fallback (Company Profile's billing address).
+//   - Delete blocks on the default when another live location would be
+//     left defaultless ("make another the default first"), and while the
+//     location still holds inventory stock or user-made bins (inventory's
+//     warehouse_id columns are foreign keys to this table). Deleting a
+//     tenant's one and only, empty location is allowed — that just returns
+//     them to the zero-locations fallback (Company Profile's billing address).
 
 import (
 	"context"
@@ -222,6 +224,30 @@ func Delete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID 
 		if otherLiveCount > 0 {
 			return ClientError{"Make another location the default before deleting this one."}
 		}
+	}
+
+	// Inventory holds stock (and bins) at a location -- it is the same row --
+	// so a location that still has either cannot simply disappear: the stock
+	// would be left pointing at a place nobody can see or pick. The system
+	// staging bin an upgraded warehouse carries does not count; only bins a
+	// person made do.
+	var onHand float64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(quantity_on_hand), 0) FROM inventory_stock
+		WHERE warehouse_id = $1`, pk).Scan(&onHand); err != nil {
+		return fmt.Errorf("check company location stock: %w", err)
+	}
+	if onHand != 0 {
+		return ClientError{"This location still holds stock. Transfer or adjust it to zero first."}
+	}
+	var liveBins int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM inventory_bin
+		WHERE warehouse_id = $1 AND bin_deleted_at IS NULL AND NOT bin_is_system`, pk).Scan(&liveBins); err != nil {
+		return fmt.Errorf("check company location bins: %w", err)
+	}
+	if liveBins > 0 {
+		return ClientError{"This location still has bins. Delete its bins first."}
 	}
 
 	if _, err := tx.Exec(ctx, `

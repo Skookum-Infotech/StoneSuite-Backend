@@ -2240,36 +2240,52 @@ INSERT INTO lkp_unit (unit_name, unit_code, unit_category, unit_is_system, unit_
     ('Linear Foot','LFT','length',TRUE,1), ('Kilogram','KG','weight',TRUE,1), ('Pound','LB','weight',TRUE,1)
 ON CONFLICT (unit_code) DO NOTHING;
 
--- lkp_warehouse -----------------------------------------------------------
-CREATE TABLE IF NOT EXISTS lkp_warehouse (
-    warehouse_id             SERIAL       PRIMARY KEY,
-    warehouse_uuid           UUID         NOT NULL DEFAULT gen_random_uuid(),
-    warehouse_name           VARCHAR(100) NOT NULL,
-    warehouse_code           VARCHAR(20)  NOT NULL,
-    warehouse_addr_line1     VARCHAR(100) NOT NULL DEFAULT '',
-    warehouse_addr_line2     VARCHAR(100) NOT NULL DEFAULT '',
-    warehouse_addr_city      VARCHAR(100) NOT NULL DEFAULT '',
-    warehouse_addr_state     INTEGER          NULL REFERENCES lkp_state(state_id),
-    warehouse_addr_zip       VARCHAR(10)  NOT NULL DEFAULT '',
-    warehouse_addr_country   INTEGER          NULL REFERENCES lkp_country(country_id),
-    warehouse_is_default     BOOLEAN      NOT NULL DEFAULT FALSE,
-    warehouse_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
-    warehouse_is_system      BOOLEAN      NOT NULL DEFAULT FALSE,
-    warehouse_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    warehouse_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
-    warehouse_deleted_at     TIMESTAMP        NULL,
-    warehouse_deleted_by     INTEGER          NULL REFERENCES employee(employee_id),
-    warehouse_record_version INTEGER      NOT NULL DEFAULT 1,
-    CONSTRAINT uq_warehouse_code UNIQUE (warehouse_code),
-    CONSTRAINT uq_warehouse_uuid UNIQUE (warehouse_uuid)
-);
--- At most one default warehouse.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouse_default
-    ON lkp_warehouse (warehouse_is_default) WHERE warehouse_is_default = TRUE;
+-- Company locations (Configuration -> Company Info -> Locations) ----------
+-- The physical addresses a tenant operates from (offices, warehouses,
+-- showrooms). Inventory has no separate "warehouse" master any more: every
+-- warehouse_id / *_warehouse_id column below is a foreign key to
+-- company_location(company_location_id), and the Inventory module shows these
+-- rows as its Locations. (The old lkp_warehouse table was folded into this one
+-- by the one-time upgrade block at the end of this file.)
+--
+-- Zero rows is a valid, common state: the Company Info screen then falls back to
+-- showing company_profile's billing address as a read-only default until the
+-- tenant adds a real location; nothing here is ever backfilled from that
+-- fallback. Defined here, ahead of the inventory tables that reference it.
+CREATE TABLE IF NOT EXISTS company_location (
+    company_location_id    SERIAL       PRIMARY KEY,
+    company_location_uuid  UUID         NOT NULL DEFAULT gen_random_uuid(),
 
-INSERT INTO lkp_warehouse (warehouse_name, warehouse_code, warehouse_is_default, warehouse_is_system, warehouse_created_by) VALUES
-    ('Main Warehouse','MAIN',TRUE,TRUE,1)
-ON CONFLICT (warehouse_code) DO NOTHING;
+    name                    VARCHAR(255) NOT NULL,
+    phone                   VARCHAR(255) NOT NULL DEFAULT '',
+
+    addr_line1              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_line2              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_suite              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_city               VARCHAR(255) NOT NULL DEFAULT '',
+    addr_country            VARCHAR(255) NOT NULL DEFAULT '',
+    addr_state              VARCHAR(255) NOT NULL DEFAULT '',
+    addr_zip                VARCHAR(255) NOT NULL DEFAULT '',
+
+    -- The one location Ship-To/inventory/other consumers should default to.
+    -- CreateLocation flags the tenant's first location default automatically;
+    -- every location after that starts FALSE and only SetDefault (a
+    -- transactional swap) moves it, so uq_company_location_default never has to
+    -- reject two TRUE rows at once.
+    is_default              BOOLEAN      NOT NULL DEFAULT FALSE,
+
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by              INTEGER          NULL REFERENCES employee(employee_id),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    deleted_at              TIMESTAMPTZ      NULL,
+    deleted_by              INTEGER          NULL REFERENCES employee(employee_id),
+
+    CONSTRAINT uq_company_location_uuid UNIQUE (company_location_uuid)
+);
+
+-- At most one live default location at a time.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_company_location_default
+    ON company_location (is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
 
 -- lkp_tax_rate ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS lkp_tax_rate (
@@ -2330,7 +2346,7 @@ CREATE INDEX IF NOT EXISTS idx_inv_item_gin    ON inventory_item USING GIN (inve
 CREATE TABLE IF NOT EXISTS inventory_stock (
     inventory_stock_id      SERIAL        PRIMARY KEY,
     inventory_item_id       INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id) ON DELETE CASCADE,
-    warehouse_id             INTEGER      NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id             INTEGER      NOT NULL REFERENCES company_location(company_location_id),
     quantity_on_hand         DECIMAL(14,3) NOT NULL DEFAULT 0,
     reorder_point            DECIMAL(14,3) NOT NULL DEFAULT 0,
     stock_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2459,7 +2475,7 @@ CREATE TABLE IF NOT EXISTS sales_order_item (
     sales_order_id          INTEGER       NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
     line_number              INTEGER      NOT NULL,
     inventory_item_id       INTEGER           NULL REFERENCES inventory_item(inventory_item_id), -- NULL = free-text line
-    warehouse_id             INTEGER          NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id             INTEGER          NULL REFERENCES company_location(company_location_id),
 
     -- Snapshots (frozen at add time)
     item_name                VARCHAR(150) NOT NULL DEFAULT '',
@@ -2501,7 +2517,7 @@ CREATE TABLE IF NOT EXISTS inventory_allocation (
     inventory_allocation_id    SERIAL        PRIMARY KEY,
     inventory_allocation_uuid  UUID          NOT NULL DEFAULT gen_random_uuid(),
     inventory_item_id          INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
-    warehouse_id               INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id               INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     sales_order_id             INTEGER       NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
     sales_order_item_id        INTEGER       NOT NULL REFERENCES sales_order_item(sales_order_item_id) ON DELETE CASCADE,
     allocated_quantity         DECIMAL(14,3) NOT NULL DEFAULT 0,
@@ -4131,7 +4147,7 @@ CREATE TABLE IF NOT EXISTS inventory_slab (
     slab_received_by         INTEGER           NULL REFERENCES employee(employee_id),
     slab_supplier_packing_ref VARCHAR(80)  NOT NULL DEFAULT '',
     inventory_item_id        INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id) ON DELETE CASCADE,
-    warehouse_id             INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id             INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     slab_bundle_id           VARCHAR(50)   NOT NULL DEFAULT '',
     slab_block_id            VARCHAR(50)   NOT NULL DEFAULT '',
     slab_lot                 VARCHAR(50)   NOT NULL DEFAULT '',
@@ -4190,7 +4206,7 @@ CREATE TABLE IF NOT EXISTS inventory_slab_ledger (
     inventory_slab_ledger_id SERIAL        PRIMARY KEY,
     inventory_slab_id        INTEGER       NOT NULL REFERENCES inventory_slab(inventory_slab_id),
     inventory_item_id        INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
-    warehouse_id             INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id             INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     event                    VARCHAR(20)   NOT NULL,
     quantity_delta           DECIMAL(14,3) NOT NULL,   -- signed, in the item's unit
     fabrication_job_slab_id  INTEGER           NULL,   -- FK added after that table exists
@@ -4641,7 +4657,7 @@ CREATE TABLE IF NOT EXISTS item_receipt (
     item_receipt_vendor_name     VARCHAR(150)  NOT NULL DEFAULT '',
 
     -- Destination (AD-4: the PO carries no warehouse, so the receipt supplies it)
-    warehouse_id                 INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id                 INTEGER       NOT NULL REFERENCES company_location(company_location_id),
 
     -- Primary info
     item_receipt_date            DATE          NOT NULL DEFAULT CURRENT_DATE,
@@ -4753,7 +4769,7 @@ CREATE TABLE IF NOT EXISTS item_receipt_history (
 CREATE TABLE IF NOT EXISTS inventory_ledger (
     inventory_ledger_id SERIAL        PRIMARY KEY,
     inventory_item_id   INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
-    warehouse_id        INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id        INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     event               VARCHAR(20)   NOT NULL,
     quantity_delta      DECIMAL(14,3) NOT NULL,   -- signed, in the item's own unit
     source_record_type  INTEGER           NULL REFERENCES lkp_record_type(record_type_id),
@@ -5600,9 +5616,14 @@ INSERT INTO lkp_inventory_reason (inventory_reason_name, inventory_reason_code,
     ('Found',                'FOUND','adjustment','increase',TRUE,1),
     ('Recount',              'RCNT', 'count',     'both',    TRUE,1),
     ('Cycle Count Variance', 'CCV',  'count',     'both',    TRUE,1),
-    ('Warehouse Transfer',   'WHTR', 'transfer',  'both',    TRUE,1),
+    ('Location Transfer',    'WHTR', 'transfer',  'both',    TRUE,1),
     ('Data Entry Correction','CORR', 'adjustment','both',    TRUE,1)
 ON CONFLICT (inventory_reason_code) DO NOTHING;
+-- Warehouses are called Locations now: rename the reason already seeded into
+-- existing tenants (the code stays WHTR). Only while it still carries the old
+-- seeded name, so a rename a tenant made by hand is never overwritten.
+UPDATE lkp_inventory_reason SET inventory_reason_name = 'Location Transfer'
+WHERE inventory_reason_code = 'WHTR' AND inventory_reason_name = 'Warehouse Transfer';
 
 -- ---------------------------------------------------------------------
 -- 2. inventory_bin -- a physical location inside a warehouse (AD-1).
@@ -5619,7 +5640,7 @@ ON CONFLICT (inventory_reason_code) DO NOTHING;
 CREATE TABLE IF NOT EXISTS inventory_bin (
     inventory_bin_id        SERIAL        PRIMARY KEY,
     inventory_bin_uuid      UUID          NOT NULL DEFAULT gen_random_uuid(),
-    warehouse_id            INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id            INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     bin_code                VARCHAR(30)   NOT NULL,
     bin_name                VARCHAR(100)  NOT NULL DEFAULT '',
     bin_type                VARCHAR(20)   NOT NULL DEFAULT 'rack',
@@ -5666,31 +5687,12 @@ CREATE INDEX IF NOT EXISTS idx_bin_path      ON inventory_bin (bin_path varchar_
 CREATE INDEX IF NOT EXISTS idx_bin_created_id ON inventory_bin (bin_created_at, inventory_bin_id) WHERE bin_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_bin_updated_id ON inventory_bin (bin_updated_at, inventory_bin_id) WHERE bin_deleted_at IS NULL;
 
--- One staging bin in MAIN so receiving has a default destination. The warehouse
--- id is resolved by subselect on warehouse_code, never a hardcoded integer.
---
--- WHERE NOT EXISTS rather than ON CONFLICT: the uniqueness above is a PARTIAL
--- index, which cannot be named as a conflict target, so a targeted ON CONFLICT
--- would error and an untargeted one would silently mask unrelated violations.
---
--- The guard is scoped to LIVE rows (bin_deleted_at IS NULL) so that it matches
--- uq_inventory_bin_code_active exactly. Scoping it to all rows instead would
--- mean that soft-deleting this system bin leaves the tenant permanently without
--- a staging destination: the guard would keep finding the dead row and skip the
--- insert on every subsequent boot. Matching the index's scope makes a deleted
--- system row reappear on the next boot, which is the same behaviour the seeded
--- chart of accounts already has (uq_coa_account_code_live, line 5041).
--- Phase 2's bin delete path must additionally refuse to soft-delete a
--- bin_is_system row, so this resurrection stays a backstop rather than the
--- normal path.
-INSERT INTO inventory_bin (warehouse_id, bin_code, bin_name, bin_type, bin_path, bin_depth, bin_is_system)
-SELECT w.warehouse_id, 'STAGING', 'Receiving Staging', 'staging', 'STAGING', 0, TRUE
-FROM lkp_warehouse w
-WHERE w.warehouse_code = 'MAIN'
-  AND NOT EXISTS (SELECT 1 FROM inventory_bin b
-                  WHERE b.warehouse_id = w.warehouse_id
-                    AND LOWER(b.bin_code) = 'staging'
-                    AND b.bin_deleted_at IS NULL);
+-- No bin is seeded any more. This used to insert one "Receiving Staging" bin
+-- into the seeded MAIN warehouse on every boot; locations now come from
+-- Configuration -> Company Info, so there is no fixed location to seed a bin
+-- into, and nothing requires one (a staging bin is just a bin_type a tenant may
+-- create). Existing staging bins are kept with their location by the upgrade
+-- block at the end of this file.
 
 -- ---------------------------------------------------------------------
 -- 3. inventory_bundle -- a shipping/handling group that moves as a set (AD-5).
@@ -5715,7 +5717,7 @@ CREATE TABLE IF NOT EXISTS inventory_bundle (
     bundle_block_id          VARCHAR(50)  NOT NULL DEFAULT '',
     bundle_lot               VARCHAR(50)  NOT NULL DEFAULT '',
     inventory_item_id        INTEGER          NULL REFERENCES inventory_item(inventory_item_id),
-    warehouse_id             INTEGER      NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id             INTEGER      NOT NULL REFERENCES company_location(company_location_id),
     inventory_bin_id         INTEGER          NULL REFERENCES inventory_bin(inventory_bin_id),
     -- open   = members may be added/removed
     -- sealed = members move together; a single-member move is refused
@@ -5769,7 +5771,7 @@ ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
 ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
     inventory_item_barcode              VARCHAR(64)   NOT NULL DEFAULT '';
 ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS
-    inventory_item_default_warehouse_id INTEGER           NULL REFERENCES lkp_warehouse(warehouse_id);
+    inventory_item_default_warehouse_id INTEGER           NULL REFERENCES company_location(company_location_id);
 
 -- inventory_item_tracking (AD-8) is the highest-value column here. Today nothing
 -- on inventory_item says whether an item is slab-tracked or quantity-tracked,
@@ -5914,8 +5916,8 @@ CREATE TABLE IF NOT EXISTS inventory_unit_history (
     history_new_value         TEXT        NOT NULL DEFAULT '',
     from_bin_id               INTEGER         NULL REFERENCES inventory_bin(inventory_bin_id),
     to_bin_id                 INTEGER         NULL REFERENCES inventory_bin(inventory_bin_id),
-    from_warehouse_id         INTEGER         NULL REFERENCES lkp_warehouse(warehouse_id),
-    to_warehouse_id           INTEGER         NULL REFERENCES lkp_warehouse(warehouse_id),
+    from_warehouse_id         INTEGER         NULL REFERENCES company_location(company_location_id),
+    to_warehouse_id           INTEGER         NULL REFERENCES company_location(company_location_id),
     inventory_reason_id       INTEGER         NULL REFERENCES lkp_inventory_reason(inventory_reason_id),
     history_note              TEXT        NOT NULL DEFAULT '',
     history_at                TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -6193,7 +6195,7 @@ CREATE TABLE IF NOT EXISTS inventory_adjustment (
     record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = IADJ
     adjustment_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
-    warehouse_id                  INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id                  INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     adjustment_date               DATE          NOT NULL DEFAULT CURRENT_DATE,
     -- Header reason is the default a line inherits when it names none. A line
     -- reason is still required at post time -- see chk_iadjl_reason.
@@ -6325,8 +6327,8 @@ CREATE TABLE IF NOT EXISTS inventory_transfer (
     record_type                INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = ITRF
     transfer_status            INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
-    from_warehouse_id          INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
-    to_warehouse_id            INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    from_warehouse_id          INTEGER       NOT NULL REFERENCES company_location(company_location_id),
+    to_warehouse_id            INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     -- Destination bin is optional and applies to serialized lines only. Bins
     -- belong to a warehouse, so the SOURCE bin is never carried: it is
     -- meaningless at the destination and is cleared on arrival.
@@ -6471,7 +6473,7 @@ CREATE TABLE IF NOT EXISTS inventory_count (
     record_type              INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = ICNT
     count_status             INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
 
-    warehouse_id             INTEGER       NOT NULL REFERENCES lkp_warehouse(warehouse_id),
+    warehouse_id             INTEGER       NOT NULL REFERENCES company_location(company_location_id),
     -- NULL = the whole warehouse. Set = this bin and everything under it,
     -- matched on inventory_bin.bin_path so a subtree is one prefix scan.
     inventory_bin_id         INTEGER           NULL REFERENCES inventory_bin(inventory_bin_id),
@@ -8425,49 +8427,8 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_name           VARCHAR
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_account_number VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_routing_number VARCHAR(255) NOT NULL DEFAULT '';
 
--- =====================================================================
--- Company Locations — Configuration -> Company Info -> Locations tab.
--- Physical addresses a tenant operates from (offices, warehouses,
--- showrooms) -- a distinct concept from company_profile's billing/
--- shipping/return addresses above (which describe how documents route,
--- not where the business physically is). Zero rows is a valid, common
--- state: the frontend falls back to showing company_profile's billing
--- address as a read-only default until the tenant adds a real location;
--- nothing here is ever backfilled from that fallback.
--- =====================================================================
-CREATE TABLE IF NOT EXISTS company_location (
-    company_location_id    SERIAL       PRIMARY KEY,
-    company_location_uuid  UUID         NOT NULL DEFAULT gen_random_uuid(),
-
-    name                    VARCHAR(255) NOT NULL,
-    phone                   VARCHAR(255) NOT NULL DEFAULT '',
-
-    addr_line1              VARCHAR(255) NOT NULL DEFAULT '',
-    addr_line2              VARCHAR(255) NOT NULL DEFAULT '',
-    addr_suite              VARCHAR(255) NOT NULL DEFAULT '',
-    addr_city               VARCHAR(255) NOT NULL DEFAULT '',
-    addr_country            VARCHAR(255) NOT NULL DEFAULT '',
-    addr_state              VARCHAR(255) NOT NULL DEFAULT '',
-    addr_zip                VARCHAR(255) NOT NULL DEFAULT '',
-
-    -- The one location Ship-To/other consumers should default to. CreateLocation
-    -- flags the tenant's first location default automatically; every location
-    -- after that starts FALSE and only SetDefault (a transactional swap) moves it,
-    -- so uq_company_location_default never has to reject two TRUE rows at once.
-    is_default              BOOLEAN      NOT NULL DEFAULT FALSE,
-
-    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    created_by              INTEGER          NULL REFERENCES employee(employee_id),
-    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    deleted_at              TIMESTAMPTZ      NULL,
-    deleted_by              INTEGER          NULL REFERENCES employee(employee_id),
-
-    CONSTRAINT uq_company_location_uuid UNIQUE (company_location_uuid)
-);
-
--- At most one live default location at a time.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_company_location_default
-    ON company_location (is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
+-- (company_location is defined earlier in this file, ahead of the inventory
+-- tables that reference it -- see "Company locations" above.)
 
 
 -- =====================================================================
@@ -8764,3 +8725,171 @@ CREATE TABLE IF NOT EXISTS crm_notify_recipient_role (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (recipient_group, role_id)
 );
+
+-- =====================================================================
+-- One-time upgrade: fold lkp_warehouse into company_location.
+--
+-- Inventory used to have its own warehouse master (lkp_warehouse), unrelated to
+-- the Configuration -> Company Info -> Locations list. There is now one list:
+-- every warehouse_id / *_warehouse_id column is a foreign key to
+-- company_location(company_location_id). This block converts a database that
+-- still has the old table; on a fresh database (or one already converted) there
+-- is no lkp_warehouse and it does nothing, so it is safe on every boot.
+--
+-- What it does, all inside the schema transaction (any failure rolls the whole
+-- upgrade back and leaves the database exactly as it was):
+--   1. Works out which warehouses are actually in use -- referenced by any row of
+--      any table with a foreign key to lkp_warehouse. Found from pg_constraint,
+--      not a hand-kept table list, so a table added later is covered too. A
+--      warehouse whose only footprint is its unused system STAGING bin is NOT in
+--      use, and that bin is dropped with it.
+--   2. Gives each in-use warehouse (soft-deleted ones included -- history still
+--      points at them) a company_location: an existing live location of the same
+--      name when exactly one exists on each side, otherwise a new one copied from
+--      the warehouse (name, address; state/country ids resolved to their names).
+--      Unused warehouses are simply left behind, so a tenant is not handed
+--      locations it never made.
+--   3. If no live location is the default afterwards, the one standing for the old
+--      default warehouse becomes it (else the oldest live location).
+--   4. Repoints every foreign key. Ids are first parked as negatives, then mapped,
+--      because warehouse ids and location ids overlap as numbers: mapping in
+--      place could momentarily collide on a UNIQUE (item, warehouse) index or the
+--      transfer's from <> to check.
+--   5. Keeps the old table as lkp_warehouse_legacy, with migrated_to_location_id
+--      recording where each row went, so the move can be audited or reversed by
+--      hand. Nothing reads it; drop it once you are satisfied.
+-- =====================================================================
+DO $wh_upgrade$
+DECLARE
+    ref        RECORD;
+    wh         RECORD;
+    loc        INTEGER;
+    reused     INTEGER := 0;
+    created    INTEGER := 0;
+BEGIN
+    IF to_regclass('lkp_warehouse') IS NULL THEN
+        RETURN;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_constraint
+               WHERE contype = 'f' AND confrelid = 'lkp_warehouse'::regclass AND cardinality(conkey) <> 1) THEN
+        RAISE EXCEPTION 'lkp_warehouse upgrade: a multi-column foreign key references lkp_warehouse; not supported';
+    END IF;
+
+    CREATE TEMP TABLE _wh_ref ON COMMIT DROP AS
+    SELECT c.conrelid::regclass::text AS tbl, a.attname::text AS col, c.conname::text AS con
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+    WHERE c.contype = 'f' AND c.confrelid = 'lkp_warehouse'::regclass;
+
+    -- 1a. Warehouses referenced by anything other than a system STAGING bin.
+    CREATE TEMP TABLE _wh_used (warehouse_id INTEGER PRIMARY KEY) ON COMMIT DROP;
+    FOR ref IN SELECT * FROM _wh_ref LOOP
+        EXECUTE format(
+            'INSERT INTO _wh_used SELECT DISTINCT %I FROM %s WHERE %I IS NOT NULL %s ON CONFLICT DO NOTHING',
+            ref.col, ref.tbl, ref.col,
+            CASE WHEN ref.tbl = 'inventory_bin'
+                 THEN 'AND NOT (bin_is_system AND lower(bin_code) = ''staging'')' ELSE '' END);
+    END LOOP;
+
+    -- 1b. Drop the system STAGING bins of the remaining warehouses, unless a unit
+    --     or child bin still points at one (the foreign key says so).
+    FOR ref IN
+        SELECT inventory_bin_id AS id FROM inventory_bin
+        WHERE bin_is_system AND lower(bin_code) = 'staging'
+          AND warehouse_id NOT IN (SELECT warehouse_id FROM _wh_used)
+    LOOP
+        BEGIN
+            DELETE FROM inventory_bin WHERE inventory_bin_id = ref.id;
+        EXCEPTION WHEN foreign_key_violation THEN
+            NULL;
+        END;
+    END LOOP;
+
+    -- 1c. What is in use now, counting every reference (bins that survived too).
+    FOR ref IN SELECT * FROM _wh_ref LOOP
+        EXECUTE format(
+            'INSERT INTO _wh_used SELECT DISTINCT %I FROM %s WHERE %I IS NOT NULL ON CONFLICT DO NOTHING',
+            ref.col, ref.tbl, ref.col);
+    END LOOP;
+
+    -- 2. warehouse -> location.
+    CREATE TEMP TABLE _wh_map (warehouse_id INTEGER PRIMARY KEY, location_id INTEGER NOT NULL) ON COMMIT DROP;
+    FOR wh IN
+        SELECT w.*, st.state_name, co.country_name
+        FROM lkp_warehouse w
+        LEFT JOIN lkp_state st   ON st.state_id   = w.warehouse_addr_state
+        LEFT JOIN lkp_country co ON co.country_id = w.warehouse_addr_country
+        WHERE w.warehouse_id IN (SELECT warehouse_id FROM _wh_used)
+        ORDER BY w.warehouse_id
+    LOOP
+        loc := NULL;
+        IF wh.warehouse_deleted_at IS NULL
+           AND (SELECT COUNT(*) FROM company_location cl
+                WHERE cl.deleted_at IS NULL
+                  AND lower(btrim(cl.name)) = lower(btrim(wh.warehouse_name))) = 1
+           AND (SELECT COUNT(*) FROM lkp_warehouse w2
+                WHERE w2.warehouse_id IN (SELECT warehouse_id FROM _wh_used)
+                  AND w2.warehouse_deleted_at IS NULL
+                  AND lower(btrim(w2.warehouse_name)) = lower(btrim(wh.warehouse_name))) = 1
+        THEN
+            SELECT cl.company_location_id INTO loc FROM company_location cl
+            WHERE cl.deleted_at IS NULL AND lower(btrim(cl.name)) = lower(btrim(wh.warehouse_name));
+            reused := reused + 1;
+        END IF;
+
+        IF loc IS NULL THEN
+            INSERT INTO company_location (
+                name, phone, addr_line1, addr_line2, addr_suite, addr_city, addr_country, addr_state, addr_zip,
+                is_default, created_at, created_by, deleted_at, deleted_by)
+            VALUES (
+                wh.warehouse_name, '', wh.warehouse_addr_line1, wh.warehouse_addr_line2, '', wh.warehouse_addr_city,
+                COALESCE(wh.country_name, ''), COALESCE(wh.state_name, ''), wh.warehouse_addr_zip,
+                FALSE, wh.warehouse_created_at, wh.warehouse_created_by, wh.warehouse_deleted_at, wh.warehouse_deleted_by)
+            RETURNING company_location_id INTO loc;
+            created := created + 1;
+        END IF;
+
+        INSERT INTO _wh_map (warehouse_id, location_id) VALUES (wh.warehouse_id, loc);
+    END LOOP;
+
+    -- 3. Keep exactly one live default.
+    IF NOT EXISTS (SELECT 1 FROM company_location WHERE is_default AND deleted_at IS NULL) THEN
+        UPDATE company_location SET is_default = TRUE
+        WHERE company_location_id = COALESCE(
+            (SELECT m.location_id FROM _wh_map m
+             JOIN lkp_warehouse w ON w.warehouse_id = m.warehouse_id
+             JOIN company_location cl ON cl.company_location_id = m.location_id
+             WHERE w.warehouse_is_default AND cl.deleted_at IS NULL
+             LIMIT 1),
+            (SELECT company_location_id FROM company_location
+             WHERE deleted_at IS NULL ORDER BY company_location_id LIMIT 1));
+    END IF;
+
+    -- 4. Repoint. Drop the old foreign keys, park every id as its negative, map
+    --    negatives to location ids, then add the new foreign keys.
+    FOR ref IN SELECT * FROM _wh_ref LOOP
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', ref.tbl, ref.con);
+    END LOOP;
+    FOR ref IN SELECT * FROM _wh_ref LOOP
+        EXECUTE format('UPDATE %s SET %I = -%I WHERE %I IS NOT NULL', ref.tbl, ref.col, ref.col, ref.col);
+    END LOOP;
+    FOR ref IN SELECT * FROM _wh_ref LOOP
+        EXECUTE format('UPDATE %s t SET %I = m.location_id FROM _wh_map m WHERE t.%I = -m.warehouse_id',
+                       ref.tbl, ref.col, ref.col);
+    END LOOP;
+    FOR ref IN SELECT * FROM _wh_ref LOOP
+        EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES company_location (company_location_id)',
+                       ref.tbl, ref.con, ref.col);
+    END LOOP;
+
+    -- 5. Keep the old rows for audit / manual rollback.
+    ALTER TABLE lkp_warehouse RENAME TO lkp_warehouse_legacy;
+    ALTER TABLE lkp_warehouse_legacy ADD COLUMN migrated_to_location_id INTEGER;
+    UPDATE lkp_warehouse_legacy w SET migrated_to_location_id = m.location_id
+    FROM _wh_map m WHERE m.warehouse_id = w.warehouse_id;
+
+    RAISE NOTICE 'lkp_warehouse folded into company_location: % location(s) created, % existing location(s) reused, % warehouse(s) left behind unused',
+        created, reused, (SELECT COUNT(*) FROM lkp_warehouse_legacy WHERE migrated_to_location_id IS NULL);
+END
+$wh_upgrade$;

@@ -24,7 +24,7 @@ const irSelect = `
 	       po.purchase_order_uuid, COALESCE(po.purchase_order_number,''), pors.record_status_code,
 	       v.vendor_uuid, ir.item_receipt_vendor_name, COALESCE(v.vendor_number,''),
 	       COALESCE(ou.id::text,''),
-	       ir.warehouse_id, COALESCE(w.warehouse_name,''),
+	       ir.warehouse_id, COALESCE(w.name,''),
 	       to_char(ir.item_receipt_date,'YYYY-MM-DD'),
 	       ir.item_receipt_packing_slip, ir.item_receipt_carrier,
 	       ir.item_receipt_tracking_number, ir.item_receipt_bill_of_lading,
@@ -39,7 +39,7 @@ const irSelect = `
 	JOIN purchase_order po ON po.purchase_order_id = ir.purchase_order_id
 	JOIN lkp_record_status pors ON pors.record_status_id = po.purchase_order_status
 	JOIN vendor v ON v.vendor_id = ir.item_receipt_vendor_id
-	LEFT JOIN lkp_warehouse w ON w.warehouse_id = ir.warehouse_id
+	LEFT JOIN company_location w ON w.company_location_id = ir.warehouse_id
 	LEFT JOIN employee oe ON oe.employee_id = ir.item_receipt_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
 

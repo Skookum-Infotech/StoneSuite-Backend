@@ -83,7 +83,7 @@ func FormatNumber(serialID int64) string { return fmt.Sprintf("%s-%06d", recordT
 const headerSelect = `
 	SELECT c.inventory_count_uuid, COALESCE(c.count_number,''),
 	       c.count_status, rs.record_status_code, rs.record_status_name,
-	       c.warehouse_id, w.warehouse_name,
+	       c.warehouse_id, w.name,
 	       b.inventory_bin_uuid, COALESCE(b.bin_path,''),
 	       to_char(c.count_date, 'YYYY-MM-DD'),
 	       to_char(c.count_frozen_at,    'YYYY-MM-DD"T"HH24:MI:SS'),
@@ -104,7 +104,7 @@ const headerSelect = `
 	       c.count_created_at, c.count_updated_at
 	FROM inventory_count c
 	JOIN lkp_record_status rs ON rs.record_status_id = c.count_status
-	JOIN lkp_warehouse w      ON w.warehouse_id = c.warehouse_id
+	JOIN company_location w   ON w.company_location_id = c.warehouse_id
 	LEFT JOIN inventory_bin b ON b.inventory_bin_id = c.inventory_bin_id`
 
 func scanHeader(row pgx.Row) (*Count, error) {
@@ -227,7 +227,7 @@ func mapWriteErr(err error, verb string) error {
 	case isUniqueViolation(err):
 		return ClientError{Msg: "That item or unit is already on a line of this count."}
 	case isFKViolation(err):
-		return ClientError{Msg: "Unknown item, unit, warehouse, bin or reason code."}
+		return ClientError{Msg: "Unknown item, unit, location, bin or reason code."}
 	case isCheckViolation(err):
 		return ClientError{Msg: "A counted quantity cannot be negative."}
 	}

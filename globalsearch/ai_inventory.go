@@ -27,8 +27,8 @@ const (
 // aiPriorityInventory ranks what a stock question most often names.
 var aiPriorityInventory = []string{"sku", "name", "status", "quantity_on_hand", "unit_price"}
 
-// aiPriorityStockDoc ranks what a warehouse-document question most often names.
-var aiPriorityStockDoc = []string{"number", "status", "date", "warehouse"}
+// aiPriorityStockDoc ranks what a stock-document question most often names.
+var aiPriorityStockDoc = []string{"number", "status", "date", "location"}
 
 var _ = addAI("inventory_item", AIHooks{
 	Label: "inventory item",
@@ -96,7 +96,7 @@ func loadInventoryUnitAI(ctx context.Context, pool *pgxpool.Pool, id string) (AI
 		"form":         u.Form,
 		"sku":          u.InventoryItemSKU,
 		"name":         u.InventoryItemName,
-		"warehouse":    u.WarehouseName,
+		"location":     u.WarehouseName,
 		"bin":          u.BinPath,
 		"lot":          u.Lot,
 		"block_id":     u.BlockID,
@@ -109,7 +109,7 @@ func loadInventoryUnitAI(ctx context.Context, pool *pgxpool.Pool, id string) (AI
 	}
 	return AIRecord{Doc: rag.RecordDoc{
 		WorkflowKey: "inventory_unit", StateName: u.Status, Core: core,
-		Priority: []string{"serial", "status", "sku", "name", "warehouse", "area"},
+		Priority: []string{"serial", "status", "sku", "name", "location", "area"},
 	}}, nil
 }
 
@@ -134,7 +134,7 @@ func loadInventoryAdjustmentAI(ctx context.Context, pool *pgxpool.Pool, id strin
 		"number":    a.Number,
 		"status":    a.StatusName,
 		"date":      a.Date,
-		"warehouse": a.WarehouseName,
+		"location":  a.WarehouseName,
 		"reason":    a.ReasonName,
 		"memo":      a.Notes,
 		"net_delta": a.NetDelta,
@@ -145,7 +145,7 @@ func loadInventoryAdjustmentAI(ctx context.Context, pool *pgxpool.Pool, id strin
 
 var _ = addAI("inventory_transfer", AIHooks{
 	Label: "inventory transfer",
-	Nouns: []string{"stock transfer", "warehouse transfer"},
+	Nouns: []string{"stock transfer", "location transfer", "warehouse transfer"},
 	Load:  loadInventoryTransferAI,
 	Count: func(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID string) (int, error) {
 		return countTable(ctx, pool, scope, identityID, "inventory_transfer", "transfer_deleted_at", "")
@@ -164,9 +164,9 @@ func loadInventoryTransferAI(ctx context.Context, pool *pgxpool.Pool, id string)
 		"number":          t.Number,
 		"status":          t.StatusName,
 		"date":            t.Date,
-		"warehouse":       t.FromWarehouseName,
-		"from_warehouse":  t.FromWarehouseName,
-		"to_warehouse":    t.ToWarehouseName,
+		"location":        t.FromWarehouseName,
+		"from_location":   t.FromWarehouseName,
+		"to_location":     t.ToWarehouseName,
 		"carrier":         t.Carrier,
 		"tracking_number": t.TrackingNumber,
 		"memo":            t.Notes,
@@ -199,7 +199,7 @@ func loadInventoryCountAI(ctx context.Context, pool *pgxpool.Pool, id string) (A
 		"number":         c.Number,
 		"status":         c.StatusName,
 		"date":           c.Date,
-		"warehouse":      c.WarehouseName,
+		"location":       c.WarehouseName,
 		"bin":            c.BinPath,
 		"memo":           c.Notes,
 		"line_count":     c.LineCount,

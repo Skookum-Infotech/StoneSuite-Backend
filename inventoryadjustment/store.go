@@ -99,7 +99,7 @@ func FormatNumber(serialID int64) string {
 const headerSelect = `
 	SELECT a.inventory_adjustment_uuid, COALESCE(a.adjustment_number,''),
 	       a.adjustment_status, rs.record_status_code, rs.record_status_name,
-	       a.warehouse_id, w.warehouse_name,
+	       a.warehouse_id, w.name,
 	       to_char(a.adjustment_date, 'YYYY-MM-DD'),
 	       a.inventory_reason_id, COALESCE(r.inventory_reason_name,''),
 	       a.adjustment_notes, a.adjustment_internal_notes,
@@ -115,7 +115,7 @@ const headerSelect = `
 	       a.adjustment_created_at, a.adjustment_updated_at
 	FROM inventory_adjustment a
 	JOIN lkp_record_status rs        ON rs.record_status_id = a.adjustment_status
-	JOIN lkp_warehouse w             ON w.warehouse_id = a.warehouse_id
+	JOIN company_location w          ON w.company_location_id = a.warehouse_id
 	LEFT JOIN lkp_inventory_reason r ON r.inventory_reason_id = a.inventory_reason_id
 	LEFT JOIN employee e             ON e.employee_id = a.adjustment_owner_id`
 
@@ -235,7 +235,7 @@ func mapWriteErr(err error, verb string) error {
 	case isUniqueViolation(err):
 		return ClientError{Msg: "This unit is already on a line of this adjustment."}
 	case isFKViolation(err):
-		return ClientError{Msg: "Unknown item, unit, warehouse or reason code."}
+		return ClientError{Msg: "Unknown item, unit, location or reason code."}
 	case isCheckViolation(err):
 		return ClientError{Msg: "An adjustment line needs a reason and a non-zero quantity."}
 	}

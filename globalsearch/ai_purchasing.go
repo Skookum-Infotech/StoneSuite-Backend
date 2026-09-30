@@ -194,7 +194,7 @@ func loadItemReceiptAI(ctx context.Context, pool *pgxpool.Pool, id string) (AIRe
 		"vendor":          ir.Vendor.Name,
 		"purchase_order":  ir.PurchaseOrder.Number,
 		"date":            ir.ReceiptDate,
-		"warehouse":       ir.WarehouseName,
+		"location":        ir.WarehouseName,
 		"packing_slip":    ir.PackingSlip,
 		"carrier":         ir.Carrier,
 		"tracking_number": ir.TrackingNumber,

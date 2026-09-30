@@ -19,7 +19,7 @@ import (
 // silently hide every empty bin, which is precisely the set a yard crew needs
 // when looking for somewhere to put a slab.
 const binSelect = `
-	SELECT b.inventory_bin_uuid, w.warehouse_uuid, w.warehouse_name,
+	SELECT b.inventory_bin_uuid, w.company_location_uuid, w.name,
 	       b.bin_code, b.bin_name, b.bin_type,
 	       p.inventory_bin_uuid, b.bin_path, b.bin_depth,
 	       b.bin_capacity_units, b.bin_capacity_area,
@@ -30,7 +30,7 @@ const binSelect = `
 	           AND s.slab_deleted_at IS NULL
 	           AND s.slab_status NOT IN ('consumed','scrapped'))
 	FROM inventory_bin b
-	JOIN lkp_warehouse w ON w.warehouse_id = b.warehouse_id
+	JOIN company_location w ON w.company_location_id = b.warehouse_id
 	LEFT JOIN inventory_bin p ON p.inventory_bin_id = b.bin_parent_id`
 
 func scanBin(row pgx.Row) (*Bin, error) {
@@ -97,20 +97,20 @@ func binByUUID(ctx context.Context, q pgxQuerier, uuid string, forUpdate bool) (
 	return b, nil
 }
 
-// warehouseIDByUUID resolves a warehouse uuid to its internal id.
+// warehouseIDByUUID resolves a location uuid to its internal id.
 func warehouseIDByUUID(ctx context.Context, q pgxQuerier, uuid string) (int, error) {
 	var id int
 	err := q.QueryRow(ctx, `
-		SELECT warehouse_id FROM lkp_warehouse
-		WHERE warehouse_uuid = $1 AND warehouse_deleted_at IS NULL`, uuid).Scan(&id)
+		SELECT company_location_id FROM company_location
+		WHERE company_location_uuid = $1 AND deleted_at IS NULL`, uuid).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ClientError{Msg: "Unknown warehouse."}
+		return 0, ClientError{Msg: "Unknown location."}
 	}
 	if err != nil {
 		if isInvalidTextRepresentation(err) {
-			return 0, ClientError{Msg: "Unknown warehouse."}
+			return 0, ClientError{Msg: "Unknown location."}
 		}
-		return 0, fmt.Errorf("resolve warehouse: %w", err)
+		return 0, fmt.Errorf("resolve location: %w", err)
 	}
 	return id, nil
 }
@@ -122,17 +122,17 @@ func ListBins(ctx context.Context, pool *pgxpool.Pool, warehouseUUID string, inc
 	args := []any{}
 	if warehouseUUID != "" {
 		args = append(args, warehouseUUID)
-		q += fmt.Sprintf(" AND w.warehouse_uuid = $%d", len(args))
+		q += fmt.Sprintf(" AND w.company_location_uuid = $%d", len(args))
 	}
 	if !includeInactive {
 		q += " AND b.bin_is_active = TRUE"
 	}
-	q += " ORDER BY w.warehouse_name, b.bin_path"
+	q += " ORDER BY w.name, b.bin_path"
 
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		if isInvalidTextRepresentation(err) {
-			return nil, ClientError{Msg: "Unknown warehouse."}
+			return nil, ClientError{Msg: "Unknown location."}
 		}
 		return nil, fmt.Errorf("list bins: %w", err)
 	}

@@ -95,7 +95,7 @@ func attachMembers(ctx context.Context, tx pgx.Tx, bundleUUID string, memberIDs 
 			return ClientError{Msg: "A unit in transit cannot be bundled. Receive its transfer first."}
 		}
 		if u.warehouseID != b.warehouseID {
-			return ClientError{Msg: "A unit must be in the bundle's warehouse before it can be bundled."}
+			return ClientError{Msg: "A unit must be in the bundle's location before it can be bundled."}
 		}
 		// The first member fixes the bundle's item; the rest are held to it. A
 		// pallet is sawn from one block, and without this TotalArea would be

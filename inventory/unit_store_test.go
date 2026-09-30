@@ -173,12 +173,21 @@ func TestMoveUnitToBin_IsStockNeutral(t *testing.T) {
 	before := onHand(t, pool, item)
 	ledgerBefore := ledgerSum(t, pool, item)
 
-	// The seeded STAGING bin in MAIN.
+	// A STAGING bin in the unit's own location. No bin is seeded any more (the
+	// old one lived in the seeded MAIN warehouse), so the test makes its own. The
+	// code is unique per location among live bins, so a database an earlier run
+	// already used has it: ON CONFLICT DO NOTHING, then look it up.
 	var binUUID string
 	if err := pool.QueryRow(ctx, `
-		SELECT inventory_bin_uuid FROM inventory_bin
-		WHERE LOWER(bin_code) = 'staging' AND bin_deleted_at IS NULL`).Scan(&binUUID); err != nil {
-		t.Fatalf("find staging bin: %v", err)
+		INSERT INTO inventory_bin (warehouse_id, bin_code, bin_name, bin_type, bin_path, bin_depth)
+		VALUES (1, 'STAGING', 'Receiving Staging', 'staging', 'STAGING', 0)
+		ON CONFLICT DO NOTHING
+		RETURNING inventory_bin_uuid`).Scan(&binUUID); err != nil {
+		if err := pool.QueryRow(ctx, `
+			SELECT inventory_bin_uuid FROM inventory_bin
+			WHERE warehouse_id = 1 AND LOWER(bin_code) = 'staging' AND bin_deleted_at IS NULL`).Scan(&binUUID); err != nil {
+			t.Fatalf("find staging bin: %v", err)
+		}
 	}
 
 	if err := MoveUnitToBin(ctx, pool, u.ID, MoveUnitInput{BinUUID: &binUUID, Note: "put away"}, 1); err != nil {

@@ -58,7 +58,7 @@ func (transferResolver) SortExpr(key string) (string, query.DataType, bool) {
 // or either warehouse name.
 func (transferResolver) SearchPredicate(ph string) string {
 	return "(COALESCE(t.transfer_number,'') ILIKE '%'||" + ph + "||'%' OR t.transfer_tracking_number ILIKE '%'||" + ph +
-		"||'%' OR fw.warehouse_name ILIKE '%'||" + ph + "||'%' OR tw.warehouse_name ILIKE '%'||" + ph + "||'%')"
+		"||'%' OR fw.name ILIKE '%'||" + ph + "||'%' OR tw.name ILIKE '%'||" + ph + "||'%')"
 }
 
 var _ query.FieldResolver = transferResolver{}

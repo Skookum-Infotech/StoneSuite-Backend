@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -309,29 +310,23 @@ func (h *PortalAuthOps) Refresh(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 
-	// Look up, then revoke before re-issuing — the same rotation order
-	// TenantOps.RefreshSession uses.
-	hash := tenancy.HashRefreshToken(cookie.Value)
-	rec, err := h.CP.RefreshTokenByHash(r.Context(), hash)
-	if errors.Is(err, tenancy.ErrRefreshTokenReused) {
-		logSecurityEvent(r, "portal_refresh_token_reused")
-		clearAuthCookies(w)
-		fail(w, http.StatusUnauthorized, "Session invalid. Please sign in again.")
+	// Same claim/rotate rules as TenantOps.RefreshSession: the old token is
+	// revoked only after its replacement is issued.
+	rec, hash, ok := claimRefreshToken(w, r, h.CP, cookie.Value, "portal_refresh_token_reused")
+	if !ok {
 		return
-	}
-	if err != nil {
-		clearAuthCookies(w)
-		fail(w, http.StatusUnauthorized, "Session expired. Please sign in again.")
-		return
-	}
-	if err := h.CP.RevokeRefreshToken(r.Context(), hash); err != nil {
-		log.Printf("warn: portal refresh rotation: revoke old token: %v", err)
 	}
 	identityID := rec.IdentityID
 
 	identity, err := h.CP.IdentityByID(r.Context(), identityID)
-	if err != nil {
+	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		clearAuthCookies(w)
 		fail(w, http.StatusUnauthorized, "Session expired. Please sign in again.")
+		return
+	}
+	if err != nil {
+		slog.Error("portal refresh: load identity", "error", err)
+		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
 		return
 	}
 
@@ -370,9 +365,11 @@ func (h *PortalAuthOps) Refresh(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return
 	}
-	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identityID)
+	refreshRaw, refreshExpiry, err := rotateRefreshToken(r.Context(), h.CP, hash, identityID)
 	if err != nil {
-		refreshRaw = ""
+		slog.Error("portal refresh rotation: issue new refresh token", "error", err)
+		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+		return
 	}
 	if err := setAuthCookiesAt(w, token, d, refreshRaw, refreshExpiry, portalRefreshCookiePath); err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to refresh session.")

@@ -447,21 +447,22 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link := applyLink(token)
-	emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, req.ContactEmail, req.RecipientName, link)
-	if emailErr != nil {
-		log.Printf("WARNING: invite email to %s failed: %v", req.ContactEmail, emailErr)
-	}
-	emailSent := emailErr == nil
+	// Notify accepts before it sends, so a nil send error does not mean the
+	// email went out: confirm the first delivery attempt before reporting it.
+	res, sendErr := services.SendOnboardingInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, req.ContactEmail, req.RecipientName, link)
+	outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
 	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.invited", "{}")
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	resp := map[string]any{
 		"success":    true,
 		"tenantId":   tenant.ID,
 		"slug":       tenant.Slug,
 		"inviteLink": link,
 		"expiresAt":  invite.ExpiresAt,
-		"emailSent":  emailSent,
-	})
+	}
+	applyEmailOutcome(r.Context(), resp, outcome, "tenant invite email not delivered (invite still valid)",
+		"tenant", tenant.ID, "invite_id", invite.ID)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ListTenants returns all tenants. Platform-admin only.
@@ -746,18 +747,17 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		// the owner can always copy the link if delivery is unavailable (e.g. no
 		// Notify configured in dev). Surface the outcome via emailSent.
 		link := applyLink(token)
-		emailErr := services.SendOnboardingInviteEmail(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
-		if emailErr != nil {
-			log.Printf("WARNING: resend invite email to %s failed: %v", contactEmail, emailErr)
-		}
-		emailSent := emailErr == nil
+		res, sendErr := services.SendOnboardingInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
+		outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
 		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}")
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"success":   true,
-			"invite":    inviteView(*invite),
-			"emailSent": emailSent,
-		})
+		resp := map[string]any{
+			"success": true,
+			"invite":  inviteView(*invite),
+		}
+		applyEmailOutcome(r.Context(), resp, outcome, "tenant invite resend email not delivered (invite still valid)",
+			"tenant", tenant.ID, "invite_id", invite.ID)
+		writeJSON(w, http.StatusOK, resp)
 
 	default:
 		fail(w, http.StatusMethodNotAllowed, "Method not allowed")

@@ -3,7 +3,11 @@
 // each request talks only to its own tenant's isolated database.
 package tenancy
 
-import "time"
+import (
+	"time"
+
+	"stonesuite-backend/models"
+)
 
 // Tenant status values (control-plane tenants.status).
 const (
@@ -72,4 +76,22 @@ type Tenant struct {
 // message instead of a raw connection error.
 func (t *Tenant) Servable() bool {
 	return t.Status == StatusActive && t.MigrationStatus == MigrationOK && t.DBName != ""
+}
+
+// UnservableReason explains why a tenant cannot be served: a stable
+// machine-readable code (models.CodeWorkspace*) and a user-facing message.
+// Both are empty for a servable tenant.
+func UnservableReason(t *Tenant) (code, message string) {
+	if t.Servable() {
+		return "", ""
+	}
+	switch t.Status {
+	case StatusSuspended:
+		code = models.CodeWorkspaceSuspended
+	case StatusDeleted:
+		code = models.CodeWorkspaceDeleted
+	default:
+		code = models.CodeWorkspaceUnavailable
+	}
+	return code, tenantUnservableMessage(t)
 }

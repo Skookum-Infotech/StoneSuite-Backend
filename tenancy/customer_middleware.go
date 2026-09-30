@@ -38,7 +38,7 @@ func (rs *Resolver) CustomerMiddleware(next http.Handler) http.Handler {
 		}
 
 		if !tenant.Servable() {
-			writeErr(w, http.StatusForbidden, tenantUnservableMessage(tenant))
+			writeUnservable(w, tenant)
 			return
 		}
 

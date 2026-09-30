@@ -685,6 +685,8 @@ func main() {
 		} else {
 			log.Println("R2 storage: not configured (R2-backed upload/download endpoints will return 503).")
 		}
+		// Lets a platform-admin tenant purge empty the tenant's bucket first.
+		tenantOps.WithR2Client(r2Client)
 
 		// Tenant's own Company Info (name/address -- Configuration -> Company Info).
 		companyProfileOps := controllers.NewCompanyProfileOps(r2Client)

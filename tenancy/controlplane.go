@@ -13,6 +13,11 @@ import (
 // ErrTenantNotFound is returned when no tenant matches the lookup.
 var ErrTenantNotFound = errors.New("tenant not found")
 
+// ErrPlatformOwnerProtected is returned when an operation that would destroy
+// the tenant is aimed at the platform-owner workspace — the one the platform
+// admin signs in to, which must never be deleted through the platform API.
+var ErrPlatformOwnerProtected = errors.New("the platform owner tenant cannot be purged")
+
 // ControlPlane owns the connection pool to the shared control-plane database
 // and exposes lookups against the tenant registry.
 type ControlPlane struct {

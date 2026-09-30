@@ -44,6 +44,7 @@ type TenantOps struct {
 	Router      *tenancy.Router // resolves tenant DB pools (used to reach the owner workspace)
 	Jobs        *jobqueue.Queue // durable async job queue (provisioning, etc.)
 	CF          storage.CFClientIface
+	R2          *storage.Client
 	CORSOrigins []string
 }
 
@@ -487,13 +488,18 @@ func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 			"dbName": t.DBName, "createdAt": t.CreatedAt,
 			"hardDeleteAfter": t.HardDeleteAfter,
 			"metadata":        meta,
+			"isPlatformOwner": t.IsPlatformOwner,
+			"r2Bucket":        t.R2Bucket,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tenants": out})
 }
 
 // TenantLifecycle handles /api/platform/tenants/{id}/{action} where action is
-// suspend | restore | delete | force-delete | invites. Platform-admin only.
+// suspend | restore | delete | force-delete | purge | invites. Platform-admin
+// only. purge permanently destroys the tenant (bucket, database, records) and
+// needs {"confirmSlug": "<slug>"} in the body; no action may suspend or delete
+// the platform-owner tenant (see lifecycleGuard).
 func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 	admin, ok := h.requirePlatformAdmin(r)
 	if !ok {
@@ -537,25 +543,54 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var err error
-	switch action {
-	case "suspend":
-		err = h.CP.SetTenantStatus(r.Context(), id, tenancy.StatusSuspended)
-	case "restore":
-		err = h.CP.RestoreTenant(r.Context(), id)
-	case "delete":
-		err = h.CP.MarkTenantDeleted(r.Context(), id, time.Now().Add(tenantDeleteGraceDays*24*time.Hour))
-	case "force-delete":
-		// Hard delete is destructive; for now we soft-delete with an immediate
-		// deadline. Actual DROP DATABASE is handled by a reaper (Phase 4+).
-		err = h.CP.MarkTenantDeleted(r.Context(), id, time.Now())
-	default:
+	if !lifecycleActions[action] {
 		fail(w, http.StatusBadRequest, "Unknown action: "+action)
+		return
+	}
+
+	tenant, err := h.CP.TenantByID(r.Context(), id)
+	if errors.Is(err, tenancy.ErrTenantNotFound) {
+		fail(w, http.StatusNotFound, "Tenant not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load tenant.")
+		return
+	}
+
+	confirmSlug := ""
+	if action == lifecyclePurge {
+		var ok bool
+		if confirmSlug, ok = readPurgeConfirmation(w, r); !ok {
+			return
+		}
+	}
+	if status, msg := lifecycleGuard(tenant, action, confirmSlug); status != 0 {
+		fail(w, status, msg)
+		return
+	}
+
+	switch action {
+	case lifecycleSuspend:
+		err = h.CP.SetTenantStatus(r.Context(), id, tenancy.StatusSuspended)
+	case lifecycleRestore:
+		err = h.CP.RestoreTenant(r.Context(), id)
+	case lifecycleDelete:
+		err = h.CP.MarkTenantDeleted(r.Context(), id, time.Now().Add(tenantDeleteGraceDays*24*time.Hour))
+	case lifecycleForceDelete:
+		// Soft-delete with an immediate deadline; nothing is destroyed. The
+		// real, irreversible removal is lifecyclePurge.
+		err = h.CP.MarkTenantDeleted(r.Context(), id, time.Now())
+	case lifecyclePurge:
+		h.purgeTenant(w, r, admin, tenant)
 		return
 	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Lifecycle action failed.")
 		return
+	}
+	if action != lifecycleRestore {
+		h.evictTenantPool(id)
 	}
 	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, id, "tenant."+action, "{}")
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Tenant " + action + " applied."})
@@ -795,7 +830,19 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 	displayName := identity.FullName
 	var pool *pgxpool.Pool
 	if identity.TenantID != "" {
-		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
+		tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID)
+		if tErr != nil {
+			fail(w, http.StatusInternalServerError, "Login failed.")
+			return
+		}
+		// A workspace that cannot be served (suspended, deleted, unprovisioned,
+		// under maintenance) must not get a session at all: skipping this check
+		// used to mint a token with no grants, so the user landed on an empty
+		// dashboard whose every request was refused.
+		if !tenant.Servable() && h.refuseUnservableLogin(w, r, identity, tenant) {
+			return
+		}
+		if tenant.Servable() {
 			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
 				pool = p
 				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)
@@ -1125,7 +1172,15 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	var pool *pgxpool.Pool
 	var activeRoleID string
 	if identity.TenantID != "" {
-		if tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID); tErr == nil && tenant.Servable() {
+		tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID)
+		if tErr != nil {
+			fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+			return
+		}
+		if !tenant.Servable() && h.refuseUnservableRefresh(w, r, identity, tenant) {
+			return
+		}
+		if tenant.Servable() {
 			if p, pErr := h.Router.PoolFor(r.Context(), tenant); pErr == nil {
 				pool = p
 				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)

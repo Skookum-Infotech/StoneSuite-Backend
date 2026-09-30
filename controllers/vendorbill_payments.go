@@ -35,19 +35,23 @@ func (h *VendorBillOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 }
 
 // Payments GET /api/tenant/vendor-bills/{uuid}/payments
-// AP reconciliation view of the bill's live settlement ledger. RBAC: vendor_bill:read.
+// AP reconciliation view: applied vendor payments, refunds, and bill-owned
+// settlements. RBAC: vendor_bill:read.
 func (h *VendorBillOps) Payments(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
 	pool, _, _, ok := h.authVBByUUID(w, r, uuid, authz.ActionRead)
 	if !ok {
 		return
 	}
-	payments, err := vendorbill.ListPayments(r.Context(), pool, uuid)
+	ledger, err := vendorbill.GetLedger(r.Context(), pool, uuid)
 	if err != nil {
 		vbFail(w, err, "Failed to load payments.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "recordId": uuid, "payments": payments})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "recordId": uuid,
+		"payments": ledger.Payments, "refunds": ledger.Refunds, "billPayments": ledger.BillPayments,
+	})
 }
 
 // RemovePayment DELETE /api/tenant/vendor-bills/{uuid}/payments/{paymentId}

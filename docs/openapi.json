@@ -18265,6 +18265,37 @@
         ]
       }
     },
+    "/api/tenant/users/me": {
+      "patch": {
+        "operationId": "patch_tenant_users_me",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "userOps.UpdateMyProfile",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/users/me/permissions": {
       "get": {
         "operationId": "get_tenant_users_me_permissions",

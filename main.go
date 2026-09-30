@@ -624,6 +624,9 @@ func main() {
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))
 		// No permission gate (unlike ListUsers below) -- see ListAssignableUsers.
 		mux.Handle("GET /api/tenant/users/assignable", tenantChain(userOps.ListAssignableUsers))
+		// Self-service, like /assignable: any active member edits their own name.
+		// Literal path, so it wins over PATCH /api/tenant/users/{id} below.
+		mux.Handle("PATCH /api/tenant/users/me", tenantChain(userOps.UpdateMyProfile))
 		mux.Handle("GET /api/tenant/users", tenantChain(userOps.ListUsers))
 		mux.Handle("POST /api/tenant/users/invite", tenantChain(userOps.InviteUser))
 		mux.Handle("GET /api/tenant/users/{id}", tenantChain(userOps.GetUser))

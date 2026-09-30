@@ -26,6 +26,26 @@ const onboardingCustomerKey = "customer"
 
 // ---- shared finalize -------------------------------------------------------
 
+// emailClaimedElsewhere reports whether email already belongs to an identity on
+// a tenant other than ownTenantID (pass "" to reject any existing identity).
+// identities.email is unique platform-wide, so onboarding must never target a
+// claimed address. Returns (0, "") when the email is free, else an HTTP status
+// and user-facing message.
+func (h *TenantOps) emailClaimedElsewhere(ctx context.Context, email, ownTenantID string) (int, string) {
+	existing, err := h.CP.IdentityByEmail(ctx, email)
+	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		return 0, ""
+	}
+	if err != nil {
+		return http.StatusInternalServerError, "Failed to validate admin email."
+	}
+	if ownTenantID != "" && existing.TenantID == ownTenantID {
+		return 0, ""
+	}
+	return http.StatusConflict, fmt.Sprintf(
+		"%q is already registered on another workspace. Use a different admin email.", email)
+}
+
 // finalizeOnboarding creates the customer's (password-pending) identity, kicks
 // off tenant provisioning, records the customer in the owner's Customer
 // workflow (best-effort), and emails a password-setup link. Returns the setup
@@ -308,6 +328,11 @@ func (h *TenantOps) SubmitApply(w http.ResponseWriter, r *http.Request) {
 	}
 	if formStr(req.FormData, "company_name") == "" || formStr(req.FormData, "super_admin_email") == "" {
 		fail(w, http.StatusBadRequest, "Company name and super-admin email are required.")
+		return
+	}
+	// The customer may change the email from the invited one, so re-check here.
+	if status, msg := h.emailClaimedElsewhere(r.Context(), formStr(req.FormData, "super_admin_email"), inv.TenantID); status != 0 {
+		fail(w, status, msg)
 		return
 	}
 

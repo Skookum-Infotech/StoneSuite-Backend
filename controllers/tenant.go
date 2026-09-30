@@ -346,12 +346,8 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	// already claimed elsewhere — finalizeOnboarding's create-or-reuse fallback
 	// cannot safely tell "retry of this same tenant" apart from "belongs to a
 	// different tenant" without this check, and used to silently misattach.
-	if existing, err := h.CP.IdentityByEmail(r.Context(), superAdminEmail); err == nil && existing != nil {
-		fail(w, http.StatusConflict, fmt.Sprintf(
-			"%q is already registered on another workspace. Use a different admin email.", superAdminEmail))
-		return
-	} else if err != nil && !errors.Is(err, tenancy.ErrIdentityNotFound) {
-		fail(w, http.StatusInternalServerError, "Failed to validate admin email.")
+	if status, msg := h.emailClaimedElsewhere(r.Context(), superAdminEmail, ""); status != 0 {
+		fail(w, status, msg)
 		return
 	}
 
@@ -412,6 +408,12 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	slug := slugify(req.CompanyName)
 	if slug == "" || req.ContactEmail == "" {
 		fail(w, http.StatusBadRequest, "A company name and a contact email are required.")
+		return
+	}
+
+	// Reject before creating the tenant shell so a taken email leaves no debris.
+	if status, msg := h.emailClaimedElsewhere(r.Context(), req.ContactEmail, ""); status != 0 {
+		fail(w, status, msg)
 		return
 	}
 
@@ -693,6 +695,10 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		}
 		if contactEmail == "" {
 			fail(w, http.StatusBadRequest, "A contact email is required to send an invite.")
+			return
+		}
+		if status, msg := h.emailClaimedElsewhere(r.Context(), contactEmail, tenantID); status != 0 {
+			fail(w, status, msg)
 			return
 		}
 
@@ -1085,32 +1091,21 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := tenancy.HashRefreshToken(cookie.Value)
-	rec, err := h.CP.RefreshTokenByHash(r.Context(), hash)
-	if errors.Is(err, tenancy.ErrRefreshTokenReused) {
-		// Possible token theft — revoke all tokens for this identity as a
-		// precaution (if we can identify which identity owns it).
-		log.Printf("warn: refresh token reuse detected (hash prefix %.8s)", hash)
-		clearAuthCookies(w)
-		fail(w, http.StatusUnauthorized, "Session invalid. Please sign in again.")
+	rec, hash, ok := claimRefreshToken(w, r, h.CP, cookie.Value, "refresh_token_reused")
+	if !ok {
 		return
-	}
-	if err != nil {
-		clearAuthCookies(w)
-		fail(w, http.StatusUnauthorized, "Refresh token expired. Please sign in again.")
-		return
-	}
-
-	// Revoke the consumed token before issuing the new pair (rotation).
-	if err := h.CP.RevokeRefreshToken(r.Context(), hash); err != nil {
-		log.Printf("warn: refresh rotation: revoke old token: %v", err)
 	}
 
 	// Load the identity to rebuild the JWT claims.
 	identity, err := h.CP.IdentityByID(r.Context(), rec.IdentityID)
-	if err != nil {
+	if errors.Is(err, tenancy.ErrIdentityNotFound) {
 		clearAuthCookies(w)
 		fail(w, http.StatusUnauthorized, "Identity not found. Please sign in again.")
+		return
+	}
+	if err != nil {
+		slog.Error("refresh: load identity", "error", err)
+		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
 		return
 	}
 
@@ -1178,11 +1173,14 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue a brand-new refresh token (rotation).
-	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID)
+	// Rotate: issue the replacement first, then revoke the old token. If issuing
+	// fails the old token stays valid, so answer 500 and let the client retry
+	// rather than ending a session that is still good.
+	refreshRaw, refreshExpiry, err := rotateRefreshToken(r.Context(), h.CP, hash, identity.ID)
 	if err != nil {
-		log.Printf("warn: refresh rotation: issue new refresh token: %v", err)
-		refreshRaw = ""
+		slog.Error("refresh rotation: issue new refresh token", "error", err)
+		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+		return
 	}
 
 	accessExpiry := time.Now().Add(d)

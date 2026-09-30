@@ -46,9 +46,31 @@ func (c *ControlPlane) CreateRefreshToken(ctx context.Context, identityID, token
 	return nil
 }
 
-// RefreshTokenByHash looks up an active (not expired, not revoked) refresh
-// token by its hash. Returns ErrRefreshTokenReused when the token exists but
-// is revoked, and ErrRefreshTokenNotFound when it does not exist or is expired.
+// RefreshRotationGrace is how long a just-rotated refresh token is still
+// honoured. Rotation revokes the old token, but the browser may legitimately
+// present it again right after: two tabs reloading together, restored tabs, or
+// a retry after the first response was lost. Without a grace window the second
+// caller looks like token theft and its cookies are cleared — a logout.
+const RefreshRotationGrace = 30 * time.Second
+
+// refreshTokenState classifies a stored refresh token at instant now: nil when
+// it may be used, ErrRefreshTokenReused when it was revoked longer ago than
+// RefreshRotationGrace, ErrRefreshTokenNotFound when it is expired.
+func refreshTokenState(revokedAt *time.Time, expiresAt, now time.Time) error {
+	if revokedAt != nil && now.Sub(*revokedAt) > RefreshRotationGrace {
+		return ErrRefreshTokenReused
+	}
+	if now.After(expiresAt) {
+		return ErrRefreshTokenNotFound
+	}
+	return nil
+}
+
+// RefreshTokenByHash looks up a usable refresh token by its hash. A token
+// revoked within RefreshRotationGrace still counts as usable. Returns
+// ErrRefreshTokenReused when it was revoked earlier than that, and
+// ErrRefreshTokenNotFound when it does not exist or is expired. Any other
+// error is a lookup failure and says nothing about the token's validity.
 func (c *ControlPlane) RefreshTokenByHash(ctx context.Context, tokenHash string) (*RefreshTokenRecord, error) {
 	var rec RefreshTokenRecord
 	var revokedAt *time.Time
@@ -65,11 +87,8 @@ func (c *ControlPlane) RefreshTokenByHash(ctx context.Context, tokenHash string)
 	if err != nil {
 		return nil, fmt.Errorf("lookup refresh token: %w", err)
 	}
-	if revokedAt != nil {
-		return nil, ErrRefreshTokenReused
-	}
-	if time.Now().After(rec.ExpiresAt) {
-		return nil, ErrRefreshTokenNotFound
+	if err := refreshTokenState(revokedAt, rec.ExpiresAt, time.Now()); err != nil {
+		return nil, err
 	}
 	return &rec, nil
 }

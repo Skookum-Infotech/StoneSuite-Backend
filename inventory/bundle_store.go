@@ -23,7 +23,7 @@ const bundleSelect = `
 	SELECT bu.inventory_bundle_uuid, bu.bundle_code, bu.bundle_status,
 	       bu.bundle_vendor_id, bu.bundle_supplier_code, bu.bundle_block_id, bu.bundle_lot,
 	       ii.inventory_item_uuid, COALESCE(ii.inventory_item_name,''),
-	       bu.warehouse_id, w.warehouse_name,
+	       bu.warehouse_id, w.name,
 	       b.inventory_bin_uuid, COALESCE(b.bin_path,''),
 	       to_char(bu.bundle_received_at, 'YYYY-MM-DD'), bu.bundle_notes,
 	       (SELECT COUNT(*) FROM inventory_slab s
@@ -36,7 +36,7 @@ const bundleSelect = `
 	           AND s.slab_status NOT IN ('consumed','scrapped')),
 	       bu.bundle_created_at, bu.bundle_updated_at
 	FROM inventory_bundle bu
-	JOIN lkp_warehouse w          ON w.warehouse_id = bu.warehouse_id
+	JOIN company_location w       ON w.company_location_id = bu.warehouse_id
 	LEFT JOIN inventory_item ii   ON ii.inventory_item_id = bu.inventory_item_id
 	LEFT JOIN inventory_bin b     ON b.inventory_bin_id = bu.inventory_bin_id`
 
@@ -82,7 +82,7 @@ func ListBundles(ctx context.Context, pool *pgxpool.Pool, warehouseUUID, status 
 	args := []any{}
 	if warehouseUUID != "" {
 		args = append(args, warehouseUUID)
-		q += fmt.Sprintf(" AND w.warehouse_uuid = $%d", len(args))
+		q += fmt.Sprintf(" AND w.company_location_uuid = $%d", len(args))
 	}
 	if status != "" {
 		args = append(args, status)
@@ -93,7 +93,7 @@ func ListBundles(ctx context.Context, pool *pgxpool.Pool, warehouseUUID, status 
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		if isInvalidTextRepresentation(err) {
-			return nil, ClientError{Msg: "Unknown warehouse."}
+			return nil, ClientError{Msg: "Unknown location."}
 		}
 		return nil, fmt.Errorf("list bundles: %w", err)
 	}
@@ -196,7 +196,7 @@ func mapBundleWriteErr(err error, verb string) error {
 	case isUniqueViolation(err):
 		return ClientError{Msg: "A bundle with this code already exists."}
 	case isFKViolation(err):
-		return ClientError{Msg: "Unknown vendor, item, warehouse or bin."}
+		return ClientError{Msg: "Unknown vendor, item, location or bin."}
 	case isCheckViolation(err):
 		return ClientError{Msg: "One or more bundle values are out of range."}
 	}

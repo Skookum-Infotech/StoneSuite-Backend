@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/database"
 	"stonesuite-backend/jobqueue"
+	"stonesuite-backend/onboardingseed"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
@@ -189,6 +190,20 @@ func (p *Provisioner) processNext(ctx context.Context) {
 	}
 }
 
+// seedCompanyInfo copies the tenant's onboarding submission into its Company
+// Info tables (see onboardingseed.Seed). It only logs on failure -- see the
+// call site for why.
+func (p *Provisioner) seedCompanyInfo(ctx context.Context, pool *pgxpool.Pool, tenantID string) {
+	tenant, err := p.cp.TenantByID(ctx, tenantID)
+	if err != nil {
+		log.Printf("provision tenant %s: load onboarding metadata for company info: %v", tenantID, err)
+		return
+	}
+	if _, err := onboardingseed.Seed(ctx, pool, tenant.Metadata, false); err != nil {
+		log.Printf("provision tenant %s: seed company info from onboarding: %v", tenantID, err)
+	}
+}
+
 // provision runs the full pipeline for one tenant. Safe to retry: each step is
 // idempotent (create-if-absent, migrations tracked by version, seed upsert).
 // jobID is used to record progress so a retried job can be observed mid-flight.
@@ -255,6 +270,15 @@ func (p *Provisioner) provision(ctx context.Context, jobID string, j Job) error 
 	if err := workflow.SeedDefaultWorkflows(ctx, pool); err != nil {
 		return err
 	}
+
+	// Copy the company details the customer gave at onboarding (held in the
+	// control-plane tenants.metadata blob) into the tenant's own Company Info
+	// profile and first Location, so both are populated the first time the
+	// tenant signs in. Non-fatal, like the employee row above: an unusable
+	// value in the submission shouldn't strand the tenant unprovisioned, and
+	// cmd/backfill-company-profile can repair it afterwards.
+	_ = p.queue.UpdateProgress(ctx, jobID, map[string]string{"step": "seed_company_info"})
+	p.seedCompanyInfo(ctx, pool, j.TenantID)
 
 	// Provision a dedicated Cloudflare R2 bucket for this tenant (idempotent).
 	// Skip when the Cloudflare client is not configured; the tenant will fall

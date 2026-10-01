@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,18 +11,16 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
-// InventoryWarehouseOps serves warehouse master data. lkp_warehouse has existed
-// since the sales-order migration with its own uuid, but no route ever served
-// it.
+// InventoryWarehouseOps serves the read-only list of locations inventory can
+// hold stock in. There is no warehouse master to maintain: a warehouse is a
+// company_location, and locations are created, edited, made the default and
+// deleted only from Configuration -> Company Info -> Locations
+// (controllers/company_location.go).
 //
 // Routes:
 //
-//	GET    /api/tenant/inventory/warehouses                     — list
-//	POST   /api/tenant/inventory/warehouses                     — create
-//	GET    /api/tenant/inventory/warehouses/{uuid}              — get
-//	PATCH  /api/tenant/inventory/warehouses/{uuid}              — update
-//	DELETE /api/tenant/inventory/warehouses/{uuid}              — soft delete
-//	POST   /api/tenant/inventory/warehouses/{uuid}/set-default  — move the default
+//	GET /api/tenant/inventory/warehouses          — list
+//	GET /api/tenant/inventory/warehouses/{uuid}   — get
 type InventoryWarehouseOps struct{}
 
 // NewInventoryWarehouseOps constructs the handler group.
@@ -48,30 +45,10 @@ func (h *InventoryWarehouseOps) auth(w http.ResponseWriter, r *http.Request, act
 	if !decision.Allowed {
 		logSecurityEvent(r, "permission_denied",
 			"identity", payload.ID, "resource", string(authz.ResourceWarehouse), "action", string(action))
-		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" warehouses.")
+		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" locations.")
 		return nil, "", false
 	}
 	return pool, payload.ID, true
-}
-
-// authByUUID adds the existence guard for single-record MUTATIONS. Warehouses
-// are tenant-global with no owner, so this is an existence check rather than an
-// ownership check — but it still 404s, because the reason (not letting ids be
-// enumerated) is the same.
-//
-// Read handlers deliberately do not call it: GetWarehouse already returns
-// ErrNotFound for a missing or malformed uuid and inventoryFail maps that to
-// 404, so the guard would only fetch the same row twice.
-func (h *InventoryWarehouseOps) authByUUID(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
-	pool, identityID, ok := h.auth(w, r, action)
-	if !ok {
-		return nil, "", false
-	}
-	if _, err := inventory.GetWarehouse(r.Context(), pool, r.PathValue("uuid")); err != nil {
-		inventoryFail(w, err, "Failed to load warehouse.")
-		return nil, "", false
-	}
-	return pool, identityID, true
 }
 
 // List GET /api/tenant/inventory/warehouses
@@ -80,9 +57,9 @@ func (h *InventoryWarehouseOps) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := inventory.ListWarehouses(r.Context(), pool, r.URL.Query().Get("includeInactive") == "true")
+	items, err := inventory.ListWarehouses(r.Context(), pool)
 	if err != nil {
-		inventoryFail(w, err, "Failed to list warehouses.")
+		inventoryFail(w, err, "Failed to list locations.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": items})
@@ -96,71 +73,8 @@ func (h *InventoryWarehouseOps) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	wh, err := inventory.GetWarehouse(r.Context(), pool, r.PathValue("uuid"))
 	if err != nil {
-		inventoryFail(w, err, "Failed to load warehouse.")
+		inventoryFail(w, err, "Failed to load location.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "warehouse": wh})
-}
-
-// Create POST /api/tenant/inventory/warehouses
-func (h *InventoryWarehouseOps) Create(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := h.auth(w, r, authz.ActionCreate)
-	if !ok {
-		return
-	}
-	var in inventory.WarehouseInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	wh, err := inventory.CreateWarehouse(r.Context(), pool, in, resolveEmployeeID(r, identityID))
-	if err != nil {
-		inventoryFail(w, err, "Failed to create warehouse.")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "warehouse": wh})
-}
-
-// Update PATCH /api/tenant/inventory/warehouses/{uuid}
-func (h *InventoryWarehouseOps) Update(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := h.authByUUID(w, r, authz.ActionUpdate)
-	if !ok {
-		return
-	}
-	var in inventory.WarehouseInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	if err := inventory.UpdateWarehouse(r.Context(), pool, r.PathValue("uuid"), in, resolveEmployeeID(r, identityID)); err != nil {
-		inventoryFail(w, err, "Failed to update warehouse.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Warehouse updated."})
-}
-
-// SetDefault POST /api/tenant/inventory/warehouses/{uuid}/set-default
-func (h *InventoryWarehouseOps) SetDefault(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.authByUUID(w, r, authz.ActionUpdate)
-	if !ok {
-		return
-	}
-	if err := inventory.SetDefaultWarehouse(r.Context(), pool, r.PathValue("uuid")); err != nil {
-		inventoryFail(w, err, "Failed to set the default warehouse.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Default warehouse updated."})
-}
-
-// Delete DELETE /api/tenant/inventory/warehouses/{uuid}
-func (h *InventoryWarehouseOps) Delete(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := h.authByUUID(w, r, authz.ActionDelete)
-	if !ok {
-		return
-	}
-	if err := inventory.DeleteWarehouse(r.Context(), pool, r.PathValue("uuid"), resolveEmployeeID(r, identityID)); err != nil {
-		inventoryFail(w, err, "Failed to delete warehouse.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Warehouse deleted."})
 }

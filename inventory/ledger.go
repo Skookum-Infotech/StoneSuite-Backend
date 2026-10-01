@@ -138,7 +138,7 @@ func LedgerAndStock(
 	case errors.Is(err, errStockWouldGoNegative):
 		return ClientError{Msg: "This would drive stock below zero — the received goods have already been used or shipped."}
 	case errors.Is(err, errNoStockRow):
-		return ClientError{Msg: "No stock on hand for this item at the receiving warehouse."}
+		return ClientError{Msg: "No stock on hand for this item at the receiving location."}
 	case err != nil:
 		return err
 	}
@@ -177,7 +177,7 @@ func SlabLedgerAndStock(
 	case errors.Is(err, errStockWouldGoNegative):
 		return ClientError{Msg: "This action would drive stock below zero; the reservation math is inconsistent."}
 	case errors.Is(err, errNoStockRow):
-		return ClientError{Msg: "No stock on hand for this item at its warehouse."}
+		return ClientError{Msg: "No stock on hand for this item at its location."}
 	case err != nil:
 		return err
 	}

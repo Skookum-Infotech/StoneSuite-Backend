@@ -48,8 +48,8 @@ func defaultWarehouse(t *testing.T, pool *pgxpool.Pool) int {
 	t.Helper()
 	var id int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT warehouse_id FROM lkp_warehouse WHERE warehouse_is_default AND warehouse_deleted_at IS NULL`).Scan(&id); err != nil {
-		t.Fatalf("read default warehouse: %v", err)
+		SELECT company_location_id FROM company_location WHERE is_default AND deleted_at IS NULL`).Scan(&id); err != nil {
+		t.Fatalf("read default location: %v", err)
 	}
 	return id
 }
@@ -284,7 +284,7 @@ func TestSlabReceipt_Validation(t *testing.T) {
 		wantMsg string
 	}{
 		{"no slabs on a slab line", slabReceipt(poUUID, poLineUUID, wh), "at least one slab"},
-		{"no warehouse named", noWarehouse, "warehouse is required"},
+		{"no location named", noWarehouse, "location is required"},
 		{"rejected quantity on a slab line", rejected, "no rejected quantity"},
 		{"unknown bin", slabReceipt(poUUID, poLineUUID, wh, unknownBin), "Line 1, slab 1"},
 		{"bad dimensions", slabReceipt(poUUID, poLineUUID, wh, SlabInput{LengthMM: 0, WidthMM: 1, ThicknessMM: 1}), "greater than zero"},

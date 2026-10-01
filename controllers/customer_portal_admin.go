@@ -4,7 +4,6 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,7 +39,7 @@ type portalInviteRequest struct {
 // PortalInvite POST /api/tenant/crm/customer/records/{id}/portal-invite
 func (h *CustomerPortalAdminOps) PortalInvite(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
-	_, pool, key, _, ok := h.crm.authCRMByRecordID(w, r, recordID, authz.ActionUpdate)
+	_, pool, key, actorIdentityID, ok := h.crm.authCRMByRecordID(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -120,9 +119,18 @@ func (h *CustomerPortalAdminOps) PortalInvite(w http.ResponseWriter, r *http.Req
 	}
 
 	link := customerInviteLink(tenant.Slug, token)
-	if err := services.SendCustomerPortalInviteEmail(r.Context(), tenant.ID, strconv.Itoa(custInternalID), req.Email, req.FullName, tenant.DisplayName, link); err != nil {
-		log.Printf("customer portal invite email to %s failed (invite still valid): %v", req.Email, err)
-	}
+	res, sendErr := services.SendCustomerPortalInviteEmailWithResult(r.Context(), tenant.ID, strconv.Itoa(custInternalID),
+		actorIdentityID, recordLink(string(authz.ResourceCustomer), recordID),
+		req.Email, req.FullName, tenant.DisplayName, link)
+	outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
 
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Invitation sent."})
+	// The invite is saved either way (staff can resend), so this is still a
+	// success — but "Invitation sent." is only said when the email really went.
+	resp := map[string]any{"success": true, "message": "Invitation sent."}
+	applyEmailOutcome(r.Context(), resp, outcome, "customer portal invite email not delivered (invite still valid)",
+		"customer_id", custInternalID, "tenant", tenant.ID)
+	if !outcome.Sent() {
+		resp["message"] = "Invitation saved, but the email was not sent."
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

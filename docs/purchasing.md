@@ -55,7 +55,7 @@ order's own status reflects whether it's been fully or only partly
 received.
 
 Slab items are received slab by slab. For a purchase order line whose item is
-tracked as individual slabs, the Item Receipt asks for a receiving warehouse
+tracked as individual slabs, the Item Receipt asks for a receiving location
 and one row per physical slab — its length, width, and thickness in
 millimetres, and optionally the bin it goes to. The received quantity for that
 line is worked out from those slabs' areas, so you don't type it. Each slab is

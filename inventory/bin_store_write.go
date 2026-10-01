@@ -13,7 +13,7 @@ import (
 
 func validateBinInput(in *BinInput) error {
 	if strings.TrimSpace(in.WarehouseUUID) == "" {
-		return ClientError{Msg: "A warehouse is required."}
+		return ClientError{Msg: "A location is required."}
 	}
 	if err := ValidateBinCode(in.Code); err != nil {
 		return err
@@ -46,7 +46,7 @@ func resolveBinParent(ctx context.Context, tx pgx.Tx, parentUUID *string, wareho
 		return nil, "", err
 	}
 	if p.warehouseID != warehouseID {
-		return nil, "", ClientError{Msg: "A bin's parent must be in the same warehouse."}
+		return nil, "", ClientError{Msg: "A bin's parent must be in the same location."}
 	}
 	return &p.id, p.path, nil
 }
@@ -99,9 +99,9 @@ func CreateBin(ctx context.Context, pool *pgxpool.Pool, in BinInput, actorEmploy
 func mapBinWriteErr(err error, verb string) error {
 	switch {
 	case isUniqueViolation(err):
-		return ClientError{Msg: "A bin with this code already exists in this warehouse."}
+		return ClientError{Msg: "A bin with this code already exists in this location."}
 	case isFKViolation(err):
-		return ClientError{Msg: "Unknown warehouse, parent bin or capacity unit."}
+		return ClientError{Msg: "Unknown location, parent bin or capacity unit."}
 	case isCheckViolation(err):
 		return ClientError{Msg: "The bin's type or depth is not allowed."}
 	}
@@ -136,7 +136,7 @@ func UpdateBin(ctx context.Context, pool *pgxpool.Pool, uuid string, in BinInput
 		// Moving a bin between warehouses would move its contents too, which is
 		// a stock movement and belongs to the (not yet built) warehouse transfer
 		// document, not to a bin edit.
-		return ClientError{Msg: "A bin cannot be moved to a different warehouse."}
+		return ClientError{Msg: "A bin cannot be moved to a different location."}
 	}
 	parentID, parentPath, err := resolveBinParent(ctx, tx, in.ParentUUID, warehouseID)
 	if err != nil {

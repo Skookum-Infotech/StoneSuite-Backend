@@ -69,11 +69,20 @@ func prepareSend(tenantID, recordID string, doc docpdf.PrintableDoc, meta DocMet
 // deliver renders the prepared document, emails it via Notify, records the
 // send and audit row, and pings the record owner. identityID is the caller's
 // control-plane identity (what Notify scopes by); it returns the document_sends
-// row id.
-func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityID, ownerUserID string, p *preparedSend) (string, *sendError) {
+// row id and what really happened to the email.
+//
+// The *sendError covers a send that could not be made at all (render failed,
+// Notify unreachable or refusing). The EmailOutcome covers the rest: Notify
+// accepts before it sends, so after recording the send deliver waits briefly
+// for the first delivery attempt (services.ConfirmEmailDelivery) and reports it
+// — a provider refusal such as an unverified sender domain arrives here as a
+// non-Sent outcome, not as a success. The send row is kept either way: Notify
+// keeps retrying a refused delivery, and the row's notification ids are how it
+// is traced.
+func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityID, ownerUserID string, p *preparedSend) (string, services.EmailOutcome, *sendError) {
 	pdf, err := h.renderPDF(p.doc)
 	if err != nil {
-		return "", &sendError{http.StatusInternalServerError, "Failed to render PDF."}
+		return "", services.EmailOutcome{}, &sendError{http.StatusInternalServerError, "Failed to render PDF."}
 	}
 	fileName := workflow.SanitizeFileName(p.meta.Number + ".pdf")
 	p.meta.DownloadURL = DocLinkURL(p.tenantID, p.recordID)
@@ -92,7 +101,7 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 	if err != nil {
 		slog.WarnContext(ctx, "document send: notify failed",
 			"workflow", p.meta.WorkflowKey, "record", p.recordID, "error", err)
-		return "", &sendError{http.StatusBadGateway, "Failed to send email."}
+		return "", services.EmailOutcome{}, &sendError{http.StatusBadGateway, "Failed to send email."}
 	}
 
 	sendID, err := workflow.InsertDocumentSend(ctx, pool, workflow.DocumentSend{
@@ -102,7 +111,7 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 		NotifyNotificationIDs: notifyResult.NotificationIDs,
 	})
 	if err != nil {
-		return "", &sendError{http.StatusInternalServerError, "Failed to record send."}
+		return "", services.EmailOutcome{}, &sendError{http.StatusInternalServerError, "Failed to record send."}
 	}
 	_ = workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to})
@@ -110,7 +119,9 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 	ownerAddr, ownerIdentityID, ownerName := ownerSendContact(ctx, pool, ownerUserID)
 	notifyOwnerOfSend(ctx, services.SendNotification, sendOwner{Email: ownerAddr, IdentityID: ownerIdentityID, Name: ownerName},
 		p.tenantID, identityID, p.doc, p.meta.Number, p.meta.WorkflowKey, p.recordID, p.to, pdf, fileName)
-	return sendID, nil
+
+	// Last, so recording the send and pinging the owner are not held up by the wait.
+	return sendID, services.ConfirmEmailDelivery(ctx, p.tenantID, notifyResult, nil), nil
 }
 
 // loadRecordDoc loads recordID's printable document through the loader
@@ -143,15 +154,15 @@ func (h *DocumentOps) preflightRecordSend(ctx context.Context, pool *pgxpool.Poo
 // sendRecord loads, validates and emails recordID's document, bypassing the
 // generic-endpoint sendDisabled gate: it is for callers that own the
 // authorization and the moment of sending (PO "Send to Vendor"). It returns
-// the document_sends row id.
-func (h *DocumentOps) sendRecord(ctx context.Context, pool *pgxpool.Pool, tenant *tenancy.Tenant, identityID, ownerUserID, recordID, workflowKey string, req sendDocRequest) (string, *sendError) {
+// the document_sends row id and the email outcome (see deliver).
+func (h *DocumentOps) sendRecord(ctx context.Context, pool *pgxpool.Pool, tenant *tenancy.Tenant, identityID, ownerUserID, recordID, workflowKey string, req sendDocRequest) (string, services.EmailOutcome, *sendError) {
 	doc, meta, serr := h.loadRecordDoc(ctx, pool, tenant, recordID, workflowKey)
 	if serr != nil {
-		return "", serr
+		return "", services.EmailOutcome{}, serr
 	}
 	p, serr := prepareSend(tenant.ID, recordID, doc, meta, req)
 	if serr != nil {
-		return "", serr
+		return "", services.EmailOutcome{}, serr
 	}
 	return h.deliver(ctx, pool, identityID, ownerUserID, p)
 }

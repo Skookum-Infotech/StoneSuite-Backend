@@ -200,16 +200,17 @@ func fulfilledByItem(ctx context.Context, tx pgx.Tx, orderID int) (map[int]float
 	return out, rows.Err()
 }
 
-// defaultWarehouseID is the warehouse a reservation is filed under when neither
-// the line nor the item names one: the tenant's default, else any active one.
+// defaultWarehouseID is the location a reservation is filed under when neither
+// the line nor the item names one: the tenant's default location, else the
+// oldest live one.
 func defaultWarehouseID(ctx context.Context, tx pgx.Tx) (int, error) {
 	var id int
 	err := tx.QueryRow(ctx, `
-		SELECT warehouse_id FROM lkp_warehouse
-		WHERE warehouse_deleted_at IS NULL AND warehouse_is_active
-		ORDER BY warehouse_is_default DESC, warehouse_id LIMIT 1`).Scan(&id)
+		SELECT company_location_id FROM company_location
+		WHERE deleted_at IS NULL
+		ORDER BY is_default DESC, company_location_id LIMIT 1`).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ClientError{Msg: "No warehouse is set up to hold stock for this order."}
+		return 0, ClientError{Msg: "No location is set up to hold stock for this order. Add one under Configuration → Company Info → Locations."}
 	}
 	if err != nil {
 		return 0, fmt.Errorf("resolve default warehouse: %w", err)
@@ -348,7 +349,7 @@ func ReserveOrder(ctx context.Context, tx pgx.Tx, orderID int, lines []ReserveLi
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 			l.ItemID, wh, orderID, l.LineID, l.Quantity, fulfilled, status, nullableInt(actorEmployeeID)); err != nil {
 			if isFKViolation(err) {
-				return ClientError{Msg: "A line names a warehouse that does not exist."}
+				return ClientError{Msg: "A line names a location that does not exist."}
 			}
 			return fmt.Errorf("insert inventory allocation: %w", err)
 		}

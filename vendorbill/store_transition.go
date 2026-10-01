@@ -124,6 +124,11 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	}
 
 	writeHistory(ctx, tx, internalID, "transition", &curStatusID, &toStatusID, actorEmployeeID)
+	if toStatusCode == paidStatusCode {
+		if err := settleOnPaid(ctx, tx, uuid, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
 	// Any move takes the bill out of the state a Reject left it in.
 	if err := approvalchain.ClearRejection(ctx, tx, recordTypeID, internalID); err != nil {
 		return nil, err

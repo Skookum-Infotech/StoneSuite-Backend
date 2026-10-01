@@ -286,7 +286,7 @@ func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []re
 		).Scan(&id)
 		if err != nil {
 			if isForeignKeyViolation(err) {
-				return nil, ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit, tax rate, or warehouse was referenced.", l.lineNumber)}
+				return nil, ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit, tax rate, or location was referenced.", l.lineNumber)}
 			}
 			if isCheckViolation(err) {
 				return nil, ClientError{Msg: fmt.Sprintf("Line %d: one or more values are out of range.", l.lineNumber)}

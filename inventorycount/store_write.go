@@ -14,7 +14,7 @@ import (
 
 func validateHeader(in *Input) error {
 	if in.WarehouseID <= 0 {
-		return ClientError{Msg: "A count needs a warehouse."}
+		return ClientError{Msg: "A count needs a location."}
 	}
 	return nil
 }
@@ -31,7 +31,7 @@ func resolveBin(ctx context.Context, q pgxQuerier, binUUID *string, warehouseID 
 		return nil, ClientError{Msg: "Unknown bin."}
 	}
 	if whID != warehouseID {
-		return nil, ClientError{Msg: "That bin is not in the counted warehouse."}
+		return nil, ClientError{Msg: "That bin is not in the counted location."}
 	}
 	return &id, nil
 }

@@ -1,16 +1,12 @@
-package main
+package companyprofile
 
-import (
-	"testing"
+import "testing"
 
-	"stonesuite-backend/companyprofile"
-)
-
-func TestParseMetadataProfile(t *testing.T) {
+func TestFromOnboardingMetadata(t *testing.T) {
 	tests := []struct {
 		name         string
 		metadataJSON string
-		wantProfile  companyprofile.Profile
+		wantProfile  Profile
 		wantOK       bool
 	}{
 		{
@@ -19,6 +15,8 @@ func TestParseMetadataProfile(t *testing.T) {
 				"company_name": "Acme Stone Co.",
 				"legal_name": "Acme Stone Company LLC",
 				"industry": "Fabrication",
+				"country": "United States of America",
+				"currency": "USD",
 				"billing_address_line1": "123 Main St",
 				"billing_address_city": "Springfield",
 				"billing_address_state": "IL",
@@ -26,37 +24,45 @@ func TestParseMetadataProfile(t *testing.T) {
 				"shipping_address_line1": "456 Warehouse Ave",
 				"super_admin_email": "owner@acmestone.example"
 			}`,
-			wantProfile: companyprofile.Profile{
+			wantProfile: Profile{
 				CompanyName: "Acme Stone Co.",
 				LegalName:   "Acme Stone Company LLC",
 				Industry:    "Fabrication",
-				BillingAddress: companyprofile.Address{
+				Country:     "United States of America",
+				Currency:    "USD",
+				BillingAddress: Address{
 					Line1: "123 Main St", City: "Springfield", State: "IL", Zip: "62704",
 				},
-				ShippingAddress: companyprofile.Address{Line1: "456 Warehouse Ave"},
+				ShippingAddress: Address{Line1: "456 Warehouse Ave"},
 			},
 			wantOK: true,
 		},
 		{
 			name:         "company name only",
 			metadataJSON: `{"company_name": "Acme Stone Co."}`,
-			wantProfile:  companyprofile.Profile{CompanyName: "Acme Stone Co."},
+			wantProfile:  Profile{CompanyName: "Acme Stone Co."},
 			wantOK:       true,
 		},
 		{
 			name:         "company name trimmed",
 			metadataJSON: `{"company_name": "  Acme Stone Co.  "}`,
-			wantProfile:  companyprofile.Profile{CompanyName: "Acme Stone Co."},
+			wantProfile:  Profile{CompanyName: "Acme Stone Co."},
 			wantOK:       true,
 		},
 		{
 			name:         "address field trimmed",
 			metadataJSON: `{"company_name": "Acme", "billing_address_city": "  Springfield  "}`,
-			wantProfile: companyprofile.Profile{
+			wantProfile: Profile{
 				CompanyName:    "Acme",
-				BillingAddress: companyprofile.Address{City: "Springfield"},
+				BillingAddress: Address{City: "Springfield"},
 			},
 			wantOK: true,
+		},
+		{
+			name:         "location keys are not part of the profile",
+			metadataJSON: `{"company_name": "Acme", "location_name": "HQ", "location_address_city": "Springfield"}`,
+			wantProfile:  Profile{CompanyName: "Acme"},
+			wantOK:       true,
 		},
 		{
 			name:         "missing company name",
@@ -92,12 +98,12 @@ func TestParseMetadataProfile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := parseMetadataProfile(tt.metadataJSON)
+			got, ok := FromOnboardingMetadata(tt.metadataJSON)
 			if ok != tt.wantOK {
-				t.Fatalf("parseMetadataProfile(%q) ok = %v, want %v", tt.metadataJSON, ok, tt.wantOK)
+				t.Fatalf("FromOnboardingMetadata(%q) ok = %v, want %v", tt.metadataJSON, ok, tt.wantOK)
 			}
 			if ok && got != tt.wantProfile {
-				t.Errorf("parseMetadataProfile(%q) = %+v, want %+v", tt.metadataJSON, got, tt.wantProfile)
+				t.Errorf("FromOnboardingMetadata(%q) = %+v, want %+v", tt.metadataJSON, got, tt.wantProfile)
 			}
 		})
 	}

@@ -5,6 +5,18 @@ import (
 	"fmt"
 )
 
+// Where a delivery-problem alert for an invite email sends the inviter, and the
+// RBAC resource that governs that page (the bell only shows an alert whose
+// resource the reader may Read — an email's own "portal_user"/"customer_portal"
+// resource is not one). Kept as literals because services does not import authz;
+// TestStatusResourcesMatchRBAC pins them to authz's names.
+const (
+	userInvitesPath            = "/config/users"
+	statusResourceUser         = "user"
+	statusResourcePortalAccess = "portal_access"
+	statusResourceCustomer     = "customer"
+)
+
 // Every builder below supplies only the dynamic content of its email (an
 // Email value); SendNotification renders it through the one shared template.
 
@@ -36,9 +48,19 @@ func buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recip
 	}
 }
 
+// SendOnboardingInviteEmailWithResult sends an invitation email for customer
+// onboarding and returns the notify notification ids, so the caller can check
+// what actually happened to the email (see ConfirmEmailDelivery).
+func SendOnboardingInviteEmailWithResult(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, inviteLink string) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink))
+}
+
 // SendOnboardingInviteEmail sends an invitation email for customer onboarding.
+// Thin wrapper over SendOnboardingInviteEmailWithResult for callers that do not
+// need the notification ids.
 func SendOnboardingInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, inviteLink string) error {
-	return SendNotification(ctx, buildOnboardingInviteNotification(tenantID, inviteID, recipientEmail, recipientName, inviteLink))
+	_, err := SendOnboardingInviteEmailWithResult(ctx, tenantID, inviteID, recipientEmail, recipientName, inviteLink)
+	return err
 }
 
 // buildPasswordSetupNotification builds the Notify request for a
@@ -83,9 +105,12 @@ func buildUserInviteNotification(tenantID, inviteID, actorUserID, recipientEmail
 		EventType:   "user.invited",
 		Resource:    "user",
 		ResourceID:  inviteID,
-		Title:       "You've been invited to " + workspaceName,
-		Body:        "User invite email sent.",
-		Channels:    []string{"email"},
+		// A bounced invite alerts the inviter; the alert opens the Users page.
+		StatusLink:     userInvitesPath,
+		StatusResource: statusResourceUser,
+		Title:          "You've been invited to " + workspaceName,
+		Body:           "User invite email sent.",
+		Channels:       []string{"email"},
 		Email: &Email{
 			Preheader: "You've been invited to join " + workspaceName + " on StoneSuite.", Badge: "Workspace Invite", Icon: IconTeam,
 			Heading: "You're invited to join", HeadingAccent: workspaceName,
@@ -154,16 +179,21 @@ func SendPasswordResetEmail(ctx context.Context, tenantID, identityID, recipient
 
 // buildPortalInviteNotification builds the Notify request for an approved
 // customer's portal-login setup invite.
-func buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) NotificationRequest {
+func buildPortalInviteNotification(tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) NotificationRequest {
 	return NotificationRequest{
-		TenantID:   tenantID,
-		Recipients: []RecipientTarget{{Email: recipientEmail}},
-		EventType:  "portal_user.invited",
-		Resource:   "portal_user",
-		ResourceID: inviteID,
-		Title:      workspaceName + " — set up your customer portal access",
-		Body:       "Portal invite email sent.",
-		Channels:   []string{"email"},
+		TenantID:    tenantID,
+		Recipients:  []RecipientTarget{{Email: recipientEmail}},
+		ActorUserID: actorUserID,
+		// "portal_user" is not an RBAC resource; the alert is filed under the one
+		// that governs the Portal Access card so the granting staff member sees it.
+		StatusLink:     statusLink,
+		StatusResource: statusResourcePortalAccess,
+		EventType:      "portal_user.invited",
+		Resource:       "portal_user",
+		ResourceID:     inviteID,
+		Title:          workspaceName + " — set up your customer portal access",
+		Body:           "Portal invite email sent.",
+		Channels:       []string{"email"},
 		Email: &Email{
 			Preheader: workspaceName + " gave you customer portal access.", Badge: "Portal Access", Icon: IconPortal,
 			Heading: "Your customer", HeadingAccent: "portal is ready.",
@@ -179,25 +209,40 @@ func buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipient
 	}
 }
 
+// SendPortalInviteEmailWithResult invites an approved customer to set up their
+// portal login and returns the notify notification ids, so the caller can check
+// what actually happened to the email (see ConfirmEmailDelivery).
+func SendPortalInviteEmailWithResult(ctx context.Context, tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildPortalInviteNotification(tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink, expiryHours))
+}
+
 // SendPortalInviteEmail invites an approved customer to set up their portal
 // login. Distinct from SendUserInviteEmail: the recipient is a customer, not a
 // colleague joining the workspace, so the copy must not imply staff access.
-func SendPortalInviteEmail(ctx context.Context, tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) error {
-	return SendNotification(ctx, buildPortalInviteNotification(tenantID, inviteID, recipientEmail, recipientName, workspaceName, setupLink, expiryHours))
+// Thin wrapper over SendPortalInviteEmailWithResult for callers that do not
+// need the notification ids.
+func SendPortalInviteEmail(ctx context.Context, tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) error {
+	_, err := SendPortalInviteEmailWithResult(ctx, tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink, expiryHours)
+	return err
 }
 
 // buildCustomerPortalInviteNotification builds the Notify request for an
 // external customer's portal-login setup invite.
-func buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) NotificationRequest {
+func buildCustomerPortalInviteNotification(tenantID, resourceID, actorUserID, statusLink, recipientEmail, recipientName, tenantDisplayName, setupLink string) NotificationRequest {
 	return NotificationRequest{
-		TenantID:   tenantID,
-		Recipients: []RecipientTarget{{Email: recipientEmail}},
-		EventType:  "customer_portal.invited",
-		Resource:   "customer_portal",
-		ResourceID: resourceID,
-		Title:      "You've been invited to the " + tenantDisplayName + " customer portal",
-		Body:       "Customer portal invite email sent.",
-		Channels:   []string{"email"},
+		TenantID:    tenantID,
+		Recipients:  []RecipientTarget{{Email: recipientEmail}},
+		ActorUserID: actorUserID,
+		// "customer_portal" is not an RBAC resource; this flow is governed by
+		// customer:update, so the alert is filed under "customer".
+		StatusLink:     statusLink,
+		StatusResource: statusResourceCustomer,
+		EventType:      "customer_portal.invited",
+		Resource:       "customer_portal",
+		ResourceID:     resourceID,
+		Title:          "You've been invited to the " + tenantDisplayName + " customer portal",
+		Body:           "Customer portal invite email sent.",
+		Channels:       []string{"email"},
 		Email: &Email{
 			Preheader: tenantDisplayName + " invited you to their customer portal.", Badge: "Portal Invite", Icon: IconDocPlus,
 			Heading: "You're invited to the", HeadingAccent: "customer portal.",
@@ -213,10 +258,21 @@ func buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail,
 	}
 }
 
+// SendCustomerPortalInviteEmailWithResult invites an external customer to set a
+// password and activate their customer-portal login, and returns the notify
+// notification ids so the caller can check what actually happened to the email
+// (see ConfirmEmailDelivery).
+func SendCustomerPortalInviteEmailWithResult(ctx context.Context, tenantID, resourceID, actorUserID, statusLink, recipientEmail, recipientName, tenantDisplayName, setupLink string) (NotificationResult, error) {
+	return SendNotificationWithResult(ctx, buildCustomerPortalInviteNotification(tenantID, resourceID, actorUserID, statusLink, recipientEmail, recipientName, tenantDisplayName, setupLink))
+}
+
 // SendCustomerPortalInviteEmail invites an external customer to set a
-// password and activate their customer-portal login.
-func SendCustomerPortalInviteEmail(ctx context.Context, tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink string) error {
-	return SendNotification(ctx, buildCustomerPortalInviteNotification(tenantID, resourceID, recipientEmail, recipientName, tenantDisplayName, setupLink))
+// password and activate their customer-portal login. Thin wrapper over
+// SendCustomerPortalInviteEmailWithResult for callers that do not need the
+// notification ids.
+func SendCustomerPortalInviteEmail(ctx context.Context, tenantID, resourceID, actorUserID, statusLink, recipientEmail, recipientName, tenantDisplayName, setupLink string) error {
+	_, err := SendCustomerPortalInviteEmailWithResult(ctx, tenantID, resourceID, actorUserID, statusLink, recipientEmail, recipientName, tenantDisplayName, setupLink)
+	return err
 }
 
 // buildCustomerNoteConfirmationNotification builds the Notify request

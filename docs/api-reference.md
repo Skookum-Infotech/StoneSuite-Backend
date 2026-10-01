@@ -667,11 +667,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/inventory/units/{uuid}/history` | staff token + tenant | `invUnit.History` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
 | `GET` | `/api/tenant/inventory/warehouses` | staff token + tenant | `invWh.List` |
-| `POST` | `/api/tenant/inventory/warehouses` | staff token + tenant | `invWh.Create` |
-| `DELETE` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Delete` |
 | `GET` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Get` |
-| `PATCH` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Update` |
-| `POST` | `/api/tenant/inventory/warehouses/{uuid}/set-default` | staff token + tenant | `invWh.SetDefault` |
 
 ### invites
 
@@ -721,6 +717,13 @@ The staff application. Every route requires a JWT and resolves a tenant database
 |---|---|---|---|
 | `ANY` | `/api/tenant/me` | staff token + tenant | `` |
 
+### my-transactions
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/my-transactions` | staff token + tenant | `myTxOps.List` |
+| `GET` | `/api/tenant/my-transactions/summary` | staff token + tenant | `myTxOps.Overview` |
+
 ### payments
 
 | Method | Path | Requires | Handler |
@@ -768,6 +771,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/purchase-orders/{uuid}/next-slab-serial` | staff token + tenant | `irOps.NextSlabSequence` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/receipts` | staff token + tenant | `irOps.ForPurchaseOrder` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/reject` | staff token + tenant | `poOps.Reject` |
+| `POST` | `/api/tenant/purchase-orders/{uuid}/resend` | staff token + tenant | `poOps.ResendToVendor` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/transition` | staff token + tenant | `poOps.Transition` |
 
 ### quotes
@@ -892,6 +896,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `ANY` | `/api/tenant/users/` | staff token + tenant | `rbac.UserRoles` |
 | `GET` | `/api/tenant/users/assignable` | staff token + tenant | `userOps.ListAssignableUsers` |
 | `POST` | `/api/tenant/users/invite` | staff token + tenant | `userOps.InviteUser` |
+| `PATCH` | `/api/tenant/users/me` | staff token + tenant | `userOps.UpdateMyProfile` |
 | `GET` | `/api/tenant/users/me/permissions` | staff token + tenant | `rbac.MyPermissions` |
 | `DELETE` | `/api/tenant/users/{id}` | staff token + tenant | `userOps.DeactivateUser` |
 | `GET` | `/api/tenant/users/{id}` | staff token + tenant | `userOps.GetUser` |

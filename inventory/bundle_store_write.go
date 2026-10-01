@@ -20,7 +20,7 @@ func validateBundleInput(in *BundleInput) error {
 		return ClientError{Msg: "A bundle code cannot exceed 50 characters."}
 	}
 	if in.WarehouseID <= 0 {
-		return ClientError{Msg: "A warehouse is required."}
+		return ClientError{Msg: "A location is required."}
 	}
 	// Mirrors chk_bundle_supplier, so the caller gets a sentence instead of a
 	// constraint name.
@@ -121,7 +121,7 @@ func UpdateBundle(ctx context.Context, pool *pgxpool.Pool, uuid string, in Bundl
 		return err
 	}
 	if cur.warehouseID != in.WarehouseID {
-		return ClientError{Msg: "A bundle cannot be moved to a different warehouse. Transfer its units instead."}
+		return ClientError{Msg: "A bundle cannot be moved to a different location. Transfer its units instead."}
 	}
 	// An OMITTED item or bin means "leave it alone", not "clear it" — see the
 	// note on BundleInput. Without this, the first PATCH after a bundle adopted

@@ -96,7 +96,7 @@ func resolveLines(ctx context.Context, q pgxQuerier, warehouseID int, in []LineI
 		}
 		if unit.WarehouseID != warehouseID {
 			return nil, ClientError{Msg: fmt.Sprintf(
-				"Line %d: unit %s is in another warehouse. Adjust it there, or transfer it first.", i+1, unit.Serial)}
+				"Line %d: unit %s is in another location. Adjust it there, or transfer it first.", i+1, unit.Serial)}
 		}
 		if li.QtyDelta == 0 {
 			return nil, ClientError{Msg: fmt.Sprintf(

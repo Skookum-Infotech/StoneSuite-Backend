@@ -81,7 +81,7 @@ which is the correct failure direction.
 ## Business modules
 
 Roughly 35 modules, largest first: **inventory** (79 endpoints — items, units,
-bins, bundles, warehouses, adjustments, transfers, cycle counts), **finance**
+bins, bundles, locations, adjustments, transfers, cycle counts), **finance**
 (38 — chart of accounts, journals, cash transfers, accounting periods), **CRM**
 (23 — the lead → prospect → customer pipeline), **fabrication** (19), and the
 document chain:

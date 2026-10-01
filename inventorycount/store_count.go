@@ -134,7 +134,7 @@ func AddUnexpected(ctx context.Context, pool *pgxpool.Pool, uuid string, in Unex
 	}
 	if unit.WarehouseID != cur.warehouseID {
 		return nil, ClientError{Msg: fmt.Sprintf(
-			"Unit %s belongs to another warehouse. Transfer it rather than counting it here.", unit.Serial)}
+			"Unit %s belongs to another location. Transfer it rather than counting it here.", unit.Serial)}
 	}
 
 	var nextLine int

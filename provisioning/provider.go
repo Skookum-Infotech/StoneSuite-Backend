@@ -27,6 +27,11 @@ type DBProvider interface {
 
 var dbNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
+// tenantDBPrefix starts every database SanitizeDBName produces. DropTenantDatabase
+// refuses any name without it, so a bad db_name can never reach the control
+// plane or admin database.
+const tenantDBPrefix = "tenant_"
+
 // SanitizeDBName builds a safe tenant database name from a slug.
 func SanitizeDBName(slug string) (string, error) {
 	s := strings.ToLower(strings.TrimSpace(slug))
@@ -35,7 +40,7 @@ func SanitizeDBName(slug string) (string, error) {
 	if s == "" {
 		return "", fmt.Errorf("slug %q has no usable characters", slug)
 	}
-	name := "tenant_" + s
+	name := tenantDBPrefix + s
 	if !dbNameRe.MatchString(name) {
 		return "", fmt.Errorf("cannot derive a valid db name from slug %q", slug)
 	}

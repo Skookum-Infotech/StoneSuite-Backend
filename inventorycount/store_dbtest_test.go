@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/dbtestutil"
+
 	"stonesuite-backend/inventory"
 )
 
@@ -28,20 +30,19 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("connect test db: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	dbtestutil.EnsureLocation(t, pool)
 	return pool
 }
 
-// countWarehouse gives each test its own warehouse, so one test's freeze does
+// countWarehouse gives each test its own location, so one test's freeze does
 // not snapshot another's stock — the whole suite shares a database.
 func countWarehouse(t *testing.T, pool *pgxpool.Pool) int {
 	t.Helper()
 	var id int
-	// warehouse_code is VARCHAR(20), so the full nanosecond suffix overflows it.
-	code := fmt.Sprintf("CW%d", time.Now().UnixNano()%1e12)
+	name := fmt.Sprintf("CW%d", time.Now().UnixNano()%1e12)
 	if err := pool.QueryRow(context.Background(), `
-		INSERT INTO lkp_warehouse (warehouse_code, warehouse_name, warehouse_created_by)
-		VALUES ($1, $1, 1) RETURNING warehouse_id`, code).Scan(&id); err != nil {
-		t.Fatalf("seed warehouse: %v", err)
+		INSERT INTO company_location (name) VALUES ($1) RETURNING company_location_id`, name).Scan(&id); err != nil {
+		t.Fatalf("seed location: %v", err)
 	}
 	return id
 }

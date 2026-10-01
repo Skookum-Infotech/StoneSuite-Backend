@@ -634,3 +634,42 @@ func TestConvertFromPurchaseOrder_ConcurrentConversionsBillTheGoodsOnce(t *testi
 		t.Errorf("qtyBilled = %v, want [10 4] -- billed exactly once, not %d times", got, created)
 	}
 }
+
+func TestManualPaidSettlesBalance(t *testing.T) {
+	pool := testPool(t)
+	vendorUUID := seedVendor(t, pool)
+	ctx := context.Background()
+
+	bill, err := Create(ctx, pool, CreateVendorBillInput{
+		VendorUUID: vendorUUID,
+		vendorBillFields: vendorBillFields{
+			BillDate: "2026-08-01",
+			Items:    []LineInput{{LineNumber: 1, Description: "Line A", Quantity: 1, UnitPrice: 100}},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := Transition(ctx, pool, bill.ID, "PAPV", 1); err != nil {
+		t.Fatalf("Transition to PAPV (auto-skips to APPV): %v", err)
+	}
+	if _, err := RecordPayment(ctx, pool, bill.ID, RecordPaymentInput{Amount: 40, PaidAt: "2026-08-05"}, 1); err != nil {
+		t.Fatalf("RecordPayment: %v", err)
+	}
+
+	paid, err := Transition(ctx, pool, bill.ID, "PAID", 1)
+	if err != nil {
+		t.Fatalf("Transition to PAID: %v", err)
+	}
+	if paid.StatusCode != "PAID" || paid.BalanceDue != 0 || paid.AmountPaid != 100 {
+		t.Errorf("after manual PAID: status=%q balance=%v paid=%v, want PAID/0/100", paid.StatusCode, paid.BalanceDue, paid.AmountPaid)
+	}
+
+	ledger, err := GetLedger(ctx, pool, bill.ID)
+	if err != nil {
+		t.Fatalf("GetLedger: %v", err)
+	}
+	if len(ledger.BillPayments) != 2 {
+		t.Errorf("bill-owned settlements = %d, want 2 (partial + marked-paid)", len(ledger.BillPayments))
+	}
+}

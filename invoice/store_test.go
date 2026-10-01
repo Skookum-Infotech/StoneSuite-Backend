@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/dbtestutil"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
@@ -24,6 +26,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("connect test db: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	dbtestutil.EnsureLocation(t, pool)
 	return pool
 }
 

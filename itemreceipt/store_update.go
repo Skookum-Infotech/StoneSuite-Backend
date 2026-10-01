@@ -104,7 +104,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 		nullableInt(ownerEmployeeID), custom, nullableInt(actorEmployeeID),
 	); err != nil {
 		if isForeignKeyViolation(err) {
-			return nil, ClientError{Msg: "One of the referenced ids (warehouse or owner) does not exist."}
+			return nil, ClientError{Msg: "One of the referenced ids (location or owner) does not exist."}
 		}
 		return nil, fmt.Errorf("update item receipt: %w", err)
 	}

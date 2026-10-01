@@ -2,8 +2,11 @@ package tenancy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ----- Tenant writes ---------------------------------------------------------
@@ -111,6 +114,32 @@ func (c *ControlPlane) RestoreTenant(ctx context.Context, id string) error {
 		return fmt.Errorf("restore tenant: %w", err)
 	}
 	return nil
+}
+
+// PurgeTenant permanently deletes a tenant's control-plane row. Every child
+// table (identities, invites, SSO config, jobs, feedback, ...) cascades, and
+// platform_audit_logs keep their rows with tenant_id set to NULL. It does not
+// touch the tenant's database or storage bucket — callers tear those down
+// first. The platform-owner tenant is refused here as well as in the handler:
+// deleting it would lock the platform admin out.
+func (c *ControlPlane) PurgeTenant(ctx context.Context, id string) error {
+	tag, err := c.pool.Exec(ctx, `DELETE FROM tenants WHERE id = $1 AND is_platform_owner = FALSE`, id)
+	if err != nil {
+		return fmt.Errorf("purge tenant: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	// Nothing was deleted: the tenant is either the platform owner or absent.
+	var isOwner bool
+	err = c.pool.QueryRow(ctx, `SELECT is_platform_owner FROM tenants WHERE id = $1`, id).Scan(&isOwner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTenantNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("purge tenant: %w", err)
+	}
+	return ErrPlatformOwnerProtected
 }
 
 // maxListTenants is a safety cap on unbounded SELECT; pagination should be

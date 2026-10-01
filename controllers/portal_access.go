@@ -135,7 +135,7 @@ func (h *PortalAccessOps) CreatePortalUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	user, invite, err := h.grantPortalAccess(r, tenant, pool, customerID,
+	user, invite, outcome, err := h.grantPortalAccess(r, tenant, pool, customerID,
 		r.PathValue("customerUuid"), customerName, req.Email, req.FullName, actorIdentityID)
 	if errors.Is(err, errStaffEmailConflict) {
 		fail(w, http.StatusConflict,
@@ -147,10 +147,13 @@ func (h *PortalAccessOps) CreatePortalUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]any{
+	resp := map[string]any{
 		"success":    true,
 		"portalUser": portalUserView(user, invite),
-	})
+	}
+	applyEmailOutcome(r.Context(), resp, outcome, "portal invite email not delivered (access still granted)",
+		"portal_user", user.ID, "tenant", tenant.ID)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // grantPortalAccess creates (or links, for a returning multi-workspace
@@ -159,8 +162,12 @@ func (h *PortalAccessOps) CreatePortalUser(w http.ResponseWriter, r *http.Reques
 // and the auto-invite CRMOps.ApproveRecord triggers when a customer record
 // becomes approved — both must apply the exact same identity/staff-collision/
 // invite rules, so this is the one place that logic lives.
+//
+// The EmailOutcome is zero (not Attempted) when no invite was sent — an
+// existing portal customer already has a password.
 func (h *PortalAccessOps) grantPortalAccess(r *http.Request, tenant *tenancy.Tenant, pool *pgxpool.Pool,
-	customerID int, customerUUID, customerName, email, fullName, actorIdentityID string) (*portal.User, *tenancy.PortalInvite, error) {
+	customerID int, customerUUID, customerName, email, fullName, actorIdentityID string) (*portal.User, *tenancy.PortalInvite, services.EmailOutcome, error) {
+	var noEmail services.EmailOutcome
 	// Find or create the control-plane identity.
 	identity, err := h.CP.IdentityByEmail(r.Context(), email)
 	switch {
@@ -170,10 +177,10 @@ func (h *PortalAccessOps) grantPortalAccess(r *http.Request, tenant *tenancy.Ten
 		// authority on which workspaces this login may enter.
 		identity, err = h.CP.CreateIdentity(r.Context(), tenant.ID, email, "", fullName, false)
 		if err != nil {
-			return nil, nil, fmt.Errorf("create portal identity: %w", err)
+			return nil, nil, noEmail, fmt.Errorf("create portal identity: %w", err)
 		}
 	case err != nil:
-		return nil, nil, fmt.Errorf("look up portal identity: %w", err)
+		return nil, nil, noEmail, fmt.Errorf("look up portal identity: %w", err)
 	default:
 		// The email already has an identity. Refuse if it belongs to a staff
 		// member anywhere: one address must not be both an employee login and
@@ -181,40 +188,43 @@ func (h *PortalAccessOps) grantPortalAccess(r *http.Request, tenant *tenancy.Ten
 		// reset token with different trust levels.
 		staff, serr := h.identityIsStaff(r, identity)
 		if serr != nil {
-			return nil, nil, fmt.Errorf("check staff collision: %w", serr)
+			return nil, nil, noEmail, fmt.Errorf("check staff collision: %w", serr)
 		}
 		if staff {
 			logSecurityEvent(r, "portal_access_refused_staff_email",
 				"identity", identity.ID, "actor", actorIdentityID)
-			return nil, nil, errStaffEmailConflict
+			return nil, nil, noEmail, errStaffEmailConflict
 		}
 	}
 
 	if _, err := h.CP.CreatePortalLink(r.Context(), identity.ID, tenant.ID); err != nil {
-		return nil, nil, fmt.Errorf("create portal link: %w", err)
+		return nil, nil, noEmail, fmt.Errorf("create portal link: %w", err)
 	}
 
 	actorEmp := employeeIDOrNil(r, pool, actorIdentityID)
 	user, err := portal.CreateUser(r.Context(), pool, identity.ID, customerID, email, fullName, actorEmp)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create portal user: %w", err)
+		return nil, nil, noEmail, fmt.Errorf("create portal user: %w", err)
 	}
 
 	// Issue the invitation. Only when the identity has no password yet — an
 	// existing portal customer at another workspace already has credentials and
 	// just needs the new workspace linked, not a new invite.
-	var invite *tenancy.PortalInvite
+	var (
+		invite  *tenancy.PortalInvite
+		outcome services.EmailOutcome
+	)
 	if identity.PasswordHash == "" {
-		invite, err = h.issueInvite(r, tenant, identity.ID, email, fullName, customerUUID, actorIdentityID)
+		invite, outcome, err = h.issueInvite(r, tenant, identity.ID, email, fullName, customerUUID, actorIdentityID)
 		if err != nil {
-			return user, nil, fmt.Errorf("issue portal invite: %w", err)
+			return user, nil, noEmail, fmt.Errorf("issue portal invite: %w", err)
 		}
 	}
 
 	logSecurityEvent(r, "portal_access_granted", "actor", actorIdentityID,
 		"identity", identity.ID, "customer", customerName, "tenant", tenant.ID)
 
-	return user, invite, nil
+	return user, invite, outcome, nil
 }
 
 // issueInvite creates or refreshes a pending invite and emails the link.
@@ -223,14 +233,16 @@ func (h *PortalAccessOps) grantPortalAccess(r *http.Request, tenant *tenancy.Ten
 // response: holding portal_access:create should not by itself yield a working
 // credential-setting link for someone else's address.
 //
-// An email failure is logged, not fatal — access has been granted either way,
-// and staff can resend. Returning 500 here would leave the caller unsure
-// whether the grant happened.
+// An email failure is not fatal — access has been granted either way, and staff
+// can resend; returning 500 would leave the caller unsure whether the grant
+// happened. It is not hidden either: the returned EmailOutcome says what really
+// happened to the email (notify sends asynchronously, so this waits briefly for
+// its first attempt) and callers put it in the response.
 func (h *PortalAccessOps) issueInvite(r *http.Request, tenant *tenancy.Tenant,
-	identityID, email, fullName, customerUUID, actorIdentityID string) (*tenancy.PortalInvite, error) {
+	identityID, email, fullName, customerUUID, actorIdentityID string) (*tenancy.PortalInvite, services.EmailOutcome, error) {
 	token, err := randomToken()
 	if err != nil {
-		return nil, fmt.Errorf("generate portal invite token: %w", err)
+		return nil, services.EmailOutcome{}, fmt.Errorf("generate portal invite token: %w", err)
 	}
 	expiresAt := inviteExpiry(0) // INVITE_EXPIRY_HOURS, same config as every other invite
 
@@ -245,17 +257,19 @@ func (h *PortalAccessOps) issueInvite(r *http.Request, tenant *tenancy.Tenant,
 		invite, err = h.CP.CreatePortalInvite(r.Context(), tenant.ID, identityID,
 			email, fullName, customerUUID, token, actorIdentityID, expiresAt)
 	default:
-		return nil, fmt.Errorf("look up pending portal invite: %w", lerr)
+		return nil, services.EmailOutcome{}, fmt.Errorf("look up pending portal invite: %w", lerr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("issue portal invite: %w", err)
+		return nil, services.EmailOutcome{}, fmt.Errorf("issue portal invite: %w", err)
 	}
 
-	if merr := services.SendPortalInviteEmail(r.Context(), tenant.ID, invite.ID, email, fullName, tenant.DisplayName,
-		portalInviteLink(token), inviteExpiryHours()); merr != nil {
-		log.Printf("warn: portal invite email to %s failed: %v", email, merr)
-	}
-	return invite, nil
+	// actorIdentityID + the customer's record page let notify alert the staff
+	// member who granted access if this email bounces.
+	res, merr := services.SendPortalInviteEmailWithResult(r.Context(), tenant.ID, invite.ID,
+		actorIdentityID, recordLink(string(authz.ResourceCustomer), customerUUID),
+		email, fullName, tenant.DisplayName, portalInviteLink(token), inviteExpiryHours())
+	persistNotifyIDs(r.Context(), "portal invite", invite.ID, res, merr, h.CP.SetPortalInviteNotifyIDs)
+	return invite, services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, merr), nil
 }
 
 // ResendPortalInvite re-issues and re-sends an invitation.
@@ -311,7 +325,7 @@ func (h *PortalAccessOps) ResendPortalInvite(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	invite, err := h.issueInvite(r, tenant, user.IdentityID, user.Email, user.FullName,
+	invite, outcome, err := h.issueInvite(r, tenant, user.IdentityID, user.Email, user.FullName,
 		r.PathValue("customerUuid"), actorIdentityID)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to resend the portal invitation.")
@@ -321,10 +335,13 @@ func (h *PortalAccessOps) ResendPortalInvite(w http.ResponseWriter, r *http.Requ
 	logSecurityEvent(r, "portal_invite_resent", "actor", actorIdentityID,
 		"identity", user.IdentityID, "tenant", tenant.ID)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"success":    true,
 		"portalUser": portalUserView(user, invite),
-	})
+	}
+	applyEmailOutcome(r.Context(), resp, outcome, "portal invite resend email not delivered (invite re-issued)",
+		"portal_user", user.ID, "tenant", tenant.ID)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // portalUserView renders a portal login plus its invitation state for staff.
@@ -383,16 +400,29 @@ func (h *PortalAccessOps) ListPortalUsers(w http.ResponseWriter, r *http.Request
 	// Attach each login's invitation state so the UI can show "invited",
 	// "expired" (with a resend button) or nothing at all, without the frontend
 	// having to infer it.
-	views := make([]map[string]any, 0, len(users))
+	// The invite emails' real delivery status is fetched with ONE batched
+	// lookup for the whole list, then attached to each row that has an invite.
+	invites := make([]*tenancy.PortalInvite, len(users))
+	var idLists [][]string
 	for i := range users {
-		u := users[i]
-		invite, ierr := h.CP.LatestPortalInviteForIdentity(r.Context(), tenant.ID, u.IdentityID)
+		invite, ierr := h.CP.LatestPortalInviteForIdentity(r.Context(), tenant.ID, users[i].IdentityID)
 		if ierr != nil {
 			// No invite on record is normal for a customer who already had a
 			// login at another workspace. Render the row without invite state.
-			invite = nil
+			continue
 		}
-		views = append(views, portalUserView(&u, invite))
+		invites[i] = invite
+		idLists = append(idLists, invite.NotifyNotificationIDs)
+	}
+	idx := loadEmailStatuses(r.Context(), tenant.ID, idLists...)
+
+	views := make([]map[string]any, 0, len(users))
+	for i := range users {
+		view := portalUserView(&users[i], invites[i])
+		if invites[i] != nil {
+			withEmailSummary(view, idx.summary(invites[i].NotifyNotificationIDs))
+		}
+		views = append(views, view)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "portalUsers": views})
 }

@@ -8893,3 +8893,62 @@ BEGIN
         created, reused, (SELECT COUNT(*) FROM lkp_warehouse_legacy WHERE migrated_to_location_id IS NULL);
 END
 $wh_upgrade$;
+
+-- Fabrication workspace v2: opt-in, preserving unknown legacy facts.
+ALTER TABLE fabrication_job ADD COLUMN IF NOT EXISTS workflow_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE fabrication_job ADD COLUMN IF NOT EXISTS delivery_mode TEXT NULL;
+ALTER TABLE fabrication_job_item ADD COLUMN IF NOT EXISTS production_stage TEXT NULL;
+ALTER TABLE fabrication_job_item ADD COLUMN IF NOT EXISTS piece_record_version BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE fabrication_job_item ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ NULL;
+ALTER TABLE fabrication_job_item ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ NULL;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_fjob_workflow_version' AND conrelid='fabrication_job'::regclass) THEN
+  ALTER TABLE fabrication_job ADD CONSTRAINT chk_fjob_workflow_version CHECK (workflow_version IN (1,2));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_fjob_delivery_mode' AND conrelid='fabrication_job'::regclass) THEN
+  ALTER TABLE fabrication_job ADD CONSTRAINT chk_fjob_delivery_mode CHECK (
+   (delivery_mode IS NULL OR delivery_mode IN ('supply_only','installed')) AND (workflow_version=1 OR delivery_mode IS NOT NULL));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='chk_fjob_piece_stage' AND conrelid='fabrication_job_item'::regclass) THEN
+  ALTER TABLE fabrication_job_item ADD CONSTRAINT chk_fjob_piece_stage CHECK (production_stage IS NULL OR production_stage IN
+   ('planned','ready_cutting','cutting','edging','qc','qc_passed','handed_over','installed','signed_off'));
+ END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS fabrication_action_event (
+ event_id BIGSERIAL PRIMARY KEY,
+ event_uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ fabrication_job_id INTEGER NOT NULL REFERENCES fabrication_job(fabrication_job_id),
+ actor_identity_id UUID NOT NULL,
+ actor_employee_id INTEGER NULL REFERENCES employee(employee_id),
+ request_id UUID NOT NULL,
+ action_code TEXT NOT NULL,
+ subject_uuid UUID NOT NULL,
+ payload_hash TEXT NOT NULL,
+ prior_version BIGINT NOT NULL CHECK (prior_version > 0),
+ resulting_version BIGINT NOT NULL CHECK (resulting_version > prior_version),
+ result JSONB NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ CONSTRAINT uq_fabrication_action_request UNIQUE (actor_identity_id, fabrication_job_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fabrication_action_history ON fabrication_action_event (fabrication_job_id,event_id);
+
+CREATE TABLE IF NOT EXISTS fabrication_delivery_obligation (
+ obligation_id BIGSERIAL PRIMARY KEY,
+ obligation_uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ fabrication_job_id INTEGER NOT NULL REFERENCES fabrication_job(fabrication_job_id),
+ sales_order_item_id INTEGER NOT NULL REFERENCES sales_order_item(sales_order_item_id),
+ quantity NUMERIC(14,3) NOT NULL CHECK (quantity > 0),
+ fulfilled_at TIMESTAMPTZ NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ CONSTRAINT uq_fabrication_obligation_job UNIQUE(obligation_id,fabrication_job_id)
+);
+ALTER TABLE fabrication_job_item ADD COLUMN IF NOT EXISTS delivery_obligation_id BIGINT NULL;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_fabrication_piece_obligation' AND conrelid='fabrication_job_item'::regclass) THEN
+  ALTER TABLE fabrication_job_item ADD CONSTRAINT fk_fabrication_piece_obligation FOREIGN KEY (delivery_obligation_id,fabrication_job_id)
+   REFERENCES fabrication_delivery_obligation(obligation_id,fabrication_job_id);
+ END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fabrication_active_obligation ON fabrication_job_item(delivery_obligation_id)
+ WHERE delivery_obligation_id IS NOT NULL AND superseded_at IS NULL AND cancelled_at IS NULL AND item_deleted_at IS NULL;

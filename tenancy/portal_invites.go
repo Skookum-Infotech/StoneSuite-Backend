@@ -33,6 +33,10 @@ type PortalInvite struct {
 	ExpiresAt    time.Time
 	AcceptedAt   *time.Time
 	CreatedAt    time.Time
+	// NotifyNotificationIDs holds the stonesuite-notify notification id for each
+	// recipient of the most recent invite email send, so its real delivery status
+	// can be looked up later. See Invite.NotifyNotificationIDs.
+	NotifyNotificationIDs []string
 }
 
 // Expired reports whether a pending invite has passed its expiry.
@@ -50,13 +54,14 @@ func (p *PortalInvite) Usable() bool {
 }
 
 const portalInviteColumns = `id, tenant_id, identity_id, email, full_name, customer_uuid,
-	token, status, COALESCE(invited_by::text, ''), expires_at, accepted_at, created_at`
+	token, status, COALESCE(invited_by::text, ''), expires_at, accepted_at, created_at,
+	notify_notification_ids`
 
 func scanPortalInvite(row pgx.Row) (*PortalInvite, error) {
 	var inv PortalInvite
 	err := row.Scan(&inv.ID, &inv.TenantID, &inv.IdentityID, &inv.Email, &inv.FullName,
 		&inv.CustomerUUID, &inv.Token, &inv.Status, &inv.InvitedBy,
-		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt, &inv.NotifyNotificationIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrPortalInviteNotFound
 	}
@@ -131,10 +136,27 @@ func (c *ControlPlane) LatestPortalInviteForIdentity(ctx context.Context, tenant
 // so a resend also invalidates a link that may have leaked.
 func (c *ControlPlane) RefreshPortalInvite(ctx context.Context, id, token string, expiresAt time.Time) (*PortalInvite, error) {
 	q := `UPDATE portal_invites
-		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL, updated_at = NOW()
+		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL,
+		    notify_notification_ids = '{}', updated_at = NOW()
 		WHERE id = $1
 		RETURNING ` + portalInviteColumns
 	return scanPortalInvite(c.pool.QueryRow(ctx, q, id, token, expiresAt))
+}
+
+// SetPortalInviteNotifyIDs records the stonesuite-notify notification ids for
+// the most recent portal-invite email. Same contract as SetInviteNotifyIDs:
+// replaces any previous value, nil is stored as an empty array, and a missing
+// row is a no-op.
+func (c *ControlPlane) SetPortalInviteNotifyIDs(ctx context.Context, id string, ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE portal_invites SET notify_notification_ids = $2, updated_at = NOW() WHERE id = $1`,
+		id, ids); err != nil {
+		return fmt.Errorf("set portal invite notify ids: %w", err)
+	}
+	return nil
 }
 
 // MarkPortalInviteAccepted closes an invite once its password has been set.

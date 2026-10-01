@@ -263,8 +263,12 @@ func (h *PortalAccessOps) issueInvite(r *http.Request, tenant *tenancy.Tenant,
 		return nil, services.EmailOutcome{}, fmt.Errorf("issue portal invite: %w", err)
 	}
 
-	res, merr := services.SendPortalInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, email, fullName, tenant.DisplayName,
-		portalInviteLink(token), inviteExpiryHours())
+	// actorIdentityID + the customer's record page let notify alert the staff
+	// member who granted access if this email bounces.
+	res, merr := services.SendPortalInviteEmailWithResult(r.Context(), tenant.ID, invite.ID,
+		actorIdentityID, recordLink(string(authz.ResourceCustomer), customerUUID),
+		email, fullName, tenant.DisplayName, portalInviteLink(token), inviteExpiryHours())
+	persistNotifyIDs(r.Context(), "portal invite", invite.ID, res, merr, h.CP.SetPortalInviteNotifyIDs)
 	return invite, services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, merr), nil
 }
 
@@ -396,16 +400,29 @@ func (h *PortalAccessOps) ListPortalUsers(w http.ResponseWriter, r *http.Request
 	// Attach each login's invitation state so the UI can show "invited",
 	// "expired" (with a resend button) or nothing at all, without the frontend
 	// having to infer it.
-	views := make([]map[string]any, 0, len(users))
+	// The invite emails' real delivery status is fetched with ONE batched
+	// lookup for the whole list, then attached to each row that has an invite.
+	invites := make([]*tenancy.PortalInvite, len(users))
+	var idLists [][]string
 	for i := range users {
-		u := users[i]
-		invite, ierr := h.CP.LatestPortalInviteForIdentity(r.Context(), tenant.ID, u.IdentityID)
+		invite, ierr := h.CP.LatestPortalInviteForIdentity(r.Context(), tenant.ID, users[i].IdentityID)
 		if ierr != nil {
 			// No invite on record is normal for a customer who already had a
 			// login at another workspace. Render the row without invite state.
-			invite = nil
+			continue
 		}
-		views = append(views, portalUserView(&u, invite))
+		invites[i] = invite
+		idLists = append(idLists, invite.NotifyNotificationIDs)
+	}
+	idx := loadEmailStatuses(r.Context(), tenant.ID, idLists...)
+
+	views := make([]map[string]any, 0, len(users))
+	for i := range users {
+		view := portalUserView(&users[i], invites[i])
+		if invites[i] != nil {
+			withEmailSummary(view, idx.summary(invites[i].NotifyNotificationIDs))
+		}
+		views = append(views, view)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "portalUsers": views})
 }

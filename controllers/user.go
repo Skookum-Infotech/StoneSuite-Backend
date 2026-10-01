@@ -302,7 +302,7 @@ func (h *UserOps) InviteUser(w http.ResponseWriter, r *http.Request) {
 
 	link := userInviteLink(token)
 	notifyResult, emailErr := services.SendUserInviteEmailWithResult(
-		r.Context(), tenant.ID, invite.ID, payload.UserID,
+		r.Context(), tenant.ID, invite.ID, payload.ID,
 		req.Email, req.FullName, tenant.DisplayName, link,
 	)
 	if emailErr == nil && len(notifyResult.NotificationIDs) > 0 {
@@ -528,10 +528,9 @@ func (h *UserOps) ListInvites(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to list invites.")
 		return
 	}
-	if invites == nil {
-		invites = []tenancy.UserInvite{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invites": invites})
+	idx := loadEmailStatuses(r.Context(), tenant.ID,
+		notifyIDsOf(invites, func(i tenancy.UserInvite) []string { return i.NotifyNotificationIDs })...)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invites": userInviteViews(invites, idx)})
 }
 
 // ResendInvite POST /api/tenant/invites/{id}/resend
@@ -593,7 +592,7 @@ func (h *UserOps) ResendInvite(w http.ResponseWriter, r *http.Request) {
 
 	link := userInviteLink(token)
 	notifyResult, emailErr := services.SendUserInviteEmailWithResult(
-		r.Context(), tenant.ID, refreshed.ID, payload.UserID,
+		r.Context(), tenant.ID, refreshed.ID, payload.ID,
 		refreshed.Email, refreshed.FullName, tenant.DisplayName, link,
 	)
 	if emailErr == nil && len(notifyResult.NotificationIDs) > 0 {

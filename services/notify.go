@@ -32,17 +32,27 @@ type RecipientTarget struct {
 
 // NotificationRequest is the payload sent to the notify service.
 type NotificationRequest struct {
-	TenantID    string             `json:"tenantId"`
-	Recipients  []RecipientTarget  `json:"recipients"`
-	ActorUserID string             `json:"actorUserId,omitempty"`
-	EventType   string             `json:"eventType"`
-	Resource    string             `json:"resource"`
-	ResourceID  string             `json:"resourceId"`
-	Title       string             `json:"title"`
-	Body        string             `json:"body,omitempty"`
-	Link        string             `json:"link,omitempty"`
-	Channels    []string           `json:"channels,omitempty"`
-	Attachments []NotifyAttachment `json:"attachments,omitempty"`
+	TenantID    string            `json:"tenantId"`
+	Recipients  []RecipientTarget `json:"recipients"`
+	ActorUserID string            `json:"actorUserId,omitempty"`
+	EventType   string            `json:"eventType"`
+	Resource    string            `json:"resource"`
+	ResourceID  string            `json:"resourceId"`
+	Title       string            `json:"title"`
+	Body        string            `json:"body,omitempty"`
+	Link        string            `json:"link,omitempty"`
+	// StatusLink is the staff-side page a delivery-problem alert about this
+	// notification's email should open (where the email's status is shown).
+	// Distinct from Link, which for a customer email is the customer's URL.
+	// Optional; keep it a short app-relative path (notify caps it at 300 chars).
+	StatusLink string `json:"statusLink,omitempty"`
+	// StatusResource is the RBAC resource that governs that page ("invoice",
+	// "user", "portal_access", …). notify files the alert under it so the
+	// sender's bell filter (their readable resources) shows it. Empty falls
+	// back to Resource, which is right when Resource is itself an RBAC resource.
+	StatusResource string             `json:"statusResource,omitempty"`
+	Channels       []string           `json:"channels,omitempty"`
+	Attachments    []NotifyAttachment `json:"attachments,omitempty"`
 	// Email is the dynamic content of the email delivery. SendNotification
 	// renders it through the one shared template (see RenderEmail) and sends
 	// the result as notify's emailBodyHtml; nil falls back to a default built

@@ -573,3 +573,12 @@ CREATE TABLE IF NOT EXISTS platform_ai_settings (
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 INSERT INTO platform_ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- stonesuite-notify ids for the invite email, so the invite's real delivery
+-- status (delivered / delayed / bounced / ...) can be looked up from notify later
+-- and shown next to the invite. Same purpose and shape as
+-- user_invites.notify_notification_ids and document_sends.notify_notification_ids.
+-- Empty array = pre-migration rows, a send whose notify response could not be
+-- parsed, or an invite whose email send failed outright; a resend resets it.
+ALTER TABLE tenant_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE portal_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';

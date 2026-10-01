@@ -271,10 +271,13 @@ func customerSendRequest(
 		EventType:   "document.sent",
 		Resource:    meta.WorkflowKey,
 		ResourceID:  recordID,
-		Title:       subject,
-		Body:        "Document sent.",
-		Email:       withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
-		Channels:    []string{"email"},
+		// A bounce alerts the sender and opens the staff record page, not the
+		// customer's download link in Link.
+		StatusLink: recordLink(meta.WorkflowKey, recordID),
+		Title:      subject,
+		Body:       "Document sent.",
+		Email:      withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
+		Channels:   []string{"email"},
 	}
 	// The email's Download PDF button is the customer's copy; only attach the
 	// PDF when there is no signed link to download it from.
@@ -297,7 +300,8 @@ func (h *DocumentOps) Sends(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to list sends.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "sends": sends})
+	idx := requestEmailStatuses(r, notifyIDsOf(sends, func(s workflow.DocumentSend) []string { return s.NotifyNotificationIDs })...)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "sends": documentSendViews(sends, idx)})
 }
 
 // normalizeRecipients trims whitespace and drops empty entries from a

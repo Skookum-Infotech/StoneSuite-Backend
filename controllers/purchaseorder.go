@@ -31,6 +31,7 @@ import (
 //	PATCH  /api/tenant/purchase-orders/{uuid}             — update (DRFT only)
 //	DELETE /api/tenant/purchase-orders/{uuid}             — soft delete (DRFT/CANC only)
 //	POST   /api/tenant/purchase-orders/{uuid}/transition  — status change (SENT also emails the vendor)
+//	POST   /api/tenant/purchase-orders/{uuid}/resend      — email the vendor again (no status change)
 //	POST   /api/tenant/purchase-orders/{uuid}/approve     — approval sign-off
 //	GET    /api/tenant/purchase-orders/{uuid}/audit       — audit trail
 type PurchaseOrderOps struct {

@@ -13969,6 +13969,68 @@
         ]
       }
     },
+    "/api/tenant/my-transactions": {
+      "get": {
+        "operationId": "get_tenant_my_transactions",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "myTxOps.List",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/my-transactions/summary": {
+      "get": {
+        "operationId": "get_tenant_my_transactions_summary",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "myTxOps.Overview",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/payments": {
       "get": {
         "operationId": "get_tenant_payments",

@@ -676,6 +676,13 @@ func main() {
 		auditOps := controllers.NewAuditOps()
 		mux.Handle("GET /api/tenant/audit", tenantChain(auditOps.ListAudit))
 
+		// My Transactions: the records the signed-in user created or last
+		// updated, across every module they may read (each gated by its own
+		// RBAC resource inside mytransactions.List).
+		myTxOps := controllers.NewMyTransactionsOps()
+		mux.Handle("GET /api/tenant/my-transactions", tenantChain(myTxOps.List))
+		mux.Handle("GET /api/tenant/my-transactions/summary", tenantChain(myTxOps.Overview))
+
 		// R2 client (Cloudflare). Nil when R2 env vars are absent -- R2-backed
 		// endpoints below (attachments, tenant logo) return 503; everything
 		// else still works.
@@ -1278,6 +1285,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Update))
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/resend", tenantChain(poOps.ResendToVendor))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/reject", tenantChain(poOps.Reject))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))

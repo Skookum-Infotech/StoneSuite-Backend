@@ -97,7 +97,7 @@ func TestBuildPasswordResetNotification(t *testing.T) {
 }
 
 func TestBuildPortalInviteNotification(t *testing.T) {
-	req := buildPortalInviteNotification("tenant-1", "invite-1", "staffer@example.com", "Pat Staffer", "Acme Stone Co", "https://app.example/portal-setup?token=abc", 72)
+	req := buildPortalInviteNotification("tenant-1", "invite-1", "actor-1", "/crm/customer/c-1", "staffer@example.com", "Pat Staffer", "Acme Stone Co", "https://app.example/portal-setup?token=abc", 72)
 
 	assert.Equal(t, "tenant-1", req.TenantID)
 	require.Len(t, req.Recipients, 1)
@@ -117,7 +117,7 @@ func TestBuildPortalInviteNotification(t *testing.T) {
 }
 
 func TestBuildCustomerPortalInviteNotification(t *testing.T) {
-	req := buildCustomerPortalInviteNotification("tenant-1", "42", "buyer@example.com", "Casey Buyer", "Acme Stone Co", "https://portal.example/set-password?token=abc")
+	req := buildCustomerPortalInviteNotification("tenant-1", "42", "actor-1", "/crm/customer/c-1", "buyer@example.com", "Casey Buyer", "Acme Stone Co", "https://portal.example/set-password?token=abc")
 
 	assert.Equal(t, "tenant-1", req.TenantID)
 	require.Len(t, req.Recipients, 1)
@@ -166,8 +166,8 @@ func TestTransactionalEmailBuilders_ContractHolds(t *testing.T) {
 		"password_setup":         buildPasswordSetupNotification("t", "id", "to@x.com", "Name", "https://x/set?token=abc"),
 		"user_invite":            buildUserInviteNotification("t", "id", "actor", "to@x.com", "Name", "Workspace", "https://x/accept?token=abc"),
 		"password_reset":         buildPasswordResetNotification("t", "id", "to@x.com", "Name", "https://x/reset?token=abc"),
-		"portal_invite":          buildPortalInviteNotification("t", "id", "to@x.com", "Name", "Workspace", "https://x/portal?token=abc", 72),
-		"customer_portal_invite": buildCustomerPortalInviteNotification("t", "id", "to@x.com", "Name", "Workspace", "https://x/portal?token=abc"),
+		"portal_invite":          buildPortalInviteNotification("t", "id", "actor", "/crm/customer/c-1", "to@x.com", "Name", "Workspace", "https://x/portal?token=abc", 72),
+		"customer_portal_invite": buildCustomerPortalInviteNotification("t", "id", "actor", "/crm/customer/c-1", "to@x.com", "Name", "Workspace", "https://x/portal?token=abc"),
 		"customer_note_confirm":  buildCustomerNoteConfirmationNotification("t", "id", "to@x.com", "Name", "Workspace"),
 	}
 

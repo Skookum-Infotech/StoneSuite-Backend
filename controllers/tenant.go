@@ -452,6 +452,7 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	// Notify accepts before it sends, so a nil send error does not mean the
 	// email went out: confirm the first delivery attempt before reporting it.
 	res, sendErr := services.SendOnboardingInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, req.ContactEmail, req.RecipientName, link)
+	persistNotifyIDs(r.Context(), "tenant invite", invite.ID, res, sendErr, h.CP.SetInviteNotifyIDs)
 	outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
 	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.invited", "{}")
 
@@ -695,11 +696,11 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 			fail(w, http.StatusInternalServerError, "Failed to load invites.")
 			return
 		}
-		out := make([]map[string]any, 0, len(invites))
-		for _, inv := range invites {
-			out = append(out, inviteView(inv))
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "invites": out})
+		// The notifications were created under the INVITED tenant, so that is
+		// the scope notify is asked about.
+		idx := loadEmailStatuses(r.Context(), tenantID,
+			notifyIDsOf(invites, func(i tenancy.Invite) []string { return i.NotifyNotificationIDs })...)
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "invites": tenantInviteViews(invites, idx)})
 
 	case http.MethodPost:
 		tenant, err := h.CP.TenantByID(r.Context(), tenantID)
@@ -754,6 +755,7 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		// Notify configured in dev). Surface the outcome via emailSent.
 		link := applyLink(token)
 		res, sendErr := services.SendOnboardingInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
+		persistNotifyIDs(r.Context(), "tenant invite resend", invite.ID, res, sendErr, h.CP.SetInviteNotifyIDs)
 		outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
 		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}")
 

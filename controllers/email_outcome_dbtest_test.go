@@ -45,6 +45,13 @@ type notifyScenario struct {
 	// emailStatus / emailLastError are the email row in the delivery log.
 	emailStatus    string
 	emailLastError string
+	// statusState is the state POST /api/deliveries/email-status reports for
+	// every id asked about ("" = answer with an empty map). statusHTTP makes
+	// that route fail with the given HTTP status (0 = 200).
+	statusState string
+	statusHTTP  int
+	// onCreate, when set, is told the actorUserId of each create call.
+	onCreate func(actorUserID string)
 }
 
 // withFakeNotify points the app at a fake stonesuite-notify for one test.
@@ -58,6 +65,13 @@ func withFakeNotify(t *testing.T, sc notifyScenario) {
 				w.WriteHeader(sc.createStatus)
 				return
 			}
+			if sc.onCreate != nil {
+				var req struct {
+					ActorUserID string `json:"actorUserId"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				sc.onCreate(req.ActorUserID)
+			}
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprintf(w, `{"success":true,"data":{"notifications":[{"id":"n-%d"}]}}`, ids.Add(1))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/deliveries"):
@@ -66,6 +80,23 @@ func withFakeNotify(t *testing.T, sc notifyScenario) {
 				{"channel": "email", "status": sc.emailStatus, "lastError": sc.emailLastError},
 			}}})
 			_, _ = w.Write(body)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/deliveries/email-status":
+			if sc.statusHTTP != 0 {
+				w.WriteHeader(sc.statusHTTP)
+				return
+			}
+			var req struct {
+				NotificationIDs []string `json:"notificationIds"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			statuses := map[string]any{}
+			if sc.statusState != "" {
+				for _, id := range req.NotificationIDs {
+					statuses[id] = map[string]any{"state": sc.statusState, "recipient": "bob@buyer.example",
+						"detail": providerRefusal, "updatedAt": "2026-10-01T12:00:00Z"}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"statuses": statuses}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -118,7 +149,8 @@ func assertEmailOutcome(t *testing.T, body string, wantSent bool, wantErrText st
 		assert.Equal(t, wantErrText, got["emailError"])
 	}
 	assert.NotContains(t, body, "not verified", "provider detail must stay in the server log")
-	assert.NotContains(t, body, "403")
+	// Not a bare "403": a random invite token or id can contain those digits.
+	assert.NotContains(t, body, "status 403")
 }
 
 // TestUserInvite_EmailOutcome_DB drives POST /api/tenant/users/invite: the
@@ -145,10 +177,12 @@ func TestUserInvite_EmailOutcome_DB(t *testing.T) {
 // docSendOutcomeEnv is a servable tenant with one sales order and a sender
 // allowed to update it, plus the real Send handler behind the tenancy resolver.
 type docSendOutcomeEnv struct {
-	pool    *pgxpool.Pool
-	handler http.Handler
-	orderID string
-	request func() *http.Request
+	pool         *pgxpool.Pool
+	handler      http.Handler
+	sendsHandler http.Handler
+	orderID      string
+	request      func() *http.Request
+	sendsRequest func() *http.Request
 }
 
 func newDocSendOutcomeEnv(t *testing.T) *docSendOutcomeEnv {
@@ -195,9 +229,16 @@ func newDocSendOutcomeEnv(t *testing.T) *docSendOutcomeEnv {
 	docOps.renderPDF = func(docpdf.PrintableDoc) ([]byte, error) { return []byte("%PDF-1.4 x"), nil }
 
 	return &docSendOutcomeEnv{
-		pool:    pool,
-		handler: tenancy.NewResolver(cp, router).Middleware(http.HandlerFunc(docOps.Send)),
-		orderID: order.ID,
+		pool:         pool,
+		handler:      tenancy.NewResolver(cp, router).Middleware(http.HandlerFunc(docOps.Send)),
+		sendsHandler: tenancy.NewResolver(cp, router).Middleware(http.HandlerFunc(docOps.Sends)),
+		orderID:      order.ID,
+		sendsRequest: func() *http.Request {
+			req := httptest.NewRequest(http.MethodGet, "/api/tenant/records/"+order.ID+"/document/sends", nil)
+			req.SetPathValue("id", order.ID)
+			return req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey,
+				middleware.UserContextPayload{ID: identityID, TenantID: tenant.ID}))
+		},
 		request: func() *http.Request {
 			req := httptest.NewRequest(http.MethodPost, "/api/tenant/records/"+order.ID+"/document/send",
 				strings.NewReader(`{"to":["bob@buyer.example"]}`))
@@ -231,6 +272,48 @@ func TestDocumentSend_EmailOutcome_DB(t *testing.T) {
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 			assertEmailOutcome(t, rr.Body.String(), tt.wantSent, tt.wantErrText)
 			require.Len(t, sends, 1, "the send is recorded whether or not the provider accepted it")
+		})
+	}
+}
+
+// TestDocumentSends_ReportsRealEmailStatus_DB: after a send, the history shows
+// what notify reports — and degrades to "unknown", never an error, when the
+// status route is down.
+func TestDocumentSends_ReportsRealEmailStatus_DB(t *testing.T) {
+	tests := []struct {
+		name       string
+		sc         notifyScenario
+		wantStatus string
+		wantMsg    bool
+	}{
+		{"bounced", notifyScenario{emailStatus: "sent", statusState: "bounced"}, "bounced", true},
+		{"delivered", notifyScenario{emailStatus: "sent", statusState: "delivered"}, "delivered", false},
+		{"notify status route down", notifyScenario{emailStatus: "sent", statusHTTP: http.StatusInternalServerError}, "unknown", false},
+		{"notify knows nothing", notifyScenario{emailStatus: "sent"}, "unknown", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newDocSendOutcomeEnv(t)
+			withFakeNotify(t, tt.sc)
+			env.handler.ServeHTTP(httptest.NewRecorder(), env.request()) // creates one send
+
+			rr := httptest.NewRecorder()
+			env.sendsHandler.ServeHTTP(rr, env.sendsRequest())
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+			var resp struct {
+				Sends []map[string]any `json:"sends"`
+			}
+			require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+			require.Len(t, resp.Sends, 1)
+			assert.Equal(t, tt.wantStatus, resp.Sends[0]["emailStatus"])
+			if tt.wantMsg {
+				assert.NotEmpty(t, resp.Sends[0]["emailStatusMessage"])
+			} else {
+				assert.NotContains(t, resp.Sends[0], "emailStatusMessage")
+			}
+			assert.NotContains(t, rr.Body.String(), "not verified", "provider detail must stay server-side")
+			assert.NotContains(t, rr.Body.String(), "403")
 		})
 	}
 }

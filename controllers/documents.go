@@ -274,10 +274,10 @@ func customerSendRequest(
 		// A bounce alerts the sender and opens the staff record page, not the
 		// customer's download link in Link.
 		StatusLink: recordLink(meta.WorkflowKey, recordID),
-		Title:       subject,
-		Body:        "Document sent.",
-		Email:       withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
-		Channels:    []string{"email"},
+		Title:      subject,
+		Body:       "Document sent.",
+		Email:      withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
+		Channels:   []string{"email"},
 	}
 	// The email's Download PDF button is the customer's copy; only attach the
 	// PDF when there is no signed link to download it from.

@@ -53,10 +53,10 @@ func TestWriteEmailPreviews(t *testing.T) {
 			return services.SendPasswordResetEmail(ctx, "t", "i", "sam@example.com", "Sam Customer", "https://app.stonesuite.io/reset?token=x")
 		}},
 		{"05-portal-access", func() error {
-			return services.SendPortalInviteEmail(ctx, "t", "i", "pat@example.com", "Pat Customer", "Acme Stone Co", "https://app.stonesuite.io/portal/setup?token=x", 72)
+			return services.SendPortalInviteEmail(ctx, "t", "i", "actor", "/crm/customer/c-1", "pat@example.com", "Pat Customer", "Acme Stone Co", "https://app.stonesuite.io/portal/setup?token=x", 72)
 		}},
 		{"06-portal-invite", func() error {
-			return services.SendCustomerPortalInviteEmail(ctx, "t", "i", "pat@example.com", "Pat Customer", "Acme Stone Co", "https://app.stonesuite.io/portal/accept-invite?token=x")
+			return services.SendCustomerPortalInviteEmail(ctx, "t", "i", "actor", "/crm/customer/c-1", "pat@example.com", "Pat Customer", "Acme Stone Co", "https://app.stonesuite.io/portal/accept-invite?token=x")
 		}},
 		{"07-note-received", func() error {
 			return services.SendCustomerNoteConfirmationEmail(ctx, "t", "i", "pat@example.com", "Pat Customer", "Acme Stone Co")

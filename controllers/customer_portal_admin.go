@@ -39,7 +39,7 @@ type portalInviteRequest struct {
 // PortalInvite POST /api/tenant/crm/customer/records/{id}/portal-invite
 func (h *CustomerPortalAdminOps) PortalInvite(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
-	_, pool, key, _, ok := h.crm.authCRMByRecordID(w, r, recordID, authz.ActionUpdate)
+	_, pool, key, actorIdentityID, ok := h.crm.authCRMByRecordID(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -119,7 +119,9 @@ func (h *CustomerPortalAdminOps) PortalInvite(w http.ResponseWriter, r *http.Req
 	}
 
 	link := customerInviteLink(tenant.Slug, token)
-	res, sendErr := services.SendCustomerPortalInviteEmailWithResult(r.Context(), tenant.ID, strconv.Itoa(custInternalID), req.Email, req.FullName, tenant.DisplayName, link)
+	res, sendErr := services.SendCustomerPortalInviteEmailWithResult(r.Context(), tenant.ID, strconv.Itoa(custInternalID),
+		actorIdentityID, recordLink(string(authz.ResourceCustomer), recordID),
+		req.Email, req.FullName, tenant.DisplayName, link)
 	outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
 
 	// The invite is saved either way (staff can resend), so this is still a

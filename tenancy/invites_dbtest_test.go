@@ -132,3 +132,93 @@ func TestUserInviteNotifyIDs(t *testing.T) {
 		}
 	})
 }
+
+// TestTenantInviteNotifyIDs covers the notify_notification_ids column on the
+// platform onboarding invite: empty on create, round-trips through the setter,
+// nil stores as '{}', a refresh (resend) clears it, a missing row is a no-op.
+func TestTenantInviteNotifyIDs(t *testing.T) {
+	cp := newCPTestControlPlane(t)
+	ctx := context.Background()
+	tenantID := seedTestTenant(t, cp)
+
+	mkInvite := func(t *testing.T) *Invite {
+		t.Helper()
+		suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+		inv, err := cp.CreateInvite(ctx, tenantID, "owner-"+suffix+"@example.com", "tok-"+suffix, time.Now().Add(48*time.Hour))
+		if err != nil {
+			t.Fatalf("CreateInvite: %v", err)
+		}
+		return inv
+	}
+
+	t.Run("fresh invite scans as empty, not nil", func(t *testing.T) {
+		inv := mkInvite(t)
+		if inv.NotifyNotificationIDs == nil || len(inv.NotifyNotificationIDs) != 0 {
+			t.Fatalf("NotifyNotificationIDs = %#v, want empty non-nil slice", inv.NotifyNotificationIDs)
+		}
+	})
+
+	t.Run("setter round-trips through list and by-token reads", func(t *testing.T) {
+		inv := mkInvite(t)
+		if err := cp.SetInviteNotifyIDs(ctx, inv.ID, []string{"n-1", "n-2"}); err != nil {
+			t.Fatalf("SetInviteNotifyIDs: %v", err)
+		}
+		got, err := cp.InviteByToken(ctx, inv.Token)
+		if err != nil {
+			t.Fatalf("InviteByToken: %v", err)
+		}
+		if len(got.NotifyNotificationIDs) != 2 || got.NotifyNotificationIDs[0] != "n-1" {
+			t.Fatalf("by-token ids = %v, want [n-1 n-2]", got.NotifyNotificationIDs)
+		}
+		list, err := cp.ListInvitesByTenant(ctx, tenantID)
+		if err != nil {
+			t.Fatalf("ListInvitesByTenant: %v", err)
+		}
+		found := false
+		for _, i := range list {
+			if i.ID == inv.ID {
+				found = true
+				if len(i.NotifyNotificationIDs) != 2 {
+					t.Fatalf("listed ids = %v, want 2", i.NotifyNotificationIDs)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("ListInvitesByTenant did not include the invite")
+		}
+	})
+
+	t.Run("nil stores as an empty array", func(t *testing.T) {
+		inv := mkInvite(t)
+		if err := cp.SetInviteNotifyIDs(ctx, inv.ID, []string{"n-9"}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if err := cp.SetInviteNotifyIDs(ctx, inv.ID, nil); err != nil {
+			t.Fatalf("SetInviteNotifyIDs(nil): %v", err)
+		}
+		got, err := cp.InviteByToken(ctx, inv.Token)
+		if err != nil || got.NotifyNotificationIDs == nil || len(got.NotifyNotificationIDs) != 0 {
+			t.Fatalf("ids = %#v, err = %v; want empty non-nil", got.NotifyNotificationIDs, err)
+		}
+	})
+
+	t.Run("a resend clears the previous send's ids", func(t *testing.T) {
+		inv := mkInvite(t)
+		if err := cp.SetInviteNotifyIDs(ctx, inv.ID, []string{"n-old"}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		refreshed, err := cp.RefreshInvite(ctx, inv.ID, "tok2-"+inv.Token, time.Now().Add(48*time.Hour))
+		if err != nil {
+			t.Fatalf("RefreshInvite: %v", err)
+		}
+		if len(refreshed.NotifyNotificationIDs) != 0 {
+			t.Fatalf("ids after refresh = %v, want empty", refreshed.NotifyNotificationIDs)
+		}
+	})
+
+	t.Run("missing row is a no-op", func(t *testing.T) {
+		if err := cp.SetInviteNotifyIDs(ctx, "00000000-0000-0000-0000-000000000000", []string{"n-1"}); err != nil {
+			t.Fatalf("SetInviteNotifyIDs(missing): %v", err)
+		}
+	})
+}

@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-546 endpoints across 7 surfaces, read from `main.go`.
+544 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 462 |
+| staff token + tenant | 460 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -320,7 +320,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 461 endpoints
+## `tenant` — 459 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -384,8 +384,6 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/config/approvers` | staff token + tenant | `crmAdminOps.ListApprovers` |
 | `POST` | `/api/tenant/config/approvers` | staff token + tenant | `crmAdminOps.CreateApprover` |
 | `DELETE` | `/api/tenant/config/approvers/{id}` | staff token + tenant | `crmAdminOps.DeleteApprover` |
-| `GET` | `/api/tenant/config/crm-notify-recipients` | staff token + tenant | `crmAdminOps.GetNotifyRecipients` |
-| `PUT` | `/api/tenant/config/crm-notify-recipients` | staff token + tenant | `crmAdminOps.SetNotifyRecipients` |
 
 ### credit-memos
 

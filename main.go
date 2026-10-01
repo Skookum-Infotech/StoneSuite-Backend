@@ -1278,6 +1278,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Update))
 		mux.Handle("DELETE /api/tenant/purchase-orders/{uuid}", tenantChain(poOps.Delete))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/transition", tenantChain(poOps.Transition))
+		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/resend", tenantChain(poOps.ResendToVendor))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/approve", tenantChain(poOps.Approve))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/reject", tenantChain(poOps.Reject))
 		mux.Handle("POST /api/tenant/purchase-orders/{uuid}/convert-to-bill", tenantChain(poOps.ConvertToBill))

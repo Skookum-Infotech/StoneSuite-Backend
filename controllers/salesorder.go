@@ -196,10 +196,13 @@ func (h *SalesOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	order, err := salesorder.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
+		if writeSODuplicate(w, r, pool, identityID, err) {
+			return
+		}
 		soFail(w, err, "Failed to create sales order.")
 		return
 	}
-	auditSO(r, pool, identityID, "create", order.ID, nil, order)
+	auditSOMeta(r, pool, identityID, "create", order.ID, nil, order, soCreateExtraMeta(order))
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "salesOrder": order})
 }
 

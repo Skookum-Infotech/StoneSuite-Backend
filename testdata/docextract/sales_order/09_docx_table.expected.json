@@ -1,0 +1,29 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Granite Works Co",
+    "order_date": "2026-07-07",
+    "payment_terms": "Net 30",
+    "po_number": "7001",
+    "subtotal": "2930.00",
+    "total": "2930.00"
+  },
+  "lines": [
+    {
+      "sku": "GR-710",
+      "description": "Absolute black granite",
+      "qty": "3",
+      "uom": "EA",
+      "unit_price": "640.00",
+      "amount": "1920.00"
+    },
+    {
+      "sku": "GR-711",
+      "description": "Silver cloud granite",
+      "qty": "2",
+      "uom": "EA",
+      "unit_price": "505.00",
+      "amount": "1010.00"
+    }
+  ]
+}

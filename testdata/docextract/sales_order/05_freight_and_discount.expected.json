@@ -1,0 +1,31 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "ACME Stone Inc",
+    "discount": "175.00",
+    "order_date": "2026-04-01",
+    "payment_terms": "Net 30",
+    "po_number": "6105",
+    "shipping": "150.00",
+    "subtotal": "3560.00",
+    "total": "3535.00"
+  },
+  "lines": [
+    {
+      "sku": "GR-600",
+      "description": "Granite slab",
+      "qty": "5",
+      "uom": "EA",
+      "unit_price": "700.00",
+      "amount": "3500.00"
+    },
+    {
+      "sku": "TK-1",
+      "description": "Trim kit",
+      "qty": "2",
+      "uom": "EA",
+      "unit_price": "30.00",
+      "amount": "60.00"
+    }
+  ]
+}

@@ -70,6 +70,8 @@ type orderFields struct {
 // CreateOrderInput is the create-request payload (spec §10).
 type CreateOrderInput struct {
 	CustomerUUID string `json:"customerUuid"`
+	// AllowDuplicate lets the create proceed past a live same-customer, same-PO order.
+	AllowDuplicate bool `json:"allowDuplicate"`
 	orderFields
 }
 
@@ -130,23 +132,27 @@ func lineStatus(fulfilled, quantity float64) string {
 // accepts round-trips back here too, so the Edit page can reload an order and
 // re-save it without silently blanking billing/shipping or any header field.
 type Order struct {
-	ID               string      `json:"id"`
-	Number           string      `json:"salesOrderNumber"`
-	Status           string      `json:"status"`          // human label, e.g. "Draft"
-	StatusCode       string      `json:"statusCode"`      // lkp_record_status code, e.g. "DRFT"
-	ApprovalStatus   string      `json:"approvalStatus"`  // none | pending | approved (AD-10)
-	NextStatusCodes  []string    `json:"nextStatusCodes"` // legal next-moves now, an unconfigured approval checkpoint collapsed out (approvalchain.NextStatusCodes)
-	Customer         CustomerRef `json:"customer"`
-	OwnerUserID      string      `json:"-"`
-	OrderDate        string      `json:"orderDate"`
-	ExpectedDelivery string      `json:"expectedDelivery,omitempty"`
-	PaymentDueDate   string      `json:"paymentDueDate,omitempty"`
-	PONumber         string      `json:"poNumber,omitempty"`
-	ReferenceNumber  string      `json:"referenceNumber,omitempty"`
-	Memo             string      `json:"memo,omitempty"`
-	Notes            string      `json:"notes,omitempty"`
-	InternalNotes    string      `json:"internalNotes,omitempty"`
-	TermsConditions  string      `json:"termsConditions,omitempty"`
+	// DuplicateOverride / DuplicateOfUUID are set by Create (never persisted or
+	// serialized) when AllowDuplicate bypassed an existing same-PO order.
+	DuplicateOverride bool        `json:"-"`
+	DuplicateOfUUID   string      `json:"-"`
+	ID                string      `json:"id"`
+	Number            string      `json:"salesOrderNumber"`
+	Status            string      `json:"status"`          // human label, e.g. "Draft"
+	StatusCode        string      `json:"statusCode"`      // lkp_record_status code, e.g. "DRFT"
+	ApprovalStatus    string      `json:"approvalStatus"`  // none | pending | approved (AD-10)
+	NextStatusCodes   []string    `json:"nextStatusCodes"` // legal next-moves now, an unconfigured approval checkpoint collapsed out (approvalchain.NextStatusCodes)
+	Customer          CustomerRef `json:"customer"`
+	OwnerUserID       string      `json:"-"`
+	OrderDate         string      `json:"orderDate"`
+	ExpectedDelivery  string      `json:"expectedDelivery,omitempty"`
+	PaymentDueDate    string      `json:"paymentDueDate,omitempty"`
+	PONumber          string      `json:"poNumber,omitempty"`
+	ReferenceNumber   string      `json:"referenceNumber,omitempty"`
+	Memo              string      `json:"memo,omitempty"`
+	Notes             string      `json:"notes,omitempty"`
+	InternalNotes     string      `json:"internalNotes,omitempty"`
+	TermsConditions   string      `json:"termsConditions,omitempty"`
 
 	PaymentTermsID     *int    `json:"paymentTermsId"`
 	PriceLevelID       *int    `json:"priceLevelId"`

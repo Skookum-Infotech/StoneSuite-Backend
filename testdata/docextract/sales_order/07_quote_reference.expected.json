@@ -1,0 +1,30 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Harbor Design Group",
+    "order_date": "2026-05-05",
+    "payment_terms": "Net 30",
+    "po_number": "9034",
+    "subtotal": "3210.00",
+    "total": "3210.00"
+  },
+  "lines": [
+    {
+      "sku": "QZ-900",
+      "description": "Quartz slab 30mm",
+      "qty": "6",
+      "uom": "EA",
+      "unit_price": "510.00",
+      "amount": "3060.00"
+    },
+    {
+      "sku": "QZ-901",
+      "description": "Quartz offcut",
+      "qty": "2",
+      "uom": "EA",
+      "unit_price": "75.00",
+      "amount": "150.00"
+    }
+  ],
+  "quote_ref": "Q-1001"
+}

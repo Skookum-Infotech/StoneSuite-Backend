@@ -84,33 +84,55 @@ func (e *docExtractDBEnv) readyExtraction(t *testing.T, identityID string, resul
 	return ex
 }
 
-// seedOwnedSO inserts a live sales order owned by userID's employee.
-func (e *docExtractDBEnv) seedOwnedSO(t *testing.T, userID string) string {
+// uniqueSuffix is a per-call suffix for names that must not collide.
+func uniqueSuffix() string { return fmt.Sprintf("%d", time.Now().UnixNano()) }
+
+// seedEmployee inserts the employee row userID's records are owned through.
+func (e *docExtractDBEnv) seedEmployee(t *testing.T, userID string) int {
 	t.Helper()
-	ctx := context.Background()
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	var empID int
-	require.NoError(t, e.pool.QueryRow(ctx, `
+	require.NoError(t, e.pool.QueryRow(context.Background(), `
 		INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email, employee_created_by)
-		VALUES ($1, 'Doc', 'Extract', $2, 1) RETURNING employee_id`, userID, "docx-"+suffix+"@example.test").Scan(&empID))
+		VALUES ($1, 'Doc', 'Extract', $2, 1) RETURNING employee_id`, userID, "docx-"+uniqueSuffix()+"@example.test").Scan(&empID))
+	return empID
+}
+
+// seedActiveCustomer inserts an active customer named name.
+func (e *docExtractDBEnv) seedActiveCustomer(t *testing.T, name string) int {
+	t.Helper()
 	var custID int
-	require.NoError(t, e.pool.QueryRow(ctx, `
+	require.NoError(t, e.pool.QueryRow(context.Background(), `
 		INSERT INTO customer (record_type, customer_name, customer_crm_status, customer_created_by)
 		SELECT rt.record_type_id, $1, cs.crm_status_id, 1
 		FROM lkp_record_type rt, lkp_crm_status cs
 		WHERE rt.record_type_code = 'CUST' AND cs.crm_status_code = 'CACT' LIMIT 1
-		RETURNING customer_id`, "DocX"+suffix).Scan(&custID))
+		RETURNING customer_id`, name).Scan(&custID))
+	return custID
+}
+
+// seedSO inserts a live (Open) sales order for custID owned by empID.
+func (e *docExtractDBEnv) seedSO(t *testing.T, custID, empID int, poNumber string) string {
+	t.Helper()
+	suffix := uniqueSuffix()
 	var u string
-	require.NoError(t, e.pool.QueryRow(ctx, `
+	require.NoError(t, e.pool.QueryRow(context.Background(), `
 		INSERT INTO sales_order (record_type, sales_order_status, sales_order_customer_id, sales_order_number,
 		                         sales_order_po_number, sales_order_subtotal, sales_order_grand_total,
 		                         sales_order_created_by, sales_order_owner_id)
-		SELECT rt.record_type_id, rs.record_status_id, $1, $2::text, 'PO-' || $2::text, 10, 10, $3, $3
+		SELECT rt.record_type_id, rs.record_status_id, $1, $2::text, $3::text, 10, 10, $4, $4
 		FROM lkp_record_type rt
 		JOIN lkp_record_status rs ON rs.record_status_record_type = rt.record_type_id AND rs.record_status_code = 'OPEN'
 		WHERE rt.record_type_code = 'SORD'
-		RETURNING sales_order_uuid::text`, custID, "SO"+suffix[len(suffix)-12:], empID).Scan(&u))
+		RETURNING sales_order_uuid::text`, custID, "SO"+suffix[len(suffix)-12:], poNumber, empID).Scan(&u))
 	return u
+}
+
+// seedOwnedSO inserts a live sales order, for its own new customer, owned by
+// userID's employee.
+func (e *docExtractDBEnv) seedOwnedSO(t *testing.T, userID string) string {
+	t.Helper()
+	suffix := uniqueSuffix()
+	return e.seedSO(t, e.seedActiveCustomer(t, "DocX"+suffix), e.seedEmployee(t, userID), "PO-"+suffix)
 }
 
 func TestDocExtract_DB_GetIsOwnerOnly(t *testing.T) {
@@ -139,12 +161,17 @@ func TestDocExtract_DB_GetIsOwnerOnly(t *testing.T) {
 
 func TestDocExtract_DB_DuplicateLinksAreScopeFiltered(t *testing.T) {
 	e := newDocExtractDBEnv(t)
-	mine := e.seedOwnedSO(t, e.userA.ID)
-	theirs := e.seedOwnedSO(t, e.userB.ID)
-	ex := e.readyExtraction(t, e.identityA.ID, docextractjob.ResultDoc{Duplicates: []docextractjob.Duplicate{
-		{Kind: docextractjob.DupSamePO, RecordUUID: mine, Number: "SO-MINE", Reason: "dup", OwnerUserID: e.userA.ID},
-		{Kind: docextractjob.DupSamePO, RecordUUID: theirs, Number: "SO-THEIRS", Reason: "dup", OwnerUserID: e.userB.ID},
+	// Real duplicates, not hand-written ones: GET re-matches a ready
+	// extraction against live data, so both orders must genuinely share the
+	// document's customer and PO number. One belongs to A, one to B.
+	name, po := "DupCo"+uniqueSuffix(), "PO-"+uniqueSuffix()
+	cust := e.seedActiveCustomer(t, name)
+	mine := e.seedSO(t, cust, e.seedEmployee(t, e.userA.ID), po)
+	theirs := e.seedSO(t, cust, e.seedEmployee(t, e.userB.ID), po)
+	ex := e.readyExtraction(t, e.identityA.ID, docextractjob.ResultDoc{Extracted: docextract.Result{
+		Header: docextract.Header{CustomerName: docextract.Field{Value: name}, PONumber: docextract.Field{Value: po}},
 	}})
+
 	rec := e.serve(e.h.Get, e.identityA.ID, http.MethodGet, "/x", ex.ID, "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var resp struct {
@@ -152,11 +179,20 @@ func TestDocExtract_DB_DuplicateLinksAreScopeFiltered(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	dups := resp.Extraction.Result.Duplicates
-	require.Len(t, dups, 2)
-	assert.Equal(t, mine, dups[0].RecordUUID)
-	assert.Empty(t, dups[1].RecordUUID, "another owner's order is not linked")
-	assert.Empty(t, dups[1].Number)
-	assert.Equal(t, "dup", dups[1].Reason)
+	require.Len(t, dups, 2, "both orders with the document's customer and PO are duplicates")
+	var linked, hidden []docextractjob.Duplicate
+	for _, d := range dups {
+		if d.RecordUUID == "" {
+			hidden = append(hidden, d)
+		} else {
+			linked = append(linked, d)
+		}
+	}
+	require.Len(t, linked, 1)
+	assert.Equal(t, mine, linked[0].RecordUUID, "the caller's own order is linked")
+	require.Len(t, hidden, 1, "another owner's order is reported but not linked")
+	assert.Empty(t, hidden[0].Number)
+	assert.NotEmpty(t, hidden[0].Reason)
 	assert.NotContains(t, rec.Body.String(), theirs)
 	assert.NotContains(t, rec.Body.String(), e.userB.ID, "the other owner's user id is never exposed")
 }

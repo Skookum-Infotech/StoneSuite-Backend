@@ -6,7 +6,10 @@
 // Spec: docs/superpowers/specs/2026-08-13-vendor-credit-module-design.md
 package vendorcredit
 
-import "time"
+import (
+	"stonesuite-backend/dateonly"
+	"time"
+)
 
 // VendorRef is the flattened {id, name} for "who owes us this credit" navigation.
 type VendorRef struct {
@@ -37,11 +40,11 @@ type VendorCredit struct {
 	OwnerUserID     string `json:"-"`
 	OwnerEmployeeID *int   `json:"ownerEmployeeId,omitempty"`
 
-	ReferenceNumber string    `json:"referenceNumber"`
-	Reason          string    `json:"reason"`
-	Memo            string    `json:"memo"`
-	InternalNotes   string    `json:"internalNotes"`
-	CreditDate      time.Time `json:"creditDate"`
+	ReferenceNumber string        `json:"referenceNumber"`
+	Reason          string        `json:"reason"`
+	Memo            string        `json:"memo"`
+	InternalNotes   string        `json:"internalNotes"`
+	CreditDate      dateonly.Date `json:"creditDate"`
 
 	GrandTotal      float64 `json:"grandTotal"`
 	AppliedTotal    float64 `json:"appliedTotal"`

@@ -1,6 +1,7 @@
 package cashtransfer
 
 import (
+	"stonesuite-backend/dateonly"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 func TestSortValueCoversEverySortableField(t *testing.T) {
 	probe := CashTransfer{
 		Number:       "CTRF-000007",
-		TransferDate: time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC),
+		TransferDate: dateonly.New(time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC)),
 		Amount:       1234.56,
 		CreatedAt:    time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:    time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),

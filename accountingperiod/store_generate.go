@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"stonesuite-backend/dateonly"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,8 +33,8 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 	start = FirstOfMonth(start)
 	fy := FiscalYear{
 		Name:   FiscalYearLabel(start),
-		Start:  start,
-		End:    FiscalYearEnd(start),
+		Start:  dateonly.New(start),
+		End:    dateonly.New(FiscalYearEnd(start)),
 		Status: StatusOpen,
 	}
 
@@ -66,7 +67,7 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 			qID int
 			q   = Quarter{
 				FiscalYearID: fy.ID, Number: span.Number, Name: span.Name,
-				Start: span.Start, End: span.End, Status: status,
+				Start: dateonly.New(span.Start), End: dateonly.New(span.End), Status: status,
 			}
 		)
 		err := tx.QueryRow(ctx, `
@@ -106,7 +107,7 @@ func generateYear(ctx context.Context, tx pgx.Tx, start time.Time, base *time.Ti
 			p        = Period{
 				FiscalYearID: fy.ID, FiscalYearName: fy.Name,
 				Name: span.Name, Number: span.Number,
-				Start: span.Start, End: span.End,
+				Start: dateonly.New(span.Start), End: dateonly.New(span.End),
 				Status: status, IsBasePeriod: isBase,
 				APLockStatus: status, ARLockStatus: status, GLLockStatus: status,
 				QuarterID:   fy.Quarters[quarterIdx].ID,
@@ -240,10 +241,14 @@ func GenerateFiscalYear(ctx context.Context, pool *pgxpool.Pool, in GenerateInpu
 			"cannot generate more than %d fiscal years in one call.", maxGenerateYears)}
 	}
 
+	var base *time.Time
+	if cal.BasePeriodStart != nil {
+		base = &cal.BasePeriodStart.Time
+	}
 	years := make([]FiscalYear, 0, count)
 	cursor := start
 	for i := 0; i < count; i++ {
-		fy, err := generateYear(ctx, tx, cursor, cal.BasePeriodStart, actionGenerate, employeeID)
+		fy, err := generateYear(ctx, tx, cursor, base, actionGenerate, employeeID)
 		if err != nil {
 			return nil, err
 		}

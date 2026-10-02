@@ -12,7 +12,10 @@
 // design. The two packages do not import each other.
 package accountingperiod
 
-import "time"
+import (
+	"stonesuite-backend/dateonly"
+	"time"
+)
 
 // Status values, matching chk_ap_status and chk_fy_status in tenant/schema.sql.
 const (
@@ -36,54 +39,54 @@ const (
 // on every tenant that has never run Setup — the state in which the legacy
 // books_closed_through column remains the whole period concept.
 type Calendar struct {
-	Configured           bool       `json:"configured"`
-	FiscalYearStartMonth int        `json:"fiscalYearStartMonth,omitempty"`
-	BasePeriodStart      *time.Time `json:"basePeriodStart,omitempty"`
-	BooksClosedThrough   *time.Time `json:"booksClosedThrough,omitempty"`
-	ConfiguredAt         *time.Time `json:"configuredAt,omitempty"`
+	Configured           bool           `json:"configured"`
+	FiscalYearStartMonth int            `json:"fiscalYearStartMonth,omitempty"`
+	BasePeriodStart      *dateonly.Date `json:"basePeriodStart,omitempty"`
+	BooksClosedThrough   *dateonly.Date `json:"booksClosedThrough,omitempty"`
+	ConfiguredAt         *time.Time     `json:"configuredAt,omitempty"`
 }
 
 // FiscalYear is one generated year. Status is derived from its periods and is
 // never set directly by a caller.
 type FiscalYear struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Start     time.Time `json:"start"`
-	End       time.Time `json:"end"`
-	Status    string    `json:"status"`
-	Periods   []Period  `json:"periods,omitempty"`
-	Quarters  []Quarter `json:"quarters,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Start     dateonly.Date `json:"start"`
+	End       dateonly.Date `json:"end"`
+	Status    string        `json:"status"`
+	Periods   []Period      `json:"periods,omitempty"`
+	Quarters  []Quarter     `json:"quarters,omitempty"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
 }
 
 // Quarter is one fiscal quarter -- three consecutive Periods. Status is
 // derived from its periods (closed iff all three are closed) and is never
 // set directly by a caller, the same posture FiscalYear.Status already has.
 type Quarter struct {
-	ID           string    `json:"id"`
-	FiscalYearID string    `json:"fiscalYearId"`
-	Number       int       `json:"quarterNumber"`
-	Name         string    `json:"name"`
-	Start        time.Time `json:"start"`
-	End          time.Time `json:"end"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           string        `json:"id"`
+	FiscalYearID string        `json:"fiscalYearId"`
+	Number       int           `json:"quarterNumber"`
+	Name         string        `json:"name"`
+	Start        dateonly.Date `json:"start"`
+	End          dateonly.Date `json:"end"`
+	Status       string        `json:"status"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
 }
 
 // Period is one calendar month of a fiscal year.
 type Period struct {
-	ID             string     `json:"id"`
-	FiscalYearID   string     `json:"fiscalYearId"`
-	FiscalYearName string     `json:"fiscalYearName"`
-	Name           string     `json:"name"`
-	Number         int        `json:"periodNumber"`
-	Start          time.Time  `json:"start"`
-	End            time.Time  `json:"end"`
-	Status         string     `json:"status"`
-	IsBasePeriod   bool       `json:"isBasePeriod"`
-	ClosedAt       *time.Time `json:"closedAt,omitempty"`
+	ID             string        `json:"id"`
+	FiscalYearID   string        `json:"fiscalYearId"`
+	FiscalYearName string        `json:"fiscalYearName"`
+	Name           string        `json:"name"`
+	Number         int           `json:"periodNumber"`
+	Start          dateonly.Date `json:"start"`
+	End            dateonly.Date `json:"end"`
+	Status         string        `json:"status"`
+	IsBasePeriod   bool          `json:"isBasePeriod"`
+	ClosedAt       *time.Time    `json:"closedAt,omitempty"`
 	// APLockStatus, ARLockStatus, GLLockStatus are the three independent
 	// sub-ledger locks. accounting_period_status (Status above) is derived
 	// from them -- closed iff all three are closed -- so, unlike Status,

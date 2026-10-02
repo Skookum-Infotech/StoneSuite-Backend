@@ -1,6 +1,9 @@
 package cashtransfer
 
-import "time"
+import (
+	"stonesuite-backend/dateonly"
+	"time"
+)
 
 // AccountRef is the flattened {id, code, name} for an account reference.
 type AccountRef struct {
@@ -17,7 +20,7 @@ type CashTransfer struct {
 	StatusCode string `json:"statusCode"`
 	StatusName string `json:"status"`
 
-	TransferDate time.Time `json:"transferDate"`
+	TransferDate dateonly.Date `json:"transferDate"`
 
 	FromAccount AccountRef `json:"fromAccount"`
 	ToAccount   AccountRef `json:"toAccount"`

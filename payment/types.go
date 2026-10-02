@@ -1,6 +1,9 @@
 package payment
 
-import "time"
+import (
+	"stonesuite-backend/dateonly"
+	"time"
+)
 
 // CustomerRef is the flattened {id, name} for "who paid" navigation.
 type CustomerRef struct {
@@ -34,11 +37,11 @@ type Payment struct {
 	MethodID   int    `json:"methodId"`
 	MethodName string `json:"method"`
 
-	ReferenceNumber string    `json:"referenceNumber"`
-	PaymentDate     time.Time `json:"paymentDate"`
-	CurrencyID      *int      `json:"currencyId,omitempty"`
-	Memo            string    `json:"memo"`
-	InternalNotes   string    `json:"internalNotes"`
+	ReferenceNumber string        `json:"referenceNumber"`
+	PaymentDate     dateonly.Date `json:"paymentDate"`
+	CurrencyID      *int          `json:"currencyId,omitempty"`
+	Memo            string        `json:"memo"`
+	InternalNotes   string        `json:"internalNotes"`
 
 	Amount          float64 `json:"amount"`
 	AppliedTotal    float64 `json:"appliedTotal"`

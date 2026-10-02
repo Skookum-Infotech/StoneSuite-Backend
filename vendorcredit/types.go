@@ -37,11 +37,11 @@ type VendorCredit struct {
 	OwnerUserID     string `json:"-"`
 	OwnerEmployeeID *int   `json:"ownerEmployeeId,omitempty"`
 
-	ReferenceNumber string    `json:"referenceNumber"`
-	Reason          string    `json:"reason"`
-	Memo            string    `json:"memo"`
-	InternalNotes   string    `json:"internalNotes"`
-	CreditDate      time.Time `json:"creditDate"`
+	ReferenceNumber string `json:"referenceNumber"`
+	Reason          string `json:"reason"`
+	Memo            string `json:"memo"`
+	InternalNotes   string `json:"internalNotes"`
+	CreditDate      string `json:"creditDate"` // "yyyy-mm-dd"
 
 	GrandTotal      float64 `json:"grandTotal"`
 	AppliedTotal    float64 `json:"appliedTotal"`

@@ -34,11 +34,11 @@ type Payment struct {
 	MethodID   int    `json:"methodId"`
 	MethodName string `json:"method"`
 
-	ReferenceNumber string    `json:"referenceNumber"`
-	PaymentDate     time.Time `json:"paymentDate"`
-	CurrencyID      *int      `json:"currencyId,omitempty"`
-	Memo            string    `json:"memo"`
-	InternalNotes   string    `json:"internalNotes"`
+	ReferenceNumber string `json:"referenceNumber"`
+	PaymentDate     string `json:"paymentDate"` // "yyyy-mm-dd"
+	CurrencyID      *int   `json:"currencyId,omitempty"`
+	Memo            string `json:"memo"`
+	InternalNotes   string `json:"internalNotes"`
 
 	Amount          float64 `json:"amount"`
 	AppliedTotal    float64 `json:"appliedTotal"`

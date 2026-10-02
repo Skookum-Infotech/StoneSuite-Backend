@@ -14,7 +14,7 @@ import (
 const headerSelect = `
 	SELECT ct.cash_transfer_uuid, COALESCE(ct.cash_transfer_number,''),
 	       COALESCE(rs.record_status_code,''), COALESCE(rs.record_status_name,''),
-	       ct.cash_transfer_date,
+	       to_char(ct.cash_transfer_date,'YYYY-MM-DD'),
 	       fa.coa_account_uuid, fa.coa_account_code, fa.coa_account_name,
 	       ta.coa_account_uuid, ta.coa_account_code, ta.coa_account_name,
 	       ct.cash_transfer_amount, ct.cash_transfer_reference,

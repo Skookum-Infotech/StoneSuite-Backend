@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	aiDateLayout   = "2006-01-02"
 	aiStatusActive = "active"
 	aiStatusInact  = "inactive"
 )
@@ -268,7 +267,7 @@ func loadCashTransferAI(ctx context.Context, pool *pgxpool.Pool, id string) (AIR
 	core := map[string]any{
 		"number":       ct.Number,
 		"status":       ct.StatusName,
-		"date":         ct.TransferDate.Format(aiDateLayout),
+		"date":         ct.TransferDate,
 		"from_account": ct.FromAccount.Name,
 		"to_account":   ct.ToAccount.Name,
 		"amount":       ct.Amount,

@@ -18,7 +18,7 @@ import (
 func TestSortValueCoversEverySortableField(t *testing.T) {
 	probe := CashTransfer{
 		Number:       "CTRF-000007",
-		TransferDate: time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC),
+		TransferDate: "2026-03-04",
 		Amount:       1234.56,
 		CreatedAt:    time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:    time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),

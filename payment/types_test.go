@@ -3,7 +3,6 @@ package payment
 import (
 	"encoding/json"
 	"testing"
-	"time"
 )
 
 func TestPayment_JSONShape(t *testing.T) {
@@ -13,7 +12,7 @@ func TestPayment_JSONShape(t *testing.T) {
 		OwnerUserID: "user-should-not-serialize",
 		MethodID:    1, MethodName: "Check",
 		Amount: 100, AppliedTotal: 40, UnappliedAmount: 60,
-		PaymentDate: time.Now(), CustomFields: map[string]any{}, Applications: []Application{},
+		PaymentDate: "2026-01-02", CustomFields: map[string]any{}, Applications: []Application{},
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -27,6 +26,9 @@ func TestPayment_JSONShape(t *testing.T) {
 		if _, ok := m[key]; !ok {
 			t.Errorf("expected JSON key %q, got keys %v", key, m)
 		}
+	}
+	if got := m["paymentDate"]; got != "2026-01-02" {
+		t.Errorf("paymentDate = %v, want 2026-01-02", got)
 	}
 	if _, ok := m["OwnerUserID"]; ok {
 		t.Error("OwnerUserID must not serialize (json:\"-\")")

@@ -41,7 +41,7 @@ const headerSelect = `
 	       COALESCE(ou.id::text,''), rfnd.refund_owner_id,
 	       COALESCE(pay.payment_uuid::text,''), COALESCE(cm.credit_memo_uuid::text,''), COALESCE(inv.invoice_uuid::text,''),
 	       rfnd.refund_method, COALESCE(pm.payment_method_name,''),
-	       rfnd.refund_reference_number, rfnd.refund_date, rfnd.refund_currency,
+	       rfnd.refund_reference_number, to_char(rfnd.refund_date,'YYYY-MM-DD'), rfnd.refund_currency,
 	       rfnd.refund_reason, rfnd.refund_memo, rfnd.refund_internal_notes,
 	       rfnd.refund_amount, rfnd.refund_applied_total, rfnd.refund_unapplied_amount,
 	       rfnd.refund_custom_fields, rfnd.refund_created_at, rfnd.refund_updated_at, rfnd.refund_record_version,

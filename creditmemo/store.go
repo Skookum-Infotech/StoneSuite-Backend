@@ -42,7 +42,7 @@ const headerSelect = `
 	       so.sales_order_uuid,
 	       sp.payment_uuid, COALESCE(sp.payment_number,''),
 	       COALESCE(ou.id::text,''), cm.credit_memo_owner_id, cm.credit_memo_sales_rep_id,
-	       cm.credit_memo_reference_number, cm.credit_memo_date, cm.credit_memo_reason,
+	       cm.credit_memo_reference_number, to_char(cm.credit_memo_date,'YYYY-MM-DD'), cm.credit_memo_reason,
 	       cm.credit_memo_sales_tax_percent,
 	       cm.credit_memo_memo, cm.credit_memo_notes, cm.credit_memo_internal_notes,
 	       cm.credit_memo_price_level, cm.credit_memo_currency, cm.credit_memo_exchange_rate,

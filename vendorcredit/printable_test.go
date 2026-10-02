@@ -3,7 +3,6 @@ package vendorcredit
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -16,7 +15,7 @@ func TestToPrintable_VendorCredit(t *testing.T) {
 		Vendor:     VendorRef{ID: "v-1", Name: "Acme Supply"},
 		Reason:     "Returned defective slab",
 		Memo:       "See RMA-42",
-		CreditDate: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC),
+		CreditDate: "2026-08-24",
 		GrandTotal: 150,
 	}
 	d := ToPrintable(vc, docpdf.Seller{Name: "Acme Stone Co"})

@@ -19,7 +19,7 @@ const vcSelect = `
 	       rs.record_status_code, rs.record_status_name,
 	       v.vendor_uuid, vc.vendor_credit_vendor_name,
 	       COALESCE(ou.id::text,''), vc.vendor_credit_owner_id,
-	       vc.vendor_credit_reference_number, vc.vendor_credit_date, vc.vendor_credit_reason,
+	       vc.vendor_credit_reference_number, to_char(vc.vendor_credit_date,'YYYY-MM-DD'), vc.vendor_credit_reason,
 	       vc.vendor_credit_memo, vc.vendor_credit_internal_notes,
 	       vc.vendor_credit_grand_total, vc.vendor_credit_applied_total, vc.vendor_credit_unapplied_amount,
 	       vc.vendor_credit_custom_fields,

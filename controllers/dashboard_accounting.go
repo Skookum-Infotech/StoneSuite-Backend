@@ -25,15 +25,18 @@ type accountingPeriodOut struct {
 	EntryCount int    `json:"entryCount"`
 }
 
-// journalEntryOut is one recent-entry row. Date is a real timestamp, not a
-// pre-formatted string -- the widget renders "2h ago" itself, in the viewer's
-// own locale (see the frontend's relativeTime helper).
+// journalEntryDateLayout is the calendar-date layout of journalEntryOut.Date.
+const journalEntryDateLayout = "2006-01-02"
+
+// journalEntryOut is one recent-entry row. The source column
+// cash_transfer_date is a DATE, so Date is a "yyyy-mm-dd" calendar date with
+// no time of day.
 type journalEntryOut struct {
-	ID          string    `json:"id"`
-	Number      string    `json:"entryNumber"`
-	Description string    `json:"description"`
-	Amount      float64   `json:"amount"`
-	Date        time.Time `json:"date"`
+	ID          string  `json:"id"`
+	Number      string  `json:"entryNumber"`
+	Description string  `json:"description"`
+	Amount      float64 `json:"amount"`
+	Date        string  `json:"date"`
 }
 
 // accountingSnapshotResult is the widget's fully-mapped payload.
@@ -53,7 +56,7 @@ func mapRecentEntries(rows []cashtransfer.RecentEntry) []journalEntryOut {
 			Number:      r.Number,
 			Description: r.Description,
 			Amount:      r.Amount,
-			Date:        r.Date,
+			Date:        r.Date.Format(journalEntryDateLayout),
 		})
 	}
 	return out

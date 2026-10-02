@@ -44,10 +44,10 @@ func TestMapRecentEntries(t *testing.T) {
 	if out[0].ID != "je-1" || out[0].Number != "JE-000231" || out[0].Amount != 4200 {
 		t.Errorf("out[0] = %+v, want je-1/JE-000231/4200", out[0])
 	}
-	// The widget formats "2h ago" itself, so the timestamp must survive
-	// mapping intact rather than being pre-rendered to a string.
-	if !out[0].Date.Equal(when) {
-		t.Errorf("out[0].Date = %v, want %v", out[0].Date, when)
+	// cash_transfer_date is a DATE, so the mapped value is a yyyy-mm-dd
+	// calendar date with no time of day.
+	if out[0].Date != "2026-09-04" {
+		t.Errorf("out[0].Date = %q, want %q", out[0].Date, "2026-09-04")
 	}
 }
 

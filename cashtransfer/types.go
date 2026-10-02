@@ -17,7 +17,7 @@ type CashTransfer struct {
 	StatusCode string `json:"statusCode"`
 	StatusName string `json:"status"`
 
-	TransferDate time.Time `json:"transferDate"`
+	TransferDate string `json:"transferDate"` // "yyyy-mm-dd"
 
 	FromAccount AccountRef `json:"fromAccount"`
 	ToAccount   AccountRef `json:"toAccount"`

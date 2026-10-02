@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,7 +42,7 @@ const headerSelect = `
 	                ELSE TRIM(v.vendor_given_name || ' ' || v.vendor_family_name) END),
 	       COALESCE(ou.id::text,''), vp.vendor_payment_owner_id,
 	       vp.vendor_payment_method, COALESCE(pm.payment_method_name,''),
-	       vp.vendor_payment_reference_number, vp.vendor_payment_date, vp.vendor_payment_scheduled_date, vp.vendor_payment_currency,
+	       vp.vendor_payment_reference_number, to_char(vp.vendor_payment_date,'YYYY-MM-DD'), to_char(vp.vendor_payment_scheduled_date,'YYYY-MM-DD'), vp.vendor_payment_currency,
 	       vp.vendor_payment_memo, vp.vendor_payment_internal_notes,
 	       vp.vendor_payment_amount, vp.vendor_payment_applied_total, vp.vendor_payment_unapplied_amount,
 	       vp.vendor_payment_approval_status, vp.vendor_payment_approved_by,
@@ -68,7 +67,7 @@ func scanVendorPayment(row pgx.Row) (*VendorPayment, paymentMeta, error) {
 	var (
 		p             VendorPayment
 		ownerEmpID    *int
-		scheduledDate *time.Time
+		scheduledDate *string
 		currencyID    *int
 		approvedByID  *int
 		custom        map[string]any

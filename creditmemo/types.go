@@ -89,13 +89,13 @@ type CreditMemo struct {
 	OwnerEmployeeID *int   `json:"ownerEmployeeId,omitempty"`
 	SalesRepID      *int   `json:"salesRepId,omitempty"`
 
-	ReferenceNumber string    `json:"referenceNumber"`
-	CreditMemoDate  time.Time `json:"creditMemoDate"`
-	Reason          string    `json:"reason"`
-	SalesTaxPercent float64   `json:"salesTaxPercent"`
-	Memo            string    `json:"memo"`
-	Notes           string    `json:"notes"`
-	InternalNotes   string    `json:"internalNotes"`
+	ReferenceNumber string  `json:"referenceNumber"`
+	CreditMemoDate  string  `json:"creditMemoDate"` // "yyyy-mm-dd"
+	Reason          string  `json:"reason"`
+	SalesTaxPercent float64 `json:"salesTaxPercent"`
+	Memo            string  `json:"memo"`
+	Notes           string  `json:"notes"`
+	InternalNotes   string  `json:"internalNotes"`
 
 	PriceLevelID *int    `json:"priceLevelId,omitempty"`
 	CurrencyID   *int    `json:"currencyId,omitempty"`

@@ -18,9 +18,6 @@ import (
 	"stonesuite-backend/vendors"
 )
 
-// purchasingDateLayout renders time.Time document dates as yyyy-mm-dd.
-const purchasingDateLayout = "2006-01-02"
-
 // purchasingCore drops empty string values and zero-valued optional facts so a
 // purchasing document stays small.
 func purchasingCore(in map[string]any) map[string]any {
@@ -32,14 +29,6 @@ func purchasingCore(in map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
-}
-
-// purchasingDate formats a non-zero time as yyyy-mm-dd, else "".
-func purchasingDate(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format(purchasingDateLayout)
 }
 
 var _ = addAI("vendor", AIHooks{
@@ -277,7 +266,7 @@ func loadVendorPaymentAI(ctx context.Context, pool *pgxpool.Pool, id string) (AI
 		"status":        vp.StatusName,
 		"approval":      vp.ApprovalStatus,
 		"vendor":        vp.Vendor.Name,
-		"date":          purchasingDate(vp.PaymentDate),
+		"date":          vp.PaymentDate,
 		"method":        vp.MethodName,
 		"reference":     vp.ReferenceNumber,
 		"memo":          vp.Memo,
@@ -286,7 +275,7 @@ func loadVendorPaymentAI(ctx context.Context, pool *pgxpool.Pool, id string) (AI
 		"unapplied":     vp.UnappliedAmount,
 	}
 	if vp.ScheduledDate != nil {
-		core["scheduled_date"] = purchasingDate(*vp.ScheduledDate)
+		core["scheduled_date"] = *vp.ScheduledDate
 	}
 	return AIRecord{
 		Doc:         rag.RecordDoc{WorkflowKey: "vendor_payment", StateName: vp.StatusName, Core: purchasingCore(core), Priority: []string{"number", "status", "vendor", "date", "grand_total", "unapplied"}},
@@ -316,7 +305,7 @@ func loadVendorCreditAI(ctx context.Context, pool *pgxpool.Pool, id string) (AIR
 		"number":        vc.Number,
 		"status":        vc.StatusName,
 		"vendor":        vc.Vendor.Name,
-		"date":          purchasingDate(vc.CreditDate),
+		"date":          vc.CreditDate,
 		"reference":     vc.ReferenceNumber,
 		"reason":        vc.Reason,
 		"memo":          vc.Memo,

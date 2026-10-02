@@ -3,7 +3,6 @@ package vendorpayment
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -15,7 +14,7 @@ func TestToPrintable_VendorPayment(t *testing.T) {
 		Number: "VP-1001", StatusName: "Paid",
 		Vendor:      VendorRef{ID: "v-1", Name: "Acme Supply"},
 		Memo:        "Payment for VB-1001",
-		PaymentDate: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC),
+		PaymentDate: "2026-08-24",
 		Amount:      541.25,
 	}
 	d := ToPrintable(vp, docpdf.Seller{Name: "Acme Stone Co"})

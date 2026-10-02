@@ -25,7 +25,7 @@ const headerSelect = `
 	       c.customer_uuid, COALESCE(c.customer_name,''),
 	       COALESCE(ou.id::text,''), p.payment_owner_id,
 	       p.payment_method, COALESCE(pm.payment_method_name,''),
-	       p.payment_reference_number, p.payment_date, p.payment_currency,
+	       p.payment_reference_number, to_char(p.payment_date,'YYYY-MM-DD'), p.payment_currency,
 	       p.payment_memo, p.payment_internal_notes,
 	       p.payment_amount, p.payment_applied_total, p.payment_unapplied_amount, p.payment_credited_total,
 	       p.payment_custom_fields, p.payment_created_at, p.payment_updated_at, p.payment_record_version,

@@ -10,7 +10,10 @@ import (
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/ai"
+	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
+	"stonesuite-backend/globalsearch"
+	"stonesuite-backend/query"
 )
 
 // countCRMRecords sums the per-type count (CRM store or module hook) across keys, building a deterministic
@@ -21,6 +24,46 @@ import (
 func countCRMRecords(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID string, keys []string) (ragcore.AskResult, error) {
 	return countGranted(grants, keys, "", func(key, scope string) (int, error) {
 		return countRecordType(ctx, store, pool, actorIdentityID, key, scope)
+	})
+}
+
+// openClosedFilterDesc renders classifyOpenClosedCount's answer suffix, e.g.
+// "You have 3 leads with an open status."
+func openClosedFilterDesc(open bool) string {
+	if open {
+		return "an open status"
+	}
+	return "a closed status"
+}
+
+// countCRMRecordsOpenClosed answers a classifyOpenClosedCount match: for each
+// key, resolves its own workflow's terminal/non-terminal status set via
+// store.Statuses (workflow.StatusInfo.IsTerminal — the same flag the workflow
+// engine tracks per status, populated correctly under either tenant design
+// version, see crmstore.Store) and counts records whose status is IN that
+// set, via the existing filter engine (query.OpIn) — never a guess at a
+// literal status name. A workflow with no status of the requested polarity
+// (e.g. every status is terminal) counts as zero rather than an error.
+func countCRMRecordsOpenClosed(ctx context.Context, store crmstore.Store, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID string, keys []string, open bool) (ragcore.AskResult, error) {
+	return countGranted(grants, keys, openClosedFilterDesc(open), func(key, scope string) (int, error) {
+		statuses, err := store.Statuses(ctx, pool, key)
+		if err != nil {
+			return 0, fmt.Errorf("statuses %s: %w", key, err)
+		}
+		ids := make([]any, 0, len(statuses))
+		for _, s := range statuses {
+			if s.IsTerminal == !open {
+				ids = append(ids, s.StateID)
+			}
+		}
+		if len(ids) == 0 {
+			return 0, nil
+		}
+		n, err := store.CountRecordsFiltered(ctx, pool, key, scope, actorIdentityID, []query.Clause{{Field: "status", Op: query.OpIn, Value: ids}})
+		if err != nil {
+			return 0, fmt.Errorf("count open/closed %s records: %w", key, err)
+		}
+		return n, nil
 	})
 }
 
@@ -81,4 +124,32 @@ func pluralize(key string, n int) string {
 		return key
 	}
 	return key + "s"
+}
+
+// sumModuleRecords answers a classifySumQuestion match via the module's own
+// AI Sum hook (see globalsearch.AISumFunc) — a real SQL SUM computed under
+// the caller's own scope, zero LLM calls. Mirrors countRecordType's
+// scope/grant handling (ai_modules.go) rather than reusing it directly: a sum
+// has no CRM-store counterpart to dispatch to, only ever a module hook.
+func sumModuleRecords(ctx context.Context, pool *pgxpool.Pool, grants ai.Grants, actorIdentityID, key string) (ragcore.AskResult, error) {
+	scope, granted := grants[key]
+	if !granted {
+		return ragcore.AskResult{Answer: noAccessSentence([]string{recordTypeLabel(key)}), Citations: []ragcore.Citation{}}, nil
+	}
+	p, ok := globalsearch.AIByRecordType(key)
+	if !ok || p.AI.Sum == nil {
+		return ragcore.AskResult{}, fmt.Errorf("sum %s: no AI sum hook", key)
+	}
+	total, n, err := p.AI.Sum(ctx, pool, authz.Scope(scope), actorIdentityID)
+	if err != nil {
+		return ragcore.AskResult{}, fmt.Errorf("sum %s records: %w", key, err)
+	}
+	label := recordTypeLabel(key)
+	if n == 0 {
+		return ragcore.AskResult{Answer: fmt.Sprintf("No %s have an outstanding balance.", pluralize(label, 0)), Citations: []ragcore.Citation{}}, nil
+	}
+	return ragcore.AskResult{
+		Answer:    fmt.Sprintf("$%.2f outstanding across %d %s.", total, n, pluralize(label, n)),
+		Citations: []ragcore.Citation{},
+	}, nil
 }

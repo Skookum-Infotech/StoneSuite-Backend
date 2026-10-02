@@ -279,3 +279,106 @@ func hasFilterHintCountIntent(question string) bool {
 	_, ok := countObject(question)
 	return ok && filterHintRe.MatchString(question)
 }
+
+// openClosedHint is the exact set of filter-hint words classifyOpenClosedCount
+// resolves deterministically against a workflow's own IsTerminal flag per
+// status, rather than asking the LLM router to guess a literal status name:
+// true means "open" (not yet terminal), false means "closed" (terminal).
+// Deliberately small and literal — words like "pending"/"dead"/"stalled" stay
+// out even though they're in filterHintWords, since they may or may not be an
+// exact status name in a given tenant's workflow and this path only ever
+// resolves the generic open/closed concept, never a specific status.
+var openClosedHint = map[string]bool{
+	"open":   true,
+	"active": true,
+	"closed": false,
+}
+
+// classifyOpenClosedCount reports whether question is a pure "how many open/
+// closed <CRM type>" question answerable deterministically via each matched
+// workflow's own terminal/non-terminal status set (see countCRMRecordsOpenClosed)
+// — no LLM call, no guessing whether "open" matches any of the tenant's actual
+// status labels. Requires every filter-hint word present to be one of
+// openClosedHint's and all of one polarity; a question combining "open" with
+// any other filter word (a date, a specific status, "open" and "closed"
+// together) is left to resolveRoutedFilteredCount/RAG — this path only ever
+// applies a single open/closed predicate, never combines filters, matching
+// this package's existing bail-rather-than-guess philosophy. Module types
+// (invoice, sales_order, ...) are left to moduleFilteredCountNote's existing
+// "can't filter that yet" path — they don't share workflow.StatusInfo's
+// IsTerminal concept.
+func classifyOpenClosedCount(question string) (keys []string, open bool, ok bool) {
+	keys, matched := countObject(question)
+	if !matched || anyModuleType(keys) {
+		return nil, false, false
+	}
+	hints := filterHintRe.FindAllString(strings.ToLower(question), -1)
+	if len(hints) == 0 {
+		return nil, false, false
+	}
+	var want *bool
+	for _, h := range hints {
+		v, known := openClosedHint[h]
+		if !known {
+			return nil, false, false
+		}
+		if want != nil && *want != v {
+			return nil, false, false // mixed "open" and "closed" — ambiguous
+		}
+		want = &v
+	}
+	return keys, *want, true
+}
+
+// sumIntentRe matches phrasing asking for an aggregate dollar total ("total
+// outstanding balance", "how much is outstanding", "sum of balances") — the
+// SUM counterpart to countIntentRe: that regex (and countObject downstream of
+// it) only ever recognizes a question counting RECORDS, never one aggregating
+// a FIELD across them, so a sum-shaped question needs its own classifier
+// rather than reusing countObject's word-scan.
+var sumIntentRe = regexp.MustCompile(`(?i)\b(?:total|sum|how much)\b`)
+
+// sumFieldWordRe matches the money-field words this path knows how to sum —
+// "balance"/"outstanding"/"owed"/"due" for a module's own outstanding-balance
+// field. Deliberately narrow: a "total" question about some other field
+// (grand_total, tax_total, a different module's own numeric field) is out of
+// scope for this pass and falls through to RAG rather than guessing which
+// field the question means.
+var sumFieldWordRe = regexp.MustCompile(`(?i)\b(?:balances?|outstanding|owe[ds]?|due)\b`)
+
+// questionNamesModule reports whether question names the AI-indexed module
+// wantType by noun (singular or plural, e.g. "invoice"/"invoices") — reusing
+// moduleLex/moduleTypeForWord (see ai_modules.go) rather than a new regex.
+func questionNamesModule(question, wantType string) bool {
+	norm := normalizeModuleNouns(question)
+	for _, w := range countWordRe.FindAllString(norm, -1) {
+		if t, ok := moduleTypeForWord(w); ok && t == wantType {
+			return true
+		}
+	}
+	return false
+}
+
+// classifySumQuestion reports whether question is a pure "total/how much
+// outstanding balance" question this path can answer deterministically via
+// the invoice module's own Sum AI hook (a real SQL SUM — see
+// globalsearch.AISumFunc) — never an LLM asked to add up whatever a low-K RAG
+// retrieval happened to surface, which is what silently produced wrong totals
+// before this path existed. Deliberately narrow and invoice-only for this
+// pass (other modules can get a Sum hook later via the same pattern): any
+// filter-hint word present (a date range, a status) makes this a FILTERED
+// sum, which this path doesn't support, so it falls through to RAG rather
+// than silently answering an unfiltered total mislabeled as a filtered one —
+// the same bail-rather-than-guess rule classifyCountQuestion already follows.
+func classifySumQuestion(question string) (key string, ok bool) {
+	if !sumIntentRe.MatchString(question) || !sumFieldWordRe.MatchString(question) {
+		return "", false
+	}
+	if filterHintRe.MatchString(question) {
+		return "", false
+	}
+	if !questionNamesModule(question, "invoice") {
+		return "", false
+	}
+	return "invoice", true
+}

@@ -44,21 +44,23 @@ type docExtractCreateRequest struct {
 }
 
 // validateDocExtractUpload checks the upload's extension, content type and size
-// and returns the sanitized file name and lower-case extension (no dot).
-func (h *DocExtractOps) validateDocExtractUpload(req docExtractCreateRequest) (name, ext string, err error) {
+// and returns the sanitized file name and lower-case extension (no dot). A
+// non-empty problem is the user-facing 400 message (worded like the import
+// page's), so it is a plain sentence rather than an error to wrap.
+func (h *DocExtractOps) validateDocExtractUpload(req docExtractCreateRequest) (name, ext, problem string) {
 	name = workflow.SanitizeFileName(req.FileName)
 	dotExt := strings.ToLower(filepath.Ext(name))
 	wantCT, ok := docExtractUploads[dotExt]
 	if !ok {
-		return "", "", fmt.Errorf("File type %q is not supported (allowed: pdf, docx).", dotExt)
+		return "", "", fmt.Sprintf("File type %q is not supported (allowed: pdf, docx).", dotExt)
 	}
 	if req.ContentType != wantCT {
-		return "", "", fmt.Errorf("Content type %q does not match file extension %q.", req.ContentType, dotExt)
+		return "", "", fmt.Sprintf("Content type %q does not match file extension %q.", req.ContentType, dotExt)
 	}
 	if req.SizeBytes <= 0 || req.SizeBytes > h.cfg.MaxBytes {
-		return "", "", fmt.Errorf("File must be between 1 byte and %d MB.", h.cfg.MaxBytes>>20)
+		return "", "", fmt.Sprintf("File must be between 1 byte and %d MB.", h.cfg.MaxBytes>>20)
 	}
-	return name, strings.TrimPrefix(dotExt, "."), nil
+	return name, strings.TrimPrefix(dotExt, "."), ""
 }
 
 // Create handles POST /api/tenant/document-extractions: validates the upload
@@ -82,9 +84,9 @@ func (h *DocExtractOps) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCreate(w, r, c, req.DocType) || !h.requireAI(w, r, c) {
 		return
 	}
-	name, ext, err := h.validateDocExtractUpload(req)
-	if err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
+	name, ext, problem := h.validateDocExtractUpload(req)
+	if problem != "" {
+		fail(w, http.StatusBadRequest, problem)
 		return
 	}
 	objs := h.objectsFor(c.tenant)

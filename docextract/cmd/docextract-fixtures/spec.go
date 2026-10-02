@@ -91,7 +91,7 @@ func (s docSpec) pages() []pdftest.Page {
 		p.Add(y, pdftest.Cell{X: xItem, S: t})
 		y -= rowGap
 	}
-	y = s.headerBlock(&p, y)
+	s.headerBlock(&p, y) // the table starts at the fixed yTable, not below the header
 	rows := s.lines
 	var second []lineSpec
 	if s.pageSplit > 0 && s.pageSplit < len(rows) {

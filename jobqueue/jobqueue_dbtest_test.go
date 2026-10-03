@@ -137,6 +137,33 @@ func TestQueue_MarkSucceededAndMarkFailed(t *testing.T) {
 	}
 }
 
+func TestQueue_MarkDead(t *testing.T) {
+	q, tenantID := newTestQueue(t)
+	ctx := context.Background()
+
+	id, err := q.Enqueue(ctx, "import", tenantID, map[string]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"import"}); err != nil {
+		t.Fatal(err)
+	}
+	// attempts (1) is below max_attempts, so MarkFailed would requeue; MarkDead must not.
+	if err := q.MarkDead(ctx, id, "bad input"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := q.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != StatusDead {
+		t.Fatalf("Status = %q, want dead", job.Status)
+	}
+	if job.LastError == nil || *job.LastError != "bad input" {
+		t.Fatalf("LastError = %v, want %q", job.LastError, "bad input")
+	}
+}
+
 // backdateUpdatedAt directly rewrites a job's updated_at into the past — the
 // only way to make RequeueStale's "hasn't been touched in staleAfter" check
 // trip inside a test without actually waiting minutes.

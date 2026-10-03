@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"stonesuite-backend/dateonly"
 	"stonesuite-backend/docpdf"
 )
 
@@ -16,7 +17,7 @@ func TestToPrintable_VendorCredit(t *testing.T) {
 		Vendor:     VendorRef{ID: "v-1", Name: "Acme Supply"},
 		Reason:     "Returned defective slab",
 		Memo:       "See RMA-42",
-		CreditDate: time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC),
+		CreditDate: dateonly.New(time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)),
 		GrandTotal: 150,
 	}
 	d := ToPrintable(vc, docpdf.Seller{Name: "Acme Stone Co"})

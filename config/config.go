@@ -86,6 +86,10 @@ type Config struct {
 	CloudflareAPIToken  string
 	R2AccessKeyID       string
 	R2SecretAccessKey   string
+	// R2Endpoint overrides the R2 S3 endpoint (e.g. http://localhost:9900) for
+	// local development against an S3-compatible server. Honoured only when
+	// APP_ENV=development; ignored everywhere else.
+	R2Endpoint string
 
 	// PDFDefaultClientLogo (PDF_DEFAULT_CLIENT_LOGO, default true) makes document
 	// PDFs show the client's logo -- the one the app header already shows -- as
@@ -93,6 +97,19 @@ type Config struct {
 	// false once tenants other than that client are served, so their documents
 	// carry only the logo they upload.
 	PDFDefaultClientLogo bool
+
+	// Document extraction (PDF/DOCX -> draft document via the LLM). Off by default.
+	DocExtractEnabled         bool          // DOC_EXTRACT_ENABLED
+	DocExtractMaxBytes        int64         // DOC_EXTRACT_MAX_BYTES: max upload size
+	DocExtractMaxPages        int           // DOC_EXTRACT_MAX_PAGES
+	DocExtractMaxLines        int           // DOC_EXTRACT_MAX_LINES: max extracted line items
+	DocExtractMaxQty          float64       // DOC_EXTRACT_MAX_QTY: max accepted line quantity
+	DocExtractDailyCap        int           // DOC_EXTRACT_DAILY_CAP: extractions per tenant per day
+	DocExtractStagingTTL      time.Duration // DOC_EXTRACT_STAGING_TTL
+	DocExtractStagingMaxBytes int64         // DOC_EXTRACT_STAGING_MAX_BYTES: per-tenant staging quota
+	DocExtractPresignTTL      time.Duration // DOC_EXTRACT_PRESIGN_TTL
+	DocExtractLLMTokenBudget  int           // DOC_EXTRACT_LLM_TOKEN_BUDGET
+	DocExtractLLMTimeout      time.Duration // DOC_EXTRACT_LLM_TIMEOUT
 
 	// Observability (all optional; each feature degrades gracefully when unset).
 	// SentryDSN enables error/panic reporting to Sentry (free tier).
@@ -231,6 +248,7 @@ func Load() {
 		CloudflareAPIToken:  getEnv("CLOUDFLARE_API_TOKEN", ""),
 		R2AccessKeyID:       getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey:   getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2Endpoint:          getEnv("R2_ENDPOINT", ""),
 		// Document PDFs
 		PDFDefaultClientLogo: getEnvBool("PDF_DEFAULT_CLIENT_LOGO", true),
 		// Observability
@@ -254,6 +272,18 @@ func Load() {
 		// Reranking (see Config.AIRerankBaseURL doc) — off by default.
 		AIRerankBaseURL:    getEnv("AI_RERANK_BASE_URL", ""),
 		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),
+		// Document extraction (see Config.DocExtractEnabled doc)
+		DocExtractEnabled:         getEnvBool("DOC_EXTRACT_ENABLED", false),
+		DocExtractMaxBytes:        getEnvInt64("DOC_EXTRACT_MAX_BYTES", defaultDocExtractMaxBytes),
+		DocExtractMaxPages:        getEnvInt("DOC_EXTRACT_MAX_PAGES", defaultDocExtractMaxPages),
+		DocExtractMaxLines:        getEnvInt("DOC_EXTRACT_MAX_LINES", defaultDocExtractMaxLines),
+		DocExtractMaxQty:          getEnvFloat("DOC_EXTRACT_MAX_QTY", defaultDocExtractMaxQty),
+		DocExtractDailyCap:        getEnvInt("DOC_EXTRACT_DAILY_CAP", defaultDocExtractDailyCap),
+		DocExtractStagingTTL:      getEnvDuration("DOC_EXTRACT_STAGING_TTL", defaultDocExtractStagingTTL),
+		DocExtractStagingMaxBytes: getEnvInt64("DOC_EXTRACT_STAGING_MAX_BYTES", defaultDocExtractStagingMaxBytes),
+		DocExtractPresignTTL:      getEnvDuration("DOC_EXTRACT_PRESIGN_TTL", defaultDocExtractPresignTTL),
+		DocExtractLLMTokenBudget:  getEnvInt("DOC_EXTRACT_LLM_TOKEN_BUDGET", defaultDocExtractLLMTokenBudget),
+		DocExtractLLMTimeout:      getEnvDuration("DOC_EXTRACT_LLM_TIMEOUT", defaultDocExtractLLMTimeout),
 		// Email branding/contact placeholders (see Config field doc comment)
 		EmailBrandName:          getEnv("EMAIL_BRAND_NAME", "StoneSuite"),
 		SupportEmail:            getEnv("SUPPORT_EMAIL", "hello@stonesuite.app"),
@@ -332,6 +362,50 @@ func getEnvInt(key string, defaultValue int) int {
 	if value, exists := os.LookupEnv(key); exists {
 		if n, err := strconv.Atoi(value); err == nil {
 			return n
+		}
+	}
+	return defaultValue
+}
+
+// Document-extraction defaults (see Config.DocExtractEnabled).
+const (
+	defaultDocExtractMaxBytes        int64         = 10 << 20
+	defaultDocExtractMaxPages        int           = 20
+	defaultDocExtractMaxLines        int           = 200
+	defaultDocExtractMaxQty          float64       = 1e6
+	defaultDocExtractDailyCap        int           = 100
+	defaultDocExtractStagingTTL      time.Duration = 24 * time.Hour
+	defaultDocExtractStagingMaxBytes int64         = 500 << 20
+	defaultDocExtractPresignTTL      time.Duration = 15 * time.Minute
+	defaultDocExtractLLMTokenBudget  int           = 2500
+	defaultDocExtractLLMTimeout      time.Duration = 60 * time.Second
+)
+
+// getEnvInt64 reads an int64 env var, falling back to defaultValue when unset or invalid.
+func getEnvInt64(key string, defaultValue int64) int64 {
+	if value, exists := os.LookupEnv(key); exists {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return n
+		}
+	}
+	return defaultValue
+}
+
+// getEnvFloat reads a float64 env var, falling back to defaultValue when unset or invalid.
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value, exists := os.LookupEnv(key); exists {
+		if f, err := strconv.ParseFloat(value, 64); err == nil {
+			return f
+		}
+	}
+	return defaultValue
+}
+
+// getEnvDuration reads a positive duration env var, falling back to defaultValue when unset or invalid.
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value, exists := os.LookupEnv(key); exists {
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			return d
 		}
 	}
 	return defaultValue

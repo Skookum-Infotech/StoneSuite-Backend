@@ -4073,66 +4073,6 @@
         ]
       }
     },
-    "/api/tenant/config/crm-notify-recipients": {
-      "get": {
-        "operationId": "get_tenant_config_crm_notify_recipients",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "crmAdminOps.GetNotifyRecipients",
-        "tags": [
-          "tenant"
-        ]
-      },
-      "put": {
-        "operationId": "put_tenant_config_crm_notify_recipients",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "summary": "crmAdminOps.SetNotifyRecipients",
-        "tags": [
-          "tenant"
-        ]
-      }
-    },
     "/api/tenant/credit-memos": {
       "get": {
         "operationId": "get_tenant_credit_memos",
@@ -6390,6 +6330,312 @@
           }
         ],
         "summary": "dashboardUI.TopCustomers",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions": {
+      "get": {
+        "operationId": "get_tenant_document_extractions",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.List",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_document_extractions",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Create",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions/{id}": {
+      "get": {
+        "operationId": "get_tenant_document_extractions_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Get",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions/{id}/complete": {
+      "post": {
+        "operationId": "post_tenant_document_extractions_id_complete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Complete",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions/{id}/discard": {
+      "post": {
+        "operationId": "post_tenant_document_extractions_id_discard",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Discard",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions/{id}/notify": {
+      "post": {
+        "operationId": "post_tenant_document_extractions_id_notify",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Notify",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions/{id}/presign": {
+      "post": {
+        "operationId": "post_tenant_document_extractions_id_presign",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Presign",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/document-extractions/{id}/start": {
+      "post": {
+        "operationId": "post_tenant_document_extractions_id_start",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "docExtractOps.Start",
         "tags": [
           "tenant"
         ]
@@ -13969,6 +14215,68 @@
         ]
       }
     },
+    "/api/tenant/my-transactions": {
+      "get": {
+        "operationId": "get_tenant_my_transactions",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "myTxOps.List",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/my-transactions/summary": {
+      "get": {
+        "operationId": "get_tenant_my_transactions_summary",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "myTxOps.Overview",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/payments": {
       "get": {
         "operationId": "get_tenant_payments",
@@ -15088,6 +15396,47 @@
           }
         ],
         "summary": "poOps.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/purchase-orders/{uuid}/resend": {
+      "post": {
+        "operationId": "post_tenant_purchase_orders_uuid_resend",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "poOps.ResendToVendor",
         "tags": [
           "tenant"
         ]

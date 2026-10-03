@@ -48,6 +48,34 @@ stock — a delivery or installation charge, say — are never checked. The
 Inventory tab shows, for each item on the order, what is on hand, what every
 order holds, what this order holds, and what is still free.
 
+### Creating a sales order from a customer's PO
+
+When your workspace has it turned on, Sales → Sales Orders has an Upload Sales
+Order button: pick a customer's purchase order (a PDF or Word file, up to
+10 MB and 20 pages), or drag it onto the page. StoneSuite reads the document,
+matches the customer and items to your records, and opens a New Sales Order
+form already filled in. Nothing is saved until you review it and press Save.
+Scanned images and password-protected files can't be read; enter those
+manually. The button is greyed out when AI features are off for your
+workspace.
+
+While the document is read, a progress window shows Upload, Read, Match and
+Review. You can choose Continue in background and you'll be notified when it is
+ready. Documents waiting for review appear under Pending documents on the
+Sales Orders list for 24 hours, after which they expire (any values you already
+entered on the form are kept).
+
+On the review screen the document sits beside the form. Each filled value is
+marked as coming from the document or learned from an earlier correction, and
+the info icon shows where on which page it was found. Fields that need a
+decision are flagged Needs review; use the Needs review button (or Alt+Down and
+Alt+Up) to jump between them. When you correct a customer or item, StoneSuite
+remembers it for the next document from that customer.
+
+If a sales order with the same customer and PO number already exists, you are
+warned and can open the existing order or choose Create anyway. You are asked
+only once per document.
+
 ## Invoices
 
 An Invoice is created from Sales → Invoices → New Invoice, or by converting a

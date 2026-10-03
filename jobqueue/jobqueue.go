@@ -150,6 +150,21 @@ func (q *Queue) MarkFailed(ctx context.Context, id string, errMsg string) error 
 	return nil
 }
 
+// MarkDead records the error and moves the job straight to 'dead' regardless
+// of attempts — for non-retryable input errors where a retry cannot succeed.
+func (q *Queue) MarkDead(ctx context.Context, id string, errMsg string) error {
+	if _, err := q.pool.Exec(ctx, `
+		UPDATE async_jobs
+		SET status = $3,
+		    last_error = $2,
+		    updated_at = NOW()
+		WHERE id = $1`,
+		id, errMsg, StatusDead); err != nil {
+		return fmt.Errorf("mark job %s dead: %w", id, err)
+	}
+	return nil
+}
+
 // UpdateProgress stores a JSON progress marker (e.g. {"step": "migrate_db"})
 // so a resumed job can report what's already been done.
 func (q *Queue) UpdateProgress(ctx context.Context, id string, progress any) error {

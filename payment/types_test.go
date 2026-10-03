@@ -2,6 +2,7 @@ package payment
 
 import (
 	"encoding/json"
+	"stonesuite-backend/dateonly"
 	"testing"
 	"time"
 )
@@ -13,7 +14,7 @@ func TestPayment_JSONShape(t *testing.T) {
 		OwnerUserID: "user-should-not-serialize",
 		MethodID:    1, MethodName: "Check",
 		Amount: 100, AppliedTotal: 40, UnappliedAmount: 60,
-		PaymentDate: time.Now(), CustomFields: map[string]any{}, Applications: []Application{},
+		PaymentDate: dateonly.New(time.Now()), CustomFields: map[string]any{}, Applications: []Application{},
 	}
 	b, err := json.Marshal(p)
 	if err != nil {

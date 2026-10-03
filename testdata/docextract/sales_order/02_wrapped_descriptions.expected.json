@@ -1,0 +1,29 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Bedrock Builders LLC",
+    "order_date": "2026-03-15",
+    "payment_terms": "Net 45",
+    "po_number": "PO-7782",
+    "subtotal": "5785.00",
+    "total": "5785.00"
+  },
+  "lines": [
+    {
+      "sku": "MB-410",
+      "description": "Imperial White marble countertop slab 3cm honed finish, two slabs per bundle",
+      "qty": "8",
+      "uom": "EA",
+      "unit_price": "620.00",
+      "amount": "4960.00"
+    },
+    {
+      "sku": "MB-411",
+      "description": "Carrara marble vanity top",
+      "qty": "3",
+      "uom": "EA",
+      "unit_price": "275.00",
+      "amount": "825.00"
+    }
+  ]
+}

@@ -28,6 +28,12 @@ func needsModel(question string, history []ragcore.Message) bool {
 	if _, ok := classifyFollowUpCount(question, history); ok {
 		return false
 	}
+	if _, _, ok := classifyOpenClosedCount(question); ok {
+		return false
+	}
+	if _, ok := classifySumQuestion(question); ok {
+		return false
+	}
 	if _, hasField, ok := lookupTemplateMatch(question); ok && hasField {
 		return false
 	}
@@ -70,6 +76,22 @@ func runAskDispatch(ctx context.Context, h *AIOps, pa preparedAsk, store crmstor
 			return res, routeCountFollowUp, err
 		}
 		return res, routeCountFollowUp, emit(res)
+	}
+
+	if keys, open, ok := classifyOpenClosedCount(question); ok {
+		res, err := countCRMRecordsOpenClosed(ctx, store, pa.pool, pa.grants, pa.identityID, keys, open)
+		if err != nil {
+			return res, routeCountOpenClosed, err
+		}
+		return res, routeCountOpenClosed, emit(res)
+	}
+
+	if key, ok := classifySumQuestion(question); ok {
+		res, err := sumModuleRecords(ctx, pa.pool, pa.grants, pa.identityID, key)
+		if err != nil {
+			return res, routeSum, err
+		}
+		return res, routeSum, emit(res)
 	}
 
 	if hasFilterHintCountIntent(question) {

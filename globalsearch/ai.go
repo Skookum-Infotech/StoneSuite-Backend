@@ -34,6 +34,15 @@ type AIListLiveFunc func(ctx context.Context, pool *pgxpool.Pool) (map[string]ti
 // same rule the module's Search applies.
 type AICountFunc func(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID string) (int, error)
 
+// AISumFunc sums one numeric field across the module's live rows the caller
+// may read under scope (same fail-closed narrowing as AICountFunc), returning
+// both the total and how many rows contributed to it — n lets a caller
+// distinguish "nothing outstanding" from "nothing to read at all", and render
+// "$X across N records" without a second query. A real SQL SUM, computed
+// against every matching row, never an LLM asked to add up whatever a RAG
+// retrieval happened to surface.
+type AISumFunc func(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID string) (total float64, n int, err error)
+
 // AIHooks makes a registered module answerable by the assistant. A provider
 // with no entry in the AI registry is simply not indexed (the assistant then
 // says so, rather than answering from unrelated records).
@@ -57,6 +66,9 @@ type AIHooks struct {
 	Load     AILoadFunc
 	ListLive AIListLiveFunc
 	Count    AICountFunc
+	// Sum is optional — nil for a module with no aggregate-able numeric field
+	// the assistant answers "total X" questions about. See AISumFunc.
+	Sum AISumFunc
 }
 
 // aiRegistry holds the AI hooks by provider Key. It is separate from registry
@@ -180,6 +192,32 @@ func countTable(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, iden
 		return 0, fmt.Errorf("count %s: %w", table, err)
 	}
 	return n, nil
+}
+
+// sumTable sums one numeric column of live, non-deleted rows matching cond
+// (e.g. "balance_due > 0" — the module's own definition of "outstanding",
+// passed in rather than hardcoded here since it varies per module) for
+// AISumFunc. ownerCol/scope narrowing mirrors countTable exactly. Identifiers
+// (table, column, deletedCol, ownerCol, cond) are compile-time constants from
+// the module's own hook file, never client input, so interpolating them is
+// safe — the same contract countTable/liveTable already rely on.
+func sumTable(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, table, column, deletedCol, ownerCol, cond string) (float64, int, error) {
+	q := fmt.Sprintf(`SELECT COALESCE(SUM(%s), 0), COUNT(*) FROM %s WHERE %s IS NULL AND %s`, column, table, deletedCol, cond)
+	var args []any
+	if ownerCol != "" && scope != authz.ScopeAll {
+		empID, found := employeeIDByIdentity(ctx, pool, identityID)
+		if !found {
+			return 0, 0, nil
+		}
+		q += fmt.Sprintf(` AND %s = $1`, ownerCol)
+		args = append(args, empID)
+	}
+	var total float64
+	var n int
+	if err := pool.QueryRow(ctx, q, args...).Scan(&total, &n); err != nil {
+		return 0, 0, fmt.Errorf("sum %s.%s: %w", table, column, err)
+	}
+	return total, n, nil
 }
 
 // maxAILineItems caps how many line items a summary spells out, keeping a

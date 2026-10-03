@@ -1,0 +1,30 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Bedrock Builders LLC",
+    "delivery_date": "2026-02-14",
+    "order_date": "2026-09-09",
+    "payment_terms": "Net 45",
+    "po_number": "A-77391",
+    "subtotal": "690.00",
+    "total": "690.00"
+  },
+  "lines": [
+    {
+      "sku": "LM-5",
+      "description": "Limestone paver",
+      "qty": "40",
+      "uom": "EA",
+      "unit_price": "11.25",
+      "amount": "450.00"
+    },
+    {
+      "sku": "LM-6",
+      "description": "Limestone coping",
+      "qty": "10",
+      "uom": "EA",
+      "unit_price": "24.00",
+      "amount": "240.00"
+    }
+  ]
+}

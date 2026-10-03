@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
 
 // A valid base64-encoded 32-byte AES key (openssl rand -base64 32 shape).
 const valid32ByteKeyB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA="
@@ -200,5 +205,37 @@ func TestLoadPDFDefaultClientLogo(t *testing.T) {
 		if AppConfig.PDFDefaultClientLogo {
 			t.Fatal("PDFDefaultClientLogo = true, want false when PDF_DEFAULT_CLIENT_LOGO=false")
 		}
+	})
+}
+
+func TestLoadDocExtractConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		Load()
+		assert.False(t, AppConfig.DocExtractEnabled)
+		assert.Equal(t, int64(10<<20), AppConfig.DocExtractMaxBytes)
+		assert.Equal(t, 20, AppConfig.DocExtractMaxPages)
+		assert.Equal(t, 200, AppConfig.DocExtractMaxLines)
+		assert.Equal(t, 1e6, AppConfig.DocExtractMaxQty)
+		assert.Equal(t, 100, AppConfig.DocExtractDailyCap)
+		assert.Equal(t, 24*time.Hour, AppConfig.DocExtractStagingTTL)
+		assert.Equal(t, int64(500<<20), AppConfig.DocExtractStagingMaxBytes)
+		assert.Equal(t, 15*time.Minute, AppConfig.DocExtractPresignTTL)
+		assert.Equal(t, 2500, AppConfig.DocExtractLLMTokenBudget)
+		assert.Equal(t, 60*time.Second, AppConfig.DocExtractLLMTimeout)
+	})
+	t.Run("overrides and invalid fallbacks", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		t.Setenv("DOC_EXTRACT_ENABLED", "true")
+		t.Setenv("DOC_EXTRACT_MAX_BYTES", "1024")
+		t.Setenv("DOC_EXTRACT_MAX_QTY", "5.5")
+		t.Setenv("DOC_EXTRACT_LLM_TIMEOUT", "30s")
+		t.Setenv("DOC_EXTRACT_STAGING_TTL", "garbage")
+		Load()
+		assert.True(t, AppConfig.DocExtractEnabled)
+		assert.Equal(t, int64(1024), AppConfig.DocExtractMaxBytes)
+		assert.Equal(t, 5.5, AppConfig.DocExtractMaxQty)
+		assert.Equal(t, 30*time.Second, AppConfig.DocExtractLLMTimeout)
+		assert.Equal(t, 24*time.Hour, AppConfig.DocExtractStagingTTL)
 	})
 }

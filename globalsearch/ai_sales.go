@@ -151,6 +151,13 @@ var _ = addAI("invoice", AIHooks{
 	ListLive: func(ctx context.Context, pool *pgxpool.Pool) (map[string]time.Time, error) {
 		return liveTable(ctx, pool, "invoice", "invoice_uuid", "invoice_updated_at", "invoice_deleted_at")
 	},
+	// Sum answers "total outstanding balance" questions with a real SQL SUM —
+	// "outstanding" means a nonzero balance due, the same literal meaning as
+	// the question, not a date-based "overdue" (which would also need a
+	// due_date predicate this pass doesn't add).
+	Sum: func(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID string) (float64, int, error) {
+		return sumTable(ctx, pool, scope, identityID, "invoice", "invoice_balance_due", "invoice_deleted_at", "invoice_owner_id", "invoice_balance_due > 0")
+	},
 })
 
 func loadInvoiceAI(ctx context.Context, pool *pgxpool.Pool, id string) (AIRecord, error) {

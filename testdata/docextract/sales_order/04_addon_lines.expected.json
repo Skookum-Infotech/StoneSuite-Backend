@@ -1,0 +1,53 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "ACME Stone Inc",
+    "order_date": "2026-02-10",
+    "payment_terms": "Net 30",
+    "po_number": "5120",
+    "subtotal": "4835.00",
+    "total": "4835.00"
+  },
+  "lines": [
+    {
+      "sku": "GR-500",
+      "description": "Kitchen island granite top",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "2400.00",
+      "amount": "2400.00"
+    },
+    {
+      "sku": "",
+      "description": "Eased edge profile",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "150.00",
+      "amount": "150.00"
+    },
+    {
+      "sku": "",
+      "description": "+ Sink cutout",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "85.00",
+      "amount": "85.00"
+    },
+    {
+      "sku": "GR-501",
+      "description": "Perimeter granite top",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "1800.00",
+      "amount": "1800.00"
+    },
+    {
+      "sku": "",
+      "description": "w/ Installation",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "400.00",
+      "amount": "400.00"
+    }
+  ]
+}

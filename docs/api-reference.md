@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-543 endpoints across 7 surfaces, read from `main.go`.
+552 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 459 |
+| staff token + tenant | 468 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -320,7 +320,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 458 endpoints
+## `tenant` — 467 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -384,8 +384,6 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/config/approvers` | staff token + tenant | `crmAdminOps.ListApprovers` |
 | `POST` | `/api/tenant/config/approvers` | staff token + tenant | `crmAdminOps.CreateApprover` |
 | `DELETE` | `/api/tenant/config/approvers/{id}` | staff token + tenant | `crmAdminOps.DeleteApprover` |
-| `GET` | `/api/tenant/config/crm-notify-recipients` | staff token + tenant | `crmAdminOps.GetNotifyRecipients` |
-| `PUT` | `/api/tenant/config/crm-notify-recipients` | staff token + tenant | `crmAdminOps.SetNotifyRecipients` |
 
 ### credit-memos
 
@@ -461,6 +459,19 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `ANY` | `/api/tenant/dashboard/widgets/roles` | staff token + tenant | `dashboardUI.RoleAllocations` |
 | `GET` | `/api/tenant/dashboard/widgets/sales-orders-snapshot/data` | staff token + tenant | `dashboardUI.SalesOrdersSnapshot` |
 | `GET` | `/api/tenant/dashboard/widgets/top-customers/data` | staff token + tenant | `dashboardUI.TopCustomers` |
+
+### document-extractions
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/document-extractions` | staff token + tenant | `docExtractOps.List` |
+| `POST` | `/api/tenant/document-extractions` | staff token + tenant | `docExtractOps.Create` |
+| `GET` | `/api/tenant/document-extractions/{id}` | staff token + tenant | `docExtractOps.Get` |
+| `POST` | `/api/tenant/document-extractions/{id}/complete` | staff token + tenant | `docExtractOps.Complete` |
+| `POST` | `/api/tenant/document-extractions/{id}/discard` | staff token + tenant | `docExtractOps.Discard` |
+| `POST` | `/api/tenant/document-extractions/{id}/notify` | staff token + tenant | `docExtractOps.Notify` |
+| `POST` | `/api/tenant/document-extractions/{id}/presign` | staff token + tenant | `docExtractOps.Presign` |
+| `POST` | `/api/tenant/document-extractions/{id}/start` | staff token + tenant | `docExtractOps.Start` |
 
 ### estimates
 
@@ -719,6 +730,13 @@ The staff application. Every route requires a JWT and resolves a tenant database
 |---|---|---|---|
 | `ANY` | `/api/tenant/me` | staff token + tenant | `` |
 
+### my-transactions
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/my-transactions` | staff token + tenant | `myTxOps.List` |
+| `GET` | `/api/tenant/my-transactions/summary` | staff token + tenant | `myTxOps.Overview` |
+
 ### payments
 
 | Method | Path | Requires | Handler |
@@ -766,6 +784,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/purchase-orders/{uuid}/next-slab-serial` | staff token + tenant | `irOps.NextSlabSequence` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/receipts` | staff token + tenant | `irOps.ForPurchaseOrder` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/reject` | staff token + tenant | `poOps.Reject` |
+| `POST` | `/api/tenant/purchase-orders/{uuid}/resend` | staff token + tenant | `poOps.ResendToVendor` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/transition` | staff token + tenant | `poOps.Transition` |
 
 ### quotes

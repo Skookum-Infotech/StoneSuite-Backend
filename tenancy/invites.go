@@ -25,41 +25,49 @@ type Invite struct {
 	ExpiresAt    time.Time
 	AcceptedAt   *time.Time
 	CreatedAt    time.Time
+	// NotifyNotificationIDs holds the stonesuite-notify notification id for each
+	// recipient of the most recent invite email send, so its real delivery status
+	// can be looked up later. Empty for pre-migration invites, an unparseable
+	// notify response, or a send that failed outright.
+	NotifyNotificationIDs []string
+}
+
+const inviteColumns = `id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at, notify_notification_ids`
+
+func scanInvite(row pgx.Row) (*Invite, error) {
+	var inv Invite
+	if err := row.Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
+		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt, &inv.NotifyNotificationIDs); err != nil {
+		return nil, err
+	}
+	return &inv, nil
 }
 
 // ----- Invite writes/reads ---------------------------------------------------
 
 // CreateInvite inserts a pending invite for a tenant.
 func (c *ControlPlane) CreateInvite(ctx context.Context, tenantID, email, token string, expiresAt time.Time) (*Invite, error) {
-	var inv Invite
-	err := c.pool.QueryRow(ctx, `
+	inv, err := scanInvite(c.pool.QueryRow(ctx, `
 		INSERT INTO tenant_invites (tenant_id, contact_email, token, status, expires_at, sent_at)
 		VALUES ($1, $2, $3, 'pending', $4, NOW())
-		RETURNING id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at`,
-		tenantID, email, token, expiresAt,
-	).Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
-		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+		RETURNING `+inviteColumns, tenantID, email, token, expiresAt))
 	if err != nil {
 		return nil, fmt.Errorf("create invite: %w", err)
 	}
-	return &inv, nil
+	return inv, nil
 }
 
 // InviteByToken loads an invite by its token.
 func (c *ControlPlane) InviteByToken(ctx context.Context, token string) (*Invite, error) {
-	var inv Invite
-	err := c.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at
-		FROM tenant_invites WHERE token = $1`, token,
-	).Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
-		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+	inv, err := scanInvite(c.pool.QueryRow(ctx,
+		`SELECT `+inviteColumns+` FROM tenant_invites WHERE token = $1`, token))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrInviteNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("invite by token: %w", err)
 	}
-	return &inv, nil
+	return inv, nil
 }
 
 // MarkInviteAccepted flips an invite to accepted.
@@ -73,9 +81,8 @@ func (c *ControlPlane) MarkInviteAccepted(ctx context.Context, id string) error 
 
 // ListInvitesByTenant returns a tenant's invites, newest first.
 func (c *ControlPlane) ListInvitesByTenant(ctx context.Context, tenantID string) ([]Invite, error) {
-	rows, err := c.pool.Query(ctx, `
-		SELECT id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at
-		FROM tenant_invites WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	rows, err := c.pool.Query(ctx,
+		`SELECT `+inviteColumns+` FROM tenant_invites WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list invites by tenant: %w", err)
 	}
@@ -83,12 +90,11 @@ func (c *ControlPlane) ListInvitesByTenant(ctx context.Context, tenantID string)
 
 	var out []Invite
 	for rows.Next() {
-		var inv Invite
-		if err := rows.Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
-			&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt); err != nil {
+		inv, err := scanInvite(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan invite: %w", err)
 		}
-		out = append(out, inv)
+		out = append(out, *inv)
 	}
 	return out, rows.Err()
 }
@@ -107,22 +113,37 @@ func (c *ControlPlane) LatestInviteForTenant(ctx context.Context, tenantID strin
 }
 
 // RefreshInvite re-issues an existing invite with a fresh token + expiry and
-// resets it to pending (the "resend / retry" path). updated_at/sent_at bump.
+// resets it to pending (the "resend / retry" path). updated_at/sent_at bump, and
+// notify_notification_ids is cleared so a failed resend does not leave the
+// previous send's ids implying the new email is trackable.
 func (c *ControlPlane) RefreshInvite(ctx context.Context, id, token string, expiresAt time.Time) (*Invite, error) {
-	var inv Invite
-	err := c.pool.QueryRow(ctx, `
+	inv, err := scanInvite(c.pool.QueryRow(ctx, `
 		UPDATE tenant_invites
 		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL,
-		    sent_at = NOW(), updated_at = NOW()
+		    notify_notification_ids = '{}', sent_at = NOW(), updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at`,
-		id, token, expiresAt,
-	).Scan(&inv.ID, &inv.TenantID, &inv.ContactEmail, &inv.Token, &inv.Status,
-		&inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt)
+		RETURNING `+inviteColumns, id, token, expiresAt))
 	if err != nil {
 		return nil, fmt.Errorf("refresh invite: %w", err)
 	}
-	return &inv, nil
+	return inv, nil
+}
+
+// SetInviteNotifyIDs records the stonesuite-notify notification ids returned for
+// the most recent onboarding-invite email, so its real delivery status can be
+// looked up later. Replaces any previous value; nil is stored as an empty array.
+// Best-effort: a missing row (invite since removed) affects zero rows and is not
+// an error.
+func (c *ControlPlane) SetInviteNotifyIDs(ctx context.Context, id string, ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE tenant_invites SET notify_notification_ids = $2, updated_at = NOW() WHERE id = $1`,
+		id, ids); err != nil {
+		return fmt.Errorf("set invite notify ids: %w", err)
+	}
+	return nil
 }
 
 // ============================================================================

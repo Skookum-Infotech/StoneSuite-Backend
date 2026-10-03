@@ -52,12 +52,14 @@ const (
 
 // Dispatch routes.
 const (
-	routeCountDirect   = "count_direct"
-	routeCountRouted   = "count_routed"
-	routeCountFollowUp = "count_followup"
-	routeLookup        = "lookup"
-	routeHelpCache     = "help_cache"
-	routeRAG           = "rag"
+	routeCountDirect     = "count_direct"
+	routeCountOpenClosed = "count_open_closed"
+	routeCountRouted     = "count_routed"
+	routeCountFollowUp   = "count_followup"
+	routeSum             = "sum"
+	routeLookup          = "lookup"
+	routeHelpCache       = "help_cache"
+	routeRAG             = "rag"
 )
 
 // Request outcomes for metrics and the ai_query security log.

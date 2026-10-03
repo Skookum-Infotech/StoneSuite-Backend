@@ -48,6 +48,7 @@ func newInviteTestEnv(t *testing.T) *inviteTestEnv {
 		inviteAdminKey, inviteAdminKey, "",
 		[]authz.Grant{
 			{Resource: authz.ResourceUser, Action: authz.ActionCreate, Scope: authz.ScopeAll},
+			{Resource: authz.ResourceUser, Action: authz.ActionRead, Scope: authz.ScopeAll},
 			{Resource: authz.ResourceRole, Action: authz.ActionUpdate, Scope: authz.ScopeAll},
 		})
 	require.NoError(t, err)
@@ -96,6 +97,37 @@ func (e *inviteTestEnv) invitesFor(t *testing.T, email string) []tenancy.UserInv
 
 func inviteTestEmail(prefix string) string {
 	return fmt.Sprintf("%s-%d@example.com", prefix, time.Now().UnixNano())
+}
+
+// TestUserOps_InviteEmail_NamesTheInviterByIdentity_DB pins who notify is told
+// sent the invite. notify raises a delivery-problem alert to that actor, and it
+// knows a person only by their control-plane identity id (the token's "id"
+// claim). The tenant-local users.id is not it — real staff tokens do not even
+// carry one — so sending it left the actor empty and a bounced invite silent.
+func TestUserOps_InviteEmail_NamesTheInviterByIdentity_DB(t *testing.T) {
+	env := newInviteTestEnv(t)
+	require.NotEqual(t, env.payload.ID, env.payload.UserID, "the test needs two distinct ids")
+
+	actors := make(chan string, 4)
+	withFakeNotify(t, notifyScenario{emailStatus: "sent", onCreate: func(actor string) { actors <- actor }})
+
+	email := inviteTestEmail("actor")
+	rec, _ := env.invite(t, map[string]any{"email": email, "fullName": "Actor Invitee"})
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+	require.Len(t, actors, 1)
+	assert.Equal(t, env.payload.ID, <-actors, "invite email must name the inviter's identity id")
+
+	invites := env.invitesFor(t, email)
+	require.Len(t, invites, 1)
+	resend := httptest.NewRequest(http.MethodPost, "/api/tenant/invites/"+invites[0].ID+"/resend", nil)
+	resend.SetPathValue("id", invites[0].ID)
+	resend = resend.WithContext(context.WithValue(resend.Context(), middleware.UserContextKey, env.payload))
+	resendRec := httptest.NewRecorder()
+	env.resolver.Middleware(http.HandlerFunc(env.ops.ResendInvite)).ServeHTTP(resendRec, resend)
+
+	require.Equal(t, http.StatusOK, resendRec.Code, "body: %s", resendRec.Body.String())
+	require.Len(t, actors, 1)
+	assert.Equal(t, env.payload.ID, <-actors, "resent invite email must name the inviter's identity id")
 }
 
 // TestUserOps_InviteUser_ConflictMessages_DB covers the guard chain in
@@ -243,4 +275,55 @@ func TestUserOps_InviteUser_MemberLookupSentinel_DB(t *testing.T) {
 	pool, _ := testCustomerTenantPool(t)
 	_, err := userstore.GetUserByEmail(context.Background(), pool, inviteTestEmail("nobody"))
 	assert.ErrorIs(t, err, userstore.ErrUserNotFound)
+}
+
+// list drives GET /api/tenant/invites through the tenancy resolver.
+func (e *inviteTestEnv) list(t *testing.T) (*httptest.ResponseRecorder, []map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/tenant/invites", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, e.payload))
+	rec := httptest.NewRecorder()
+	e.resolver.Middleware(http.HandlerFunc(e.ops.ListInvites)).ServeHTTP(rec, req)
+
+	var resp struct {
+		Invites []map[string]any `json:"invites"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	return rec, resp.Invites
+}
+
+// TestUserOps_ListInvites_ReportsRealEmailStatus_DB: the invites tab shows what
+// notify reports for each invite email, keeps its legacy PascalCase keys, and
+// never errors when notify's status route is down.
+func TestUserOps_ListInvites_ReportsRealEmailStatus_DB(t *testing.T) {
+	env := newInviteTestEnv(t)
+
+	for _, tt := range []struct {
+		name       string
+		sc         notifyScenario
+		wantStatus string
+	}{
+		{"bounced", notifyScenario{emailStatus: "sent", statusState: "bounced"}, "bounced"},
+		{"status route down", notifyScenario{emailStatus: "sent", statusHTTP: http.StatusInternalServerError}, "unknown"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			withFakeNotify(t, tt.sc)
+			email := inviteTestEmail("status")
+			rec, _ := env.invite(t, map[string]any{"email": email, "fullName": "Status Invitee"})
+			require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+
+			lrec, invites := env.list(t)
+
+			require.Equal(t, http.StatusOK, lrec.Code, "body: %s", lrec.Body.String())
+			var row map[string]any
+			for _, inv := range invites {
+				if inv["Email"] == email {
+					row = inv
+				}
+			}
+			require.NotNil(t, row, "the new invite is listed")
+			assert.Equal(t, tt.wantStatus, row["emailStatus"])
+			assert.NotEmpty(t, row["ID"], "legacy PascalCase keys are intact")
+		})
+	}
 }

@@ -269,6 +269,9 @@ type fakeCountStore struct {
 	// id (see statusAllowedValues). Empty by default: no status allowed-values
 	// offered, matching resolveRoutedFilteredCount's pre-Phase-6b behavior.
 	statuses []workflow.StatusInfo
+	// statusesErr, when set, is returned by Statuses (not AllStatuses) — the
+	// countCRMRecordsOpenClosed error-propagation path.
+	statusesErr error
 }
 
 // AllStatuses satisfies crmstore.Store for resolveRoutedFilteredCount's
@@ -278,6 +281,23 @@ type fakeCountStore struct {
 // not a fallback.
 func (f *fakeCountStore) AllStatuses(context.Context, *pgxpool.Pool) ([]workflow.StatusInfo, error) {
 	return f.statuses, nil
+}
+
+// Statuses satisfies crmstore.Store for countCRMRecordsOpenClosed's
+// terminal/non-terminal lookup — f.statuses filtered to one workflow key,
+// matching the real store's per-key scoping (unlike AllStatuses above, which
+// returns every workflow's statuses unfiltered).
+func (f *fakeCountStore) Statuses(_ context.Context, _ *pgxpool.Pool, key string) ([]workflow.StatusInfo, error) {
+	if f.statusesErr != nil {
+		return nil, f.statusesErr
+	}
+	var out []workflow.StatusInfo
+	for _, s := range f.statuses {
+		if s.WorkflowKey == key {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 // allGrants / ownGrants read every CRM type at one scope — the shape every
@@ -611,4 +631,295 @@ func TestResolveRoutedFilteredCount_StoreErrorFallsBack(t *testing.T) {
 	if ok {
 		t.Fatal("expected fallback when the store call itself fails")
 	}
+}
+
+func TestClassifyOpenClosedCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		question string
+		wantKeys []string
+		wantOpen bool
+		wantOK   bool
+	}{
+		{
+			name:     "how many open leads",
+			question: "How many open leads do I have?",
+			wantKeys: []string{"lead"},
+			wantOpen: true,
+			wantOK:   true,
+		},
+		{
+			name:     "how many active customers",
+			question: "how many active customers",
+			wantKeys: []string{"customer"},
+			wantOpen: true,
+			wantOK:   true,
+		},
+		{
+			name:     "how many closed prospects",
+			question: "how many closed prospects",
+			wantKeys: []string{"prospect"},
+			wantOpen: false,
+			wantOK:   true,
+		},
+		{
+			name:     "two types, both open",
+			question: "how many open leads and how many open prospects",
+			wantKeys: []string{"lead", "prospect"},
+			wantOpen: true,
+			wantOK:   true,
+		},
+		{
+			name:     "no count intent -> fall through",
+			question: "tell me about my open leads",
+			wantOK:   false,
+		},
+		{
+			name:     "no filter hint at all -> fall through (classifyCountQuestion's job)",
+			question: "how many leads",
+			wantOK:   false,
+		},
+		{
+			name:     "mixed open and closed -> ambiguous, fall through",
+			question: "how many open and closed leads",
+			wantOK:   false,
+		},
+		{
+			name:     "open combined with a date filter -> fall through",
+			question: "how many open leads last week",
+			wantOK:   false,
+		},
+		{
+			name:     "open combined with a literal status word -> fall through",
+			question: "how many open qualified leads",
+			wantOK:   false,
+		},
+		{
+			name:     "module type -> fall through (no IsTerminal concept here)",
+			question: "how many open invoices",
+			wantOK:   false,
+		},
+		{
+			name:     "a filter-hint word this path doesn't know -> fall through",
+			question: "how many pending leads",
+			wantOK:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keys, open, ok := classifyOpenClosedCount(tt.question)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v (keys=%v open=%v)", ok, tt.wantOK, keys, open)
+			}
+			if !ok {
+				return
+			}
+			if open != tt.wantOpen {
+				t.Fatalf("open = %v, want %v", open, tt.wantOpen)
+			}
+			if len(keys) != len(tt.wantKeys) {
+				t.Fatalf("keys = %v, want %v", keys, tt.wantKeys)
+			}
+			for i, k := range tt.wantKeys {
+				if keys[i] != k {
+					t.Fatalf("keys = %v, want %v", keys, tt.wantKeys)
+				}
+			}
+		})
+	}
+}
+
+// leadStatuses is a realistic lead status catalog (see workflow/seed.go):
+// New/In Progress/Qualified are non-terminal, UnQualified/Converted/Dead are
+// terminal — mirrors the actual seeded set countCRMRecordsOpenClosed's fix
+// was designed against.
+var leadStatuses = []workflow.StatusInfo{
+	{StateID: "s-new", WorkflowKey: "lead", StatusLabel: "New", IsTerminal: false},
+	{StateID: "s-inprogress", WorkflowKey: "lead", StatusLabel: "In Progress", IsTerminal: false},
+	{StateID: "s-qualified", WorkflowKey: "lead", StatusLabel: "Qualified", IsTerminal: false},
+	{StateID: "s-unqualified", WorkflowKey: "lead", StatusLabel: "UnQualified", IsTerminal: true},
+	{StateID: "s-converted", WorkflowKey: "lead", StatusLabel: "Converted", IsTerminal: true},
+	{StateID: "s-dead", WorkflowKey: "lead", StatusLabel: "Dead", IsTerminal: true},
+}
+
+func TestClassifySumQuestion(t *testing.T) {
+	tests := []struct {
+		name     string
+		question string
+		wantKey  string
+		wantOK   bool
+	}{
+		{
+			name:     "total outstanding balance across all invoices",
+			question: "What is the total outstanding balance across all invoices?",
+			wantKey:  "invoice",
+			wantOK:   true,
+		},
+		{
+			name:     "how much is outstanding on invoices",
+			question: "How much is outstanding on invoices?",
+			wantKey:  "invoice",
+			wantOK:   true,
+		},
+		{
+			name:     "sum of invoice balances",
+			question: "what's the sum of invoice balances",
+			wantKey:  "invoice",
+			wantOK:   true,
+		},
+		{
+			name:     "total balance due on invoices",
+			question: "total balance due on invoices",
+			wantKey:  "invoice",
+			wantOK:   true,
+		},
+		{
+			name:     "no sum intent -> fall through",
+			question: "which invoices are overdue",
+			wantOK:   false,
+		},
+		{
+			name:     "sum intent but no money-field word -> fall through",
+			question: "what is the total number of invoices",
+			wantOK:   false,
+		},
+		{
+			name:     "money-field word but no module named -> fall through",
+			question: "what is my total balance",
+			wantOK:   false,
+		},
+		{
+			name:     "money-field word naming a different module -> fall through",
+			question: "total outstanding balance on vendor bills",
+			wantOK:   false,
+		},
+		{
+			name:     "filter-hint word present -> a filtered sum, out of scope",
+			question: "total outstanding balance on invoices this month",
+			wantOK:   false,
+		},
+		{
+			name:     "filter-hint word present (status) -> out of scope",
+			question: "total outstanding balance on open invoices",
+			wantOK:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, ok := classifySumQuestion(tt.question)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v (key=%q)", ok, tt.wantOK, key)
+			}
+			if ok && key != tt.wantKey {
+				t.Fatalf("key = %q, want %q", key, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestSumModuleRecords_NoGrantSkipsHookCall(t *testing.T) {
+	res, err := sumModuleRecords(context.Background(), nil, ai.Grants{}, "identity-1", "invoice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Answer != "You don't have access to invoice records." {
+		t.Fatalf("answer = %q", res.Answer)
+	}
+}
+
+func TestCountCRMRecordsOpenClosed_FiltersByIsTerminal(t *testing.T) {
+	t.Run("open counts only non-terminal statuses", func(t *testing.T) {
+		store := &fakeCountStore{statuses: leadStatuses, counts: map[string]int{"lead": 3}}
+		res, err := countCRMRecordsOpenClosed(context.Background(), store, nil, allGrants, "identity-1", []string{"lead"}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(store.filteredCalls) != 1 {
+			t.Fatalf("filteredCalls = %v, want 1 call", store.filteredCalls)
+		}
+		call := store.filteredCalls[0]
+		if len(call.filters) != 1 || call.filters[0].Field != "status" || call.filters[0].Op != query.OpIn {
+			t.Fatalf("filters = %v, want one status/in clause", call.filters)
+		}
+		ids, ok := call.filters[0].Value.([]any)
+		if !ok || len(ids) != 3 {
+			t.Fatalf("filter value = %v, want the 3 non-terminal status ids", call.filters[0].Value)
+		}
+		for _, want := range []any{"s-new", "s-inprogress", "s-qualified"} {
+			found := false
+			for _, id := range ids {
+				if id == want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("ids = %v, missing non-terminal id %v", ids, want)
+			}
+		}
+		want := "You have 3 leads with an open status."
+		if res.Answer != want {
+			t.Fatalf("answer = %q, want %q", res.Answer, want)
+		}
+	})
+
+	t.Run("closed counts only terminal statuses", func(t *testing.T) {
+		store := &fakeCountStore{statuses: leadStatuses, counts: map[string]int{"lead": 1}}
+		res, err := countCRMRecordsOpenClosed(context.Background(), store, nil, allGrants, "identity-1", []string{"lead"}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids, ok := store.filteredCalls[0].filters[0].Value.([]any)
+		if !ok || len(ids) != 3 {
+			t.Fatalf("filter value = %v, want the 3 terminal status ids", store.filteredCalls[0].filters[0].Value)
+		}
+		for _, want := range []any{"s-unqualified", "s-converted", "s-dead"} {
+			found := false
+			for _, id := range ids {
+				if id == want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("ids = %v, missing terminal id %v", ids, want)
+			}
+		}
+		want := "You have 1 lead with a closed status."
+		if res.Answer != want {
+			t.Fatalf("answer = %q, want %q", res.Answer, want)
+		}
+	})
+
+	t.Run("no status of the requested polarity -> zero, no store filter call", func(t *testing.T) {
+		allTerminal := []workflow.StatusInfo{{StateID: "s-x", WorkflowKey: "lead", IsTerminal: true}}
+		store := &fakeCountStore{statuses: allTerminal}
+		res, err := countCRMRecordsOpenClosed(context.Background(), store, nil, allGrants, "identity-1", []string{"lead"}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(store.filteredCalls) != 0 {
+			t.Fatalf("filteredCalls = %v, want none (nothing to filter for)", store.filteredCalls)
+		}
+		if res.Answer != "You have 0 leads with an open status." {
+			t.Fatalf("answer = %q", res.Answer)
+		}
+	})
+
+	t.Run("Statuses error propagates", func(t *testing.T) {
+		store := &fakeCountStore{statusesErr: errBoomAnalytical}
+		_, err := countCRMRecordsOpenClosed(context.Background(), store, nil, allGrants, "identity-1", []string{"lead"}, true)
+		if err == nil {
+			t.Fatal("expected the Statuses error to propagate")
+		}
+	})
+
+	t.Run("scope/grants pass through exactly as an ordinary count", func(t *testing.T) {
+		store := &fakeCountStore{statuses: leadStatuses, counts: map[string]int{"lead": 2}}
+		grants := ai.Grants{"lead": ai.ScopeOwn}
+		if _, err := countCRMRecordsOpenClosed(context.Background(), store, nil, grants, "identity-1", []string{"lead"}, true); err != nil {
+			t.Fatal(err)
+		}
+		if store.filteredCalls[0].scope != "own" || store.filteredCalls[0].actorIdentityID != "identity-1" {
+			t.Fatalf("filteredCall = %+v", store.filteredCalls[0])
+		}
+	})
 }

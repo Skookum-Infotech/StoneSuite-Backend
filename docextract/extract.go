@@ -51,7 +51,7 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 		return Result{}, "", newInputError(FailUnsupportedType, "document type "+string(docType)+" is not supported yet")
 	}
 	lim := opts.Limits.withDefaults()
-	if len(b) > lim.MaxBytes {
+	if int64(len(b)) > lim.MaxBytes {
 		return Result{}, "", newInputError(FailTooLarge, fmt.Sprintf("%d bytes exceeds the cap of %d", len(b), lim.MaxBytes))
 	}
 	kind, err := Sniff(b)

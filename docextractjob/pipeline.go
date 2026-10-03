@@ -171,7 +171,7 @@ func (j *jobRunner) download(ctx context.Context, ex *Extraction) ([]byte, error
 	if j.objects == nil {
 		return nil, storage.ErrStorageNotConfigured
 	}
-	data, err := j.objects.GetLimited(ctx, ex.StagingKey, int64(j.cfg.Limits.MaxBytes))
+	data, err := j.objects.GetLimited(ctx, ex.StagingKey, j.cfg.Limits.MaxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("fetch staged document: %w", err)
 	}

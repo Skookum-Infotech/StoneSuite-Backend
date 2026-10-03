@@ -193,7 +193,7 @@ type Result struct {
 
 // Limits bounds the work done on one document.
 type Limits struct {
-	MaxBytes int
+	MaxBytes int64
 	MaxPages int
 	MaxLines int
 	MaxQty   int64 // whole units

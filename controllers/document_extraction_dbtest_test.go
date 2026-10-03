@@ -80,7 +80,9 @@ func (e *docExtractDBEnv) readyExtraction(t *testing.T, identityID string, resul
 	_, _, err = s.MarkQueued(ctx, ex.ID, identityID, testSHA, "job")
 	require.NoError(t, err)
 	require.NoError(t, s.MarkRunning(ctx, ex.ID))
-	require.NoError(t, s.SaveResult(ctx, ex.ID, docextractjob.SaveResultParams{SHA256: "secretsha", Method: docextract.MethodParser, Result: result}))
+	// A per-extraction sha: a shared one makes every earlier used extraction a
+	// "same file" duplicate of this one once GET re-matches it.
+	require.NoError(t, s.SaveResult(ctx, ex.ID, docextractjob.SaveResultParams{SHA256: "secretsha" + uniqueSuffix(), Method: docextract.MethodParser, Result: result}))
 	return ex
 }
 

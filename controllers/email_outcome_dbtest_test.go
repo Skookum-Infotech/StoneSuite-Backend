@@ -313,7 +313,10 @@ func TestDocumentSends_ReportsRealEmailStatus_DB(t *testing.T) {
 				assert.NotContains(t, resp.Sends[0], "emailStatusMessage")
 			}
 			assert.NotContains(t, rr.Body.String(), "not verified", "provider detail must stay server-side")
-			assert.NotContains(t, rr.Body.String(), "403")
+			// The provider detail reads "unexpected status 403: …". Match the
+			// phrase, not bare "403": the body carries random UUIDs, and one
+			// containing "403" (e.g. f4034a50-…) made this flaky.
+			assert.NotContains(t, rr.Body.String(), "status 403")
 		})
 	}
 }

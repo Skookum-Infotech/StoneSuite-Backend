@@ -14,4 +14,5 @@ const (
 	WarnInjectionPhrases  = "injection_phrases_detected"
 	WarnChargeIgnored     = "charge_not_mapped"
 	WarnDocLooksLike      = "document_looks_like_"
+	WarnNotRecognized     = "document_not_recognized"
 )

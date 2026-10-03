@@ -8,19 +8,23 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ledongthuc/pdf"
 )
 
 const (
-	rowYTolerance     = 2.5  // points; glyphs within this Y belong to one row
-	wordGapFactor     = 0.25 // gap > factor*fontSize starts a new word
-	mojibakeThreshold = 0.30 // share of junk runes that makes a text layer unreadable
-	minRunesForRatio  = 20   // below this many runes the ratio is not meaningful
-	encryptMarker     = "/Encrypt"
-	sigByteRange      = "/ByteRange"
-	sigMarker         = "/Sig"
-	unsupportedMarker = "unsupported PDF"
+	rowYTolerance = 2.5  // points; glyphs within this Y belong to one row
+	wordGapFactor = 0.25 // gap > factor*fontSize starts a new word
+	// estCharWidthFactor is the assumed average advance (in font-size units) of
+	// a glyph whose font has no width table — about Helvetica's average.
+	estCharWidthFactor = 0.5
+	mojibakeThreshold  = 0.30 // share of junk runes that makes a text layer unreadable
+	minRunesForRatio   = 20   // below this many runes the ratio is not meaningful
+	encryptMarker      = "/Encrypt"
+	sigByteRange       = "/ByteRange"
+	sigMarker          = "/Sig"
+	unsupportedMarker  = "unsupported PDF"
 )
 
 // PDFResult is the layout of a parsed PDF.
@@ -177,8 +181,18 @@ func buildWords(gs []pdf.Text) []Word {
 			x0 = g.X
 		}
 		cur.WriteString(g.S)
-		end = g.X + g.W
+		end = g.X + glyphWidth(g)
 	}
 	flush()
 	return words
+}
+
+// glyphWidth is the run's advance width. Fonts without width tables report 0,
+// which would measure the next gap from the run's start and split kerned
+// words ("T imesheet"); estimate an average advance instead.
+func glyphWidth(g pdf.Text) float64 {
+	if g.W > 0 {
+		return g.W
+	}
+	return float64(utf8.RuneCountInString(g.S)) * estCharWidthFactor * g.FontSize
 }

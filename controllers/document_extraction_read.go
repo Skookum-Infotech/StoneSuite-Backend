@@ -210,6 +210,9 @@ func (h *DocExtractOps) Notify(w http.ResponseWriter, r *http.Request) {
 		h.failStoreMutation(w, r, ex.ID, err)
 		return
 	}
+	// The job may have finished before the flag was set; the worker has then
+	// already passed its notify step, so send it here (claimed, exactly once).
+	h.notifyIfReady(r.Context(), c, ex.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

@@ -123,6 +123,8 @@ type docExtractEnv struct {
 	queue *fakeDocQueue
 	allow bool // create permission
 	ai    bool
+
+	notified []string // ids passed to the notifyIfReady seam
 }
 
 func newDocExtractEnv(t *testing.T) *docExtractEnv {
@@ -145,7 +147,19 @@ func newDocExtractEnv(t *testing.T) *docExtractEnv {
 	}
 	e.h.objectsFor = func(*tenancy.Tenant) docExtractObjects { return e.objs }
 	e.h.aiAvailable = func(context.Context, *docExtractCaller) (bool, error) { return e.ai, nil }
+	e.h.notifyIfReady = func(_ context.Context, _ *docExtractCaller, id string) { e.notified = append(e.notified, id) }
 	return e
+}
+
+// A user who asks to be notified must trigger the ready check, so a job that
+// finished before the flag was set still produces a notification.
+func TestDocExtract_Notify_ChecksReadyAfterSettingFlag(t *testing.T) {
+	e := newDocExtractEnv(t)
+	id := "11111111-1111-1111-1111-111111111111"
+	e.store.rows[id] = &docextractjob.Extraction{ID: id, OwnerIdentityID: testIdentity, DocType: "sales_order", Status: docextractjob.StatusReady}
+	rec := e.do(e.h.Notify, http.MethodPost, "/x", "", id)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{id}, e.notified)
 }
 
 func (e *docExtractEnv) do(handler http.HandlerFunc, method, target, body string, id string) *httptest.ResponseRecorder {
@@ -400,4 +414,20 @@ func TestValidSHA256Hex(t *testing.T) {
 	assert.True(t, validSHA256Hex(testSHA))
 	assert.False(t, validSHA256Hex(strings.Repeat("g", 64)))
 	assert.False(t, validSHA256Hex(""))
+}
+
+// Browsers send an empty or generic type for files the OS can't classify; the
+// extension decides, and the response says which type to PUT with.
+func TestDocExtract_Create_GenericContentTypeUsesExtension(t *testing.T) {
+	for _, ct := range []string{"", "application/octet-stream"} {
+		t.Run(ct, func(t *testing.T) {
+			e := newDocExtractEnv(t)
+			body := `{"docType":"sales_order","fileName":"PO.PDF","sizeBytes":500,"contentType":"` + ct + `"}`
+			rec := e.do(e.h.Create, http.MethodPost, "/x", body, "")
+			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), `"contentType":"application/pdf"`)
+			require.Len(t, e.store.created, 1)
+			assert.Equal(t, "application/pdf", e.store.created[0].ContentType)
+		})
+	}
 }

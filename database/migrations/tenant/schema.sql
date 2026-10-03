@@ -8922,6 +8922,10 @@ CREATE TABLE IF NOT EXISTS document_extractions (
 CREATE INDEX IF NOT EXISTS idx_doc_extractions_owner   ON document_extractions (owner_identity_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_doc_extractions_sha     ON document_extractions (doc_type, sha256);
 CREATE INDEX IF NOT EXISTS idx_doc_extractions_expires ON document_extractions (expires_at);
+-- Set once the "document ready" notification is sent; the worker and
+-- POST /{id}/notify both claim it, so a user who asks to be notified after the
+-- job already finished still gets exactly one notification.
+ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS ready_notified_at TIMESTAMPTZ NULL;
 
 CREATE TABLE IF NOT EXISTS document_party_alias (
     id             BIGSERIAL    PRIMARY KEY,

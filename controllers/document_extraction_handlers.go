@@ -43,24 +43,30 @@ type docExtractCreateRequest struct {
 	ContentType string             `json:"contentType"`
 }
 
+// genericContentTypes are what browsers send when the OS has no type for a
+// file (some Windows setups); the extension then decides the type.
+var genericContentTypes = map[string]bool{"": true, "application/octet-stream": true}
+
 // validateDocExtractUpload checks the upload's extension, content type and size
-// and returns the sanitized file name and lower-case extension (no dot). A
-// non-empty problem is the user-facing 400 message (worded like the import
-// page's), so it is a plain sentence rather than an error to wrap.
-func (h *DocExtractOps) validateDocExtractUpload(req docExtractCreateRequest) (name, ext, problem string) {
+// and returns the sanitized file name, lower-case extension (no dot) and the
+// content type the upload must be PUT with. A missing or generic content type
+// is replaced by the extension's. A non-empty problem is the user-facing 400
+// message (worded like the import page's), so it is a plain sentence rather
+// than an error to wrap.
+func (h *DocExtractOps) validateDocExtractUpload(req docExtractCreateRequest) (name, ext, contentType, problem string) {
 	name = workflow.SanitizeFileName(req.FileName)
 	dotExt := strings.ToLower(filepath.Ext(name))
 	wantCT, ok := docExtractUploads[dotExt]
 	if !ok {
-		return "", "", fmt.Sprintf("File type %q is not supported (allowed: pdf, docx).", dotExt)
+		return "", "", "", fmt.Sprintf("File type %q is not supported (allowed: pdf, docx).", dotExt)
 	}
-	if req.ContentType != wantCT {
-		return "", "", fmt.Sprintf("Content type %q does not match file extension %q.", req.ContentType, dotExt)
+	if req.ContentType != wantCT && !genericContentTypes[req.ContentType] {
+		return "", "", "", fmt.Sprintf("Content type %q does not match file extension %q.", req.ContentType, dotExt)
 	}
 	if req.SizeBytes <= 0 || req.SizeBytes > h.cfg.MaxBytes {
-		return "", "", fmt.Sprintf("File must be between 1 byte and %d MB.", h.cfg.MaxBytes>>20)
+		return "", "", "", fmt.Sprintf("File must be between 1 byte and %d MB.", h.cfg.MaxBytes>>20)
 	}
-	return name, strings.TrimPrefix(dotExt, "."), ""
+	return name, strings.TrimPrefix(dotExt, "."), wantCT, ""
 }
 
 // Create handles POST /api/tenant/document-extractions: validates the upload
@@ -84,7 +90,7 @@ func (h *DocExtractOps) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCreate(w, r, c, req.DocType) || !h.requireAI(w, r, c) {
 		return
 	}
-	name, ext, problem := h.validateDocExtractUpload(req)
+	name, ext, contentType, problem := h.validateDocExtractUpload(req)
 	if problem != "" {
 		fail(w, http.StatusBadRequest, problem)
 		return
@@ -98,7 +104,7 @@ func (h *DocExtractOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ex, err := c.store.Create(r.Context(), docextractjob.CreateParams{
-		DocType: string(req.DocType), OwnerIdentityID: c.identityID, FileName: name, ContentType: req.ContentType,
+		DocType: string(req.DocType), OwnerIdentityID: c.identityID, FileName: name, ContentType: contentType,
 		SizeBytes: req.SizeBytes, TenantSlug: c.tenant.Slug, Extension: ext, TTL: h.stagingTTL(),
 	})
 	if err != nil {
@@ -115,7 +121,8 @@ func (h *DocExtractOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"success": true, "id": ex.ID, "uploadUrl": url, "expiresAt": time.Now().Add(h.cfg.PresignTTL).UTC(),
+		"success": true, "id": ex.ID, "uploadUrl": url, "contentType": ex.ContentType,
+		"expiresAt": time.Now().Add(h.cfg.PresignTTL).UTC(),
 	})
 }
 
@@ -171,7 +178,8 @@ func (h *DocExtractOps) Presign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true, "id": ex.ID, "uploadUrl": url, "expiresAt": time.Now().Add(h.cfg.PresignTTL).UTC(),
+		"success": true, "id": ex.ID, "uploadUrl": url, "contentType": ex.ContentType,
+		"expiresAt": time.Now().Add(h.cfg.PresignTTL).UTC(),
 	})
 }
 

@@ -27,6 +27,10 @@ func validateBinInput(in *BinInput) error {
 	if in.CapacityUnits < 0 || in.CapacityArea < 0 {
 		return ClientError{Msg: "Capacity cannot be negative."}
 	}
+	in.MachineLabel = strings.TrimSpace(in.MachineLabel)
+	if !in.IsWIP && in.MachineLabel != "" {
+		return ClientError{Msg: "A machine can only be assigned to a WIP bin."}
+	}
 	in.Code = strings.TrimSpace(in.Code)
 	return nil
 }
@@ -80,12 +84,12 @@ func CreateBin(ctx context.Context, pool *pgxpool.Pool, in BinInput, actorEmploy
 		INSERT INTO inventory_bin (
 			warehouse_id, bin_code, bin_name, bin_type, bin_parent_id,
 			bin_path, bin_depth, bin_capacity_units, bin_capacity_area,
-			bin_is_active, bin_notes, bin_created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			bin_is_active, bin_notes, bin_created_by, bin_is_wip, bin_machine_label
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING inventory_bin_uuid`,
 		warehouseID, in.Code, in.Name, in.Type, parentID,
 		path, depth, in.CapacityUnits, in.CapacityArea,
-		in.IsActive, in.Notes, nullableInt(actorEmployeeID),
+		in.IsActive, in.Notes, nullableInt(actorEmployeeID), in.IsWIP, in.MachineLabel,
 	).Scan(&newUUID)
 	if err != nil {
 		return nil, mapBinWriteErr(err, "insert")
@@ -160,11 +164,12 @@ func UpdateBin(ctx context.Context, pool *pgxpool.Pool, uuid string, in BinInput
 			bin_capacity_units = $8, bin_capacity_area = $9,
 			bin_is_active = $10, bin_notes = $11,
 			bin_updated_at = NOW(), bin_updated_by = $12,
+			bin_is_wip = $13, bin_machine_label = $14,
 			bin_record_version = bin_record_version + 1
 		WHERE inventory_bin_id = $1`,
 		cur.id, in.Code, in.Name, in.Type, parentID, newPath, newDepth,
 		in.CapacityUnits, in.CapacityArea, in.IsActive, in.Notes,
-		nullableInt(actorEmployeeID)); err != nil {
+		nullableInt(actorEmployeeID), in.IsWIP, in.MachineLabel); err != nil {
 		return mapBinWriteErr(err, "update")
 	}
 

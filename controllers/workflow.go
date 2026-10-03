@@ -45,6 +45,7 @@ func (h *WorkflowOps) authorize(w http.ResponseWriter, r *http.Request, resource
 		return nil, "", "", false
 	}
 	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied", "identity", payload.ID, "resource", string(resource), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" "+string(resource)+".")
 		return nil, "", "", false
 	}

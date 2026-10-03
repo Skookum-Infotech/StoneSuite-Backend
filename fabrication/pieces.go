@@ -101,6 +101,9 @@ func UpdatePiece(ctx context.Context, pool *pgxpool.Pool, jobUUID, pieceUUID str
 	if !canEditPieces(st.statusCode) {
 		return nil, ErrPiecesLocked
 	}
+	if err := requireUnboundPiece(ctx, tx, st.internalID, pieceUUID); err != nil {
+		return nil, err
+	}
 
 	var soInternalID int
 	if err := tx.QueryRow(ctx, `
@@ -157,6 +160,9 @@ func RemovePiece(ctx context.Context, pool *pgxpool.Pool, jobUUID, pieceUUID str
 	}
 	if !canEditPieces(st.statusCode) {
 		return ErrPiecesLocked
+	}
+	if err := requireUnboundPiece(ctx, tx, st.internalID, pieceUUID); err != nil {
+		return err
 	}
 
 	var pieceInternalID int

@@ -80,7 +80,8 @@ const jobSelect = `
 	       COALESCE(to_char(fj.job_actual_install_date,'YYYY-MM-DD'),''),
 	       fj.job_owner_id, fj.job_templater_id, fj.job_fabricator_id, fj.job_install_crew_id,
 	       fj.job_notes, fj.job_custom_fields,
-	       fj.fabrication_job_created_at, fj.fabrication_job_updated_at
+	       fj.fabrication_job_created_at, fj.fabrication_job_updated_at,
+ fj.workflow_version, fj.fabrication_job_record_version, fj.delivery_mode
 	FROM fabrication_job fj
 	JOIN lkp_record_status rs ON rs.record_status_id = fj.fabrication_job_status
 	JOIN sales_order so ON so.sales_order_id = fj.sales_order_id
@@ -102,6 +103,7 @@ func scanJob(row pgx.Row) (*Job, error) {
 		&j.OwnerEmployeeID, &j.TemplaterEmployeeID, &j.FabricatorEmployeeID, &j.InstallCrewEmployeeID,
 		&j.Notes, &customRaw,
 		&j.CreatedAt, &j.UpdatedAt,
+		&j.WorkflowVersion, &j.Version, &j.DeliveryMode,
 	); err != nil {
 		return nil, err
 	}
@@ -139,7 +141,7 @@ func loadPieces(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]JobItem
 		SELECT fi.fabrication_job_item_uuid, fi.piece_number, fi.piece_name, fi.piece_type,
 		       fi.piece_length_mm, fi.piece_width_mm, fi.piece_thickness_mm,
 		       fi.sink_cutout_count, fi.cooktop_cutout_count, fi.seam_count, fi.piece_status,
-		       COALESCE(soi.sales_order_item_uuid::text, '')
+		       COALESCE(soi.sales_order_item_uuid::text, ''), fi.production_stage, fi.piece_record_version
 		FROM fabrication_job_item fi
 		JOIN fabrication_job fj ON fj.fabrication_job_id = fi.fabrication_job_id
 		LEFT JOIN sales_order_item soi ON soi.sales_order_item_id = fi.sales_order_item_id
@@ -155,7 +157,7 @@ func loadPieces(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]JobItem
 		if err := rows.Scan(&p.ID, &p.PieceNumber, &p.PieceName, &p.PieceType,
 			&p.LengthMM, &p.WidthMM, &p.ThicknessMM,
 			&p.SinkCutoutCount, &p.CooktopCutoutCount, &p.SeamCount, &p.Status,
-			&p.SalesOrderItemUUID); err != nil {
+			&p.SalesOrderItemUUID, &p.ProductionStage, &p.Version); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

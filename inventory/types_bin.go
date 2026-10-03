@@ -25,6 +25,8 @@ type Bin struct {
 	CapacityArea  float64   `json:"capacityArea"`
 	IsActive      bool      `json:"isActive"`
 	IsSystem      bool      `json:"isSystem"`
+	IsWIP         bool      `json:"isWip"`
+	MachineLabel  string    `json:"machineLabel"`
 	Notes         string    `json:"notes"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
@@ -52,6 +54,8 @@ type BinInput struct {
 	CapacityUnits int     `json:"capacityUnits"`
 	CapacityArea  float64 `json:"capacityArea"`
 	IsActive      bool    `json:"isActive"`
+	IsWIP         bool    `json:"isWip"`
+	MachineLabel  string  `json:"machineLabel"`
 	Notes         string  `json:"notes"`
 }
 

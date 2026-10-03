@@ -69,6 +69,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			id := item.internalID
 			rl.inventoryItemID = &id
 			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
+			if strings.TrimSpace(in.Description) != "" {
+				rl.desc = in.Description
+			}
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice
@@ -185,90 +188,14 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePurchaseOrderInput
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	vendorInternalID, vendorName, err := vendorSnapshot(ctx, tx, in.VendorUUID)
+	draft, err := CreateDraftTx(ctx, tx, in, actorEmployeeID)
 	if err != nil {
 		return nil, err
 	}
-
-	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
-	if err != nil {
-		return nil, err
-	}
-	lineMoney := make([]LineMoney, len(lines))
-	for i, l := range lines {
-		lineMoney[i] = l.money
-	}
-	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
-
-	recordTypeID, err := recordTypeIDByCode(ctx, tx, pordRecordTypeCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve PORD record type: %w", err)
-	}
-	draftStatusID, err := statusIDByCode(ctx, tx, recordTypeID, draftStatusCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve DRFT status: %w", err)
-	}
-
-	ownerEmployeeID := actorEmployeeID
-	if in.OwnerEmployeeID != nil && *in.OwnerEmployeeID > 0 {
-		ownerEmployeeID = *in.OwnerEmployeeID
-	}
-	custom := in.CustomFields
-	if custom == nil {
-		custom = map[string]any{}
-	}
-
-	cv := []colVal{
-		{"record_type", recordTypeID, ""},
-		{"purchase_order_status", draftStatusID, ""},
-		{"purchase_order_vendor_id", vendorInternalID, ""},
-		{"purchase_order_vendor_name", vendorName, ""},
-		{"purchase_order_reference_number", in.ReferenceNumber, ""},
-		{"purchase_order_date", orNow(in.OrderDate), "::date"},
-		{"purchase_order_expected_date", nullableDate(in.ExpectedDate), "::date"},
-		{"purchase_order_sales_tax_percent", in.SalesTaxPercent, ""},
-		{"purchase_order_memo", in.Memo, ""},
-		{"purchase_order_notes", in.Notes, ""},
-		{"purchase_order_internal_notes", in.InternalNotes, ""},
-		{"purchase_order_terms_conditions", in.TermsConditions, ""},
-		{"purchase_order_owner_id", nullableInt(ownerEmployeeID), ""},
-		{"purchase_order_payment_terms", in.PaymentTermsID, ""},
-		{"purchase_order_currency", in.CurrencyID, ""},
-		{"purchase_order_subtotal", header.Subtotal, ""},
-		{"purchase_order_discount_total", header.DiscountTotal, ""},
-		{"purchase_order_tax_total", header.TaxTotal, ""},
-		{"purchase_order_shipping_charge", in.ShippingCharge, ""},
-		{"purchase_order_adjustment", in.Adjustment, ""},
-		{"purchase_order_grand_total", header.GrandTotal, ""},
-		{"purchase_order_custom_fields", custom, ""},
-		{"purchase_order_created_by", nullableInt(actorEmployeeID), ""},
-	}
-	cv = append(cv, addrColVals(in.ShipTo)...)
-
-	insertSQL, insertArgs := buildInsert("purchase_order", cv, "purchase_order_id, purchase_order_uuid")
-	var internalID int
-	var newUUID string
-	err = tx.QueryRow(ctx, insertSQL, insertArgs...).Scan(&internalID, &newUUID)
-	if err != nil {
-		if isForeignKeyViolation(err) {
-			return nil, ClientError{Msg: "One of the referenced ids (payment terms, currency, state, or country) does not exist."}
-		}
-		return nil, fmt.Errorf("insert purchase order: %w", err)
-	}
-
-	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
-		return nil, err
-	}
-
-	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {
-		return nil, err
-	}
-
-	writeHistory(ctx, tx, internalID, "create", nil, &draftStatusID, actorEmployeeID)
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create purchase order: %w", err)
 	}
-	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
-	return Get(ctx, pool, newUUID)
+	notifyCreated(ctx, pool, draft.ID, draft.InternalID, actorEmployeeID)
+	return Get(ctx, pool, draft.ID)
 }

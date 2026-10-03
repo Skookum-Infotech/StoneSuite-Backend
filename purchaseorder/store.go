@@ -12,7 +12,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/workflow"
 )
@@ -237,7 +236,7 @@ func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) 
 // validateCustom validates custom fields against the "purchase_order"
 // workflow's field definitions (≤15, typed) — the corrected skeleton
 // (mirrors invoice.validateCustom; estimate/quote dropped this, known drift).
-func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]any) error {
+func validateCustom(ctx context.Context, pool workflow.Querier, custom map[string]any) error {
 	if custom == nil {
 		return nil
 	}

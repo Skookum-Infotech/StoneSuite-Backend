@@ -13,12 +13,13 @@ import "time"
 // it would break inventory_slab_ledger, fabrication_job_slab and every existing
 // foreign key, for no gain.
 type Unit struct {
-	ID           string `json:"id"`
-	Serial       string `json:"serial"`
-	Kind         string `json:"kind"` // slab | remnant
-	VendorID     *int   `json:"vendorId,omitempty"`
-	SupplierCode string `json:"supplierCode,omitempty"`
-	Barcode      string `json:"barcode,omitempty"`
+	InspectionStatus string `json:"inspectionStatus"`
+	ID               string `json:"id"`
+	Serial           string `json:"serial"`
+	Kind             string `json:"kind"` // slab | remnant
+	VendorID         *int   `json:"vendorId,omitempty"`
+	SupplierCode     string `json:"supplierCode,omitempty"`
+	Barcode          string `json:"barcode,omitempty"`
 
 	InventoryItemID   string `json:"inventoryItemId"`
 	InventoryItemName string `json:"inventoryItemName,omitempty"`

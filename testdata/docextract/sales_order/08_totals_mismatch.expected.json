@@ -1,0 +1,29 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "ACME Stone Inc",
+    "order_date": "2026-06-06",
+    "payment_terms": "Net 30",
+    "po_number": "3310",
+    "subtotal": "1000.00",
+    "total": "1000.00"
+  },
+  "lines": [
+    {
+      "sku": "A-1",
+      "description": "Granite sample set",
+      "qty": "5",
+      "uom": "EA",
+      "unit_price": "100.00",
+      "amount": "500.00"
+    },
+    {
+      "sku": "A-2",
+      "description": "Marble sample set",
+      "qty": "4",
+      "uom": "EA",
+      "unit_price": "122.50",
+      "amount": "490.00"
+    }
+  ]
+}

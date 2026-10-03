@@ -1,0 +1,61 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Summit Kitchens",
+    "order_date": "2026-01-02",
+    "payment_terms": "Net 30",
+    "po_number": "88-1203",
+    "subtotal": "3646.00",
+    "total": "3646.00"
+  },
+  "lines": [
+    {
+      "sku": "ST-1",
+      "description": "Soapstone slab",
+      "qty": "2",
+      "uom": "EA",
+      "unit_price": "900.00",
+      "amount": "1800.00"
+    },
+    {
+      "sku": "ST-2",
+      "description": "Slate tile pack",
+      "qty": "10",
+      "uom": "EA",
+      "unit_price": "35.00",
+      "amount": "350.00"
+    },
+    {
+      "sku": "ST-3",
+      "description": "Epoxy adhesive",
+      "qty": "5",
+      "uom": "EA",
+      "unit_price": "22.00",
+      "amount": "110.00"
+    },
+    {
+      "sku": "ST-4",
+      "description": "Quartzite slab",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "1200.00",
+      "amount": "1200.00"
+    },
+    {
+      "sku": "ST-5",
+      "description": "Diamond blade 7in",
+      "qty": "2",
+      "uom": "EA",
+      "unit_price": "64.50",
+      "amount": "129.00"
+    },
+    {
+      "sku": "ST-6",
+      "description": "Safety gloves",
+      "qty": "12",
+      "uom": "EA",
+      "unit_price": "4.75",
+      "amount": "57.00"
+    }
+  ]
+}

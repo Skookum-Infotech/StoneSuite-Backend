@@ -1,0 +1,29 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "ACME Stone Inc",
+    "order_date": "2026-08-12",
+    "payment_terms": "Net 60",
+    "po_number": "2208",
+    "subtotal": "2513.20",
+    "total": "2513.20"
+  },
+  "lines": [
+    {
+      "sku": "QZ-20",
+      "description": "Quartz slab 20mm",
+      "qty": "12.5",
+      "uom": "SQM",
+      "unit_price": "140.00",
+      "amount": "1750.00"
+    },
+    {
+      "sku": "PC-80",
+      "description": "Porcelain panel",
+      "qty": "8",
+      "uom": "SQM",
+      "unit_price": "95.40",
+      "amount": "763.20"
+    }
+  ]
+}

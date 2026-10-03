@@ -1,0 +1,38 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "ACME Stone Inc",
+    "order_date": "2026-01-02",
+    "payment_terms": "Net 30",
+    "po_number": "4471",
+    "subtotal": "2034.50",
+    "tax": "167.85",
+    "total": "2202.35"
+  },
+  "lines": [
+    {
+      "sku": "GR-100",
+      "description": "Black Galaxy granite slab",
+      "qty": "10",
+      "uom": "SF",
+      "unit_price": "12.50",
+      "amount": "125.00"
+    },
+    {
+      "sku": "QZ-200",
+      "description": "Calacatta quartz slab",
+      "qty": "4",
+      "uom": "EA",
+      "unit_price": "450.00",
+      "amount": "1800.00"
+    },
+    {
+      "sku": "TL-300",
+      "description": "Tile adhesive 25kg bag",
+      "qty": "6",
+      "uom": "EA",
+      "unit_price": "18.25",
+      "amount": "109.50"
+    }
+  ]
+}

@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-544 endpoints across 7 surfaces, read from `main.go`.
+552 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 460 |
+| staff token + tenant | 468 |
 | portal token + tenant | 26 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -320,7 +320,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 459 endpoints
+## `tenant` — 467 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -459,6 +459,19 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `ANY` | `/api/tenant/dashboard/widgets/roles` | staff token + tenant | `dashboardUI.RoleAllocations` |
 | `GET` | `/api/tenant/dashboard/widgets/sales-orders-snapshot/data` | staff token + tenant | `dashboardUI.SalesOrdersSnapshot` |
 | `GET` | `/api/tenant/dashboard/widgets/top-customers/data` | staff token + tenant | `dashboardUI.TopCustomers` |
+
+### document-extractions
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/document-extractions` | staff token + tenant | `docExtractOps.List` |
+| `POST` | `/api/tenant/document-extractions` | staff token + tenant | `docExtractOps.Create` |
+| `GET` | `/api/tenant/document-extractions/{id}` | staff token + tenant | `docExtractOps.Get` |
+| `POST` | `/api/tenant/document-extractions/{id}/complete` | staff token + tenant | `docExtractOps.Complete` |
+| `POST` | `/api/tenant/document-extractions/{id}/discard` | staff token + tenant | `docExtractOps.Discard` |
+| `POST` | `/api/tenant/document-extractions/{id}/notify` | staff token + tenant | `docExtractOps.Notify` |
+| `POST` | `/api/tenant/document-extractions/{id}/presign` | staff token + tenant | `docExtractOps.Presign` |
+| `POST` | `/api/tenant/document-extractions/{id}/start` | staff token + tenant | `docExtractOps.Start` |
 
 ### estimates
 

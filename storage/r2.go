@@ -46,6 +46,22 @@ type Client struct {
 	accessKey string
 	secretKey string
 	host      string // {accountID}.r2.cloudflarestorage.com
+	scheme    string // "" means https; "http" only via the development endpoint override
+}
+
+// defaultScheme is the scheme for every real R2 request.
+const defaultScheme = "https"
+
+// devEnvironment is the only APP_ENV in which R2Endpoint is honoured.
+const devEnvironment = "development"
+
+// baseURL returns scheme://host for object URLs.
+func (c *Client) baseURL() string {
+	scheme := c.scheme
+	if scheme == "" {
+		scheme = defaultScheme
+	}
+	return scheme + "://" + c.host
 }
 
 // New builds a Client from the application config. Returns (nil, nil) when
@@ -56,11 +72,22 @@ func New(cfg config.Config) (*Client, error) {
 	if cfg.CloudflareAccountID == "" || cfg.R2AccessKeyID == "" || cfg.R2SecretAccessKey == "" {
 		return nil, nil
 	}
-	return &Client{
+	c := &Client{
 		accessKey: cfg.R2AccessKeyID,
 		secretKey: cfg.R2SecretAccessKey,
 		host:      cfg.CloudflareAccountID + ".r2.cloudflarestorage.com",
-	}, nil
+	}
+	// Development-only: point at a local S3-compatible server (MinIO or a
+	// fake) so upload flows can be exercised without real R2. Ignored in
+	// every other environment so a stray env var can never redirect prod data.
+	if cfg.R2Endpoint != "" && cfg.Environment == devEnvironment {
+		u, err := url.Parse(cfg.R2Endpoint)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != defaultScheme) {
+			return nil, fmt.Errorf("invalid R2_ENDPOINT %q", cfg.R2Endpoint)
+		}
+		c.scheme, c.host = u.Scheme, u.Host
+	}
+	return c, nil
 }
 
 // IsConfigured reports whether the client has valid credentials.
@@ -150,7 +177,7 @@ func (c *Client) Put(ctx context.Context, key, contentType string, body []byte) 
 		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
 	)
 
-	objURL := "https://" + c.host + "/" + c.bucket + "/" + encodeKeyPath(key)
+	objURL := c.baseURL() + "/" + c.bucket + "/" + encodeKeyPath(key)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, objURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build r2 put request: %w", err)
@@ -215,7 +242,7 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
 		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
 	)
 
-	objURL := "https://" + c.host + "/" + c.bucket + "/" + encodeKeyPath(key)
+	objURL := c.baseURL() + "/" + c.bucket + "/" + encodeKeyPath(key)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, objURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build r2 get request: %w", err)
@@ -323,7 +350,7 @@ func (c *Client) listPage(ctx context.Context, continuationToken string) (listPa
 		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
 	)
 
-	listURL := "https://" + c.host + bucketPath + "?" + canonQS
+	listURL := c.baseURL() + bucketPath + "?" + canonQS
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
 	if err != nil {
 		return listPage{}, fmt.Errorf("build r2 list request: %w", err)
@@ -416,7 +443,7 @@ func (c *Client) presignURL(method, key, contentType string, extraQuery url.Valu
 
 	// Build the final URL. The canonical query string is used here too so
 	// the encoding in the URL exactly matches what was signed.
-	rawURL := "https://" + c.host + "/" + c.bucket + "/" + encodeKeyPath(key)
+	rawURL := c.baseURL() + "/" + c.bucket + "/" + encodeKeyPath(key)
 	return rawURL + "?" + canonicalQueryString(q), nil
 }
 
@@ -450,7 +477,7 @@ func (c *Client) signedDelete(ctx context.Context, key string) error {
 		awsAlgorithm, c.accessKey, credScope, signedHdrs, sig,
 	)
 
-	objURL := "https://" + c.host + "/" + c.bucket + "/" + encodeKeyPath(key)
+	objURL := c.baseURL() + "/" + c.bucket + "/" + encodeKeyPath(key)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, objURL, nil)
 	if err != nil {
 		return fmt.Errorf("build delete request: %w", err)

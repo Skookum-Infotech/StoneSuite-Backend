@@ -215,14 +215,11 @@ func (j *jobRunner) extractOrCache(ctx context.Context, ex *Extraction, data []b
 	return res, method, adapter.calls > 0, method, nil
 }
 
-// maybeNotify re-reads the row (the user may have closed the dialog and set
-// notify_on_complete while the job ran) and notifies the uploader if asked.
+// maybeNotify notifies the uploader if they asked (they may have closed the
+// dialog and set notify_on_complete while the job ran); the claim makes it
+// exactly-once against a concurrent POST /{id}/notify.
 func (j *jobRunner) maybeNotify(ctx context.Context, id string) {
-	ex, err := j.store.GetInternal(ctx, id)
-	if err != nil || !ex.NotifyOnComplete || ex.Status != StatusReady {
-		return
-	}
-	notifyReady(ctx, j.notify, j.tenantID, ex)
+	NotifyIfReady(ctx, j.store, j.notify, j.tenantID, id)
 }
 
 // loadOwnCompanyNames reads the tenant's own names from company_profile; a

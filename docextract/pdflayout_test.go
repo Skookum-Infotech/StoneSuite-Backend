@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ledongthuc/pdf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -115,5 +116,30 @@ func TestIsJunkRune(t *testing.T) {
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, isJunkRune(tt.r), "%U", tt.r)
+	}
+}
+
+// Fonts without width tables report W=0 for every run; a kerned word must not
+// be split at the kern ("T imesheet"), while a real column gap still splits.
+func TestBuildWords_ZeroWidthRuns(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []pdf.Text
+		want []string
+	}{
+		{"kerned capital", []pdf.Text{{X: 33.75, FontSize: 14, S: "T"}, {X: 39.08, FontSize: 14, S: "imesheet"}}, []string{"Timesheet"}},
+		{"kern after T in Total", []pdf.Text{{X: 62.41, FontSize: 10, S: "T"}, {X: 67.24, FontSize: 10, S: "otal"}}, []string{"Total"}},
+		{"column gap splits", []pdf.Text{{X: 100, FontSize: 10, S: "Qty"}, {X: 140, FontSize: 10, S: "UoM"}}, []string{"Qty", "UoM"}},
+		{"space glyph splits", []pdf.Text{{X: 10, FontSize: 10, S: "Net"}, {X: 25, FontSize: 10, S: " "}, {X: 28, FontSize: 10, S: "30"}}, []string{"Net", "30"}},
+		{"known widths unchanged", []pdf.Text{{X: 10, W: 6, FontSize: 10, S: "A"}, {X: 20, W: 6, FontSize: 10, S: "B"}}, []string{"A", "B"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, w := range buildWords(tc.in) {
+				got = append(got, w.Text)
+			}
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }

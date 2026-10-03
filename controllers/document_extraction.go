@@ -12,6 +12,7 @@ import (
 	"stonesuite-backend/config"
 	"stonesuite-backend/docextract"
 	"stonesuite-backend/docextractjob"
+	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 )
@@ -135,6 +136,8 @@ type DocExtractOps struct {
 	newStore    func(pool *pgxpool.Pool) docExtractStore
 	objectsFor  func(tenant *tenancy.Tenant) docExtractObjects
 	aiAvailable func(ctx context.Context, caller *docExtractCaller) (bool, error)
+	// notifyIfReady sends the ready notification when the job already finished.
+	notifyIfReady func(ctx context.Context, caller *docExtractCaller, id string)
 }
 
 // NewDocExtractOps constructs the handler group. r2 may be nil (the endpoints
@@ -146,6 +149,9 @@ func NewDocExtractOps(r2 *storage.Client, queue docExtractQueue, cpPool *pgxpool
 	h.check = checkFromPool
 	h.objectsFor = h.r2Objects
 	h.aiAvailable = h.settingsAvailable
+	h.notifyIfReady = func(ctx context.Context, c *docExtractCaller, id string) {
+		docextractjob.NotifyIfReady(ctx, docextractjob.NewStore(c.pool), services.SendNotification, c.tenant.ID, id)
+	}
 	return h
 }
 

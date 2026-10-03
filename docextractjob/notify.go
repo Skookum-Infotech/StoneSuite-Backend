@@ -29,6 +29,30 @@ var resourceByDocType = map[string]string{
 // NotifyFunc sends one notification (services.SendNotification).
 type NotifyFunc func(ctx context.Context, req services.NotificationRequest) error
 
+// NotifyIfReady sends the "document ready" notification once: only the caller
+// that wins ClaimReadyNotify sends it. The worker calls it after saving a
+// result and POST /{id}/notify calls it after setting the flag, so a user who
+// asks to be notified just after the job finished is still notified.
+func NotifyIfReady(ctx context.Context, store *Store, send NotifyFunc, tenantID, id string) {
+	if send == nil {
+		return
+	}
+	won, err := store.ClaimReadyNotify(ctx, id)
+	if err != nil {
+		slog.WarnContext(ctx, "docextract: claim ready notification", "extractionId", id, "error", err)
+		return
+	}
+	if !won {
+		return
+	}
+	ex, err := store.GetInternal(ctx, id)
+	if err != nil {
+		slog.WarnContext(ctx, "docextract: load extraction for notification", "extractionId", id, "error", err)
+		return
+	}
+	notifyReady(ctx, send, tenantID, ex)
+}
+
 // notifyReady sends the in-app "document ready" notification to the uploader.
 // Best-effort: a failure is logged and never fails the job.
 func notifyReady(ctx context.Context, send NotifyFunc, tenantID string, ex *Extraction) {

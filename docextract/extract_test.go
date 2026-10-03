@@ -254,3 +254,34 @@ func TestExtract_PromptInjection(t *testing.T) {
 		assert.NotContains(t, llm.user, "Evil Corp", "injection row is withheld from the prompt")
 	})
 }
+
+// The LLM fallback must never put our own company back as the customer: a
+// customer PO names us as the vendor.
+func TestExtract_LLMOwnCompanyCustomerDropped(t *testing.T) {
+	llm := &fakeLLM{reply: `{"customer_name":"Granite Depot LLC"}`}
+	res, method, err := Extract(context.Background(), poPDF(nil), DocTypeSalesOrder,
+		Options{LLM: llm, OwnCompanyNames: []string{"Granite Depot LLC"}, ReconcileFn: noReconcile})
+	require.NoError(t, err)
+	assert.Equal(t, 1, llm.calls)
+	assert.False(t, res.Header.CustomerName.Found(), "own company dropped from the LLM answer")
+	assert.Equal(t, MethodParser, method, "nothing else was applied, so the method stays parser")
+	assert.Contains(t, res.Unresolved, KeyCustomerName)
+}
+
+// A document with no title, table, PO number or customer (a timesheet) is
+// flagged as not recognised, and its empty lists serialise as [] not null.
+func TestExtract_UnrecognisedDocument(t *testing.T) {
+	var p pdftest.Page
+	p.Add(750, pdftest.Cell{X: 50, S: "Weekly Timesheet Report"})
+	p.Add(720, pdftest.Cell{X: 50, S: "Employee Name: Pat Example"})
+	p.Add(700, pdftest.Cell{X: 50, S: "Start Date: 09/21/2026"})
+	res, _, err := Extract(context.Background(), pdftest.Build([]pdftest.Page{p}, pdftest.Options{}), DocTypeSalesOrder, Options{ReconcileFn: noReconcile})
+	require.NoError(t, err)
+	assert.Contains(t, res.Warnings, WarnNotRecognized)
+	assert.NotNil(t, res.Lines, "lines must be [] on the wire, never null")
+	assert.Empty(t, res.Lines)
+
+	po, _, err := Extract(context.Background(), poPDF([]string{"ACME Stone Inc"}), DocTypeSalesOrder, Options{ReconcileFn: noReconcile})
+	require.NoError(t, err)
+	assert.NotContains(t, po.Warnings, WarnNotRecognized, "a real PO is recognised")
+}

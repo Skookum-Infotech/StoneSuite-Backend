@@ -156,6 +156,11 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			id := item.internalID
 			rl.inventoryItemID = &id
 			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
+			// A line description the caller wrote (or carried from a customer's
+			// PO) wins over the catalog's; identity, unit and tax stay the item's.
+			if d := strings.TrimSpace(in.Description); d != "" {
+				rl.desc = d
+			}
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice

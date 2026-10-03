@@ -99,7 +99,16 @@ func TestStore_StateMachine(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, other)
 
+	won, err := s.ClaimReadyNotify(ctx, e.ID)
+	require.NoError(t, err)
+	assert.False(t, won, "no claim before the owner asked to be notified")
 	require.NoError(t, s.SetNotify(ctx, e.ID, ownerA, true))
+	won, err = s.ClaimReadyNotify(ctx, e.ID)
+	require.NoError(t, err)
+	assert.True(t, won, "a ready row whose owner asked to be notified is claimed")
+	won, err = s.ClaimReadyNotify(ctx, e.ID)
+	require.NoError(t, err)
+	assert.False(t, won, "the ready notification is sent exactly once")
 
 	rec := "33333333-3333-4333-8333-333333333333"
 	require.NoError(t, s.CompleteCAS(ctx, e.ID, ownerA, rec))

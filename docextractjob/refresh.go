@@ -38,7 +38,19 @@ func ResolveDoc(ctx context.Context, pool *pgxpool.Pool, ex *Extraction, sha str
 	if err != nil {
 		return ResultDoc{}, fmt.Errorf("duplicate checks: %w", err)
 	}
-	return ResultDoc{Extracted: extracted, Resolution: resolution, Duplicates: append(dups, found...)}, nil
+	// Results cached before Extract stopped emitting null lists still carry nil
+	// slices; normalise here so every stored doc serialises them as [].
+	if extracted.Lines == nil {
+		extracted.Lines = []docextract.Line{}
+	}
+	if extracted.Pages == nil {
+		extracted.Pages = []docextract.PageRows{}
+	}
+	if resolution.Lines == nil {
+		resolution.Lines = []LineMatch{}
+	}
+	all := append([]Duplicate{}, dups...)
+	return ResultDoc{Extracted: extracted, Resolution: resolution, Duplicates: append(all, found...)}, nil
 }
 
 // Refresh re-resolves a ready extraction's stored text against current master

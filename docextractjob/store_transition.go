@@ -135,6 +135,23 @@ func (s *Store) SetNotify(ctx context.Context, id, ownerIdentityID string, notif
 	return nil
 }
 
+// ClaimReadyNotify marks the ready notification as sent and reports whether
+// this call won the claim. It only succeeds for a ready row whose owner asked
+// to be notified and that has not been notified yet.
+func (s *Store) ClaimReadyNotify(ctx context.Context, id string) (bool, error) {
+	if !validUUID(id) {
+		return false, nil
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE document_extractions SET ready_notified_at = NOW()
+		WHERE id = $1::uuid AND status = $2 AND notify_on_complete AND ready_notified_at IS NULL`,
+		id, StatusReady)
+	if err != nil {
+		return false, fmt.Errorf("claim ready notification: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // CompleteCAS atomically moves the caller's ready, non-expired extraction to
 // used and records the created record's uuid. A second call (or a different
 // state) returns ErrConflict; another owner's id returns ErrNotFound.

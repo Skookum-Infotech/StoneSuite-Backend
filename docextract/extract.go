@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -86,7 +87,24 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 			res.Unresolved = salesOrderUnresolved(&res)
 		}
 	}
+	if notRecognized(&res) {
+		res.Warnings = append(res.Warnings, WarnNotRecognized)
+	}
+	// Empty, never null, on the wire: clients iterate these without a guard.
+	if res.Lines == nil {
+		res.Lines = []Line{}
+	}
+	if res.Pages == nil {
+		res.Pages = []PageRows{}
+	}
 	return res, method, nil
+}
+
+// notRecognized reports a document with no title class, no line table, no PO
+// number and no customer: almost certainly not a purchase order at all.
+func notRecognized(res *Result) bool {
+	return res.ClassifiedAs == "" && len(res.Lines) == 0 &&
+		!res.Header.PONumber.Found() && !res.Header.CustomerName.Found()
 }
 
 // buildSalesOrder runs the deterministic stages over res.Pages.
@@ -213,6 +231,11 @@ func runLLM(ctx context.Context, res *Result, keys []string, opts Options) bool 
 	if err != nil {
 		res.Warnings = append(res.Warnings, WarnAIUnavailable)
 		return false
+	}
+	// A customer PO names us as the vendor; the model must not put us back as the customer.
+	if slices.Contains(applied, KeyCustomerName) && isOwnCompany(res.Header.CustomerName.Value, opts.OwnCompanyNames) {
+		res.Header.CustomerName = notFound()
+		applied = slices.DeleteFunc(applied, func(k string) bool { return k == KeyCustomerName })
 	}
 	return len(applied) > 0
 }

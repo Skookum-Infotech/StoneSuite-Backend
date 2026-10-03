@@ -9021,3 +9021,116 @@ CREATE TABLE IF NOT EXISTS document_extraction_feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_feedback_extraction ON document_extraction_feedback (extraction_id);
 CREATE INDEX IF NOT EXISTS idx_doc_feedback_layout     ON document_extraction_feedback (layout_fingerprint);
+CREATE TABLE IF NOT EXISTS fabrication_template_revision (
+ template_id BIGSERIAL PRIMARY KEY,
+ template_uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ fabrication_job_id INTEGER NOT NULL REFERENCES fabrication_job(fabrication_job_id),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ sales_order_version BIGINT NOT NULL CHECK(sales_order_version>0),
+ state TEXT NOT NULL DEFAULT 'submitted' CHECK(state IN ('submitted','approved','rejected','superseded')),
+ baseline JSONB NOT NULL CHECK(jsonb_typeof(baseline)='array'),
+ measured_lines JSONB NOT NULL CHECK(jsonb_typeof(measured_lines)='array'),
+ change_summary JSONB NOT NULL,
+ created_by INTEGER NULL REFERENCES employee(employee_id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ UNIQUE(fabrication_job_id,revision)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fabrication_current_template ON fabrication_template_revision(fabrication_job_id)
+ WHERE state IN ('submitted','approved');
+
+CREATE TABLE IF NOT EXISTS fabrication_approval_policy (
+ subject_kind TEXT PRIMARY KEY CHECK(subject_kind IN ('template','remake')),
+ employee_ids INTEGER[] NOT NULL CHECK(cardinality(employee_ids)>0),
+ updated_by INTEGER NULL REFERENCES employee(employee_id),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS fabrication_revision_approval (
+ template_id BIGINT PRIMARY KEY REFERENCES fabrication_template_revision(template_id),
+ steps JSONB NOT NULL CHECK(jsonb_typeof(steps)='array' AND jsonb_array_length(steps)>0),
+ internal_approved_at TIMESTAMPTZ NULL,
+ customer_approved_at TIMESTAMPTZ NULL,
+ customer_approver TEXT NULL,
+ customer_channel TEXT NULL,
+ customer_evidence TEXT NULL,
+ customer_recorded_by INTEGER NULL REFERENCES employee(employee_id),
+ customer_recorded_at TIMESTAMPTZ NULL,
+ rejected_at TIMESTAMPTZ NULL,
+ rejection_reason TEXT NULL
+);
+
+-- Inspection is independent of physical location and stock disposition.
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS inspection_status TEXT NOT NULL DEFAULT 'legacy';
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS inspection_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS inspected_at TIMESTAMPTZ NULL;
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS inspected_by INTEGER NULL REFERENCES employee(employee_id);
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='chk_slab_inspection' AND conrelid='inventory_slab'::regclass) THEN
+  ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_inspection CHECK(inspection_status IN ('legacy','pending','accepted','rejected'));
+ END IF;
+END $$;
+
+-- WIP is a bin purpose, independent of its physical storage type.
+ALTER TABLE inventory_bin ADD COLUMN IF NOT EXISTS bin_is_wip BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE inventory_bin ADD COLUMN IF NOT EXISTS bin_machine_label TEXT NOT NULL DEFAULT '';
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_bin_wip_machine' AND conrelid = 'inventory_bin'::regclass) THEN
+        ALTER TABLE inventory_bin ADD CONSTRAINT chk_bin_wip_machine CHECK (bin_is_wip OR bin_machine_label = '');
+    END IF;
+END $$;
+
+-- Approved measured layout for action-based material reservations. Historical
+-- allocations intentionally have no inferred layout evidence.
+CREATE TABLE IF NOT EXISTS fabrication_material_layout (
+    fabrication_job_slab_id INTEGER PRIMARY KEY REFERENCES fabrication_job_slab(fabrication_job_slab_id),
+    template_id BIGINT NOT NULL REFERENCES fabrication_template_revision(template_id),
+    source_line_uuid UUID NOT NULL,
+    layout JSONB NOT NULL CHECK (jsonb_typeof(layout) = 'object'),
+    reviewed_by INTEGER NOT NULL REFERENCES employee(employee_id),
+    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_fabrication_material_layout_template
+    ON fabrication_material_layout(template_id, source_line_uuid);
+
+-- Durable procurement provenance; existing purchase orders remain unchanged.
+CREATE TABLE IF NOT EXISTS fabrication_shortage_purchase (
+    purchase_order_id INTEGER PRIMARY KEY REFERENCES purchase_order(purchase_order_id),
+    fabrication_job_id INTEGER NOT NULL REFERENCES fabrication_job(fabrication_job_id),
+    template_id BIGINT NOT NULL REFERENCES fabrication_template_revision(template_id),
+    requirements JSONB NOT NULL CHECK (jsonb_typeof(requirements) = 'array'),
+    reason TEXT NOT NULL CHECK (length(btrim(reason)) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_fabrication_shortage_job ON fabrication_shortage_purchase(fabrication_job_id);
+
+-- Version-two cutting runs retain the exact approved inputs and piece layouts.
+CREATE TABLE IF NOT EXISTS fabrication_cutting_run (
+ cutting_run_id BIGSERIAL PRIMARY KEY,
+ cutting_run_uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ fabrication_job_id INTEGER NOT NULL REFERENCES fabrication_job(fabrication_job_id),
+ template_id BIGINT NOT NULL REFERENCES fabrication_template_revision(template_id),
+ inventory_bin_id INTEGER NOT NULL REFERENCES inventory_bin(inventory_bin_id),
+ state TEXT NOT NULL DEFAULT 'started' CHECK(state IN ('started','completed','disposed')),
+ started_by INTEGER NOT NULL REFERENCES employee(employee_id),
+ started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cutting_run_job ON fabrication_cutting_run(fabrication_job_id,state);
+CREATE TABLE IF NOT EXISTS fabrication_cutting_input (
+ cutting_run_id BIGINT NOT NULL REFERENCES fabrication_cutting_run(cutting_run_id),
+ fabrication_job_slab_id INTEGER NOT NULL REFERENCES fabrication_job_slab(fabrication_job_slab_id),
+ source_line_uuid UUID NOT NULL,
+ measured_line JSONB NOT NULL,
+ layout JSONB NOT NULL,
+ PRIMARY KEY(cutting_run_id,fabrication_job_slab_id),
+ UNIQUE(fabrication_job_slab_id)
+);
+CREATE TABLE IF NOT EXISTS fabrication_cutting_selection (
+ cutting_run_id BIGINT NOT NULL REFERENCES fabrication_cutting_run(cutting_run_id),
+ template_id BIGINT NOT NULL REFERENCES fabrication_template_revision(template_id),
+ source_line_uuid UUID NOT NULL,
+ piece_index INTEGER NOT NULL CHECK(piece_index>=0),
+ PRIMARY KEY(template_id,source_line_uuid,piece_index)
+);
+
+-- Cutting selections retain a stable production record; historical selections stay unknown.
+ALTER TABLE fabrication_cutting_selection ADD COLUMN IF NOT EXISTS fabrication_job_item_id INTEGER NULL REFERENCES fabrication_job_item(fabrication_job_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cutting_selection_piece ON fabrication_cutting_selection(fabrication_job_item_id) WHERE fabrication_job_item_id IS NOT NULL;

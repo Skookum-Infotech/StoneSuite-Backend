@@ -144,61 +144,13 @@ func MoveUnitToBin(ctx context.Context, pool *pgxpool.Pool, uuid string, in Move
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	u, err := unitByUUID(ctx, tx, uuid, true)
-	if err != nil {
-		return err
-	}
-	if u.status == StatusConsumed || u.status == StatusScrapped {
-		return ClientError{Msg: "A consumed or scrapped unit cannot be moved."}
-	}
-	if u.status == StatusInTransit {
-		// It is on a truck between two warehouses and holds no bin at all, so a
-		// bin move here would file it into a rack it has not reached.
-		return ClientError{Msg: "This unit is in transit. Receive its transfer before moving it to a bin."}
-	}
-	// A sealed bundle is physically banded to a pallet: moving one member means
-	// cutting the bands. Cross-row, so no CHECK can express it.
-	if u.bundleID != nil {
-		var status string
-		if err := tx.QueryRow(ctx, `
-			SELECT bundle_status FROM inventory_bundle WHERE inventory_bundle_id = $1`, *u.bundleID).Scan(&status); err != nil {
-			return fmt.Errorf("read bundle status: %w", err)
-		}
-		if status == "sealed" {
-			return ClientError{Msg: "This unit is in a sealed bundle. Move the whole bundle, or break it first."}
-		}
-	}
-
-	newBin, err := resolveUnitBin(ctx, tx, in.BinUUID, u.warehouseID)
-	if err != nil {
-		return err
-	}
-	// BOTH ends are checked against a live cycle count. Guarding only the source
-	// would still let stock be moved INTO a frozen bin, which corrupts that
-	// bin's count just as thoroughly as moving stock out of it.
-	if err := checkBinMoveNotFrozen(ctx, tx, u.warehouseID, u.binID, newBin); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE inventory_slab SET inventory_bin_id = $2, slab_updated_at = NOW(), slab_updated_by = $3
-		WHERE inventory_slab_id = $1`, u.id, newBin, nullableInt(actorEmployeeID)); err != nil {
-		return mapUnitWriteErr(err, "move")
-	}
-	if err := writeUnitHistory(ctx, tx, u.id, "bin_move", "binId",
-		binLabel(u.binID), binLabel(newBin), u.binID, newBin, nil, in.Note, actorEmployeeID); err != nil {
+	if err := MoveUnitToBinTx(ctx, tx, uuid, in, actorEmployeeID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit move unit: %w", err)
 	}
 	return nil
-}
-
-func binLabel(id *int) string {
-	if id == nil {
-		return ""
-	}
-	return fmt.Sprintf("%d", *id)
 }
 
 // ScrapUnit writes a unit off. If it was still counted in stock (available or

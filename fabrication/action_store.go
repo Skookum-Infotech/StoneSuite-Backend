@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"stonesuite-backend/authz"
+	"stonesuite-backend/portal"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,6 +16,9 @@ import (
 )
 
 // ErrActionConflict asks the client to refresh stale state or fix its request identity.
+// ErrActionPermission rejects a command after permissions have changed.
+var ErrActionPermission = errors.New("permission denied for fabrication action")
+
 var ErrActionConflict = errors.New("fabrication action conflicts with current state; refresh and retry")
 
 // ActionActor is resolved from tenant authentication, never decoded from a body.
@@ -21,18 +26,24 @@ type ActionActor struct {
 	IdentityID string
 	EmployeeID int
 	// AllScope is set only after an installation permission check.
-	AllScope bool
+	AllScope       bool
+	permission     authz.Action
+	portalCustomer bool
 }
 
 // ActionResult is the durable receipt returned for a command and its retries.
 type ActionResult struct {
-	EventID string `json:"eventId"`
-	Version int64  `json:"version"`
+	EventID   string `json:"eventId"`
+	Version   int64  `json:"version"`
+	RelatedID string `json:"relatedId,omitempty"`
 }
 
 type actionCommand struct {
-	Code, SubjectID string
-	Payload         []byte
+	Code, SubjectID    string
+	Payload            []byte
+	MovementPermission bool
+	PurchasePermission bool
+	RelatedID          *string
 }
 type actionState struct {
 	JobID   int
@@ -73,6 +84,48 @@ func executeAction(ctx context.Context, pool *pgxpool.Pool, jobUUID string, acto
 	if err != nil {
 		return zero, fmt.Errorf("lock action job: %w", err)
 	}
+	if actor.portalCustomer {
+		session, sessionErr := portal.ResolveSession(ctx, tx, actor.IdentityID)
+		if sessionErr != nil {
+			return zero, ErrNotFound
+		}
+		var belongs bool
+		if err = tx.QueryRow(ctx, `SELECT fabrication_job_customer_id=$2 FROM fabrication_job WHERE fabrication_job_id=$1`, state.JobID, session.CustomerID).Scan(&belongs); err != nil {
+			return zero, fmt.Errorf("verify customer job: %w", err)
+		}
+		if !belongs {
+			return zero, ErrNotFound
+		}
+		actor.AllScope = true
+	}
+	if actor.permission != "" {
+		decision, checkErr := authz.Check(ctx, tx, actor.IdentityID, authz.ResourceInstallation, actor.permission)
+		if checkErr != nil {
+			return zero, fmt.Errorf("authorize action: %w", checkErr)
+		}
+		if !decision.Allowed {
+			return zero, ErrActionPermission
+		}
+		actor.AllScope = decision.Scope == authz.ScopeAll
+	}
+	if command.MovementPermission {
+		decision, err := authz.Check(ctx, tx, actor.IdentityID, authz.ResourceInventoryUnit, authz.ActionUpdate)
+		if err != nil {
+			return zero, fmt.Errorf("authorize material movement: %w", err)
+		}
+		if !decision.Allowed {
+			return zero, ErrMovementPermission
+		}
+	}
+	if command.PurchasePermission {
+		decision, err := authz.Check(ctx, tx, actor.IdentityID, authz.ResourcePurchaseOrder, authz.ActionCreate)
+		if err != nil {
+			return zero, fmt.Errorf("authorize shortage purchase order: %w", err)
+		}
+		if !decision.Allowed {
+			return zero, ErrPurchasePermission
+		}
+	}
 	if !actor.AllScope && (ownerIdentity == nil || *ownerIdentity != actor.IdentityID) {
 		return zero, ErrNotFound
 	}
@@ -103,6 +156,9 @@ func executeAction(ctx context.Context, pool *pgxpool.Pool, jobUUID string, acto
 		return zero, err
 	}
 	result := ActionResult{Version: state.Version + 1}
+	if command.RelatedID != nil {
+		result.RelatedID = *command.RelatedID
+	}
 	if err = tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&result.EventID); err != nil {
 		return zero, fmt.Errorf("allocate action event: %w", err)
 	}

@@ -38,6 +38,9 @@ func SealBundle(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		// yard never intended to enter.
 		return nil, ClientError{Msg: "An empty bundle cannot be sealed."}
 	}
+	if err := requireBundleOutsideCutting(ctx, tx, b.id); err != nil {
+		return nil, err
+	}
 	if err := setBundleStatus(ctx, tx, b.id, BundleSealed, actorEmployeeID); err != nil {
 		return nil, err
 	}
@@ -135,6 +138,9 @@ func MoveBundle(ctx context.Context, pool *pgxpool.Pool, uuid string, in MoveBun
 	}
 	if b.status == BundleBroken {
 		return ClientError{Msg: "A broken bundle holds no units to move."}
+	}
+	if err := requireBundleOutsideCutting(ctx, tx, b.id); err != nil {
+		return err
 	}
 	newBin, err := resolveUnitBin(ctx, tx, in.BinUUID, b.warehouseID)
 	if err != nil {

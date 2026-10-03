@@ -1,0 +1,22 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "ACME Stone Inc",
+    "order_date": "2026-01-20",
+    "payment_terms": "Net 30",
+    "po_number": "4471-R2",
+    "subtotal": "3060.00",
+    "total": "3060.00"
+  },
+  "lines": [
+    {
+      "sku": "QZ-900",
+      "description": "Quartz slab 30mm",
+      "qty": "6",
+      "uom": "EA",
+      "unit_price": "510.00",
+      "amount": "3060.00"
+    }
+  ],
+  "revision": "Revision 2|4400"
+}

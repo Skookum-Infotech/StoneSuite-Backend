@@ -140,7 +140,17 @@ func (h *AIOps) Status(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to load assistant status.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "status": status})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "status": aiStatusView{
+		Status:             status,
+		DocumentExtraction: h.docExtractEnabled && status.Available,
+	}})
+}
+
+// aiStatusView is the GET /ai/status payload: the AI toggle state plus the
+// frontend gate for "create from document" (rollout flag && AI available).
+type aiStatusView struct {
+	aisettings.Status
+	DocumentExtraction bool `json:"documentExtraction"`
 }
 
 // UpdateSettings handles PUT /api/tenant/ai/settings, gated on the same

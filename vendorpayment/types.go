@@ -6,7 +6,10 @@
 // Approve/Transition live in sibling files added alongside this core.
 package vendorpayment
 
-import "time"
+import (
+	"stonesuite-backend/dateonly"
+	"time"
+)
 
 // VendorRef is the flattened {id, name} for the payment's fixed vendor (spec
 // AD-14: the vendor is fixed at creation, name snapshotted).
@@ -55,12 +58,12 @@ type VendorPayment struct {
 	MethodID   int    `json:"methodId"`
 	MethodName string `json:"method"`
 
-	ReferenceNumber string     `json:"referenceNumber"`
-	PaymentDate     time.Time  `json:"paymentDate"`
-	ScheduledDate   *time.Time `json:"scheduledDate,omitempty"`
-	CurrencyID      *int       `json:"currencyId,omitempty"`
-	Memo            string     `json:"memo"`
-	InternalNotes   string     `json:"internalNotes"`
+	ReferenceNumber string        `json:"referenceNumber"`
+	PaymentDate     dateonly.Date `json:"paymentDate"`
+	ScheduledDate   *time.Time    `json:"scheduledDate,omitempty"`
+	CurrencyID      *int          `json:"currencyId,omitempty"`
+	Memo            string        `json:"memo"`
+	InternalNotes   string        `json:"internalNotes"`
 
 	Amount          float64 `json:"amount"`
 	AppliedTotal    float64 `json:"appliedTotal"`

@@ -27,6 +27,7 @@ import (
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
+	"stonesuite-backend/docextractjob"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/estimate"
 	"stonesuite-backend/importer"
@@ -120,6 +121,7 @@ func main() {
 	var customerAuthOps *controllers.CustomerAuthOps
 	var provisioner *provisioning.Provisioner
 	var importWorker *importer.Worker
+	var docExtractWorker *docextractjob.Worker
 	var tenantRouter *tenancy.Router // also used below by importWorker construction, outside this block
 	var jobQueue *jobqueue.Queue     // also used below by importWorker construction, outside this block
 	var cpPool *pgxpool.Pool         // control-plane pool; used by AIOps for cp_rag_chunks
@@ -770,6 +772,33 @@ func main() {
 		mux.Handle("GET /api/tenant/import/jobs/{jobId}/rows", tenantChain(importOps.ListRows))
 		mux.Handle("PATCH /api/tenant/import/jobs/{jobId}/rows/{rowId}", tenantChain(importOps.UpdateRow))
 		mux.Handle("POST /api/tenant/import/jobs/{jobId}/commit", tenantChain(importOps.Commit))
+
+		// Create from document: upload a PDF/DOCX -> parser-first extraction ->
+		// pre-filled New form (see docextract/ and docextractjob/). The worker
+		// (concurrency 1) starts only behind DOC_EXTRACT_ENABLED; with the flag
+		// off every route below answers 404. Nil interfaces, never typed nils,
+		// are passed for the optional Ollama waker.
+		docExtractOps := controllers.NewDocExtractOps(r2Client, jobQueue, cpPool, aiSettingsCache,
+			controllers.DocExtractSettingsFromApp(config.AppConfig))
+		mux.Handle("POST /api/tenant/document-extractions", tenantChain(docExtractOps.Create))
+		mux.Handle("GET /api/tenant/document-extractions", tenantChain(docExtractOps.List))
+		mux.Handle("GET /api/tenant/document-extractions/{id}", tenantChain(docExtractOps.Get))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/presign", tenantChain(docExtractOps.Presign))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/start", tenantChain(docExtractOps.Start))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/notify", tenantChain(docExtractOps.Notify))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/discard", tenantChain(docExtractOps.Discard))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/complete", tenantChain(docExtractOps.Complete))
+		if config.AppConfig.DocExtractEnabled {
+			var docExtractWaker docextractjob.Waker
+			if aiToggler != nil && aiToggler.waker != nil {
+				docExtractWaker = aiToggler.waker
+			}
+			docExtractWorker = docextractjob.NewWorker(cp, tenantRouter, jobQueue, r2Client,
+				newChatClient(), docExtractWaker, services.SendNotification,
+				docextractjob.ConfigFromApp(config.AppConfig))
+			docExtractWorker.Start()
+			log.Println("Document extraction worker started (concurrency 1, durable queue).")
+		}
 
 		// In-app feedback tickets (bugs / feature requests / UX / performance),
 		// filed by tenant staff or customer-portal users, triaged by platform
@@ -1490,6 +1519,7 @@ func main() {
 		// must invalidate the same cache both read from, or the nudged loop
 		// would read a stale value for up to cacheTTL.
 		aiOps = aiOps.WithSettingsCache(aiSettingsCache)
+		aiOps = aiOps.WithDocExtractEnabled(config.AppConfig.DocExtractEnabled)
 		// Tenant AI toggle -> immediate RAG index catch-up (revive + reconcile)
 		// instead of waiting out ragMaintenanceInterval. A tenant not yet
 		// registered with indexCoordinator (RAG indexing not started, e.g.
@@ -1634,6 +1664,9 @@ func main() {
 	}
 	if importWorker != nil {
 		importWorker.Stop()
+	}
+	if docExtractWorker != nil {
+		docExtractWorker.Stop()
 	}
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

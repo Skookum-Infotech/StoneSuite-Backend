@@ -10,6 +10,7 @@ import (
 	"stonesuite-backend/accountingperiod"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/cashtransfer"
+	"stonesuite-backend/dateonly"
 )
 
 func TestAccountingSnapshot_RequiresAuth(t *testing.T) {
@@ -33,7 +34,7 @@ func TestAccountingSnapshot_RejectsWrongMethod(t *testing.T) {
 }
 
 func TestMapRecentEntries(t *testing.T) {
-	when := time.Date(2026, 9, 4, 8, 12, 0, 0, time.UTC)
+	when := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
 	rows := []cashtransfer.RecentEntry{
 		{UUID: "je-1", Number: "JE-000231", Description: "Fabrication labor accrual", Amount: 4200, Date: when},
 	}
@@ -44,10 +45,9 @@ func TestMapRecentEntries(t *testing.T) {
 	if out[0].ID != "je-1" || out[0].Number != "JE-000231" || out[0].Amount != 4200 {
 		t.Errorf("out[0] = %+v, want je-1/JE-000231/4200", out[0])
 	}
-	// The widget formats "2h ago" itself, so the timestamp must survive
-	// mapping intact rather than being pre-rendered to a string.
-	if !out[0].Date.Equal(when) {
-		t.Errorf("out[0].Date = %v, want %v", out[0].Date, when)
+	// The DATE survives mapping as its calendar day.
+	if out[0].Date.String() != "2026-09-04" {
+		t.Errorf("out[0].Date = %v, want 2026-09-04", out[0].Date)
 	}
 }
 
@@ -55,8 +55,8 @@ func periodFixture() *accountingperiod.Period {
 	return &accountingperiod.Period{
 		Name:   "Aug 2026",
 		Status: "open",
-		Start:  time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
-		End:    time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC),
+		Start:  dateonly.New(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)),
+		End:    dateonly.New(time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)),
 	}
 }
 
@@ -82,7 +82,7 @@ func TestBuildAccountingSnapshot_Granted(t *testing.T) {
 	if !ok {
 		t.Fatal("ok = false, want true")
 	}
-	if !gotFrom.Equal(period.Start) || !gotTo.Equal(period.End) {
+	if !gotFrom.Equal(period.Start.Time) || !gotTo.Equal(period.End.Time) {
 		t.Errorf("counted over %v..%v, want the period's own %v..%v", gotFrom, gotTo, period.Start, period.End)
 	}
 	if result.Period == nil {

@@ -8881,3 +8881,81 @@ BEGIN
         created, reused, (SELECT COUNT(*) FROM lkp_warehouse_legacy WHERE migrated_to_location_id IS NULL);
 END
 $wh_upgrade$;
+
+
+-- =====================================================================
+-- Create-from-document: extraction staging, learned aliases, feedback.
+-- document_extractions holds one uploaded PDF/DOCX per row from presign until
+-- it is used or purged (expires_at; a sweeper deletes the staging object and
+-- the row). result is the parsed + resolved document, owner-readable only.
+-- document_party_alias / document_item_alias are the "remembers corrections"
+-- memory the resolvers consult first. document_extraction_feedback stores
+-- field-level corrections (values only, never document text) and deliberately
+-- has no FK to document_extractions so it outlives the purged row.
+-- All statements are idempotent (new tables only; indexes IF NOT EXISTS).
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS document_extractions (
+    id                  UUID         PRIMARY KEY,
+    doc_type            TEXT         NOT NULL
+                        CHECK (doc_type IN ('sales_order','purchase_order','vendor_bill')),
+    owner_identity_id   TEXT         NOT NULL,
+    status              TEXT         NOT NULL DEFAULT 'awaiting_upload'
+                        CHECK (status IN ('awaiting_upload','queued','running','ready','failed','discarded','used','attached')),
+    client_sha256       TEXT         NOT NULL DEFAULT '',
+    file_name           TEXT         NOT NULL DEFAULT '',
+    content_type        TEXT         NOT NULL DEFAULT '',
+    size_bytes          BIGINT       NOT NULL DEFAULT 0,
+    sha256              TEXT         NOT NULL DEFAULT '',
+    staging_key         TEXT         NOT NULL,
+    job_id              TEXT         NOT NULL DEFAULT '',
+    method              TEXT         NOT NULL DEFAULT '',   -- parser | parser+llm
+    model               TEXT         NOT NULL DEFAULT '',
+    result              JSONB            NULL,
+    failure_code        TEXT         NOT NULL DEFAULT '',
+    notify_on_complete  BOOLEAN      NOT NULL DEFAULT FALSE,
+    record_uuid         UUID             NULL,              -- the record created from this extraction
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMPTZ  NOT NULL,
+    CONSTRAINT uq_document_extractions_staging_key UNIQUE (staging_key)
+);
+CREATE INDEX IF NOT EXISTS idx_doc_extractions_owner   ON document_extractions (owner_identity_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_doc_extractions_sha     ON document_extractions (doc_type, sha256);
+CREATE INDEX IF NOT EXISTS idx_doc_extractions_expires ON document_extractions (expires_at);
+
+CREATE TABLE IF NOT EXISTS document_party_alias (
+    id             BIGSERIAL    PRIMARY KEY,
+    party_kind     TEXT         NOT NULL CHECK (party_kind IN ('customer','vendor')),
+    alias_key      TEXT         NOT NULL,   -- duplicate.Key of the document's party text
+    party_uuid     UUID         NOT NULL,
+    hits           INTEGER      NOT NULL DEFAULT 1,
+    last_used_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by     TEXT         NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_document_party_alias UNIQUE (party_kind, alias_key)
+);
+
+CREATE TABLE IF NOT EXISTS document_item_alias (
+    id             BIGSERIAL    PRIMARY KEY,
+    party_uuid     UUID         NOT NULL,
+    alias_key      TEXT         NOT NULL,   -- 'sku:<normalized sku>' or 'desc:<duplicate.Key description>'
+    item_uuid      UUID         NOT NULL,
+    hits           INTEGER      NOT NULL DEFAULT 1,
+    last_used_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    created_by     TEXT         NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_document_item_alias UNIQUE (party_uuid, alias_key)
+);
+
+CREATE TABLE IF NOT EXISTS document_extraction_feedback (
+    id                  BIGSERIAL    PRIMARY KEY,
+    extraction_id       UUID         NOT NULL,   -- no FK: outlives the purged extraction row
+    party_uuid          UUID             NULL,
+    field               TEXT         NOT NULL,
+    extracted           TEXT         NOT NULL DEFAULT '',
+    final               TEXT         NOT NULL DEFAULT '',
+    layout_fingerprint  TEXT         NOT NULL DEFAULT '',
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_doc_feedback_extraction ON document_extraction_feedback (extraction_id);
+CREATE INDEX IF NOT EXISTS idx_doc_feedback_layout     ON document_extraction_feedback (layout_fingerprint);

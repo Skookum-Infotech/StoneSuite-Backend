@@ -54,6 +54,9 @@ type AIOps struct {
 	// in front of platform_ai_settings/ai_settings), gating Ask/AskStream
 	// (via prepareAsk), Reindex, and Warm.
 	aiSettings *aisettings.Cache
+	// docExtractEnabled is the DOC_EXTRACT_ENABLED rollout flag, surfaced on
+	// the status endpoint as the frontend gate for "create from document".
+	docExtractEnabled bool
 	// toggleListener is notified after a successful platform-level toggle
 	// write. Nil until a later step wires one (Ollama lifecycle, reindex
 	// queue pause) via WithPlatformToggleListener.
@@ -125,6 +128,13 @@ func (h *AIOps) WithReranker(r ragcore.Reranker, candidateK int) *AIOps {
 // returns the receiver for chaining at construction in main.go.
 func (h *AIOps) WithOllamaWaker(w ollamaWaker) *AIOps {
 	h.waker = w
+	return h
+}
+
+// WithDocExtractEnabled sets the document-extraction rollout flag reported by
+// GET /api/tenant/ai/status (documentExtraction = flag && AI available).
+func (h *AIOps) WithDocExtractEnabled(enabled bool) *AIOps {
+	h.docExtractEnabled = enabled
 	return h
 }
 

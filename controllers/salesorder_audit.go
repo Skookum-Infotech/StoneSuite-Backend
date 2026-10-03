@@ -29,10 +29,15 @@ func soSnapshot(o *salesorder.Order) map[string]any {
 // auditSO records a Sales Order mutation in the unified audit_logs table.
 // Best-effort: failures are logged, never returned, mirroring auditCRM.
 func auditSO(r *http.Request, pool *pgxpool.Pool, identityID, action, recordID string, oldOrder, newOrder *salesorder.Order) {
+	auditSOMeta(r, pool, identityID, action, recordID, oldOrder, newOrder, nil)
+}
+
+// auditSOMeta is auditSO with extraMeta merged into the audit details.
+func auditSOMeta(r *http.Request, pool *pgxpool.Pool, identityID, action, recordID string, oldOrder, newOrder *salesorder.Order, extraMeta map[string]any) {
 	ctx := r.Context()
 	actorUserID, _ := workflow.UserIDByIdentity(ctx, pool, identityID)
 	if err := workflow.LogAuditFull(ctx, pool, actorUserID, action, "sales_order", recordID, "sales_order",
-		soSnapshot(oldOrder), soSnapshot(newOrder), nil,
+		soSnapshot(oldOrder), soSnapshot(newOrder), extraMeta,
 		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
 		log.Printf("salesorder: audit %s %s: %v", action, recordID, err)
 	}

@@ -8,6 +8,7 @@ import (
 	"stonesuite-backend/accountingperiod"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/cashtransfer"
+	"stonesuite-backend/dateonly"
 	"stonesuite-backend/middleware"
 )
 
@@ -25,15 +26,16 @@ type accountingPeriodOut struct {
 	EntryCount int    `json:"entryCount"`
 }
 
-// journalEntryOut is one recent-entry row. Date is a real timestamp, not a
-// pre-formatted string -- the widget renders "2h ago" itself, in the viewer's
-// own locale (see the frontend's relativeTime helper).
+// journalEntryOut is one recent-entry row. Date is the transfer's calendar
+// day (a DATE column), sent as "yyyy-mm-dd" so it can't shift a day in the
+// viewer's timezone; the widget formats it itself (see the frontend's
+// relativeTime helper).
 type journalEntryOut struct {
-	ID          string    `json:"id"`
-	Number      string    `json:"entryNumber"`
-	Description string    `json:"description"`
-	Amount      float64   `json:"amount"`
-	Date        time.Time `json:"date"`
+	ID          string        `json:"id"`
+	Number      string        `json:"entryNumber"`
+	Description string        `json:"description"`
+	Amount      float64       `json:"amount"`
+	Date        dateonly.Date `json:"date"`
 }
 
 // accountingSnapshotResult is the widget's fully-mapped payload.
@@ -53,7 +55,7 @@ func mapRecentEntries(rows []cashtransfer.RecentEntry) []journalEntryOut {
 			Number:      r.Number,
 			Description: r.Description,
 			Amount:      r.Amount,
-			Date:        r.Date,
+			Date:        dateonly.New(r.Date),
 		})
 	}
 	return out
@@ -105,7 +107,7 @@ func buildAccountingSnapshot(
 		return result, true, nil
 	}
 
-	count, err := countEntries(decision.Scope, period.Start, period.End)
+	count, err := countEntries(decision.Scope, period.Start.Time, period.End.Time)
 	if err != nil {
 		return accountingSnapshotResult{}, false, err
 	}

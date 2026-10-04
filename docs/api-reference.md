@@ -4,14 +4,14 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-552 endpoints across 7 surfaces, read from `main.go`.
+567 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 468 |
-| portal token + tenant | 26 |
+| staff token + tenant | 481 |
+| portal token + tenant | 28 |
 | none (rate-limited) | 20 |
 | none | 18 |
 | staff token | 15 |
@@ -171,7 +171,7 @@ Public tenant onboarding and workspace-user invitations.
 | `POST` | `/api/onboarding/user-invite/accept` | none | `userOps.AcceptUserInvite` |
 | `GET` | `/api/onboarding/user-invite/{token}` | none | `userOps.GetUserInvite` |
 
-## `portal` — 37 endpoints
+## `portal` — 39 endpoints
 
 Customer portal — scoped read access, invitations, workspace switching.
 
@@ -189,6 +189,13 @@ Customer portal — scoped read access, invitations, workspace switching.
 | `POST` | `/api/portal/auth/reset-password` | none (rate-limited) | `portalAuthOps.ResetPassword` |
 | `GET` | `/api/portal/auth/reset-password/{token}` | none (rate-limited) | `portalAuthOps.ValidateResetToken` |
 | `POST` | `/api/portal/auth/switch-workspace` | portal token | `portalAuthOps.SwitchWorkspace` |
+
+### fabrication-jobs
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/portal/fabrication-jobs/{uuid}/templates/{revision}` | portal token + tenant | `portalDocOps.GetFabricationTemplate` |
+| `POST` | `/api/portal/fabrication-jobs/{uuid}/templates/{revision}/approve` | portal token + tenant | `portalDocOps.ApproveFabricationTemplate` |
 
 ### feedback
 
@@ -320,7 +327,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 467 endpoints
+## `tenant` — 480 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -384,6 +391,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/config/approvers` | staff token + tenant | `crmAdminOps.ListApprovers` |
 | `POST` | `/api/tenant/config/approvers` | staff token + tenant | `crmAdminOps.CreateApprover` |
 | `DELETE` | `/api/tenant/config/approvers/{id}` | staff token + tenant | `crmAdminOps.DeleteApprover` |
+| `PUT` | `/api/tenant/config/fabrication-approval-policy` | staff token + tenant | `wf.SetFabricationApprovalPolicy` |
 
 ### credit-memos
 
@@ -518,17 +526,28 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/approve` | staff token + tenant | `fj.Approve` |
 | `PUT` | `/api/tenant/fabrication-jobs/{uuid}/fabrication/status` | staff token + tenant | `fj.Transition` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/hold` | staff token + tenant | `fj.Hold` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/material-allocations` | staff token + tenant | `fj.AllocateMaterial` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/material-releases` | staff token + tenant | `fj.ReleaseMaterial` |
 | `GET` | `/api/tenant/fabrication-jobs/{uuid}/materials` | staff token + tenant | `fj.JobMaterials` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/pieces` | staff token + tenant | `fj.AddPiece` |
 | `DELETE` | `/api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}` | staff token + tenant | `fj.RemovePiece` |
 | `PATCH` | `/api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}` | staff token + tenant | `fj.UpdatePiece` |
+| `GET` | `/api/tenant/fabrication-jobs/{uuid}/procurement-action` | staff token + tenant | `fj.ProcurementAction` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/resume` | staff token + tenant | `fj.Resume` |
+| `GET` | `/api/tenant/fabrication-jobs/{uuid}/shortage-purchase-orders` | staff token + tenant | `fj.ProcurementOrders` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/shortage-purchase-orders` | staff token + tenant | `fj.CreateShortagePurchase` |
 | `GET` | `/api/tenant/fabrication-jobs/{uuid}/slabs` | staff token + tenant | `fj.JobSlabs` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/slabs` | staff token + tenant | `fj.AllocateSlab` |
 | `DELETE` | `/api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}` | staff token + tenant | `fj.DeallocateSlab` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/slabs/{slabUuid}/disposition` | staff token + tenant | `fj.Disposition` |
 | `GET` | `/api/tenant/fabrication-jobs/{uuid}/steps` | staff token + tenant | `fj.Steps` |
 | `PATCH` | `/api/tenant/fabrication-jobs/{uuid}/steps/{stepCode}` | staff token + tenant | `fj.UpdateStep` |
+| `GET` | `/api/tenant/fabrication-jobs/{uuid}/templates` | staff token + tenant | `fj.Templates` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/templates` | staff token + tenant | `fj.SubmitTemplate` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/templates/{revision}/customer-approval` | staff token + tenant | `fj.RecordTemplateCustomerApproval` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/templates/{revision}/decision` | staff token + tenant | `fj.DecideTemplate` |
+| `GET` | `/api/tenant/fabrication-jobs/{uuid}/wip-options` | staff token + tenant | `fj.WIPOptions` |
+| `POST` | `/api/tenant/fabrication-jobs/{uuid}/wip-transfers` | staff token + tenant | `fj.TransferMaterialToWIP` |
 
 ### feedback
 
@@ -678,6 +697,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PATCH` | `/api/tenant/inventory/units/{uuid}/bin` | staff token + tenant | `invUnit.MoveBin` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/cut` | staff token + tenant | `invUnit.Cut` |
 | `GET` | `/api/tenant/inventory/units/{uuid}/history` | staff token + tenant | `invUnit.History` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/inspection` | staff token + tenant | `invUnit.Inspect` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
 | `GET` | `/api/tenant/inventory/warehouses` | staff token + tenant | `invWh.List` |
 | `GET` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Get` |

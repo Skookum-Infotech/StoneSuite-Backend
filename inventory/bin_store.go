@@ -23,7 +23,7 @@ const binSelect = `
 	       b.bin_code, b.bin_name, b.bin_type,
 	       p.inventory_bin_uuid, b.bin_path, b.bin_depth,
 	       b.bin_capacity_units, b.bin_capacity_area,
-	       b.bin_is_active, b.bin_is_system, b.bin_notes,
+	       b.bin_is_active, b.bin_is_system, b.bin_notes, b.bin_is_wip, b.bin_machine_label,
 	       b.bin_created_at, b.bin_updated_at,
 	       (SELECT COUNT(*) FROM inventory_slab s
 	         WHERE s.inventory_bin_id = b.inventory_bin_id
@@ -37,7 +37,7 @@ func scanBin(row pgx.Row) (*Bin, error) {
 	var b Bin
 	if err := row.Scan(&b.ID, &b.WarehouseID, &b.WarehouseName,
 		&b.Code, &b.Name, &b.Type, &b.ParentID, &b.Path, &b.Depth,
-		&b.CapacityUnits, &b.CapacityArea, &b.IsActive, &b.IsSystem, &b.Notes,
+		&b.CapacityUnits, &b.CapacityArea, &b.IsActive, &b.IsSystem, &b.Notes, &b.IsWIP, &b.MachineLabel,
 		&b.CreatedAt, &b.UpdatedAt, &b.UnitCount); err != nil {
 		return nil, err
 	}

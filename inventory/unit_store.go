@@ -64,7 +64,7 @@ const unitSelect = `
 	       s.slab_bundle_id, bu.inventory_bundle_uuid, s.slab_block_id, s.slab_lot,
 	       s.slab_length_mm, s.slab_width_mm, s.slab_thickness_mm, s.slab_area, s.slab_area_unit_id,
 	       au.unit_code,
-	       s.slab_form, s.slab_status,
+	       s.slab_form, s.slab_status, s.inspection_status,
 	       p.inventory_slab_uuid, COALESCE(p.slab_serial,''),
 	       r.inventory_slab_uuid, COALESCE(r.slab_serial,''),
 	       s.slab_is_usable_remnant, s.slab_grade, s.slab_finish, s.slab_finish_id, s.slab_photo_key,
@@ -104,7 +104,7 @@ func scanUnit(row pgx.Row) (*Unit, error) {
 		&u.BundleID, &u.BundleUUID, &u.BlockID, &u.Lot,
 		&u.LengthMM, &u.WidthMM, &u.ThicknessMM, &u.Area, &u.AreaUnitID,
 		&u.AreaUnitCode,
-		&u.Form, &u.Status,
+		&u.Form, &u.Status, &u.InspectionStatus,
 		&u.ParentUnitID, &u.ParentSerial,
 		&u.RootUnitID, &u.RootSerial,
 		&u.IsUsableRemnant, &u.Grade, &u.Finish, &u.FinishID, &u.PhotoKey,
@@ -185,6 +185,12 @@ func unitByUUID(ctx context.Context, q pgxQuerier, uuid string, forUpdate bool) 
 		}
 		return unitRow{}, fmt.Errorf("resolve inventory unit: %w", err)
 	}
+	if forUpdate {
+		if err := requireOutsideCutting(ctx, q, u.id); err != nil {
+			return unitRow{}, err
+		}
+	}
+
 	return u, nil
 }
 

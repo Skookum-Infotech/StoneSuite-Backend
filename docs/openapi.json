@@ -2039,6 +2039,104 @@
         ]
       }
     },
+    "/api/portal/fabrication-jobs/{uuid}/templates/{revision}": {
+      "get": {
+        "operationId": "get_portal_fabrication_jobs_uuid_templates_revision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "portalDocOps.GetFabricationTemplate",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/portal/fabrication-jobs/{uuid}/templates/{revision}/approve": {
+      "post": {
+        "operationId": "post_portal_fabrication_jobs_uuid_templates_revision_approve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "portalDocOps.ApproveFabricationTemplate",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
     "/api/portal/feedback": {
       "get": {
         "operationId": "get_portal_feedback",
@@ -4068,6 +4166,37 @@
           }
         ],
         "summary": "crmAdminOps.DeleteApprover",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/config/fabrication-approval-policy": {
+      "put": {
+        "operationId": "put_tenant_config_fabrication_approval_policy",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "wf.SetFabricationApprovalPolicy",
         "tags": [
           "tenant"
         ]
@@ -7794,6 +7923,88 @@
         ]
       }
     },
+    "/api/tenant/fabrication-jobs/{uuid}/material-allocations": {
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_material_allocations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.AllocateMaterial",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/material-releases": {
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_material_releases",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.ReleaseMaterial",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/fabrication-jobs/{uuid}/materials": {
       "get": {
         "operationId": "get_tenant_fabrication_jobs_uuid_materials",
@@ -7972,6 +8183,47 @@
         ]
       }
     },
+    "/api/tenant/fabrication-jobs/{uuid}/procurement-action": {
+      "get": {
+        "operationId": "get_tenant_fabrication_jobs_uuid_procurement_action",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.ProcurementAction",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/fabrication-jobs/{uuid}/resume": {
       "post": {
         "operationId": "post_tenant_fabrication_jobs_uuid_resume",
@@ -8008,6 +8260,86 @@
           }
         ],
         "summary": "fj.Resume",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/shortage-purchase-orders": {
+      "get": {
+        "operationId": "get_tenant_fabrication_jobs_uuid_shortage_purchase_orders",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.ProcurementOrders",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_shortage_purchase_orders",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.CreateShortagePurchase",
         "tags": [
           "tenant"
         ]
@@ -8276,6 +8608,266 @@
           }
         ],
         "summary": "fj.UpdateStep",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/templates": {
+      "get": {
+        "operationId": "get_tenant_fabrication_jobs_uuid_templates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.Templates",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_templates",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.SubmitTemplate",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/templates/{revision}/customer-approval": {
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_templates_revision_customer_approval",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.RecordTemplateCustomerApproval",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/templates/{revision}/decision": {
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_templates_revision_decision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.DecideTemplate",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/wip-options": {
+      "get": {
+        "operationId": "get_tenant_fabrication_jobs_uuid_wip_options",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.WIPOptions",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/fabrication-jobs/{uuid}/wip-transfers": {
+      "post": {
+        "operationId": "post_tenant_fabrication_jobs_uuid_wip_transfers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "fj.TransferMaterialToWIP",
         "tags": [
           "tenant"
         ]
@@ -12973,6 +13565,47 @@
           }
         ],
         "summary": "invUnit.History",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/units/{uuid}/inspection": {
+      "post": {
+        "operationId": "post_tenant_inventory_units_uuid_inspection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnit.Inspect",
         "tags": [
           "tenant"
         ]

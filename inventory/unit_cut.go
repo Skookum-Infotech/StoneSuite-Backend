@@ -12,7 +12,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -78,130 +77,15 @@ type parentForCut struct {
 
 // CutUnit consumes a unit and mints the remnants kept from it.
 func CutUnit(ctx context.Context, pool *pgxpool.Pool, uuid string, in CutInput, actorEmployeeID int) (*CutResult, error) {
-	for i := range in.Remnants {
-		if strings.TrimSpace(in.Remnants[i].Serial) == "" {
-			return nil, ClientError{Msg: "Every remnant needs a serial."}
-		}
-		if in.Remnants[i].LengthMM <= 0 || in.Remnants[i].WidthMM <= 0 {
-			return nil, ClientError{Msg: "Every remnant needs a positive length and width."}
-		}
-	}
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin cut unit: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	p, err := lockParentForCut(ctx, tx, uuid)
+	result, err := CutUnitTx(ctx, tx, uuid, in, actorEmployeeID)
 	if err != nil {
 		return nil, err
 	}
-	switch p.status {
-	case "consumed":
-		return nil, ClientError{Msg: "This unit has already been consumed."}
-	case "scrapped":
-		return nil, ClientError{Msg: "A scrapped unit cannot be cut."}
-	case "reserved":
-		// The slab is committed to a fabrication job, which has its own consume
-		// path. Cutting it here would deduct the same stone twice.
-		return nil, ClientError{Msg: "This unit is reserved for a job. Release the reservation before cutting it."}
-	case StatusInTransit:
-		// It is physically on a truck. Its area has already left the source
-		// warehouse's stock, so a cut here would consume it a second time.
-		return nil, ClientError{Msg: "This unit is in transit. Receive its transfer before cutting it."}
-	}
-	// Same rule as MoveUnitToBin: a sealed bundle is physically banded, and the
-	// slab has to come off the pallet before a saw touches it. Cross-row, so no
-	// CHECK can express it.
-	if p.bundleID != nil {
-		var bundleStatus string
-		if err := tx.QueryRow(ctx, `
-			SELECT bundle_status FROM inventory_bundle WHERE inventory_bundle_id = $1`,
-			*p.bundleID).Scan(&bundleStatus); err != nil {
-			return nil, fmt.Errorf("read bundle status: %w", err)
-		}
-		if bundleStatus == BundleSealed {
-			return nil, ClientError{Msg: "This unit is in a sealed bundle. Break the bundle before cutting it."}
-		}
-	}
-
-	// Areas are computed from the millimetres into the ITEM's unit, never taken
-	// from the caller — the same rule as receipt.
-	childAreas := make([]float64, len(in.Remnants))
-	for i, r := range in.Remnants {
-		a, err := AreaFor(r.LengthMM, r.WidthMM, p.unitCode, p.unitCat)
-		if err != nil {
-			return nil, err
-		}
-		childAreas[i] = a
-	}
-	plan, err := PlanCut(p.area, childAreas)
-	if err != nil {
-		return nil, err
-	}
-
-	// The parent leaves stock in full.
-	if _, err := tx.Exec(ctx, `
-		UPDATE inventory_slab SET slab_status = 'consumed', slab_updated_at = NOW(), slab_updated_by = $2
-		WHERE inventory_slab_id = $1`, p.id, nullableInt(actorEmployeeID)); err != nil {
-		return nil, fmt.Errorf("mark unit consumed: %w", err)
-	}
-	if err := SlabLedgerAndStock(ctx, tx, p.id, p.itemID, p.warehouseID,
-		EventConsumed, -p.area, nil, actorEmployeeID); err != nil {
-		return nil, err
-	}
-
-	// Every remnant descends from the ORIGINAL slab, not from its immediate
-	// parent, so recall ("every piece from vendor lot X") stays one indexed
-	// equality rather than a recursive walk.
-	rootID := p.id
-	if p.rootID != nil {
-		rootID = *p.rootID
-	}
-
-	var (
-		recovered float64
-		outUUIDs  []string
-	)
-	for i, r := range in.Remnants {
-		usable := IsUsableRemnant(r.LengthMM, r.WidthMM, in.MinUsableLengthMM, in.MinUsableWidthMM)
-		// An unusable offcut is recorded so the cut has a complete history, but
-		// it is born scrapped and never enters available stock — so it cannot
-		// inflate on-hand area or clutter the remnant picker.
-		status := "available"
-		if !usable {
-			status = "scrapped"
-		}
-		childUUID, childID, err := insertRemnant(ctx, tx, p, r, childAreas[i], rootID, usable, status, actorEmployeeID)
-		if err != nil {
-			return nil, err
-		}
-		outUUIDs = append(outUUIDs, childUUID)
-
-		if usable {
-			if err := SlabLedgerAndStock(ctx, tx, childID, p.itemID, p.warehouseID,
-				EventRecovered, childAreas[i], nil, actorEmployeeID); err != nil {
-				return nil, err
-			}
-			recovered += childAreas[i]
-		}
-		if err := writeUnitHistory(ctx, tx, childID, "remnant_created", "parentSerial", "", r.Serial,
-			nil, p.binID, in.ReasonID, in.Note, actorEmployeeID); err != nil {
-			return nil, err
-		}
-	}
-
-	// The shortfall is recorded operationally, NOT as a ledger row: consuming
-	// the parent in full while recovering only the remnants has already removed
-	// it from stock. A 'scrapped' row here would deduct the kerf a second time.
-	lost := roundTo(p.area-recovered, areaScale)
-	if err := writeUnitHistory(ctx, tx, p.id, "cut", "area",
-		fmt.Sprintf("%.3f", p.area), fmt.Sprintf("%.3f recovered, %.3f lost", recovered, lost),
-		p.binID, nil, in.ReasonID, in.Note, actorEmployeeID); err != nil {
-		return nil, err
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit cut unit: %w", err)
 	}
@@ -213,11 +97,11 @@ func CutUnit(ctx context.Context, pool *pgxpool.Pool, uuid string, in CutInput, 
 	out := &CutResult{
 		Parent:        parent,
 		Remnants:      []Unit{},
-		ConsumedArea:  plan.ParentArea,
-		RecoveredArea: roundTo(recovered, areaScale),
-		LostArea:      lost,
+		ConsumedArea:  result.ConsumedArea,
+		RecoveredArea: result.RecoveredArea,
+		LostArea:      result.LostArea,
 	}
-	for _, u := range outUUIDs {
+	for _, u := range result.RemnantIDs {
 		child, err := GetUnit(ctx, pool, u)
 		if err != nil {
 			return nil, err

@@ -96,6 +96,9 @@ func ReceiveSlabForTransfer(ctx context.Context, tx pgx.Tx, u UnitRef,
 // scrapped and its area leaves stock.
 func AdjustSlabDown(ctx context.Context, tx pgx.Tx, u UnitRef,
 	reasonID *int, note string, src DocSource, actorEmployeeID int) (float64, error) {
+	if err := requireOutsideCutting(ctx, tx, u.ID); err != nil {
+		return 0, err
+	}
 	switch u.Status {
 	case StatusScrapped:
 		return 0, ClientError{Msg: fmt.Sprintf("Unit %s is already written off.", u.Serial)}

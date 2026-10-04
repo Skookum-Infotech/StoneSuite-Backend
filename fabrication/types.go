@@ -22,14 +22,18 @@ type SiteAddress struct {
 // Job is the full API response for a fabrication job header. OwnerUserID backs
 // the controller's IDOR scope check and is never serialized.
 type Job struct {
-	ID             string      `json:"id"`
-	Number         string      `json:"jobNumber"`
-	Status         string      `json:"status"`     // human label
-	StatusCode     string      `json:"statusCode"` // lkp_record_status code
-	ApprovalStatus string      `json:"approvalStatus"`
-	SalesOrderID   string      `json:"salesOrderId"`
-	Customer       CustomerRef `json:"customer"`
-	OwnerUserID    string      `json:"-"`
+	WorkflowVersion int              `json:"workflowVersion"`
+	Version         int64            `json:"version"`
+	DeliveryMode    *DeliveryMode    `json:"deliveryMode"`
+	Summary         *ProgressSummary `json:"summary,omitempty"`
+	ID              string           `json:"id"`
+	Number          string           `json:"jobNumber"`
+	Status          string           `json:"status"`     // human label
+	StatusCode      string           `json:"statusCode"` // lkp_record_status code
+	ApprovalStatus  string           `json:"approvalStatus"`
+	SalesOrderID    string           `json:"salesOrderId"`
+	Customer        CustomerRef      `json:"customer"`
+	OwnerUserID     string           `json:"-"`
 
 	HeldFromStatusCode string `json:"heldFromStatusCode,omitempty"`
 	CancelRequested    bool   `json:"cancelRequested"`
@@ -57,17 +61,19 @@ type Job struct {
 
 // JobItem is one fabricated piece.
 type JobItem struct {
-	ID                 string  `json:"id"`
-	PieceNumber        int     `json:"pieceNumber"`
-	PieceName          string  `json:"pieceName"`
-	PieceType          string  `json:"pieceType"`
-	LengthMM           float64 `json:"lengthMm"`
-	WidthMM            float64 `json:"widthMm"`
-	ThicknessMM        float64 `json:"thicknessMm"`
-	SinkCutoutCount    int     `json:"sinkCutoutCount"`
-	CooktopCutoutCount int     `json:"cooktopCutoutCount"`
-	SeamCount          int     `json:"seamCount"`
-	Status             string  `json:"status"`
+	ProductionStage    *PieceStage `json:"productionStage"`
+	Version            int64       `json:"version"`
+	ID                 string      `json:"id"`
+	PieceNumber        int         `json:"pieceNumber"`
+	PieceName          string      `json:"pieceName"`
+	PieceType          string      `json:"pieceType"`
+	LengthMM           float64     `json:"lengthMm"`
+	WidthMM            float64     `json:"widthMm"`
+	ThicknessMM        float64     `json:"thicknessMm"`
+	SinkCutoutCount    int         `json:"sinkCutoutCount"`
+	CooktopCutoutCount int         `json:"cooktopCutoutCount"`
+	SeamCount          int         `json:"seamCount"`
+	Status             string      `json:"status"`
 	// SalesOrderItemUUID is the linked sales-order line, when this piece has
 	// one — round-tripped so an edit that doesn't touch the link (frontend
 	// sends back whatever it read here) doesn't silently clear it.

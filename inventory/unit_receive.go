@@ -66,10 +66,11 @@ func ResolveBinForWarehouse(ctx context.Context, q pgxQuerier, binUUID string, w
 // ReceiveUnitParams is one full physical piece to bring into stock, expressed
 // with internal ids — the caller has already resolved every uuid.
 type ReceiveUnitParams struct {
-	Serial       string
-	VendorID     *int
-	SupplierCode string
-	Barcode      string
+	NeedsInspection bool
+	Serial          string
+	VendorID        *int
+	SupplierCode    string
+	Barcode         string
 
 	Item        ItemUnitInfo
 	WarehouseID int
@@ -129,9 +130,9 @@ func ReceiveUnitTx(ctx context.Context, tx pgx.Tx, p ReceiveUnitParams, actorEmp
 			inventory_item_id, warehouse_id, inventory_bin_id, inventory_bundle_id,
 			slab_bundle_id, slab_block_id, slab_lot,
 			slab_length_mm, slab_width_mm, slab_thickness_mm, slab_area, slab_area_unit_id,
-			slab_form, slab_status, slab_grade, slab_finish, slab_finish_id, slab_created_by)
+			slab_form, slab_status, slab_grade, slab_finish, slab_finish_id, slab_created_by, inspection_status)
 		VALUES ($1,$2,$3,$4,$5, COALESCE(NULLIF($22,'')::date, CURRENT_DATE),$6, $7,$8,$9,$10, $11,$12,$13,
-			$14,$15,$16,$17,$18, 'full','available',$19,$20,$21,$6)
+			$14,$15,$16,$17,$18, 'full','available',$19,$20,$21,$6,CASE WHEN $23 THEN 'pending' ELSE 'legacy' END)
 		RETURNING inventory_slab_id, inventory_slab_uuid`,
 		p.Serial, UnitKindSlab, p.VendorID, p.SupplierCode, p.Barcode,
 		nullableInt(actorEmployeeID),
@@ -139,7 +140,7 @@ func ReceiveUnitTx(ctx context.Context, tx pgx.Tx, p ReceiveUnitParams, actorEmp
 		p.BundleLabel, p.BlockID, p.Lot,
 		p.LengthMM, p.WidthMM, p.ThicknessMM, area, p.Item.UnitID,
 		p.Grade, p.Finish, nullableIntPtr(p.FinishID),
-		p.ReceivedAt,
+		p.ReceivedAt, p.NeedsInspection,
 	).Scan(&rec.ID, &rec.UUID)
 	if err != nil {
 		return nil, mapUnitWriteErr(err, "insert")

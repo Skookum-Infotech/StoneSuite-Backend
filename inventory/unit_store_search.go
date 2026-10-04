@@ -90,7 +90,7 @@ func UsableRemnants(ctx context.Context, pool *pgxpool.Pool, itemUUID string, mi
 	where := `s.slab_deleted_at IS NULL
 	          AND s.slab_unit_kind = '` + UnitKindRemnant + `'
 	          AND s.slab_is_usable_remnant = TRUE
-	          AND s.slab_status = 'available'`
+	          AND s.slab_status = 'available' AND s.inspection_status IN ('accepted','legacy')`
 	args := []any{}
 	if itemUUID != "" {
 		args = append(args, itemUUID)

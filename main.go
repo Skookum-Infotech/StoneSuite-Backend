@@ -504,6 +504,8 @@ func main() {
 		mux.Handle("GET /api/portal/workspaces", portalCrossTenant(portalAuthOps.Workspaces))
 
 		mux.Handle("/api/portal/me", portalChain(portalDocOps.Me))
+		mux.Handle("GET /api/portal/fabrication-jobs/{uuid}/templates/{revision}", portalChain(portalDocOps.GetFabricationTemplate))
+		mux.Handle("POST /api/portal/fabrication-jobs/{uuid}/templates/{revision}/approve", portalChain(portalDocOps.ApproveFabricationTemplate))
 
 		mux.Handle("GET /api/portal/sales-orders", portalChain(portalDocOps.ListSalesOrders))
 		mux.Handle("POST /api/portal/sales-orders/search", portalChain(portalDocOps.SearchSalesOrders))
@@ -717,6 +719,7 @@ func main() {
 
 		// Tenant-scoped workflow engine + records (Phase 3).
 		wf := controllers.NewWorkflowOps()
+		mux.Handle("PUT /api/tenant/config/fabrication-approval-policy", tenantChain(wf.SetFabricationApprovalPolicy))
 		mux.Handle("GET /api/tenant/workflows", tenantChain(wf.ListWorkflows))
 		mux.Handle("GET /api/tenant/workflows/enabled", tenantChain(wf.ListEnabledWorkflows))
 		mux.Handle("GET /api/tenant/workflows/{id}", tenantChain(wf.GetWorkflow))
@@ -1201,6 +1204,17 @@ func main() {
 		mux.Handle("POST /api/tenant/fabrication-jobs", tenantChain(fj.Create))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/fabricate", tenantChain(fj.Fabricate))
 		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Get))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/templates", tenantChain(fj.Templates))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/templates", tenantChain(fj.SubmitTemplate))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/wip-transfers", tenantChain(fj.TransferMaterialToWIP))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/material-allocations", tenantChain(fj.AllocateMaterial))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/shortage-purchase-orders", tenantChain(fj.CreateShortagePurchase))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/shortage-purchase-orders", tenantChain(fj.ProcurementOrders))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/procurement-action", tenantChain(fj.ProcurementAction))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/material-releases", tenantChain(fj.ReleaseMaterial))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/wip-options", tenantChain(fj.WIPOptions))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/templates/{revision}/decision", tenantChain(fj.DecideTemplate))
+		mux.Handle("POST /api/tenant/fabrication-jobs/{uuid}/templates/{revision}/customer-approval", tenantChain(fj.RecordTemplateCustomerApproval))
 		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Update))
 		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}", tenantChain(fj.Delete))
 		mux.Handle("PUT /api/tenant/fabrication-jobs/{uuid}/fabrication/status", tenantChain(fj.Transition))
@@ -1230,6 +1244,7 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/cut", tenantChain(invUnit.Cut))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/inspection", tenantChain(invUnit.Inspect))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
 
 		// The original /inventory/slabs/* paths, served by the same handlers so

@@ -106,6 +106,47 @@ func (c *ControlPlane) RevokeRefreshToken(ctx context.Context, tokenHash string)
 	return nil
 }
 
+// RevokeRefreshTokenNow ends a session for good: it revokes the token with a
+// timestamp already past RefreshRotationGrace, so the rotation grace window
+// never applies and the token cannot be refreshed again. Used on logout; a
+// plain RevokeRefreshToken (rotation) deliberately keeps the grace.
+func (c *ControlPlane) RevokeRefreshTokenNow(ctx context.Context, tokenHash string) error {
+	cutoff := time.Now().Add(-(RefreshRotationGrace + time.Second))
+	_, err := c.pool.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = $2
+		 WHERE token_hash = $1 AND (revoked_at IS NULL OR revoked_at > $2)`,
+		tokenHash, cutoff,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke refresh token now: %w", err)
+	}
+	return nil
+}
+
+// RotateRefreshToken inserts the replacement token and revokes the old one in a
+// single transaction, so a failed revoke can never leave two live tokens.
+func (c *ControlPlane) RotateRefreshToken(ctx context.Context, oldHash, identityID, newHash string, expiresAt time.Time) error {
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("rotate refresh token: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at)
+		 VALUES ($1, $2, $3)`, identityID, newHash, expiresAt); err != nil {
+		return fmt.Errorf("rotate refresh token: insert: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = NOW()
+		 WHERE token_hash = $1 AND revoked_at IS NULL`, oldHash); err != nil {
+		return fmt.Errorf("rotate refresh token: revoke old: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("rotate refresh token: commit: %w", err)
+	}
+	return nil
+}
+
 // RevokeAllRefreshTokens revokes every active refresh token for an identity.
 // Used on logout to invalidate all sessions across devices.
 func (c *ControlPlane) RevokeAllRefreshTokens(ctx context.Context, identityID string) error {

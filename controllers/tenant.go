@@ -1106,18 +1106,9 @@ func (h *TenantOps) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Logout clears both auth cookies and revokes the refresh token. Path: POST /api/auth/logout
+// Logout revokes the refresh token (final, no grace) and clears both auth cookies. Path: POST /api/auth/logout
 func (h *TenantOps) Logout(w http.ResponseWriter, r *http.Request) {
-	// Revoke the refresh token in the DB so it cannot be reused after logout.
-	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
-		hash := tenancy.HashRefreshToken(cookie.Value)
-		if err := h.CP.RevokeRefreshToken(r.Context(), hash); err != nil {
-			// Non-fatal — the cookie will expire on its own.
-			log.Printf("warn: logout: revoke refresh token: %v", err)
-		}
-	}
-	clearAuthCookies(w)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	revokeSessionOnLogout(w, r, h.CP)
 }
 
 // RefreshSession issues a new access + refresh token pair given a valid refresh

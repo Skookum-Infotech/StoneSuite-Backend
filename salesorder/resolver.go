@@ -27,6 +27,8 @@ var systemFields = map[string]resolved{
 	"record_number":        {"COALESCE(so.sales_order_number,'')", query.TypeString},
 	"customer_id":          {"so.sales_order_customer_id::text", query.TypeString},
 	"status":               {"so.sales_order_status::text", query.TypeString},
+	"status_code":          {"rs.record_status_code", query.TypeString},
+	"customer_uuid":        {"c.customer_uuid::text", query.TypeString},
 	"sales_rep_id":         {"so.sales_order_sales_rep_id::text", query.TypeString},
 	"owner_id":             {"so.sales_order_owner_id::text", query.TypeString},
 	"order_date":           {"so.sales_order_date", query.TypeDate},

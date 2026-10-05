@@ -25,6 +25,24 @@ func TestResolverWhitelist(t *testing.T) {
 		}
 	})
 
+	t.Run("status_code and customer_uuid resolve to the joined aliases", func(t *testing.T) {
+		for key, want := range map[string]string{
+			"status_code":   "rs.record_status_code",
+			"customer_uuid": "c.customer_uuid::text",
+		} {
+			expr, dt, ok := r.Resolve(key)
+			if !ok {
+				t.Fatalf("expected %s to resolve", key)
+			}
+			if expr != want {
+				t.Errorf("%s: unexpected expr %q", key, expr)
+			}
+			if dt != query.TypeString {
+				t.Errorf("%s: expected TypeString, got %v", key, dt)
+			}
+		}
+	})
+
 	t.Run("unknown key does not resolve", func(t *testing.T) {
 		if _, _, ok := r.Resolve("sales_order_grand_total; DROP TABLE sales_order"); ok {
 			t.Error("unknown/injection key must not resolve")

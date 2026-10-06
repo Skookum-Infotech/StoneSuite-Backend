@@ -682,3 +682,25 @@ func TestGet_NotFound(t *testing.T) {
 		t.Errorf("Get(unknown) = %v, want ErrNotFound", err)
 	}
 }
+
+// Credit already refunded to the customer can't also be applied to an invoice:
+// after refunding 60 of a 100 memo, only 40 remains appliable.
+func TestApply_CapsAtUnappliedNetOfRefunds(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID := seedCustomer(t, pool)
+	invUUID := seedSentInvoice(t, pool, custUUID, 100)
+	cm := seedApprovedMemo(t, pool, custUUID, 100)
+	if _, err := pool.Exec(ctx, `UPDATE credit_memo SET credit_memo_refunded_total = 60 WHERE credit_memo_uuid = $1`, cm.ID); err != nil {
+		t.Fatalf("simulate refund: %v", err)
+	}
+
+	_, err := Apply(ctx, pool, cm.ID, invUUID, 100, 1)
+	var clientErr ClientError
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("applying refunded credit must be a ClientError, got %T: %v", err, err)
+	}
+	if _, err := Apply(ctx, pool, cm.ID, invUUID, 40, 1); err != nil {
+		t.Fatalf("applying the remaining 40: %v", err)
+	}
+}

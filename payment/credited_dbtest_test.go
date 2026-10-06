@@ -104,3 +104,27 @@ func TestSoftDelete_IsBlockedWhileCreditMemosAreLinked(t *testing.T) {
 		t.Fatalf("deleting once the credit memo is gone: %v", err)
 	}
 }
+
+// Money already refunded to the customer is no longer the payment's to spend:
+// after refunding 60 of 500, only 440 can be applied to an invoice.
+func TestApply_CapsAtUnappliedNetOfRefunds(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID, invUUID := seedSentInvoice(t, pool, 500)
+	p, err := Create(ctx, pool, CreatePaymentInput{CustomerUUID: custUUID, MethodID: firstMethodID(t, pool), Amount: 500}, 1)
+	if err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE payment SET payment_refunded_total = 60 WHERE payment_uuid = $1`, p.ID); err != nil {
+		t.Fatalf("simulate refund: %v", err)
+	}
+
+	_, err = Apply(ctx, pool, p.ID, invUUID, 500, 1)
+	var clientErr ClientError
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("applying refunded money must be a ClientError, got %T: %v", err, err)
+	}
+	if _, err := Apply(ctx, pool, p.ID, invUUID, 440, 1); err != nil {
+		t.Fatalf("applying the remaining 440: %v", err)
+	}
+}

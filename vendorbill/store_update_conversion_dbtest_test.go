@@ -14,7 +14,11 @@ func editLines(t *testing.T, bill *VendorBill, qty float64) UpdateVendorBillInpu
 	t.Helper()
 	items := make([]LineInput, len(bill.Items))
 	for i, l := range bill.Items {
-		in := LineInput{LineNumber: l.LineNumber, Description: l.Description, Quantity: qty, UnitPrice: l.UnitPrice}
+		desc := l.Description
+		if desc == "" {
+			desc = "edited line"
+		}
+		in := LineInput{LineNumber: l.LineNumber, Description: desc, Quantity: qty, UnitPrice: l.UnitPrice}
 		if l.PurchaseOrderItemID != nil {
 			in.PurchaseOrderItemID = *l.PurchaseOrderItemID
 		}

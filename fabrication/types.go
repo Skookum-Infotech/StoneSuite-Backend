@@ -83,6 +83,7 @@ type JobItem struct {
 // Step is one of the 16 checklist rows.
 type Step struct {
 	Code        string         `json:"code"`
+	PieceUUID   string         `json:"pieceUuid,omitempty"` // set on piece-grain rows; address one piece's row with it
 	Sequence    int            `json:"sequence"`
 	Status      string         `json:"status"`
 	Notes       string         `json:"notes,omitempty"`

@@ -167,10 +167,11 @@ func loadPieces(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]JobItem
 
 func loadSteps(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]Step, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT fs.step_code, fs.step_sequence, fs.step_status, fs.step_notes, fs.step_payload,
-		       fs.step_started_at, fs.step_completed_at
+		SELECT fs.step_code, COALESCE(fi.fabrication_job_item_uuid::text, ''), fs.step_sequence, fs.step_status,
+		       fs.step_notes, fs.step_payload, fs.step_started_at, fs.step_completed_at
 		FROM fabrication_job_step fs
 		JOIN fabrication_job fj ON fj.fabrication_job_id = fs.fabrication_job_id
+		LEFT JOIN fabrication_job_item fi ON fi.fabrication_job_item_id = fs.fabrication_job_item_id
 		WHERE fj.fabrication_job_uuid = $1
 		ORDER BY fs.step_sequence, fs.fabrication_job_step_id`, uuid)
 	if err != nil {
@@ -181,7 +182,7 @@ func loadSteps(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]Step, er
 	for rows.Next() {
 		var s Step
 		var payloadRaw []byte
-		if err := rows.Scan(&s.Code, &s.Sequence, &s.Status, &s.Notes, &payloadRaw,
+		if err := rows.Scan(&s.Code, &s.PieceUUID, &s.Sequence, &s.Status, &s.Notes, &payloadRaw,
 			&s.StartedAt, &s.CompletedAt); err != nil {
 			return nil, err
 		}

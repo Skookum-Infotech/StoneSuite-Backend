@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/inventory"
 )
 
 // ErrDispositionRequired is returned when a job cannot be cancelled because it
@@ -90,6 +93,9 @@ type DispositionInput struct {
 	LengthMM      float64 `json:"lengthMm"`
 	WidthMM       float64 `json:"widthMm"`
 	ThicknessMM   float64 `json:"thicknessMm"`
+	// DestinationBinUUID is where a recovered offcut is put away. Required for
+	// "recovered": an offcut with no bin is stock nobody can find.
+	DestinationBinUUID string `json:"destinationBinUuid"`
 }
 
 // RecordDisposition declares the fate of one consumed slab on a job that is being
@@ -99,6 +105,16 @@ type DispositionInput struct {
 func RecordDisposition(ctx context.Context, pool *pgxpool.Pool, jobUUID string, in DispositionInput, actorEmployeeID int) error {
 	if in.Disposition != "recovered" && in.Disposition != "scrapped" && in.Disposition != "delivered" {
 		return ClientError{Msg: "Disposition must be recovered, scrapped, or delivered."}
+	}
+	if in.Disposition == "recovered" {
+		// Checked up front so nothing is placeholder-filled: the offcut becomes real
+		// stock with these exact dimensions and location.
+		if in.LengthMM <= 0 || in.WidthMM <= 0 || in.ThicknessMM <= 0 {
+			return ClientError{Msg: "A recovered offcut needs its length, width and thickness."}
+		}
+		if strings.TrimSpace(in.DestinationBinUUID) == "" {
+			return ClientError{Msg: "Choose a destination bin for the recovered offcut."}
+		}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -125,15 +141,16 @@ func RecordDisposition(ctx context.Context, pool *pgxpool.Pool, jobUUID string, 
 
 	// Lock the consumed allocation + parent slab.
 	var allocID, slabID, itemID, whID int
+	var parentBinID *int
 	var parentArea, consumedFrom float64
 	err = tx.QueryRow(ctx, `
-		SELECT fjs.fabrication_job_slab_id, s.inventory_slab_id, s.inventory_item_id, s.warehouse_id, s.slab_area,
+		SELECT fjs.fabrication_job_slab_id, s.inventory_slab_id, s.inventory_item_id, s.warehouse_id, s.slab_area, s.inventory_bin_id,
 		       COALESCE((SELECT SUM(c.slab_area) FROM inventory_slab c WHERE c.slab_parent_slab_id = s.inventory_slab_id AND c.slab_deleted_at IS NULL), 0)
 		FROM fabrication_job_slab fjs
 		JOIN inventory_slab s ON s.inventory_slab_id = fjs.inventory_slab_id
 		WHERE fjs.fabrication_job_id = $1 AND s.inventory_slab_uuid = $2
 		  AND fjs.allocation_status = 'consumed' AND fjs.disposition IS NULL
-		FOR UPDATE OF fjs, s`, jobID, in.SlabUUID).Scan(&allocID, &slabID, &itemID, &whID, &parentArea, &consumedFrom)
+		FOR UPDATE OF fjs, s`, jobID, in.SlabUUID).Scan(&allocID, &slabID, &itemID, &whID, &parentArea, &parentBinID, &consumedFrom)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClientError{Msg: "No consumed, undeclared slab of that id on this job."}
 	}
@@ -148,7 +165,14 @@ func RecordDisposition(ctx context.Context, pool *pgxpool.Pool, jobUUID string, 
 		if in.RecoveredArea <= 0 || in.RecoveredArea > remaining {
 			return ClientError{Msg: fmt.Sprintf("Recovered area must be between 0 and the remaining %.3f.", remaining)}
 		}
-		childID, err := mintOffcut(ctx, tx, slabID, in, actorEmployeeID)
+		binID, err := inventory.ResolveRemnantBin(ctx, tx, in.DestinationBinUUID, whID, parentBinID)
+		if err != nil {
+			if inventory.IsClientError(err) {
+				return ClientError{Msg: err.Error()}
+			}
+			return err
+		}
+		childID, err := mintOffcut(ctx, tx, slabID, binID, in, actorEmployeeID)
 		if err != nil {
 			return err
 		}
@@ -181,7 +205,7 @@ func RecordDisposition(ctx context.Context, pool *pgxpool.Pool, jobUUID string, 
 
 // mintOffcut inserts a child slab (form='cut', available) from a consumed parent,
 // inheriting material, vendor, and supplier code, with serial {parent}-R{n}.
-func mintOffcut(ctx context.Context, tx pgx.Tx, parentSlabID int, in DispositionInput, actorEmployeeID int) (int, error) {
+func mintOffcut(ctx context.Context, tx pgx.Tx, parentSlabID, binID int, in DispositionInput, actorEmployeeID int) (int, error) {
 	// Next free -R suffix for this parent, computed while the parent is locked.
 	var n int
 	if err := tx.QueryRow(ctx, `
@@ -194,16 +218,16 @@ func mintOffcut(ctx context.Context, tx pgx.Tx, parentSlabID int, in Disposition
 			slab_serial, slab_vendor_id, slab_supplier_code, inventory_item_id, warehouse_id,
 			slab_bundle_id, slab_block_id, slab_lot,
 			slab_length_mm, slab_width_mm, slab_thickness_mm, slab_area, slab_area_unit_id,
-			slab_form, slab_parent_slab_id, slab_status, slab_grade, slab_finish, slab_created_by)
+			slab_form, slab_parent_slab_id, slab_status, slab_grade, slab_finish, slab_created_by, inventory_bin_id)
 		SELECT p.slab_serial || '-R' || ($2::int + 1), p.slab_vendor_id, p.slab_supplier_code,
 		       p.inventory_item_id, p.warehouse_id, p.slab_bundle_id, p.slab_block_id, p.slab_lot,
 		       $3, $4, $5, $6, p.slab_area_unit_id,
-		       'cut', p.inventory_slab_id, 'available', p.slab_grade, p.slab_finish, $7
+		       'cut', p.inventory_slab_id, 'available', p.slab_grade, p.slab_finish, $7, $8
 		FROM inventory_slab p WHERE p.inventory_slab_id = $1
 		RETURNING inventory_slab_id`,
 		parentSlabID, n,
-		defaultPositive(in.LengthMM), defaultPositive(in.WidthMM), defaultPositive(in.ThicknessMM),
-		in.RecoveredArea, nullableInt(actorEmployeeID)).Scan(&childID)
+		in.LengthMM, in.WidthMM, in.ThicknessMM,
+		in.RecoveredArea, nullableInt(actorEmployeeID), binID).Scan(&childID)
 	if err != nil {
 		if isCheckViolation(err) {
 			return 0, ClientError{Msg: "Offcut dimensions or area are out of range."}
@@ -211,13 +235,4 @@ func mintOffcut(ctx context.Context, tx pgx.Tx, parentSlabID int, in Disposition
 		return 0, fmt.Errorf("mint offcut: %w", err)
 	}
 	return childID, nil
-}
-
-// defaultPositive returns v when positive, else 1 (schema requires dims > 0; a
-// caller that omits offcut dimensions gets a nominal placeholder).
-func defaultPositive(v float64) float64 {
-	if v > 0 {
-		return v
-	}
-	return 1
 }

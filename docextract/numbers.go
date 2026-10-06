@@ -30,13 +30,24 @@ var (
 	currencyRe = regexp.MustCompile(`(?i)USD|[$€£¥]`)
 )
 
+const (
+	centsDigits = 2
+	milliDigits = 3
+)
+
+// lossy reports whether a fraction has non-zero digits beyond keep places,
+// i.e. whether storing it at that precision changes the value.
+func lossy(frac string, keep int) bool {
+	return len(frac) > keep && strings.Trim(frac[keep:], "0") != ""
+}
+
 // NumberFlagsUsable reports whether a parse issue still leaves a usable value.
 func NumberFlagsUsable(issue string) bool { return issue == "" || issue == IssuePrecision }
 
 // ParseMoney strictly parses a currency string into cents. It never guesses:
 // letters inside digits are invalid and European 1.234,56 is reported as
 // IssueEUDecimal with a zero value. More than two decimals round half up and
-// report IssuePrecision.
+// report IssuePrecision, unless the extra digits are zeros ("25.0000").
 func ParseMoney(s string) (Cents, string) {
 	t := strings.TrimSpace(s)
 	neg := false
@@ -70,7 +81,7 @@ func ParseMoney(s string) (Cents, string) {
 	t = strings.ReplaceAll(t, ",", "")
 	whole, frac, _ := strings.Cut(t, ".")
 	issue := ""
-	if len(frac) > 2 {
+	if lossy(frac, centsDigits) {
 		issue = IssuePrecision
 	}
 	w, err := parseDigits(whole)
@@ -115,7 +126,7 @@ func FormatCents(c Cents) string {
 var qtyRe = regexp.MustCompile(`^(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$`)
 
 // ParseQty strictly parses a quantity into milli-units (12.5 -> 12500). More
-// than three decimals round half up with IssuePrecision.
+// than three non-zero decimals round half up with IssuePrecision.
 func ParseQty(s string) (int64, string) {
 	t := strings.TrimSpace(s)
 	neg := false
@@ -135,7 +146,7 @@ func ParseQty(s string) (int64, string) {
 	t = strings.ReplaceAll(t, ",", "")
 	whole, frac, _ := strings.Cut(t, ".")
 	issue := ""
-	if len(frac) > 3 {
+	if lossy(frac, milliDigits) {
 		issue = IssuePrecision
 	}
 	w, err := parseDigits(whole)

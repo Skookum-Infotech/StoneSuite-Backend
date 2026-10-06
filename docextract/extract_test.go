@@ -16,9 +16,11 @@ import (
 func poPDF(billTo []string, extra ...string) []byte {
 	var p pdftest.Page
 	y := 750.0
-	p.Add(y, pdftest.Cell{X: 50, S: "Granite Depot LLC"})
-	y -= 20
+	// The title comes first, so there is no letterhead to infer the customer
+	// from: without a Bill To the parser genuinely can't name the customer.
 	p.Add(y, pdftest.Cell{X: 50, S: "PURCHASE ORDER"})
+	y -= 20
+	p.Add(y, pdftest.Cell{X: 50, S: "Granite Depot LLC"})
 	y -= 20
 	p.Add(y, pdftest.Cell{X: 50, S: "PO Number: 4471"}, pdftest.Cell{X: 330, S: "Order Date: 01/02/2026"})
 	y -= 30

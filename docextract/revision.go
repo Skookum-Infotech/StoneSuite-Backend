@@ -19,7 +19,9 @@ func DetectRevision(pages []PageRows) *Revision {
 	for _, p := range pages {
 		for _, r := range p.Rows {
 			text := r.Text()
-			if m := changeOrdRe.FindStringSubmatch(text); m != nil {
+			// A change-order number has a digit: "Change Order Buyer Options"
+			// in an options table is prose, not a revision.
+			if m := changeOrdRe.FindStringSubmatch(text); m != nil && hasDigit(m[1]) {
 				rev = &Revision{Label: "Change Order " + strings.ToUpper(m[1])}
 			} else if m := revisionRe.FindStringSubmatch(text); m != nil {
 				rev = &Revision{Label: "Revision " + strings.ToUpper(m[1])}

@@ -14,6 +14,10 @@ const (
 	roleUoM    colRole = "uom"
 	rolePrice  colRole = "price"
 	roleAmount colRole = "amount"
+	// roleSkip is a recognised column whose values belong to no field (a
+	// second amount-like column, e.g. "Extension" beside "Ext. Cost"); it
+	// exists so its numbers don't drift into the description.
+	roleSkip colRole = "skip"
 )
 
 const (
@@ -37,6 +41,7 @@ var headerPhrases = map[string]colRole{
 	"line total": roleAmount, "ext price": roleAmount, "ext amount": roleAmount,
 	"item number": roleSKU, "item no": roleSKU, "part number": roleSKU, "part no": roleSKU,
 	"product code": roleSKU, "item code": roleSKU,
+	"item cost": rolePrice, "ext cost": roleAmount, "extended cost": roleAmount,
 }
 
 // headerWords are single-word column titles.
@@ -47,6 +52,7 @@ var headerWords = map[string]colRole{
 	"uom": roleUoM, "unit": roleUoM, "u/m": roleUoM, "um": roleUoM,
 	"price": rolePrice, "rate": rolePrice, "cost": rolePrice,
 	"amount": roleAmount, "total": roleAmount, "ext": roleAmount, "extended": roleAmount,
+	"extension": roleAmount,
 }
 
 // normHeaderWord lower-cases a header word and trims punctuation.
@@ -81,21 +87,41 @@ func detectTableHeader(r Row) ([]column, bool) {
 			role = rr
 		}
 		last := r.Words[i+span-1]
-		if !seen[role] {
+		col := column{role: role, x0: w.X, x1: last.X + last.W}
+		switch {
+		case !seen[role]:
 			seen[role] = true
-			cols = append(cols, column{role: role, x0: w.X, x1: last.X + last.W})
+		case role == roleAmount:
+			// The rightmost amount-like column is the line total; an earlier
+			// one ("Extension" before "Ext. Cost") is kept but ignored.
+			for ci := range cols {
+				if cols[ci].role == roleAmount {
+					cols[ci].role = roleSkip
+				}
+			}
+		default:
+			col.role = roleSkip
 		}
+		cols = append(cols, col)
 		i += span - 1
 	}
-	if len(cols) < minHeaderRoles {
+	if !isLineTableHeader(seen) {
 		return nil, false
 	}
 	sort.SliceStable(cols, func(a, b int) bool { return cols[a].x0 < cols[b].x0 })
 	return cols, true
 }
 
+// isLineTableHeader reports whether the roles found make a line-item table: at
+// least minHeaderRoles of them, one being a quantity or an amount. A label
+// strip such as "Date | Job Number | Cost Code | Cost Code Description" hits
+// three column words but carries neither.
+func isLineTableHeader(seen map[colRole]bool) bool {
+	return len(seen) >= minHeaderRoles && (seen[roleQty] || seen[roleAmount])
+}
+
 func isNumericRole(r colRole) bool {
-	return r == roleQty || r == rolePrice || r == roleAmount
+	return r == roleQty || r == rolePrice || r == roleAmount || r == roleSkip
 }
 
 // assignWords places each word of a data row into its nearest column. Numeric

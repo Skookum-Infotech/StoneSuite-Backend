@@ -73,6 +73,20 @@ func seedSalesOrder(t *testing.T, pool *pgxpool.Pool) (soUUID string) {
 	return soUUID
 }
 
+// setSalesOrderStatus forces a sales order into the given status code. Job
+// creation requires a confirmed order, so fixtures that build an order through
+// salesorder.Create (which starts it as a Draft) call this with "OPEN".
+func setSalesOrderStatus(t *testing.T, pool *pgxpool.Pool, soUUID, code string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE sales_order SET sales_order_status = (
+			SELECT record_status_id FROM lkp_record_status
+			WHERE record_status_record_type = sales_order.record_type AND record_status_code = $2)
+		WHERE sales_order_uuid = $1`, soUUID, code); err != nil {
+		t.Fatalf("set sales order status %s: %v", code, err)
+	}
+}
+
 // newCancelledJob creates a job and cancels it, since SoftDelete only accepts
 // draft or cancelled jobs and Create starts one at ORCV.
 func newCancelledJob(t *testing.T, pool *pgxpool.Pool) *Job {

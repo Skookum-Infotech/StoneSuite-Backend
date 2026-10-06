@@ -38,6 +38,14 @@ func fabricateAs(t *testing.T, grants ...authz.Grant) *httptest.ResponseRecorder
 	in.Items = []salesorder.LineInput2{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
 	order, err := salesorder.Create(ctx, pool, in, 1)
 	require.NoError(t, err)
+	// Job creation requires a confirmed order; salesorder.Create starts it as a
+	// Draft, which would turn the success case into a 400.
+	_, err = pool.Exec(ctx, `
+		UPDATE sales_order SET sales_order_status = (
+			SELECT record_status_id FROM lkp_record_status
+			WHERE record_status_record_type = sales_order.record_type AND record_status_code = 'OPEN')
+		WHERE sales_order_uuid = $1`, order.ID)
+	require.NoError(t, err)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/tenant/sales-orders/{uuid}/fabricate", NewFabricationOps().Fabricate)

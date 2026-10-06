@@ -65,13 +65,7 @@ func TestCreateOnce_ReplayIsScopedToCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE sales_order SET sales_order_status = (
-			SELECT record_status_id FROM lkp_record_status
-			WHERE record_status_record_type = sales_order.record_type AND record_status_code = 'CANC')
-		WHERE sales_order_uuid = $1`, soUUID); err != nil {
-		t.Fatalf("cancel order: %v", err)
-	}
+	setSalesOrderStatus(t, pool, soUUID, "CANC")
 	again, created, err := CreateOnce(ctx, pool, in, 1)
 	if err != nil || created || again.ID != first.ID {
 		t.Fatalf("replay after cancel: created=%v err=%v", created, err)

@@ -82,6 +82,15 @@ func parseHeader(pages []PageRows, spans map[int][2]int, opts HeaderOptions) hea
 	h.DeliveryDate, warn = extractDate(rows, hits, keyDelivery)
 	out.Warnings = append(out.Warnings, warn...)
 	h.CustomerName, h.BillTo = extractParty(rows, hits, keyBillTo, opts.OwnCompanyNames, true)
+	// Only a document that is plainly an order (a PO number or a line table)
+	// lends its letterhead to the customer.
+	if !h.CustomerName.Found() && (h.PONumber.Found() || len(spans) > 0) {
+		ln, lb := extractLetterhead(rows, hits, opts.OwnCompanyNames)
+		h.CustomerName = ln
+		if !h.BillTo.Found() {
+			h.BillTo = lb
+		}
+	}
 	_, h.ShipTo = extractParty(rows, hits, keyShipTo, opts.OwnCompanyNames, false)
 	h.PaymentTerms = extractTerms(rows, hits)
 	h.Subtotal = extractMoney(rows, hits, keySubtotal)
@@ -103,6 +112,9 @@ func segments(rows []hrow, h labelHit) []string {
 	if h.spec.below {
 		segs = append(segs, belowSeg(rows, h))
 	}
+	if h.spec.nearBelow {
+		segs = append(segs, nearBelowSegs(rows, h)...)
+	}
 	return segs
 }
 
@@ -123,7 +135,7 @@ func extractPO(rows []hrow, hits []labelHit) (Field, bool) {
 		for _, seg := range segments(rows, h) {
 			tok := poTokenRe.FindString(seg)
 			tok = strings.TrimRight(tok, ".-/_")
-			if tok == "" || !hasDigit(tok) {
+			if tok == "" || !hasDigit(tok) || isDateToken(tok) {
 				continue
 			}
 			distinct[strings.ToUpper(tok)] = true
@@ -134,6 +146,12 @@ func extractPO(rows []hrow, hits []labelHit) (Field, bool) {
 		}
 	}
 	return best, len(distinct) > 1
+}
+
+// isDateToken reports whether a candidate PO token is really a date.
+func isDateToken(tok string) bool {
+	_, ok := ParseDate(tok)
+	return ok
 }
 
 // extractDate returns the best date for a key, ISO-normalised.

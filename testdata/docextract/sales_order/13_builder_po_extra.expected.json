@@ -1,0 +1,20 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Lakeview Homes",
+    "order_date": "2026-10-01",
+    "po_number": "08005-81726",
+    "ship_to": "77 Larkspur Lane\nDenton, TX 76207\nMeadow Glen 50s\nLot 21 Blk E Sect 1B",
+    "total": "500.00"
+  },
+  "lines": [
+    {
+      "sku": "",
+      "description": "Countertops Labor/Turnkey (P/O) counter top upgrades per co 15.",
+      "qty": "1",
+      "uom": "",
+      "unit_price": "500.00",
+      "amount": "500.00"
+    }
+  ]
+}

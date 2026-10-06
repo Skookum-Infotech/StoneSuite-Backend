@@ -134,7 +134,10 @@ func (tp *tableParser) kindFor(ln Line, cells map[colRole][]Word) LineKind {
 	if !ln.SKU.Found() && chargeRe.MatchString(desc) {
 		return KindCharge
 	}
-	if addonPrefixRe.MatchString(desc) || addonVocabRe.MatchString(desc) {
+	// A line with its own item number is a product even when its wording
+	// sounds like an add-on ("Kitchen Sink - Stainless Steel", SKU 93310E);
+	// the vocabulary only decides for SKU-less rows.
+	if addonPrefixRe.MatchString(desc) || (!ln.SKU.Found() && addonVocabRe.MatchString(desc)) {
 		return KindAddon
 	}
 	if dc, ok := columnByRole(tp.cols, roleDesc); ok && len(cells[roleDesc]) > 0 {

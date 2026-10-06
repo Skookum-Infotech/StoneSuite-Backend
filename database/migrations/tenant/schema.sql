@@ -8427,6 +8427,12 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_name           VARCHAR
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_account_number VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_routing_number VARCHAR(255) NOT NULL DEFAULT '';
 
+-- Default Terms & Conditions / Notes printed on a customer-facing PDF whose
+-- record leaves them blank, keyed by document kind (estimate, quote,
+-- sales_order, invoice) as {"invoice": {"terms": "...", "notes": "..."}}.
+-- Empty object means no defaults: the PDF then omits those sections.
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS document_defaults JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- (company_location is defined earlier in this file, ahead of the inventory
 -- tables that reference it -- see "Company locations" above.)
 

@@ -131,3 +131,10 @@ Every sales document — Estimate, Quote, Sales Order, Invoice, Payment,
 Credit Memo, and Refund — has an Export PDF action in its Quick Actions
 panel, which downloads a PDF copy of the document for you to save, print, or
 send yourself outside of StoneSuite's built-in Send to Customer action.
+
+### Terms and notes on the PDF
+
+An Estimate, Quote, Sales Order, or Invoice PDF prints the Terms & Conditions
+and Notes saved on that document. If you left them blank, the PDF uses the
+default wording your company set for that document type, and leaves the section
+out when no default is set. StoneSuite does not add wording of its own.

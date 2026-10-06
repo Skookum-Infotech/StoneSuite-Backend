@@ -3,10 +3,12 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"stonesuite-backend/config"
 	"stonesuite-backend/tenancy"
 )
 
@@ -41,18 +43,38 @@ func claimRefreshToken(w http.ResponseWriter, r *http.Request, cp *tenancy.Contr
 	return nil, "", false
 }
 
-// rotateRefreshToken issues the replacement refresh token and only then revokes
-// the one it replaces. The order matters: revoking first would leave the user
-// with no valid refresh token if issuing then failed. Revoke failure is not
-// fatal — the old token is already inside its rotation grace and expires on its
-// own.
+// rotateRefreshToken issues the replacement refresh token and revokes the one
+// it replaces in a single transaction: either both happen or neither, so a
+// failure can neither strand the user without a valid token nor leave two live.
 func rotateRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, oldHash, identityID string) (string, time.Time, error) {
-	raw, expiry, err := issueRefreshToken(ctx, cp, identityID)
+	raw, err := randomToken()
 	if err != nil {
+		return "", time.Time{}, fmt.Errorf("generate refresh token: %w", err)
+	}
+	rd, err := time.ParseDuration(config.AppConfig.RefreshTokenExpiresIn)
+	if err != nil {
+		rd = 24 * time.Hour
+	}
+	expiry := time.Now().Add(rd)
+	if err := cp.RotateRefreshToken(ctx, oldHash, identityID, tenancy.HashRefreshToken(raw), expiry); err != nil {
 		return "", time.Time{}, err
 	}
-	if err := cp.RevokeRefreshToken(ctx, oldHash); err != nil {
-		slog.Warn("refresh rotation: revoke old token", "error", err)
-	}
 	return raw, expiry, nil
+}
+
+// revokeSessionOnLogout revokes the presented refresh token immediately (no
+// rotation grace), clears the auth cookies and writes the response. A revoke
+// failure answers 500 success:false: the cookies are still cleared, but the
+// client must not be told the server-side session ended when it did not.
+func revokeSessionOnLogout(w http.ResponseWriter, r *http.Request, cp *tenancy.ControlPlane) {
+	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
+		if err := cp.RevokeRefreshTokenNow(r.Context(), tenancy.HashRefreshToken(cookie.Value)); err != nil {
+			slog.Error("logout: revoke refresh token", "error", err)
+			clearAuthCookies(w)
+			fail(w, http.StatusInternalServerError, "Failed to end session. Please try again.")
+			return
+		}
+	}
+	clearAuthCookies(w)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }

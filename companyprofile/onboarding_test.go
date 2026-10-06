@@ -1,6 +1,9 @@
 package companyprofile
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestFromOnboardingMetadata(t *testing.T) {
 	tests := []struct {
@@ -102,7 +105,7 @@ func TestFromOnboardingMetadata(t *testing.T) {
 			if ok != tt.wantOK {
 				t.Fatalf("FromOnboardingMetadata(%q) ok = %v, want %v", tt.metadataJSON, ok, tt.wantOK)
 			}
-			if ok && got != tt.wantProfile {
+			if ok && !reflect.DeepEqual(got, tt.wantProfile) {
 				t.Errorf("FromOnboardingMetadata(%q) = %+v, want %+v", tt.metadataJSON, got, tt.wantProfile)
 			}
 		})

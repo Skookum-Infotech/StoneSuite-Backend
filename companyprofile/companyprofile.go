@@ -6,6 +6,7 @@ package companyprofile
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,23 @@ import (
 // MaxFieldLength bounds every profile field, matching the VARCHAR(255)
 // column widths in the company_profile table.
 const MaxFieldLength = 255
+
+// MaxWordingLength bounds a default Terms or Notes text.
+const MaxWordingLength = 5000
+
+// Document kinds a tenant can set default wording for (the DocumentDefaults keys).
+const (
+	DocKindEstimate   = "estimate"
+	DocKindQuote      = "quote"
+	DocKindSalesOrder = "sales_order"
+	DocKindInvoice    = "invoice"
+)
+
+// DocumentWording is the default Terms & Conditions and Notes for one document kind.
+type DocumentWording struct {
+	Terms string `json:"terms"`
+	Notes string `json:"notes"`
+}
 
 // Address is a structured postal address — the same line1/line2/suite/city/
 // country/state/zip shape CRM Lead/Prospect/Customer records use for their
@@ -66,6 +84,11 @@ type Profile struct {
 	// frontend saving the rest of the form) omits the field, and Upsert keeps
 	// what is stored instead of blanking it. Send an empty object to clear them.
 	PaymentDetails *PaymentDetails `json:"paymentDetails,omitempty"`
+
+	// DocumentDefaults is the default Terms/Notes per document kind, printed on
+	// a PDF whose record leaves them blank. Like PaymentDetails, nil on update
+	// keeps what is stored; an empty map clears it.
+	DocumentDefaults map[string]DocumentWording `json:"documentDefaults,omitempty"`
 }
 
 // Querier is the subset of pgx behavior Get/Upsert need (consumer-side
@@ -128,6 +151,16 @@ func Validate(p Profile) error {
 		fields["paymentDetails.accountNumber"] = pd.AccountNumber
 		fields["paymentDetails.routingNumber"] = pd.RoutingNumber
 	}
+	for kind, w := range p.DocumentDefaults {
+		switch kind {
+		case DocKindEstimate, DocKindQuote, DocKindSalesOrder, DocKindInvoice:
+		default:
+			return ValidationError{fmt.Sprintf("documentDefaults.%s is not a supported document kind", kind)}
+		}
+		if len(w.Terms) > MaxWordingLength || len(w.Notes) > MaxWordingLength {
+			return ValidationError{fmt.Sprintf("documentDefaults.%s terms and notes must be at most %d characters", kind, MaxWordingLength)}
+		}
+	}
 	for field, value := range fields {
 		if len(value) > MaxFieldLength {
 			return ValidationError{fmt.Sprintf("%s must be at most %d characters", field, MaxFieldLength)}
@@ -142,19 +175,20 @@ func Validate(p Profile) error {
 func Get(ctx context.Context, q Querier) (*Profile, error) {
 	p := &Profile{}
 	var pd PaymentDetails
+	var defaultsJSON []byte
 	err := q.QueryRow(ctx, `
 		SELECT company_name, legal_name, industry, website, country, currency, timezone, tax_id, logo_r2_key,
 		       billing_addr_line1, billing_addr_line2, billing_addr_suite, billing_addr_city, billing_addr_country, billing_addr_state, billing_addr_zip,
 		       shipping_addr_line1, shipping_addr_line2, shipping_addr_suite, shipping_addr_city, shipping_addr_country, shipping_addr_state, shipping_addr_zip,
 		       return_addr_line1, return_addr_line2, return_addr_suite, return_addr_city, return_addr_country, return_addr_state, return_addr_zip,
-		       bank_name, bank_account_number, bank_routing_number
+		       bank_name, bank_account_number, bank_routing_number, document_defaults
 		FROM company_profile WHERE id = 1`).
 		Scan(
 			&p.CompanyName, &p.LegalName, &p.Industry, &p.Website, &p.Country, &p.Currency, &p.Timezone, &p.TaxID, &p.LogoKey,
 			&p.BillingAddress.Line1, &p.BillingAddress.Line2, &p.BillingAddress.Suite, &p.BillingAddress.City, &p.BillingAddress.Country, &p.BillingAddress.State, &p.BillingAddress.Zip,
 			&p.ShippingAddress.Line1, &p.ShippingAddress.Line2, &p.ShippingAddress.Suite, &p.ShippingAddress.City, &p.ShippingAddress.Country, &p.ShippingAddress.State, &p.ShippingAddress.Zip,
 			&p.ReturnAddress.Line1, &p.ReturnAddress.Line2, &p.ReturnAddress.Suite, &p.ReturnAddress.City, &p.ReturnAddress.Country, &p.ReturnAddress.State, &p.ReturnAddress.Zip,
-			&pd.BankName, &pd.AccountNumber, &pd.RoutingNumber,
+			&pd.BankName, &pd.AccountNumber, &pd.RoutingNumber, &defaultsJSON,
 		)
 	if err == pgx.ErrNoRows {
 		return p, nil
@@ -165,7 +199,35 @@ func Get(ctx context.Context, q Querier) (*Profile, error) {
 	if pd != (PaymentDetails{}) {
 		p.PaymentDetails = &pd
 	}
+	if err := json.Unmarshal(defaultsJSON, &p.DocumentDefaults); err != nil {
+		return nil, fmt.Errorf("decode document defaults: %w", err)
+	}
+	if len(p.DocumentDefaults) == 0 {
+		p.DocumentDefaults = nil
+	}
 	return p, nil
+}
+
+// defaultsArg returns the document_defaults upsert argument: the marshalled
+// map, or nil (SQL NULL, "keep what is stored") when the caller supplied none.
+// Texts are trimmed and kinds left blank are dropped.
+func defaultsArg(m map[string]DocumentWording) (*string, error) {
+	if m == nil {
+		return nil, nil
+	}
+	clean := make(map[string]DocumentWording, len(m))
+	for kind, w := range m {
+		w = DocumentWording{Terms: strings.TrimSpace(w.Terms), Notes: strings.TrimSpace(w.Notes)}
+		if w != (DocumentWording{}) {
+			clean[kind] = w
+		}
+	}
+	b, err := json.Marshal(clean)
+	if err != nil {
+		return nil, fmt.Errorf("encode document defaults: %w", err)
+	}
+	str := string(b)
+	return &str, nil
 }
 
 // paymentArgs returns the arguments for the bank_* columns of an upsert: the
@@ -189,19 +251,24 @@ func Upsert(ctx context.Context, q Querier, p Profile) error {
 		return err
 	}
 	bank, account, routing := paymentArgs(p.PaymentDetails)
-	_, err := q.Exec(ctx, `
+	defaults, err := defaultsArg(p.DocumentDefaults)
+	if err != nil {
+		return err
+	}
+	_, err = q.Exec(ctx, `
 		INSERT INTO company_profile (
 			id, company_name, legal_name, industry, website, country, currency, timezone, tax_id,
 			billing_addr_line1, billing_addr_line2, billing_addr_suite, billing_addr_city, billing_addr_country, billing_addr_state, billing_addr_zip,
 			shipping_addr_line1, shipping_addr_line2, shipping_addr_suite, shipping_addr_city, shipping_addr_country, shipping_addr_state, shipping_addr_zip,
 			return_addr_line1, return_addr_line2, return_addr_suite, return_addr_city, return_addr_country, return_addr_state, return_addr_zip,
-			bank_name, bank_account_number, bank_routing_number
+			bank_name, bank_account_number, bank_routing_number, document_defaults
 		) VALUES (
 			1,$1,$2,$3,$4,$5,$6,$7,$8,
 			$9,$10,$11,$12,$13,$14,$15,
 			$16,$17,$18,$19,$20,$21,$22,
 			$23,$24,$25,$26,$27,$28,$29,
-			COALESCE($30::text, ''), COALESCE($31::text, ''), COALESCE($32::text, '')
+			COALESCE($30::text, ''), COALESCE($31::text, ''), COALESCE($32::text, ''),
+			COALESCE($33::text::jsonb, '{}'::jsonb)
 		)
 		ON CONFLICT (id) DO UPDATE
 			SET company_name         = EXCLUDED.company_name,
@@ -236,12 +303,13 @@ func Upsert(ctx context.Context, q Querier, p Profile) error {
 			    bank_name           = COALESCE($30::text, company_profile.bank_name),
 			    bank_account_number = COALESCE($31::text, company_profile.bank_account_number),
 			    bank_routing_number = COALESCE($32::text, company_profile.bank_routing_number),
+			    document_defaults   = COALESCE($33::text::jsonb, company_profile.document_defaults),
 			    updated_at = NOW()`,
 		p.CompanyName, p.LegalName, p.Industry, p.Website, p.Country, p.Currency, p.Timezone, p.TaxID,
 		p.BillingAddress.Line1, p.BillingAddress.Line2, p.BillingAddress.Suite, p.BillingAddress.City, p.BillingAddress.Country, p.BillingAddress.State, p.BillingAddress.Zip,
 		p.ShippingAddress.Line1, p.ShippingAddress.Line2, p.ShippingAddress.Suite, p.ShippingAddress.City, p.ShippingAddress.Country, p.ShippingAddress.State, p.ShippingAddress.Zip,
 		p.ReturnAddress.Line1, p.ReturnAddress.Line2, p.ReturnAddress.Suite, p.ReturnAddress.City, p.ReturnAddress.Country, p.ReturnAddress.State, p.ReturnAddress.Zip,
-		bank, account, routing,
+		bank, account, routing, defaults,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert company profile: %w", err)

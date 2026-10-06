@@ -241,7 +241,18 @@ jobs:
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          govulncheck -json ./... > govulncheck.json || true
+
+          # Fail closed: `-json` exits 0 even when it reports findings, so a
+          # non-zero exit (or empty/malformed output) means the scanner itself
+          # broke -- that must fail the job, not read as "no vulnerabilities".
+          if ! govulncheck -json ./... > govulncheck.json; then
+            echo "::error::govulncheck exited non-zero -- the scan did not complete."
+            exit 1
+          fi
+          if ! jq -e 'select(.config)' govulncheck.json > /dev/null; then
+            echo "::error::govulncheck produced no config message -- output is empty or malformed."
+            exit 1
+          fi
 
           # GO-2026-6452 (github.com/xuri/excelize/v2, reached via
           # importer.Worker.runImport -> go-rag/parse.Run -> excelize.GetRows)
@@ -258,11 +269,12 @@ jobs:
           # module -- matching what govulncheck's plain-text mode treats as a
           # failing result (the human-readable output further above only
           # errors on these, not on imported-but-uncalled vulnerabilities).
-          called=$(jq -r '
+          jq -r '
             select(.finding) | .finding |
             select((.trace | length) > 1 and (.trace[-1].module == "stonesuite-backend")) |
             .osv
-          ' govulncheck.json 2>/dev/null | sort -u || true)
+          ' govulncheck.json > called.txt || { echo "::error::jq failed parsing govulncheck.json"; exit 1; }
+          called=$(sort -u called.txt)
 
           unallowed=$(echo "$called" | grep -v '^$' | grep -vxF -f <(printf '%s\n' $ALLOWED_VULN_IDS) || true)
 

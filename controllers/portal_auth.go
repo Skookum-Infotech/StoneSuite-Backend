@@ -384,11 +384,7 @@ func (h *PortalAuthOps) Refresh(w http.ResponseWriter, r *http.Request) {
 // Logout revokes the refresh token and clears the session cookies.
 // Path: POST /api/portal/auth/logout
 func (h *PortalAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
-		_ = h.CP.RevokeRefreshToken(r.Context(), tenancy.HashRefreshToken(cookie.Value))
-	}
-	clearAuthCookies(w)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	revokeSessionOnLogout(w, r, h.CP)
 }
 
 // ---- credential setup / reset ----------------------------------------------

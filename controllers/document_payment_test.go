@@ -44,3 +44,13 @@ func TestProfileResponse(t *testing.T) {
 	assert.Equal(t, "Acme", got.CompanyName)
 	assert.Nil(t, in.PaymentDetails, "the caller's profile is not modified")
 }
+
+func TestDefaultsFromProfile(t *testing.T) {
+	assert.Nil(t, defaultsFromProfile(nil))
+	assert.Nil(t, defaultsFromProfile(&companyprofile.Profile{}))
+	got := defaultsFromProfile(&companyprofile.Profile{DocumentDefaults: map[string]companyprofile.DocumentWording{
+		companyprofile.DocKindSalesOrder: {Terms: "T", Notes: "N"},
+		"bogus":                          {Terms: "x"},
+	}})
+	assert.Equal(t, map[string]docpdf.Wording{"SALES ORDER": {Terms: "T", Notes: "N"}}, got)
+}

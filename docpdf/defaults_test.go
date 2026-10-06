@@ -7,18 +7,24 @@ import (
 )
 
 func TestWithDefaultWording(t *testing.T) {
+	defaults := map[string]Wording{
+		"INVOICE":     {Terms: "Net 30", Notes: "Thanks"},
+		"SALES ORDER": {Terms: "Deposit first", Notes: "Call us"},
+	}
 	tests := []struct {
 		name      string
 		in        PrintableDoc
 		wantTerms string
 		wantNotes string
 	}{
-		{"blank estimate gets defaults", PrintableDoc{Kind: "ESTIMATE"}, defaultWordingByKind["ESTIMATE"].terms, defaultWordingByKind["ESTIMATE"].notes},
-		{"kind match ignores case and spaces", PrintableDoc{Kind: " invoice "}, defaultWordingByKind["INVOICE"].terms, defaultWordingByKind["INVOICE"].notes},
-		{"record text wins", PrintableDoc{Kind: "QUOTE", Terms: "Net 15", Notes: "Custom"}, "Net 15", "Custom"},
-		{"only the blank field is filled", PrintableDoc{Kind: "SALES ORDER", Terms: "Custom terms"}, "Custom terms", defaultWordingByKind["SALES ORDER"].notes},
-		{"whitespace-only counts as blank", PrintableDoc{Kind: "ESTIMATE", Terms: "  ", Notes: "\n"}, defaultWordingByKind["ESTIMATE"].terms, defaultWordingByKind["ESTIMATE"].notes},
-		{"purchase kinds get none", PrintableDoc{Kind: "PURCHASE ORDER"}, "", ""},
+		{"blank invoice gets tenant defaults", PrintableDoc{Kind: "INVOICE", Seller: Seller{Defaults: defaults}}, "Net 30", "Thanks"},
+		{"kind match ignores case and spaces", PrintableDoc{Kind: " sales order ", Seller: Seller{Defaults: defaults}}, "Deposit first", "Call us"},
+		{"record text wins", PrintableDoc{Kind: "INVOICE", Terms: "Net 15", Notes: "Custom", Seller: Seller{Defaults: defaults}}, "Net 15", "Custom"},
+		{"only the blank field is filled", PrintableDoc{Kind: "INVOICE", Terms: "Custom terms", Seller: Seller{Defaults: defaults}}, "Custom terms", "Thanks"},
+		{"whitespace-only counts as blank", PrintableDoc{Kind: "INVOICE", Terms: "  ", Notes: "\n", Seller: Seller{Defaults: defaults}}, "Net 30", "Thanks"},
+		{"kind without a default stays blank", PrintableDoc{Kind: "QUOTE", Seller: Seller{Defaults: defaults}}, "", ""},
+		{"tenant with no defaults stays blank", PrintableDoc{Kind: "INVOICE"}, "", ""},
+		{"purchase kinds get none", PrintableDoc{Kind: "PURCHASE ORDER", Seller: Seller{Defaults: defaults}}, "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

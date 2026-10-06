@@ -1,6 +1,11 @@
 package companyprofile
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestValidate(t *testing.T) {
 	base := func() Profile {
@@ -103,4 +108,42 @@ func TestPaymentArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidate_DocumentDefaults(t *testing.T) {
+	long := strings.Repeat("x", MaxWordingLength+1)
+	tests := []struct {
+		name    string
+		in      map[string]DocumentWording
+		wantErr bool
+	}{
+		{"nil is fine", nil, false},
+		{"known kind", map[string]DocumentWording{DocKindInvoice: {Terms: "Net 30"}}, false},
+		{"unknown kind", map[string]DocumentWording{"purchase_order": {Terms: "x"}}, true},
+		{"terms too long", map[string]DocumentWording{DocKindQuote: {Terms: long}}, true},
+		{"notes too long", map[string]DocumentWording{DocKindQuote: {Notes: long}}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(Profile{CompanyName: "Acme", DocumentDefaults: tc.in})
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestDefaultsArg(t *testing.T) {
+	got, err := defaultsArg(nil)
+	assert.NoError(t, err)
+	assert.Nil(t, got, "nil keeps stored defaults")
+
+	got, err = defaultsArg(map[string]DocumentWording{
+		DocKindInvoice: {Terms: "  Net 30 ", Notes: " "},
+		DocKindQuote:   {},
+	})
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"invoice":{"terms":"Net 30","notes":""}}`, *got)
 }

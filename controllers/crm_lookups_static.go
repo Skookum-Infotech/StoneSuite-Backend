@@ -29,17 +29,17 @@ func (e *lookupLoadError) Unwrap() error { return e.err }
 // crmStaticLookups is the tenant-wide, caller-independent part of the CRM
 // lookups response. Callers must treat it as read-only (it is shared).
 type crmStaticLookups struct {
-	CustomerTypes []LookupItem
-	ArStatuses []LookupItem
-	PaymentTerms []LookupItem
-	Currencies []CurrencyLookupItem
-	Countries []LookupItem
-	LeadSources []LookupItem
+	CustomerTypes  []LookupItem
+	ArStatuses     []LookupItem
+	PaymentTerms   []LookupItem
+	Currencies     []CurrencyLookupItem
+	Countries      []LookupItem
+	LeadSources    []LookupItem
 	ContactMethods []LookupItem
-	PriceLevels []LookupItem
-	States []StateLookupItem
-	RecordTypes []LookupItem
-	CrmStatuses []LookupItem
+	PriceLevels    []LookupItem
+	States         []StateLookupItem
+	RecordTypes    []LookupItem
+	CrmStatuses    []LookupItem
 }
 
 func newCRMStaticCache() *cache.TTLCache[string, *crmStaticLookups] {

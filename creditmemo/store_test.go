@@ -704,3 +704,49 @@ func TestApply_CapsAtUnappliedNetOfRefunds(t *testing.T) {
 		t.Fatalf("applying the remaining 40: %v", err)
 	}
 }
+
+// Editing an invoice must keep the credit-adjusted balance: a 100 invoice with
+// 30 of credit applied has balance 70, and an ordinary edit (here, a memo
+// change) must not reset it to 100 — nor allow the total to drop below the
+// credit already applied.
+func TestInvoiceUpdate_PreservesCreditAdjustedBalance(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	custUUID := seedCustomer(t, pool)
+	invUUID := seedSentInvoice(t, pool, custUUID, 100)
+	cm := seedApprovedMemo(t, pool, custUUID, 30)
+	if _, err := Apply(ctx, pool, cm.ID, invUUID, 30, 1); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	itemUUID := seedItem(t, pool, 100)
+	line := func(price float64) []invoice.InvoiceLineInput {
+		return []invoice.InvoiceLineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1, UnitPrice: price}}
+	}
+
+	if _, err := invoice.Update(ctx, pool, invUUID, invoice.UpdateInvoiceInput{Memo: "edited", Items: line(100)}, 1); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	_, paid, credit, balance, status := invoiceBalances(t, pool, invUUID)
+	if paid != 0 || credit != 30 || balance != 70 {
+		t.Errorf("after edit paid/credit/balance = %v/%v/%v, want 0/30/70", paid, credit, balance)
+	}
+	if status != "PART" {
+		t.Errorf("status = %q, want PART", status)
+	}
+
+	// Reducing the total below the applied credit is rejected.
+	_, err := invoice.Update(ctx, pool, invUUID, invoice.UpdateInvoiceInput{Items: line(20)}, 1)
+	var clientErr invoice.ClientError
+	if !errors.As(err, &clientErr) {
+		t.Fatalf("expected ClientError reducing total below credit, got %T: %v", err, err)
+	}
+
+	// Reducing it to exactly what is settled makes the invoice PAID.
+	if _, err := invoice.Update(ctx, pool, invUUID, invoice.UpdateInvoiceInput{Items: line(30)}, 1); err != nil {
+		t.Fatalf("update to settled total: %v", err)
+	}
+	_, _, _, balance, status = invoiceBalances(t, pool, invUUID)
+	if balance != 0 || status != "PAID" {
+		t.Errorf("balance/status = %v/%q, want 0/PAID", balance, status)
+	}
+}

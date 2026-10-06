@@ -9140,3 +9140,9 @@ CREATE TABLE IF NOT EXISTS fabrication_cutting_selection (
 -- Cutting selections retain a stable production record; historical selections stay unknown.
 ALTER TABLE fabrication_cutting_selection ADD COLUMN IF NOT EXISTS fabrication_job_item_id INTEGER NULL REFERENCES fabrication_job_item(fabrication_job_item_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_cutting_selection_piece ON fabrication_cutting_selection(fabrication_job_item_id) WHERE fabrication_job_item_id IS NOT NULL;
+
+-- Idempotent job creation: a retried create carrying the same client request id
+-- returns the job it already made instead of opening a duplicate. Existing rows keep NULL.
+ALTER TABLE fabrication_job ADD COLUMN IF NOT EXISTS job_create_request_id VARCHAR(64) NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fj_create_request ON fabrication_job(sales_order_id, job_create_request_id)
+    WHERE job_create_request_id IS NOT NULL AND fabrication_job_deleted_at IS NULL;

@@ -131,6 +131,10 @@ type jobFields struct {
 // sales order (spec §2.2).
 type CreateJobInput struct {
 	SalesOrderUUID string `json:"salesOrderUuid"`
+	// RequestID is an optional client-generated idempotency key. A retry carrying
+	// the same key for the same sales order and caller returns the job the first
+	// attempt made instead of opening a second one. Omit it to always create.
+	RequestID string `json:"requestId,omitempty"`
 	jobFields
 }
 

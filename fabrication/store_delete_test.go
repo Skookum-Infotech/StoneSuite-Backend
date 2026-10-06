@@ -31,7 +31,8 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 // seedSalesOrder inserts the minimum a fabrication job needs to exist: a live
-// customer and a live sales order to spawn from. Inserted directly rather than
+// customer and a live, confirmed (OPEN) sales order to spawn from - Create
+// rejects orders that aren't approved yet. Inserted directly rather than
 // via the salesorder package to keep this package's tests dependency-free.
 func seedSalesOrder(t *testing.T, pool *pgxpool.Pool) (soUUID string) {
 	t.Helper()
@@ -59,8 +60,8 @@ func seedSalesOrder(t *testing.T, pool *pgxpool.Pool) (soUUID string) {
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT record_status_id FROM lkp_record_status
-		WHERE record_status_record_type = $1 AND record_status_code = 'DRFT'`, soTypeID).Scan(&soStatusID); err != nil {
-		t.Fatalf("resolve SORD DRFT status: %v", err)
+		WHERE record_status_record_type = $1 AND record_status_code = 'OPEN'`, soTypeID).Scan(&soStatusID); err != nil {
+		t.Fatalf("resolve SORD OPEN status: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO sales_order (sales_order_number, record_type, sales_order_customer_id,

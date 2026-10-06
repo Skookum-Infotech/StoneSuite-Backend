@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/salesorder"
 )
 
 // Create inserts a new fabrication job spawned from a sales order, seeds its 16
@@ -29,19 +31,26 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmp
 	var soInternalID, customerInternalID int
 	var soShipName, soShipLine1, soShipLine2, soShipCity, soShipZip, soShipPhone string
 	var soShipState *int
+	var soStatusCode string
 	err = tx.QueryRow(ctx, `
 		SELECT so.sales_order_id, so.sales_order_customer_id,
 		       so.sales_order_ship_customer_name, so.sales_order_ship_addr_line1, so.sales_order_ship_addr_line2,
-		       so.sales_order_ship_addr_city, so.sales_order_ship_addr_state, so.sales_order_ship_addr_zip, so.sales_order_ship_phone
+		       so.sales_order_ship_addr_city, so.sales_order_ship_addr_state, so.sales_order_ship_addr_zip, so.sales_order_ship_phone,
+		       rs.record_status_code
 		FROM sales_order so
+		JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, in.SalesOrderUUID).Scan(
 		&soInternalID, &customerInternalID,
-		&soShipName, &soShipLine1, &soShipLine2, &soShipCity, &soShipState, &soShipZip, &soShipPhone)
+		&soShipName, &soShipLine1, &soShipLine2, &soShipCity, &soShipState, &soShipZip, &soShipPhone, &soStatusCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "The referenced sales order does not exist."}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve sales order: %w", err)
+	}
+
+	if !salesorder.IsConvertible(soStatusCode) {
+		return nil, ClientError{Msg: "A sales order must be approved before a fabrication job can be opened from it."}
 	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, fjobRecordTypeCode)

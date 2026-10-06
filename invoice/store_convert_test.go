@@ -35,7 +35,50 @@ func seedSalesOrderWithLine(t *testing.T, pool *pgxpool.Pool, custUUID, itemUUID
 	if err != nil {
 		t.Fatalf("seed sales order: %v", err)
 	}
+	// Conversion requires a confirmed order; set the status directly, as the
+	// approval flow itself is not under test here.
+	setSalesOrderStatus(t, pool, order.ID, "OPEN")
 	return order
+}
+
+// setSalesOrderStatus forces a sales order into the given status code.
+func setSalesOrderStatus(t *testing.T, pool *pgxpool.Pool, soUUID, code string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE sales_order SET sales_order_status = (
+			SELECT record_status_id FROM lkp_record_status
+			WHERE record_status_record_type = sales_order.record_type AND record_status_code = $2)
+		WHERE sales_order_uuid = $1`, soUUID, code); err != nil {
+		t.Fatalf("set sales order status %s: %v", code, err)
+	}
+}
+
+// An unconfirmed (or cancelled) order can't be billed; a repeat conversion of an
+// already-invoiced order still replays the existing invoice.
+func TestConvertFromSalesOrder_RequiresConfirmedOrder(t *testing.T) {
+	pool := testPool(t)
+	custUUID, itemUUID := seedCustomerAndItem(t, pool)
+	so := seedSalesOrderWithLine(t, pool, custUUID, itemUUID)
+
+	for _, code := range []string{"DRFT", "PAPV", "CANC"} {
+		setSalesOrderStatus(t, pool, so.ID, code)
+		_, _, err := ConvertFromSalesOrder(context.Background(), pool, so.ID, 1)
+		var ce ClientError
+		if !errors.As(err, &ce) {
+			t.Fatalf("status %s: expected ClientError, got %T: %v", code, err, err)
+		}
+	}
+
+	setSalesOrderStatus(t, pool, so.ID, "OPEN")
+	first, created, err := ConvertFromSalesOrder(context.Background(), pool, so.ID, 1)
+	if err != nil || !created {
+		t.Fatalf("convert OPEN order: created=%v err=%v", created, err)
+	}
+	setSalesOrderStatus(t, pool, so.ID, "CANC")
+	again, created, err := ConvertFromSalesOrder(context.Background(), pool, so.ID, 1)
+	if err != nil || created || again.ID != first.ID {
+		t.Fatalf("replay after cancel: created=%v err=%v id=%v want %v", created, err, again, first.ID)
+	}
 }
 
 func TestConvertFromSalesOrder_CopiesLinesAndTotals(t *testing.T) {

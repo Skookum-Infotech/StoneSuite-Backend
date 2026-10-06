@@ -45,6 +45,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	if err != nil {
 		return nil, err
 	}
+	if anyLinked(lines) {
+		return nil, ClientError{Msg: "Lines cannot link to purchase order lines on create; convert the purchase order instead."}
+	}
 	lineMoney := make([]LineMoney, len(lines))
 	for i, l := range lines {
 		lineMoney[i] = l.money

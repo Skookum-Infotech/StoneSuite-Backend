@@ -116,7 +116,10 @@ func approvalCounts(ctx context.Context, q Querier, recordID, stateID string) (r
 		return 0, 0, fmt.Errorf("count state approvers: %w", err)
 	}
 	if err = q.QueryRow(ctx,
-		`SELECT COUNT(*) FROM workflow_record_approval WHERE record_id = $1 AND state_id = $2`,
+		`SELECT COUNT(*) FROM workflow_record_approval ra
+		 WHERE ra.record_id = $1 AND ra.state_id = $2
+		   AND EXISTS(SELECT 1 FROM workflow_state_approver sa
+			WHERE sa.state_id = ra.state_id AND sa.approver_user_id = ra.approver_user_id AND sa.is_active)`,
 		recordID, stateID).Scan(&approved); err != nil {
 		return 0, 0, fmt.Errorf("count record approvals: %w", err)
 	}

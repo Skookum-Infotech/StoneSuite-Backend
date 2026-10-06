@@ -96,6 +96,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 		return nil, fmt.Errorf("update vendor bill: %w", err)
 	}
 
+	// Preserve the purchase order lineage and keep what the bill claims as
+	// billed in step with the edited quantities.
+	if err := syncConversionOnEdit(ctx, tx, internalID, lines); err != nil {
+		return nil, err
+	}
+
 	if _, err := tx.Exec(ctx,
 		`UPDATE vendor_bill_item SET item_deleted_at = NOW() WHERE vendor_bill_id = $1 AND item_deleted_at IS NULL`,
 		internalID); err != nil {

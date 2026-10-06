@@ -45,6 +45,9 @@ type RecordPaymentInput struct {
 	ReferenceNumber string  `json:"referenceNumber"`
 	Memo            string  `json:"memo"`
 	PaidAt          string  `json:"paidAt"` // "yyyy-mm-dd"; blank => CURRENT_DATE
+	// IdempotencyKey is set from the Idempotency-Key request header, never the body.
+	// A replay of the same key on the same bill records nothing and returns the bill.
+	IdempotencyKey string `json:"-"`
 }
 
 // RecordPayment records one settlement against a vendor bill (AD-7, AD-15):
@@ -66,6 +69,18 @@ func RecordPayment(ctx context.Context, pool *pgxpool.Pool, uuid string, in Reco
 	if err != nil {
 		return nil, err
 	}
+	if in.IdempotencyKey != "" {
+		var seen bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM vendor_bill_payment WHERE vendor_bill_id = $1 AND idempotency_key = $2)`,
+			l.InternalID, in.IdempotencyKey).Scan(&seen); err != nil {
+			return nil, fmt.Errorf("check vendor bill payment idempotency key: %w", err)
+		}
+		if seen {
+			return Get(ctx, pool, uuid)
+		}
+	}
+	// No currency check here: vendor_bill_payment has no currency column, so a
+	// bill-owned settlement is by definition in the bill's own currency.
 	if !PayableStatuses[l.StatusCode] {
 		return nil, ClientError{Msg: "A vendor bill can only be paid while APPV, PART, or ODUE (current status: " + l.StatusCode + ")."}
 	}
@@ -85,9 +100,9 @@ func RecordPayment(ctx context.Context, pool *pgxpool.Pool, uuid string, in Reco
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO vendor_bill_payment (
-			vendor_bill_id, payment_method_id, amount, reference_number, memo, paid_at, created_by
-		) VALUES ($1,$2,$3,$4,$5, COALESCE(NULLIF($6,'')::date, CURRENT_DATE), $7)`,
-		l.InternalID, in.MethodID, in.Amount, in.ReferenceNumber, in.Memo, in.PaidAt, nullableInt(actorEmployeeID),
+			vendor_bill_id, payment_method_id, amount, reference_number, memo, paid_at, created_by, idempotency_key
+		) VALUES ($1,$2,$3,$4,$5, COALESCE(NULLIF($6,'')::date, CURRENT_DATE), $7, NULLIF($8,''))`,
+		l.InternalID, in.MethodID, in.Amount, in.ReferenceNumber, in.Memo, in.PaidAt, nullableInt(actorEmployeeID), in.IdempotencyKey,
 	); err != nil {
 		return nil, fmt.Errorf("insert vendor bill payment: %w", err)
 	}

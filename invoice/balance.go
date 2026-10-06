@@ -23,6 +23,7 @@ type Locked struct {
 	GrandTotal  float64
 	AmountPaid  float64
 	CreditTotal float64
+	CurrencyID  *int // invoice_currency; nil = unspecified
 }
 
 // BalanceDue is the invoice's live outstanding balance:
@@ -53,12 +54,12 @@ func LockForUpdate(ctx context.Context, tx pgx.Tx, invoiceUUID string) (Locked, 
 	var l Locked
 	err := tx.QueryRow(ctx, `
 		SELECT i.invoice_id, i.invoice_customer_id, rs.record_status_code,
-		       i.invoice_grand_total, i.invoice_amount_paid, i.invoice_credit_total
+		       i.invoice_grand_total, i.invoice_amount_paid, i.invoice_credit_total, i.invoice_currency
 		FROM invoice i
 		JOIN lkp_record_status rs ON rs.record_status_id = i.invoice_status
 		WHERE i.invoice_uuid = $1 AND i.invoice_deleted_at IS NULL
 		FOR UPDATE OF i`, invoiceUUID,
-	).Scan(&l.InternalID, &l.CustomerID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal)
+	).Scan(&l.InternalID, &l.CustomerID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal, &l.CurrencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Locked{}, ClientError{Msg: "Unknown or deleted invoice."}
 	}
@@ -76,12 +77,12 @@ func LockForUpdateByID(ctx context.Context, tx pgx.Tx, internalID int) (Locked, 
 	l := Locked{InternalID: internalID}
 	err := tx.QueryRow(ctx, `
 		SELECT i.invoice_customer_id, rs.record_status_code,
-		       i.invoice_grand_total, i.invoice_amount_paid, i.invoice_credit_total
+		       i.invoice_grand_total, i.invoice_amount_paid, i.invoice_credit_total, i.invoice_currency
 		FROM invoice i
 		JOIN lkp_record_status rs ON rs.record_status_id = i.invoice_status
 		WHERE i.invoice_id = $1
 		FOR UPDATE OF i`, internalID,
-	).Scan(&l.CustomerID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal)
+	).Scan(&l.CustomerID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal, &l.CurrencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Locked{}, ClientError{Msg: "Unknown or deleted invoice."}
 	}

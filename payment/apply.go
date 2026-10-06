@@ -33,17 +33,18 @@ type lockedPayment struct {
 	amount     float64
 	credited   float64 // overpayment already turned into credit memos
 	refunded   float64 // money already returned to the customer via refunds
+	currencyID *int    // payment_currency; nil = unspecified
 }
 
 func lockPaymentForUpdate(ctx context.Context, tx pgx.Tx, paymentUUID string) (lockedPayment, error) {
 	var lp lockedPayment
 	err := tx.QueryRow(ctx, `
-		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_amount, p.payment_credited_total, p.payment_refunded_total
+		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_amount, p.payment_credited_total, p.payment_refunded_total, p.payment_currency
 		FROM payment p
 		JOIN lkp_record_status rs ON rs.record_status_id = p.payment_status
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL
 		FOR UPDATE OF p`, paymentUUID,
-	).Scan(&lp.internalID, &lp.customerID, &lp.statusCode, &lp.amount, &lp.credited, &lp.refunded)
+	).Scan(&lp.internalID, &lp.customerID, &lp.statusCode, &lp.amount, &lp.credited, &lp.refunded, &lp.currencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedPayment{}, ErrNotFound
 	}
@@ -93,27 +94,44 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	lp, err := lockPaymentForUpdate(ctx, tx, paymentUUID) // lock order: payment first
-	if err != nil {
+	if err := applyTx(ctx, tx, paymentUUID, invoiceUUID, amount, actorEmployeeID); err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit apply: %w", err)
+	}
+	return Get(ctx, pool, paymentUUID)
+}
+
+// applyTx is Apply's body inside a caller-owned transaction: it neither begins
+// nor commits, so QuickPay can compose it with the payment insert atomically.
+func applyTx(ctx context.Context, tx pgx.Tx, paymentUUID, invoiceUUID string, amount float64, actorEmployeeID int) error {
+	lp, err := lockPaymentForUpdate(ctx, tx, paymentUUID) // lock order: payment first
+	if err != nil {
+		return err
+	}
 	if lp.statusCode == "VOID" {
-		return nil, ClientError{Msg: "Cannot apply a voided payment."}
+		return ClientError{Msg: "Cannot apply a voided payment."}
 	}
 	li, err := invoice.LockForUpdate(ctx, tx, invoiceUUID) // then invoice
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if li.CustomerID != lp.customerID {
-		return nil, ClientError{Msg: "Invoice belongs to a different customer than the payment."}
+		return ClientError{Msg: "Invoice belongs to a different customer than the payment."}
+	}
+	if msg, err := invoice.CurrencyConflictMsg(ctx, tx, "payment", lp.currencyID, "invoice", li.CurrencyID); err != nil {
+		return err
+	} else if msg != "" {
+		return ClientError{Msg: msg}
 	}
 	if !invoice.PayableStatuses[li.StatusCode] {
-		return nil, ClientError{Msg: "Cannot apply payment to a " + li.StatusCode + " invoice; it must be sent first."}
+		return ClientError{Msg: "Cannot apply payment to a " + li.StatusCode + " invoice; it must be sent first."}
 	}
 
 	var applied float64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(application_amount),0) FROM payment_application WHERE payment_id = $1 AND application_deleted_at IS NULL`, lp.internalID).Scan(&applied); err != nil {
-		return nil, fmt.Errorf("sum payment applications: %w", err)
+		return fmt.Errorf("sum payment applications: %w", err)
 	}
 	// Money already turned into a credit memo, or refunded to the customer, is
 	// no longer the payment's to spend.
@@ -126,7 +144,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 		capAmt = invoiceBalance
 	}
 	if amount > capAmt+0.001 {
-		return nil, ClientError{Msg: "Amount exceeds available balance."}
+		return ClientError{Msg: "Amount exceeds available balance."}
 	}
 
 	var existingID int
@@ -137,35 +155,32 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID str
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO payment_application (payment_id, invoice_id, application_amount, application_created_by)
 			VALUES ($1,$2,$3,$4)`, lp.internalID, li.InternalID, round2(amount), nullableInt(actorEmployeeID)); err != nil {
-			return nil, fmt.Errorf("insert payment application: %w", err)
+			return fmt.Errorf("insert payment application: %w", err)
 		}
 	case err != nil:
-		return nil, fmt.Errorf("check existing application: %w", err)
+		return fmt.Errorf("check existing application: %w", err)
 	default:
 		if _, err := tx.Exec(ctx, `
 			UPDATE payment_application SET application_amount = application_amount + $1, application_record_version = application_record_version + 1
 			WHERE application_id = $2`, round2(amount), existingID); err != nil {
-			return nil, fmt.Errorf("increase payment application: %w", err)
+			return fmt.Errorf("increase payment application: %w", err)
 		}
 	}
 
 	if err := recomputePayment(ctx, tx, lp.internalID, lp.amount, actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 	if err := invoice.RecomputeBalance(ctx, tx, li, "payment", actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO payment_history (payment_id, from_status_id, to_status_id, action, actor_employee_id)
 		SELECT payment_id, payment_status, payment_status, 'apply', $2 FROM payment WHERE payment_id = $1`,
 		lp.internalID, nullableInt(actorEmployeeID)); err != nil {
-		return nil, fmt.Errorf("insert payment apply history: %w", err)
+		return fmt.Errorf("insert payment apply history: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit apply: %w", err)
-	}
-	return Get(ctx, pool, paymentUUID)
+	return nil
 }
 
 // Unapply reverses the live application between paymentUUID and invoiceUUID

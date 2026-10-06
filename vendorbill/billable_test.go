@@ -6,6 +6,52 @@ import (
 	"testing"
 )
 
+func TestPlanLinkedQuantities(t *testing.T) {
+	source := []poSourceLine{
+		{internalID: 1, qtyReceived: 10, qtyBilled: 10}, // this bill claims all 10
+		{internalID: 2, qtyReceived: 10, qtyBilled: 10}, // 6 here, 4 on another bill
+	}
+	current := map[int]float64{1: 10, 2: 6}
+	tests := []struct {
+		name    string
+		linked  []linkedQty
+		want    map[int]float64
+		wantErr bool
+	}{
+		{"reduce 10 to 4", []linkedQty{{1, 1, 4}}, map[int]float64{1: 4}, false},
+		{"restore to full received", []linkedQty{{1, 1, 10}}, map[int]float64{1: 10}, false},
+		{"over received", []linkedQty{{1, 1, 10.5}}, nil, true},
+		{"over other bills remainder", []linkedQty{{1, 2, 7}}, nil, true},
+		{"up to other bills remainder", []linkedQty{{1, 2, 6}}, map[int]float64{2: 6}, false},
+		{"split across two lines sums", []linkedQty{{1, 1, 6}, {2, 1, 4}}, map[int]float64{1: 10}, false},
+		{"split sum over limit", []linkedQty{{1, 1, 6}, {2, 1, 4.5}}, nil, true},
+		{"dropped line is absent", []linkedQty{{1, 2, 3}}, map[int]float64{2: 3}, false},
+		{"unknown po line", []linkedQty{{1, 9, 1}}, nil, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := planLinkedQuantities(source, current, tt.linked)
+			if tt.wantErr {
+				if err == nil || !IsClientError(err) {
+					t.Fatalf("err = %v, want ClientError", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for k, v := range tt.want {
+				if got[k] != v {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestIsConvertibleStatus(t *testing.T) {
 	tests := []struct {
 		code string

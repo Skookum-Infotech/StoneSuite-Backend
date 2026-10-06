@@ -182,7 +182,7 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		return ApproveOutcome{}, fmt.Errorf("record %s approval: %w", rec.Table, err)
 	}
 
-	approved, err := signOffCount(ctx, tx, cfg.ApprovalTable, rec.IDColumn, internalID, curStatusID)
+	approved, err := signOffCount(ctx, tx, cfg.ApprovalTable, cfg.ApproverTable, rec.IDColumn, recordTypeID, internalID, curStatusID)
 	if err != nil {
 		return ApproveOutcome{}, err
 	}
@@ -434,11 +434,19 @@ func activeApproverCount(ctx context.Context, q workflow.Querier, approverTable 
 	return n, nil
 }
 
-func signOffCount(ctx context.Context, q workflow.Querier, approvalTable, idColumn string, internalID, statusID int) (int, error) {
+// signOffCount counts sign-offs at a status, but only from approvers who are
+// still active configured approvers for the record type -- a vote cast by an
+// approver since removed from the config must not count toward the quorum.
+func signOffCount(ctx context.Context, q workflow.Querier, approvalTable, approverTable, idColumn string, recordTypeID, internalID, statusID int) (int, error) {
 	var n int
-	if err := q.QueryRow(ctx, fmt.Sprintf(
-		`SELECT COUNT(*) FROM %s WHERE %s = $1 AND record_status_id = $2`, approvalTable, idColumn),
-		internalID, statusID).Scan(&n); err != nil {
+	if err := q.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COUNT(*) FROM %s ap
+		WHERE ap.%s = $1 AND ap.record_status_id = $2
+		  AND EXISTS(SELECT 1 FROM %s ea
+			WHERE ea.record_type_id = $3 AND ea.record_status_id = ap.record_status_id
+			  AND ea.approver_employee_id = ap.approver_employee_id AND ea.is_active)`,
+		approvalTable, idColumn, approverTable),
+		internalID, statusID, recordTypeID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count sign-offs in %s: %w", approvalTable, err)
 	}
 	return n, nil

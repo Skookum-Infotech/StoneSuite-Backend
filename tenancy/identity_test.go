@@ -27,7 +27,7 @@ func newCPTestControlPlane(t *testing.T) *ControlPlane {
 		t.Fatalf("connect test db: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	return &ControlPlane{pool: pool}
+	return &ControlPlane{pool: pool, tenants: newTenantCache()}
 }
 
 // seedTestTenant inserts a minimal tenant row and returns its id, for tests

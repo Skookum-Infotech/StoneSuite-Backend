@@ -974,10 +974,10 @@ func main() {
 		crm := controllers.NewCRMOps()
 		// Reference data for the unified CRM core-field selects (design-agnostic).
 		crmLookups := controllers.NewCRMLookups()
-		mux.Handle("GET /api/tenant/crm/lookups", tenantChain(crmLookups.GetLookups))
+		mux.Handle("GET /api/tenant/crm/lookups", middleware.ETag(tenantChain(crmLookups.GetLookups)))
 		// Status / dropdown endpoints.
-		mux.Handle("GET /api/tenant/crm/statuses", tenantChain(crm.AllStatuses))
-		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", tenantChain(crm.WorkflowStatuses))
+		mux.Handle("GET /api/tenant/crm/statuses", middleware.ETag(tenantChain(crm.AllStatuses)))
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", middleware.ETag(tenantChain(crm.WorkflowStatuses)))
 		// Per-workflow list + create.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records", tenantChain(crm.ListRecords))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/search", tenantChain(crm.SearchRecords))
@@ -1039,8 +1039,8 @@ func main() {
 		// in the app previously returned lkp_unit or lkp_warehouse and
 		// inventory_item_unit_id is NOT NULL.
 		invLookup := controllers.NewInventoryLookupOps()
-		mux.Handle("GET /api/tenant/inventory/lookups", tenantChain(invLookup.All))
-		mux.Handle("GET /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.List))
+		mux.Handle("GET /api/tenant/inventory/lookups", middleware.ETag(tenantChain(invLookup.All)))
+		mux.Handle("GET /api/tenant/inventory/lookups/{kind}", middleware.ETag(tenantChain(invLookup.List)))
 		mux.Handle("POST /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.Create))
 		mux.Handle("PATCH /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Update))
 		mux.Handle("DELETE /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Delete))

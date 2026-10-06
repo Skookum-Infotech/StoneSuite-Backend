@@ -95,3 +95,17 @@ func UnservableReason(t *Tenant) (code, message string) {
 	}
 	return code, tenantUnservableMessage(t)
 }
+
+// clone returns a deep copy so cached rows are never shared with callers.
+func (t *Tenant) clone() *Tenant {
+	cp := *t
+	if t.DeletedAt != nil {
+		d := *t.DeletedAt
+		cp.DeletedAt = &d
+	}
+	if t.HardDeleteAfter != nil {
+		h := *t.HardDeleteAfter
+		cp.HardDeleteAfter = &h
+	}
+	return &cp
+}

@@ -150,6 +150,7 @@ func (h *DocumentOps) sellerFromTenant(ctx context.Context, pool *pgxpool.Pool, 
 		return s
 	}
 	s.Payment = paymentFromProfile(profile)
+	s.Defaults = defaultsFromProfile(profile)
 	s.LogoPNG = fallbackLogo(profile, h.defaultLogo)
 	if profile.LogoKey == "" {
 		return s

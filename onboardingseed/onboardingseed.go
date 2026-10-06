@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -68,7 +69,7 @@ func seedProfile(ctx context.Context, pool *pgxpool.Pool, metadataJSON string, d
 	if err != nil {
 		return false, fmt.Errorf("check existing company profile: %w", err)
 	}
-	if *existing != (companyprofile.Profile{}) {
+	if !reflect.DeepEqual(*existing, companyprofile.Profile{}) {
 		return false, nil
 	}
 	if dryRun {

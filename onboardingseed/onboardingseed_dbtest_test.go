@@ -5,6 +5,7 @@ package onboardingseed
 import (
 	"context"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,7 +99,7 @@ func TestSeed_DryRun_WritesNothing(t *testing.T) {
 	if locations, _ := companylocation.List(ctx, pool); len(locations) != 0 {
 		t.Errorf("locations after dry run = %+v, want none", locations)
 	}
-	if profile, _ := companyprofile.Get(ctx, pool); *profile != (companyprofile.Profile{}) {
+	if profile, _ := companyprofile.Get(ctx, pool); !reflect.DeepEqual(*profile, companyprofile.Profile{}) {
 		t.Errorf("profile after dry run = %+v, want empty", profile)
 	}
 }

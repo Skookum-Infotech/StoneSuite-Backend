@@ -25,7 +25,14 @@ type Seller struct {
 	// Payment is where the seller asks to be paid. It is printed only on
 	// documents that set PrintableDoc.ShowPayment.
 	Payment PaymentDetails
+	// Defaults is the seller's fallback Terms/Notes per document Kind (upper
+	// case, e.g. "INVOICE"), printed when a document's own are blank. Kinds
+	// absent from the map get no fallback.
+	Defaults map[string]Wording
 }
+
+// Wording is a Terms & Conditions and Notes text pair.
+type Wording struct{ Terms, Notes string }
 
 // PaymentDetails are the bank details a customer needs to pay the seller.
 // Fields are free text (account formats differ by country); blank ones are

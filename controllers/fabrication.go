@@ -211,6 +211,9 @@ func (h *FabricationOps) Create(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
+	if !authSourceSalesOrder(w, r, pool, identityID, in.SalesOrderUUID) {
+		return
+	}
 	job, err := fabrication.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		fjFail(w, err, "Failed to create fabrication job.")
@@ -220,8 +223,8 @@ func (h *FabricationOps) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Fabricate POST /api/tenant/sales-orders/{uuid}/fabricate — spawn a job from an
-// existing sales order. Requires installation:create (checked here) and reads a
-// sales order (the store validates it exists and is live).
+// existing sales order. Requires installation:create plus sales_order:read
+// on the source order, within the caller's ownership scope (authSourceSalesOrder).
 func (h *FabricationOps) Fabricate(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authFJ(w, r, authz.ActionCreate)
 	if !ok {
@@ -235,6 +238,9 @@ func (h *FabricationOps) Fabricate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	in.SalesOrderUUID = r.PathValue("uuid")
+	if !authSourceSalesOrder(w, r, pool, identityID, in.SalesOrderUUID) {
+		return
+	}
 	job, err := fabrication.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		fjFail(w, err, "Failed to create fabrication job.")

@@ -74,6 +74,9 @@ func createOrder(t *testing.T, pool *pgxpool.Pool, itemsJSON string) *salesorder
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	// A job can only be opened from a confirmed order; salesorder.Create starts
+	// it as a Draft.
+	setSalesOrderStatus(t, pool, o.ID, "OPEN")
 	return o
 }
 

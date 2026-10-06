@@ -18,7 +18,9 @@ func (h *FabricationOps) Steps(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateStep PATCH /api/tenant/fabrication-jobs/{uuid}/steps/{stepCode}
-// body {"status":"completed","notes":"...","payload":{...}}
+// body {"status":"completed","notes":"...","payload":{...},"pieceUuid":"..."}
+// pieceUuid selects one piece's row of a piece-grain step; it is required when
+// the step has several rows and rejected for job-grain steps.
 func (h *FabricationOps) UpdateStep(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
 	stepCode := r.PathValue("stepCode")
@@ -27,15 +29,16 @@ func (h *FabricationOps) UpdateStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Status  string         `json:"status"`
-		Notes   string         `json:"notes"`
-		Payload map[string]any `json:"payload"`
+		PieceUUID string         `json:"pieceUuid"`
+		Status    string         `json:"status"`
+		Notes     string         `json:"notes"`
+		Payload   map[string]any `json:"payload"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Status == "" {
 		fail(w, http.StatusBadRequest, "status is required.")
 		return
 	}
-	step, err := fabrication.UpdateStep(r.Context(), pool, uuid, stepCode, req.Status, req.Notes, req.Payload, resolveEmployeeID(r, identityID))
+	step, err := fabrication.UpdateStep(r.Context(), pool, uuid, stepCode, req.PieceUUID, req.Status, req.Notes, req.Payload, resolveEmployeeID(r, identityID))
 	if err != nil {
 		fjFail(w, err, "Failed to update step.")
 		return

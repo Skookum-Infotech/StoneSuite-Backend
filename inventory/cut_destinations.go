@@ -26,6 +26,22 @@ func CutUnitToBinsTx(ctx context.Context, tx pgx.Tx, uuid string, in CutInput, d
 	return cutUnitTx(ctx, tx, uuid, in, explicit, actorEmployeeID)
 }
 
+// ResolveRemnantBin validates an explicit destination bin (by uuid) for a
+// remnant minted outside the cut flow -- e.g. a slab recovered when a job is
+// cancelled. It applies the same rules as CutUnitToBinsTx: the bin must be
+// active, in the source slab's warehouse, and not frozen against moves. sourceBinID
+// is the bin the source slab sat in (nil if none).
+func ResolveRemnantBin(ctx context.Context, tx pgx.Tx, binUUID string, warehouseID int, sourceBinID *int) (int, error) {
+	if strings.TrimSpace(binUUID) == "" {
+		return 0, ClientError{Msg: "Choose a destination bin for the remnant."}
+	}
+	bin, err := cutDestination(ctx, tx, binUUID, warehouseID, sourceBinID)
+	if err != nil {
+		return 0, err
+	}
+	return *bin, nil
+}
+
 func cutDestination(ctx context.Context, tx pgx.Tx, uuid string, warehouseID int, source *int) (*int, error) {
 	var id, warehouse int
 	var active bool

@@ -24,6 +24,7 @@ type lockedMemo struct {
 	customerID int
 	statusCode string
 	grandTotal float64
+	refunded   float64 // credit already paid back to the customer via refunds
 }
 
 // lockCreditMemoForUpdate loads + row-locks a live credit memo by uuid inside
@@ -33,12 +34,12 @@ type lockedMemo struct {
 func lockCreditMemoForUpdate(ctx context.Context, tx pgx.Tx, memoUUID string) (lockedMemo, error) {
 	var lm lockedMemo
 	err := tx.QueryRow(ctx, `
-		SELECT cm.credit_memo_id, cm.credit_memo_customer_id, rs.record_status_code, cm.credit_memo_grand_total
+		SELECT cm.credit_memo_id, cm.credit_memo_customer_id, rs.record_status_code, cm.credit_memo_grand_total, cm.credit_memo_refunded_total
 		FROM credit_memo cm
 		JOIN lkp_record_status rs ON rs.record_status_id = cm.credit_memo_status
 		WHERE cm.credit_memo_uuid = $1 AND cm.credit_memo_deleted_at IS NULL
 		FOR UPDATE OF cm`, memoUUID,
-	).Scan(&lm.internalID, &lm.customerID, &lm.statusCode, &lm.grandTotal)
+	).Scan(&lm.internalID, &lm.customerID, &lm.statusCode, &lm.grandTotal, &lm.refunded)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedMemo{}, ErrNotFound
 	}
@@ -149,7 +150,8 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID string
 		WHERE credit_memo_id = $1 AND application_deleted_at IS NULL`, lm.internalID).Scan(&applied); err != nil {
 		return nil, fmt.Errorf("sum credit memo applications: %w", err)
 	}
-	unapplied := round2(lm.grandTotal - applied)
+	// Credit already refunded to the customer can't also be applied to an invoice.
+	unapplied := round2(lm.grandTotal - applied - lm.refunded)
 	capAmt := unapplied
 	if b := li.BalanceDue(); b < capAmt {
 		capAmt = b

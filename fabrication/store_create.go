@@ -8,17 +8,85 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/salesorder"
 )
+
+// maxCreateRequestIDLen bounds CreateJobInput.RequestID (job_create_request_id is VARCHAR(64)).
+const maxCreateRequestIDLen = 64
 
 // Create inserts a new fabrication job spawned from a sales order, seeds its 16
 // checklist steps, and starts it at ORCV (order received). The site snapshot
 // defaults from the sales order's shipping address unless overridden. All in
 // one transaction (spec §2.2, §5).
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmployeeID int) (*Job, error) {
-	if strings.TrimSpace(in.SalesOrderUUID) == "" {
-		return nil, ClientError{Msg: "A sales order is required to open a fabrication job."}
-	}
+	job, _, err := CreateOnce(ctx, pool, in, actorEmployeeID)
+	return job, err
+}
 
+// CreateOnce is Create that also reports whether a job was newly created. When
+// in.RequestID repeats a create this caller already made for the same sales
+// order, it returns that existing job with created=false rather than a
+// duplicate, so a client retry after a timeout is safe.
+func CreateOnce(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmployeeID int) (job *Job, created bool, err error) {
+	if strings.TrimSpace(in.SalesOrderUUID) == "" {
+		return nil, false, ClientError{Msg: "A sales order is required to open a fabrication job."}
+	}
+	in.RequestID = strings.TrimSpace(in.RequestID)
+	if len(in.RequestID) > maxCreateRequestIDLen {
+		return nil, false, ClientError{Msg: "requestId must be at most 64 characters."}
+	}
+	// A replayed request returns the job it already made, before any other gate:
+	// the order may have moved on (e.g. been cancelled) since the first attempt.
+	if existing, found, lerr := existingByRequestID(ctx, pool, in, actorEmployeeID); lerr != nil {
+		return nil, false, lerr
+	} else if found {
+		return existing, false, nil
+	}
+	job, err = createJob(ctx, pool, in, actorEmployeeID)
+	if err == nil {
+		return job, true, nil
+	}
+	// Two concurrent attempts with one key: the loser hits the unique index and
+	// returns what the winner made.
+	if in.RequestID != "" && isUniqueViolation(err) {
+		if existing, found, lerr := existingByRequestID(ctx, pool, in, actorEmployeeID); lerr == nil && found {
+			return existing, false, nil
+		}
+		return nil, false, ClientError{Msg: "requestId was already used for a different request."}
+	}
+	return nil, false, err
+}
+
+// existingByRequestID returns the live job this caller already created for
+// in.SalesOrderUUID under in.RequestID, if any.
+func existingByRequestID(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmployeeID int) (*Job, bool, error) {
+	if in.RequestID == "" {
+		return nil, false, nil
+	}
+	var uuid string
+	err := pool.QueryRow(ctx, `
+		SELECT fj.fabrication_job_uuid
+		FROM fabrication_job fj
+		JOIN sales_order so ON so.sales_order_id = fj.sales_order_id
+		WHERE so.sales_order_uuid = $1 AND fj.job_create_request_id = $2
+		  AND fj.fabrication_job_created_by IS NOT DISTINCT FROM $3::INTEGER
+		  AND fj.fabrication_job_deleted_at IS NULL`,
+		in.SalesOrderUUID, in.RequestID, nullableInt(actorEmployeeID)).Scan(&uuid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("look up job by request id: %w", err)
+	}
+	job, err := Get(ctx, pool, uuid)
+	if err != nil {
+		return nil, false, err
+	}
+	return job, true, nil
+}
+
+func createJob(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmployeeID int) (*Job, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin create fabrication job: %w", err)
@@ -29,19 +97,26 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmp
 	var soInternalID, customerInternalID int
 	var soShipName, soShipLine1, soShipLine2, soShipCity, soShipZip, soShipPhone string
 	var soShipState *int
+	var soStatusCode string
 	err = tx.QueryRow(ctx, `
 		SELECT so.sales_order_id, so.sales_order_customer_id,
 		       so.sales_order_ship_customer_name, so.sales_order_ship_addr_line1, so.sales_order_ship_addr_line2,
-		       so.sales_order_ship_addr_city, so.sales_order_ship_addr_state, so.sales_order_ship_addr_zip, so.sales_order_ship_phone
+		       so.sales_order_ship_addr_city, so.sales_order_ship_addr_state, so.sales_order_ship_addr_zip, so.sales_order_ship_phone,
+		       rs.record_status_code
 		FROM sales_order so
+		JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, in.SalesOrderUUID).Scan(
 		&soInternalID, &customerInternalID,
-		&soShipName, &soShipLine1, &soShipLine2, &soShipCity, &soShipState, &soShipZip, &soShipPhone)
+		&soShipName, &soShipLine1, &soShipLine2, &soShipCity, &soShipState, &soShipZip, &soShipPhone, &soStatusCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "The referenced sales order does not exist."}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve sales order: %w", err)
+	}
+
+	if !salesorder.IsConvertible(soStatusCode) {
+		return nil, ClientError{Msg: "A sales order must be approved before a fabrication job can be opened from it."}
 	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, fjobRecordTypeCode)
@@ -85,9 +160,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmp
 			job_site_addr_state, job_site_addr_zip, job_site_phone,
 			job_template_date, job_fabrication_start, job_promised_install_date,
 			job_owner_id, job_templater_id, job_fabricator_id, job_install_crew_id,
-			job_notes, job_custom_fields, fabrication_job_created_by
+			job_notes, job_custom_fields, fabrication_job_created_by, job_create_request_id
 		) VALUES ($1,$2,$3,$4, $5,$6,$7,$8, $9,$10,$11, $12::date,$13::date,$14::date,
-			$15,$16,$17,$18, $19,$20,$21)
+			$15,$16,$17,$18, $19,$20,$21, NULLIF($22,''))
 		RETURNING fabrication_job_id, fabrication_job_uuid`,
 		recordTypeID, initialStatusID, soInternalID, customerInternalID,
 		site.CustomerName, site.AddrLine1, site.AddrLine2, site.City,
@@ -95,7 +170,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmp
 		nullableDate(in.TemplateDate), nullableDate(in.FabricationStart), nullableDate(in.PromisedInstallDate),
 		nullableInt(ownerEmployeeID), nullableIntPtr(in.TemplaterEmployeeID),
 		nullableIntPtr(in.FabricatorEmployeeID), nullableIntPtr(in.InstallCrewEmployeeID),
-		in.Notes, custom, nullableInt(actorEmployeeID)).Scan(&jobInternalID, &newUUID)
+		in.Notes, custom, nullableInt(actorEmployeeID), in.RequestID).Scan(&jobInternalID, &newUUID)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			return nil, ClientError{Msg: "One of the referenced ids (state, or an employee) does not exist."}

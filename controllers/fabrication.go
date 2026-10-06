@@ -211,17 +211,30 @@ func (h *FabricationOps) Create(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	job, err := fabrication.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
+	if !authSourceSalesOrder(w, r, pool, identityID, in.SalesOrderUUID) {
+		return
+	}
+	createFabricationJob(w, r, pool, in, resolveEmployeeID(r, identityID))
+}
+
+// createFabricationJob runs the idempotent create and writes the response: 201
+// for a new job, 200 when a retried requestId replays one already made.
+func createFabricationJob(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, in fabrication.CreateJobInput, empID int) {
+	job, created, err := fabrication.CreateOnce(r.Context(), pool, in, empID)
 	if err != nil {
 		fjFail(w, err, "Failed to create fabrication job.")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "fabricationJob": job})
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, map[string]any{"success": true, "fabricationJob": job, "created": created})
 }
 
 // Fabricate POST /api/tenant/sales-orders/{uuid}/fabricate — spawn a job from an
-// existing sales order. Requires installation:create (checked here) and reads a
-// sales order (the store validates it exists and is live).
+// existing sales order. Requires installation:create plus sales_order:read
+// on the source order, within the caller's ownership scope (authSourceSalesOrder).
 func (h *FabricationOps) Fabricate(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authFJ(w, r, authz.ActionCreate)
 	if !ok {
@@ -235,12 +248,10 @@ func (h *FabricationOps) Fabricate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	in.SalesOrderUUID = r.PathValue("uuid")
-	job, err := fabrication.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
-	if err != nil {
-		fjFail(w, err, "Failed to create fabrication job.")
+	if !authSourceSalesOrder(w, r, pool, identityID, in.SalesOrderUUID) {
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "fabricationJob": job})
+	createFabricationJob(w, r, pool, in, resolveEmployeeID(r, identityID))
 }
 
 // ---- single record ---------------------------------------------------------

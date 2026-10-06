@@ -20,6 +20,17 @@ var allowedTransitions = map[string]map[string]bool{
 	"CANC": {},
 }
 
+// convertibleStatuses are the statuses from which downstream documents (an
+// invoice, a fabrication job) may be created from an order: it has to be
+// approved and confirmed, or further along fulfillment. Draft, Pending
+// Approval and Cancelled orders are not a commitment to bill or build.
+var convertibleStatuses = map[string]bool{"APPV": true, "OPEN": true, "PART": true, "FILL": true}
+
+// IsConvertible reports whether an order in statusCode may spawn an invoice or
+// a fabrication job. The UI hides those actions otherwise; this is the server
+// side of the same rule.
+func IsConvertible(statusCode string) bool { return convertibleStatuses[statusCode] }
+
 // CanTransition reports whether moving fromCode->toCode is allowed.
 func CanTransition(fromCode, toCode string) bool {
 	return allowedTransitions[fromCode][toCode]

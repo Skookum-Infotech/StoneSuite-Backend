@@ -31,7 +31,8 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 // seedSalesOrder inserts the minimum a fabrication job needs to exist: a live
-// customer and a live sales order to spawn from. Inserted directly rather than
+// customer and a live, confirmed (OPEN) sales order to spawn from - Create
+// rejects orders that aren't approved yet. Inserted directly rather than
 // via the salesorder package to keep this package's tests dependency-free.
 func seedSalesOrder(t *testing.T, pool *pgxpool.Pool) (soUUID string) {
 	t.Helper()
@@ -59,8 +60,8 @@ func seedSalesOrder(t *testing.T, pool *pgxpool.Pool) (soUUID string) {
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT record_status_id FROM lkp_record_status
-		WHERE record_status_record_type = $1 AND record_status_code = 'DRFT'`, soTypeID).Scan(&soStatusID); err != nil {
-		t.Fatalf("resolve SORD DRFT status: %v", err)
+		WHERE record_status_record_type = $1 AND record_status_code = 'OPEN'`, soTypeID).Scan(&soStatusID); err != nil {
+		t.Fatalf("resolve SORD OPEN status: %v", err)
 	}
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO sales_order (sales_order_number, record_type, sales_order_customer_id,
@@ -70,6 +71,20 @@ func seedSalesOrder(t *testing.T, pool *pgxpool.Pool) (soUUID string) {
 		t.Fatalf("seed sales order: %v", err)
 	}
 	return soUUID
+}
+
+// setSalesOrderStatus forces a sales order into the given status code. Job
+// creation requires a confirmed order, so fixtures that build an order through
+// salesorder.Create (which starts it as a Draft) call this with "OPEN".
+func setSalesOrderStatus(t *testing.T, pool *pgxpool.Pool, soUUID, code string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE sales_order SET sales_order_status = (
+			SELECT record_status_id FROM lkp_record_status
+			WHERE record_status_record_type = sales_order.record_type AND record_status_code = $2)
+		WHERE sales_order_uuid = $1`, soUUID, code); err != nil {
+		t.Fatalf("set sales order status %s: %v", code, err)
+	}
 }
 
 // newCancelledJob creates a job and cancels it, since SoftDelete only accepts

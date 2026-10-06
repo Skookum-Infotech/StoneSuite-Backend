@@ -83,6 +83,7 @@ type JobItem struct {
 // Step is one of the 16 checklist rows.
 type Step struct {
 	Code        string         `json:"code"`
+	PieceUUID   string         `json:"pieceUuid,omitempty"` // set on piece-grain rows; address one piece's row with it
 	Sequence    int            `json:"sequence"`
 	Status      string         `json:"status"`
 	Notes       string         `json:"notes,omitempty"`
@@ -130,6 +131,10 @@ type jobFields struct {
 // sales order (spec §2.2).
 type CreateJobInput struct {
 	SalesOrderUUID string `json:"salesOrderUuid"`
+	// RequestID is an optional client-generated idempotency key. A retry carrying
+	// the same key for the same sales order and caller returns the job the first
+	// attempt made instead of opening a second one. Omit it to always create.
+	RequestID string `json:"requestId,omitempty"`
 	jobFields
 }
 

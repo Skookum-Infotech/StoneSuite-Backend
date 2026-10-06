@@ -70,13 +70,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 		resolved = append(resolved, rl)
 		lineMoney = append(lineMoney, rl.money)
 	}
+	// BalanceDue here is provisional: RecomputeBalance below rewrites it (and the
+	// status) from the live payment and credit-memo ledgers.
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment, existing.AmountPaid)
-
-	// An invoice total can't be reduced below what has already been paid; that
-	// would force a negative balance_due (rejected by chk_invoice_paid_nonneg).
-	if existing.AmountPaid > header.GrandTotal+0.005 {
-		return nil, ClientError{Msg: "Cannot reduce the invoice total below the amount already paid."}
-	}
 
 	custom := in.CustomFields
 	if custom == nil {
@@ -91,6 +87,21 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 		return nil, fmt.Errorf("begin update invoice: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Re-read the settlement state under the row lock: payments and credit memos
+	// apply concurrently, and the pre-transaction read above can be stale.
+	locked, err := LockForUpdate(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if terminalStatuses[locked.StatusCode] {
+		return nil, ClientError{Msg: "Cannot edit a " + locked.StatusCode + " invoice."}
+	}
+	// An invoice total can't be reduced below what has already been settled by
+	// cash or credit; that would force a negative balance_due.
+	if locked.settled() > header.GrandTotal+0.005 {
+		return nil, ClientError{Msg: "Cannot reduce the invoice total below the amount already paid or credited."}
+	}
 
 	_, err = tx.Exec(ctx, `
 		UPDATE invoice SET
@@ -162,11 +173,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO invoice_history (invoice_id, from_status_id, to_status_id, action, actor_employee_id)
-		SELECT invoice_id, invoice_status, invoice_status, 'update', $2
-		FROM invoice WHERE invoice_id = $1`, internalID, nullableInt(actorEmployeeID)); err != nil {
-		return nil, fmt.Errorf("insert invoice update history: %w", err)
+	// Sole writer of balance_due/status; it also writes the 'update' history row.
+	// The new grand_total must be visible to it, hence the refreshed Locked.
+	locked.GrandTotal = header.GrandTotal
+	if err := RecomputeBalance(ctx, tx, locked, "update", actorEmployeeID); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {

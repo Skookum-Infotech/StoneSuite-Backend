@@ -87,7 +87,12 @@ func insertStep(ctx context.Context, tx pgx.Tx, jobInternalID int, pieceID *int,
 
 // UpdateStep sets a step's status/notes/payload. A skipped step requires a
 // non-empty reason (spec §5), otherwise the checklist can be bypassed silently.
-func UpdateStep(ctx context.Context, pool *pgxpool.Pool, jobUUID, stepCode, status, notes string, payload map[string]any, actorEmployeeID int) (*Step, error) {
+//
+// Piece-grain steps are seeded once per piece, so pieceUUID selects which
+// piece's row to change. It is required when the step has more than one row
+// (a blanket update would complete the step for pieces nobody touched) and
+// rejected for job-grain steps.
+func UpdateStep(ctx context.Context, pool *pgxpool.Pool, jobUUID, stepCode, pieceUUID, status, notes string, payload map[string]any, actorEmployeeID int) (*Step, error) {
 	if !validStepStatus(status) {
 		return nil, ClientError{Msg: "Invalid step status."}
 	}
@@ -104,12 +109,18 @@ func UpdateStep(ctx context.Context, pool *pgxpool.Pool, jobUUID, stepCode, stat
 	var jobID int
 	err = tx.QueryRow(ctx, `
 		SELECT fabrication_job_id FROM fabrication_job
-		WHERE fabrication_job_uuid = $1 AND fabrication_job_deleted_at IS NULL`, jobUUID).Scan(&jobID)
+		WHERE fabrication_job_uuid = $1 AND fabrication_job_deleted_at IS NULL
+		FOR UPDATE`, jobUUID).Scan(&jobID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load job for step update: %w", err)
+	}
+
+	pieceID, err := resolveStepPiece(ctx, tx, jobID, stepCode, pieceUUID)
+	if err != nil {
+		return nil, err
 	}
 
 	if payload == nil {
@@ -133,8 +144,9 @@ func UpdateStep(ctx context.Context, pool *pgxpool.Pool, jobUUID, stepCode, stat
 			step_completed_at = CASE WHEN $3 IN ('completed','skipped') THEN NOW() ELSE NULL END,
 			step_completed_by = CASE WHEN $3 IN ('completed','skipped') THEN $6 ELSE NULL END
 		WHERE fabrication_job_id = $1 AND step_code = $2
+		  AND fabrication_job_item_id IS NOT DISTINCT FROM $7::INTEGER
 		RETURNING fabrication_job_step_id`,
-		jobID, stepCode, status, notes, payload, nullableInt(actorEmployeeID)).Scan(&stepID)
+		jobID, stepCode, status, notes, payload, nullableInt(actorEmployeeID), pieceID).Scan(&stepID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "Unknown step for this job."}
 	}
@@ -150,11 +162,57 @@ func UpdateStep(ctx context.Context, pool *pgxpool.Pool, jobUUID, stepCode, stat
 		return nil, err
 	}
 	for i := range steps {
-		if steps[i].Code == stepCode {
+		if steps[i].Code == stepCode && steps[i].PieceUUID == pieceUUID {
 			return &steps[i], nil
 		}
 	}
 	return nil, ErrNotFound
+}
+
+// resolveStepPiece maps the caller's pieceUUID to the item id the step row is
+// keyed on (nil for a job-grain row), under the job lock held by the caller. It
+// rejects the ambiguous and the mismatched cases so exactly one row is updated.
+func resolveStepPiece(ctx context.Context, tx pgx.Tx, jobID int, stepCode, pieceUUID string) (*int, error) {
+	var rows, pieceRows int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(fabrication_job_item_id) FROM fabrication_job_step
+		WHERE fabrication_job_id = $1 AND step_code = $2`, jobID, stepCode).Scan(&rows, &pieceRows); err != nil {
+		return nil, fmt.Errorf("count step rows: %w", err)
+	}
+	if rows == 0 {
+		return nil, ClientError{Msg: "Unknown step for this job."}
+	}
+	if pieceUUID == "" {
+		if pieceRows > 0 && rows > 1 {
+			return nil, ClientError{Msg: "This step is tracked per piece; specify pieceUuid."}
+		}
+		// A job-grain row, or the lone row of a single-piece job.
+		var id *int
+		if pieceRows > 0 {
+			if err := tx.QueryRow(ctx, `
+				SELECT fabrication_job_item_id FROM fabrication_job_step
+				WHERE fabrication_job_id = $1 AND step_code = $2`, jobID, stepCode).Scan(&id); err != nil {
+				return nil, fmt.Errorf("resolve single step piece: %w", err)
+			}
+		}
+		return id, nil
+	}
+	if pieceRows == 0 {
+		return nil, ClientError{Msg: "This step applies to the whole job, not a piece."}
+	}
+	var id int
+	err := tx.QueryRow(ctx, `
+		SELECT fs.fabrication_job_item_id FROM fabrication_job_step fs
+		JOIN fabrication_job_item fi ON fi.fabrication_job_item_id = fs.fabrication_job_item_id
+		WHERE fs.fabrication_job_id = $1 AND fs.step_code = $2 AND fi.fabrication_job_item_uuid::text = $3`,
+		jobID, stepCode, pieceUUID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ClientError{Msg: "That piece does not belong to this job."}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve step piece: %w", err)
+	}
+	return &id, nil
 }
 
 func validStepStatus(s string) bool {

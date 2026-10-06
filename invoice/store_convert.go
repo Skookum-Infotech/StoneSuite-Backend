@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/salesorder"
 	"stonesuite-backend/workflow"
 )
 
@@ -49,6 +50,7 @@ type salesOrderSnapshot struct {
 	currencyID           *int
 	salesRepEmployeeID   *int
 	ownerEmployeeID      *int
+	statusCode           string
 	salesTaxPercent      float64
 	shippingCharge       float64
 	adjustment           float64
@@ -77,8 +79,10 @@ func loadSalesOrderSnapshot(ctx context.Context, tx pgx.Tx, salesOrderUUID strin
 		       sales_order_ship_addr_line1, sales_order_ship_addr_line2, sales_order_ship_addr_suitenum,
 		       sales_order_ship_addr_city, sales_order_ship_addr_state, sales_order_ship_addr_zip,
 		       sales_order_ship_addr_country, sales_order_ship_phone, sales_order_ship_fax, sales_order_ship_email,
-		       sales_order_custom_fields
-		FROM sales_order WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL`, salesOrderUUID).Scan(
+		       sales_order_custom_fields, rs.record_status_code
+		FROM sales_order
+		JOIN lkp_record_status rs ON rs.record_status_id = sales_order_status
+		WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL`, salesOrderUUID).Scan(
 		&s.internalID, &s.customerInternalID,
 		&s.poNumber, &s.refNumber,
 		&s.memo, &s.notes, &s.internalNotes, &s.terms,
@@ -93,7 +97,7 @@ func loadSalesOrderSnapshot(ctx context.Context, tx pgx.Tx, salesOrderUUID strin
 		&s.shipping.AddrLine1, &s.shipping.AddrLine2, &s.shipping.SuiteUnit,
 		&s.shipping.City, &s.shipping.StateID, &s.shipping.Zip,
 		&s.shipping.CountryID, &s.shipping.Phone, &s.shipping.Fax, &s.shipping.Email,
-		&customRaw,
+		&customRaw, &s.statusCode,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSalesOrderNotFound
@@ -229,7 +233,11 @@ func ConvertFromSalesOrder(ctx context.Context, pool *pgxpool.Pool, salesOrderUU
 	}
 
 	// Checked after the replay above, so repeating a conversion still returns the
-	// invoice it already made even if the customer has since gone on hold.
+	// invoice it already made even if the order has since been cancelled or the
+	// customer has gone on hold.
+	if !salesorder.IsConvertible(src.statusCode) {
+		return nil, false, ClientError{Msg: "A sales order must be approved before it can be invoiced."}
+	}
 	msg, err := workflow.CustomerNotUsableByID(ctx, tx, src.customerInternalID)
 	if err != nil {
 		return nil, false, err

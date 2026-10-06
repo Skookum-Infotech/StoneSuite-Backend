@@ -73,6 +73,10 @@ func TestApplyLLM(t *testing.T) {
 		{name: "empty value dropped", reply: `{"customer_name":"  "}`, residual: residualDoc},
 		{name: "date normalised to ISO", reply: `{"order_date":"Jan 2, 2026"}`, residual: residualDoc, wantApplied: []string{KeyOrderDate}},
 		{name: "ungrounded impossible date dropped", reply: `{"order_date":"Feb 30, 2026"}`, residual: "Feb 30, 2026"},
+		{name: "one heading answered for customer and po is dropped from both", reply: `{"customer_name":"POWDER 1","po_number":"POWDER 1"}`, residual: "POWDER 1 Location Color Finish"},
+		{name: "po with spaces is not a po number", reply: `{"po_number":"POWDER 1"}`, residual: "POWDER 1 Location"},
+		{name: "po that is a date is rejected", reply: `{"po_number":"01/02/2026"}`, residual: residualDoc},
+		{name: "po without a digit is rejected", reply: `{"po_number":"PENDING"}`, residual: "PO PENDING"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

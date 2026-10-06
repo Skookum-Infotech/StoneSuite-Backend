@@ -287,3 +287,20 @@ func TestExtract_UnrecognisedDocument(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, po.Warnings, WarnNotRecognized, "a real PO is recognised")
 }
+
+// A spec sheet (no title, table, PO number or customer) is never sent to the
+// model: asked to find an order where there is none, it can only invent one.
+func TestExtract_NonOrderNeverAsksTheModel(t *testing.T) {
+	var p pdftest.Page
+	p.Add(750, pdftest.Cell{X: 50, S: "KITCHEN"}, pdftest.Cell{X: 330, S: "ISLAND"})
+	p.Add(730, pdftest.Cell{X: 50, S: "Color Finish Edge"})
+	p.Add(700, pdftest.Cell{X: 50, S: "POWDER 1"}, pdftest.Cell{X: 330, S: "Location"})
+	llm := &fakeLLM{reply: `{"customer_name":"POWDER 1","po_number":"POWDER 1"}`}
+	res, method, err := Extract(context.Background(), pdftest.Build([]pdftest.Page{p}, pdftest.Options{}), DocTypeSalesOrder, Options{LLM: llm, ReconcileFn: noReconcile})
+	require.NoError(t, err)
+	assert.Equal(t, 0, llm.calls)
+	assert.Equal(t, MethodParser, method)
+	assert.False(t, res.Header.CustomerName.Found())
+	assert.False(t, res.Header.PONumber.Found())
+	assert.Contains(t, res.Warnings, WarnNotRecognized)
+}

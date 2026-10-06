@@ -726,3 +726,52 @@ func TestCreateAndPost_RefusesUnreceivableOrder(t *testing.T) {
 		t.Errorf("receipt count %d -> %d, want unchanged", before, n)
 	}
 }
+
+// A post that commits while SoftDelete is waiting on the row lock must win:
+// the delete re-reads the status under the lock and refuses, instead of
+// deleting a receipt whose inventory movements stand.
+func TestSoftDelete_BlocksOnConcurrentPost(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	poUUID, poLineUUID, _ := seedSentPO(t, pool, 100)
+	r, err := Create(ctx, pool, CreateItemReceiptInput{
+		PurchaseOrderUUID: poUUID,
+		itemReceiptFields: itemReceiptFields{
+			PackingSlip: "PS-race",
+			Items:       []LineInput{{LineNumber: 1, PurchaseOrderItemUUID: poLineUUID, QtyReceived: 10}},
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Stand in for a Post mid-flight: it holds the row lock and has moved the
+	// receipt to RCVD but not yet committed.
+	if _, err := tx.Exec(ctx, `
+		UPDATE item_receipt SET item_receipt_status = (
+			SELECT rs.record_status_id FROM lkp_record_status rs
+			JOIN lkp_record_type rt ON rt.record_type_id = rs.record_status_record_type
+			WHERE rt.record_type_code = $2 AND rs.record_status_code = $3)
+		WHERE item_receipt_uuid = $1`, r.ID, irctRecordTypeCode, receivedStatusCode); err != nil {
+		t.Fatalf("simulate post: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- SoftDelete(ctx, pool, r.ID, 1) }()
+	select {
+	case err := <-done:
+		t.Fatalf("SoftDelete returned %v while the row was locked, want it to wait", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit simulated post: %v", err)
+	}
+	if err := <-done; !errors.Is(err, ErrAlreadyPosted) {
+		t.Fatalf("SoftDelete after concurrent post = %v, want ErrAlreadyPosted", err)
+	}
+}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/invoice"
 )
 
 // lockedRefund is the row state read under FOR UPDATE at the start of Apply/Unapply.
@@ -15,17 +17,18 @@ type lockedRefund struct {
 	customerID int
 	statusCode string
 	amount     float64
+	currencyID *int // refund_currency; nil = unspecified
 }
 
 func lockRefundForUpdate(ctx context.Context, tx pgx.Tx, refundUUID string) (lockedRefund, error) {
 	var lr lockedRefund
 	err := tx.QueryRow(ctx, `
-		SELECT rfnd.refund_id, rfnd.refund_customer_id, rs.record_status_code, rfnd.refund_amount
+		SELECT rfnd.refund_id, rfnd.refund_customer_id, rs.record_status_code, rfnd.refund_amount, rfnd.refund_currency
 		FROM refund rfnd
 		JOIN lkp_record_status rs ON rs.record_status_id = rfnd.refund_status
 		WHERE rfnd.refund_uuid = $1 AND rfnd.refund_deleted_at IS NULL
 		FOR UPDATE OF rfnd`, refundUUID,
-	).Scan(&lr.internalID, &lr.customerID, &lr.statusCode, &lr.amount)
+	).Scan(&lr.internalID, &lr.customerID, &lr.statusCode, &lr.amount, &lr.currencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedRefund{}, ErrNotFound
 	}
@@ -43,18 +46,19 @@ type lockedSource struct {
 	customerID int
 	statusCode string
 	available  float64
+	currencyID *int // source payment_currency / credit_memo_currency
 }
 
 func lockPaymentSource(ctx context.Context, tx pgx.Tx, paymentUUID string) (lockedSource, error) {
 	var ls lockedSource
 	var unapplied, refunded, credited float64
 	err := tx.QueryRow(ctx, `
-		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_unapplied_amount, p.payment_refunded_total, p.payment_credited_total
+		SELECT p.payment_id, p.payment_customer_id, rs.record_status_code, p.payment_unapplied_amount, p.payment_refunded_total, p.payment_credited_total, p.payment_currency
 		FROM payment p
 		JOIN lkp_record_status rs ON rs.record_status_id = p.payment_status
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL
 		FOR UPDATE OF p`, paymentUUID,
-	).Scan(&ls.internalID, &ls.customerID, &ls.statusCode, &unapplied, &refunded, &credited)
+	).Scan(&ls.internalID, &ls.customerID, &ls.statusCode, &unapplied, &refunded, &credited, &ls.currencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedSource{}, ClientError{Msg: "Unknown or deleted payment."}
 	}
@@ -70,12 +74,12 @@ func lockCreditMemoSource(ctx context.Context, tx pgx.Tx, creditMemoUUID string)
 	var ls lockedSource
 	var unapplied, refunded float64
 	err := tx.QueryRow(ctx, `
-		SELECT cm.credit_memo_id, cm.credit_memo_customer_id, rs.record_status_code, cm.credit_memo_unapplied_amount, cm.credit_memo_refunded_total
+		SELECT cm.credit_memo_id, cm.credit_memo_customer_id, rs.record_status_code, cm.credit_memo_unapplied_amount, cm.credit_memo_refunded_total, cm.credit_memo_currency
 		FROM credit_memo cm
 		JOIN lkp_record_status rs ON rs.record_status_id = cm.credit_memo_status
 		WHERE cm.credit_memo_uuid = $1 AND cm.credit_memo_deleted_at IS NULL
 		FOR UPDATE OF cm`, creditMemoUUID,
-	).Scan(&ls.internalID, &ls.customerID, &ls.statusCode, &unapplied, &refunded)
+	).Scan(&ls.internalID, &ls.customerID, &ls.statusCode, &unapplied, &refunded, &ls.currencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedSource{}, ClientError{Msg: "Unknown or deleted credit memo."}
 	}
@@ -197,6 +201,15 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, refundUUID, paymentUUID, cre
 	}
 	if src.customerID != lr.customerID {
 		return nil, ClientError{Msg: "Source belongs to a different customer than the refund."}
+	}
+	srcLabel := "credit memo"
+	if isPayment {
+		srcLabel = "payment"
+	}
+	if msg, err := invoice.CurrencyConflictMsg(ctx, tx, srcLabel, src.currencyID, "refund", lr.currencyID); err != nil {
+		return nil, err
+	} else if msg != "" {
+		return nil, ClientError{Msg: msg}
 	}
 
 	capAmt := lr.amount - (func() float64 {

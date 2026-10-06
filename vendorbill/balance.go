@@ -24,6 +24,7 @@ type Locked struct {
 	GrandTotal  float64
 	AmountPaid  float64
 	CreditTotal float64
+	CurrencyID  *int // vendor_bill_currency; nil = unspecified
 }
 
 // BalanceDue is the vendor bill's live outstanding balance: grand_total -
@@ -48,12 +49,12 @@ func LockForUpdate(ctx context.Context, tx pgx.Tx, billUUID string) (Locked, err
 	var l Locked
 	err := tx.QueryRow(ctx, `
 		SELECT vb.vendor_bill_id, vb.vendor_bill_vendor_id, rs.record_status_code,
-		       vb.vendor_bill_grand_total, vb.vendor_bill_amount_paid, vb.vendor_bill_credit_total
+		       vb.vendor_bill_grand_total, vb.vendor_bill_amount_paid, vb.vendor_bill_credit_total, vb.vendor_bill_currency
 		FROM vendor_bill vb
 		JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
 		WHERE vb.vendor_bill_uuid = $1 AND vb.vendor_bill_deleted_at IS NULL
 		FOR UPDATE OF vb`, billUUID,
-	).Scan(&l.InternalID, &l.VendorID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal)
+	).Scan(&l.InternalID, &l.VendorID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal, &l.CurrencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Locked{}, ClientError{Msg: "Unknown or deleted vendor bill."}
 	}
@@ -70,12 +71,12 @@ func LockForUpdateByID(ctx context.Context, tx pgx.Tx, internalID int) (Locked, 
 	l := Locked{InternalID: internalID}
 	err := tx.QueryRow(ctx, `
 		SELECT vb.vendor_bill_vendor_id, rs.record_status_code,
-		       vb.vendor_bill_grand_total, vb.vendor_bill_amount_paid, vb.vendor_bill_credit_total
+		       vb.vendor_bill_grand_total, vb.vendor_bill_amount_paid, vb.vendor_bill_credit_total, vb.vendor_bill_currency
 		FROM vendor_bill vb
 		JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
 		WHERE vb.vendor_bill_id = $1
 		FOR UPDATE OF vb`, internalID,
-	).Scan(&l.VendorID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal)
+	).Scan(&l.VendorID, &l.StatusCode, &l.GrandTotal, &l.AmountPaid, &l.CreditTotal, &l.CurrencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Locked{}, ClientError{Msg: "Unknown or deleted vendor bill."}
 	}

@@ -144,23 +144,39 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	// returns 0 for any caller without a linked employee row, so rejecting
 	// here made deletion unreachable for every real user. The actor falls back
 	// to the system employee below, as it does in every other module.
-	var curStatusCode string
-	err := pool.QueryRow(ctx, `
-		SELECT rs.record_status_code
-		FROM item_receipt ir
-		JOIN lkp_record_status rs ON rs.record_status_id = ir.item_receipt_status
-		WHERE ir.item_receipt_uuid = $1 AND ir.item_receipt_deleted_at IS NULL`, uuid).Scan(&curStatusCode)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete item receipt: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// The row lock serialises against a concurrent Post/Void: without it a post
+	// could commit between the status check and the delete.
+	// Lock the receipt row alone: joining the status table in a FOR UPDATE
+	// query makes Postgres re-check the join against the pre-wait status row
+	// once the lock is granted, dropping a receipt that was just posted.
+	var statusID int
+	err = tx.QueryRow(ctx, `
+		SELECT item_receipt_status FROM item_receipt
+		WHERE item_receipt_uuid = $1 AND item_receipt_deleted_at IS NULL
+		FOR UPDATE`, uuid).Scan(&statusID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("load item receipt for delete: %w", err)
+		return fmt.Errorf("lock item receipt for delete: %w", err)
+	}
+	var curStatusCode string
+	if err := tx.QueryRow(ctx,
+		`SELECT record_status_code FROM lkp_record_status WHERE record_status_id = $1`,
+		statusID).Scan(&curStatusCode); err != nil {
+		return fmt.Errorf("load item receipt status for delete: %w", err)
 	}
 	if IsPosted(curStatusCode) {
 		return ErrAlreadyPosted
 	}
 
-	tag, err := pool.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE item_receipt
 		SET item_receipt_deleted_at = NOW(), item_receipt_deleted_by = $2
 		WHERE item_receipt_uuid = $1 AND item_receipt_deleted_at IS NULL`, uuid, actorOrSystem(actorEmployeeID))
@@ -169,6 +185,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete item receipt: %w", err)
 	}
 	return nil
 }

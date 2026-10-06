@@ -31,6 +31,9 @@ type DocMeta struct {
 	DefaultSubject        string
 	// DownloadURL is the signed, login-free link the emailed PDF card points at.
 	DownloadURL string
+	// CurrencyID is the document's lkp_currency id; the PDF prints that
+	// currency's symbol instead of the default "$". nil keeps the default.
+	CurrencyID *int
 }
 
 // recordLink builds a notification's deep-link path for resource+recordID
@@ -77,7 +80,11 @@ type DocumentOps struct {
 // NewDocumentOps constructs the handler group. sendDisabled and r2 may both
 // be nil.
 func NewDocumentOps(loaders map[string]DocumentLoader, sendDisabled map[string]bool, r2 *storage.Client) *DocumentOps {
-	return &DocumentOps{loaders: loaders, sendDisabled: sendDisabled, renderPDF: docpdf.Render, r2: r2}
+	wrapped := make(map[string]DocumentLoader, len(loaders))
+	for key, load := range loaders {
+		wrapped[key] = withCurrencySymbol(load)
+	}
+	return &DocumentOps{loaders: wrapped, sendDisabled: sendDisabled, renderPDF: docpdf.Render, r2: r2}
 }
 
 // WithDefaultLogo sets the logo PDFs show for a tenant that has not uploaded

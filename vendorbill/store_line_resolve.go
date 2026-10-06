@@ -21,16 +21,16 @@ type resolvedLine struct {
 	purchaseOrderItemUUID string
 	purchaseOrderItemID   *int
 	lineNumber            int
-	inventoryItemID *int
-	sku, name, desc string
-	unitID          *int
-	unitCode        string
-	quantity        float64
-	unitPrice       float64
-	discountPercent float64
-	taxRateID       *int
-	taxPercent      float64
-	money           LineMoney
+	inventoryItemID       *int
+	sku, name, desc       string
+	unitID                *int
+	unitCode              string
+	quantity              float64
+	unitPrice             float64
+	discountPercent       float64
+	taxRateID             *int
+	taxPercent            float64
+	money                 LineMoney
 }
 
 // resolveLines validates and resolves every input line against the catalog

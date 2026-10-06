@@ -51,12 +51,12 @@ type Line struct {
 type LineInput struct {
 	LineNumber          int     `json:"lineNumber"`
 	PurchaseOrderItemID string  `json:"purchaseOrderItemId,omitempty"`
-	InventoryItemUUID string  `json:"inventoryItemUuid,omitempty"`
-	Description       string  `json:"description,omitempty"`
-	Quantity          float64 `json:"quantity"`
-	UnitPrice         float64 `json:"unitPrice"`
-	DiscountPercent   float64 `json:"discountPercent"`
-	TaxRateID         *int    `json:"taxRateId,omitempty"`
+	InventoryItemUUID   string  `json:"inventoryItemUuid,omitempty"`
+	Description         string  `json:"description,omitempty"`
+	Quantity            float64 `json:"quantity"`
+	UnitPrice           float64 `json:"unitPrice"`
+	DiscountPercent     float64 `json:"discountPercent"`
+	TaxRateID           *int    `json:"taxRateId,omitempty"`
 }
 
 // BillPayment is one live vendor_bill_payment row (AD-7).

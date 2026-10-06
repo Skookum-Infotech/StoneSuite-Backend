@@ -41,7 +41,8 @@ type recordPaymentRequest struct {
 // RecordPayment is the legacy quick-pay endpoint (spec AD-5): it now delegates
 // to payment.QuickPay, which creates a Payment + one payment_application
 // under the hood, instead of writing invoice_amount_paid directly. Path,
-// request, and response shape are unchanged for API compatibility.
+// request, and response shape are unchanged for API compatibility. An optional
+// Idempotency-Key header makes a retry return the recorded result, not a duplicate.
 func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("uuid")
 	pool, identityID, _, ok := h.authInvoiceByUUID(w, r, id, authz.ActionUpdate)
@@ -53,8 +54,12 @@ func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "amount is required and must be positive.")
 		return
 	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
 	empID := resolveEmployeeID(r, identityID)
-	inv, err := payment.QuickPay(r.Context(), pool, id, req.Amount, empID)
+	inv, err := payment.QuickPay(r.Context(), pool, id, req.Amount, key, empID)
 	if err != nil {
 		invoiceFail(w, err, "Failed to record payment.")
 		return

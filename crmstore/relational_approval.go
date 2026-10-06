@@ -477,7 +477,13 @@ func (s *relationalStore) approvalCount(ctx context.Context, pool *pgxpool.Pool,
 	err := pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM customer_approval ca
 		JOIN customer c ON c.customer_id = ca.customer_id
-		WHERE c.customer_uuid = $1`, id).Scan(&count)
+		WHERE c.customer_uuid = $1
+		  AND EXISTS (
+			SELECT 1 FROM crm_workflow_approver a
+			WHERE a.record_type_id = c.record_type
+			  AND a.approver_employee_id = ca.approver_employee_id
+			  AND a.is_active AND a.crm_status_id IS NULL
+		)`, id).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count approvals: %w", err)
 	}

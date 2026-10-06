@@ -43,17 +43,20 @@ type Line struct {
 	LineTotal           float64 `json:"lineTotal"`
 }
 
-// LineInput is one line of a create/update request. There is no
-// purchaseOrderItemUuid field here on purpose (AD-8): that lineage FK is set
-// exclusively by the convert path, never by manual Create/Update input.
+// LineInput is one line of a create/update request. PurchaseOrderItemID is the
+// purchase order line uuid exactly as Line.PurchaseOrderItemID returns it, so a
+// converted bill's lines round-trip through an edit. It is honoured only by
+// Update on a bill converted from a purchase order (Create rejects it): the
+// lineage is established by the convert path, Update merely preserves it.
 type LineInput struct {
-	LineNumber        int     `json:"lineNumber"`
-	InventoryItemUUID string  `json:"inventoryItemUuid,omitempty"`
-	Description       string  `json:"description,omitempty"`
-	Quantity          float64 `json:"quantity"`
-	UnitPrice         float64 `json:"unitPrice"`
-	DiscountPercent   float64 `json:"discountPercent"`
-	TaxRateID         *int    `json:"taxRateId,omitempty"`
+	LineNumber          int     `json:"lineNumber"`
+	PurchaseOrderItemID string  `json:"purchaseOrderItemId,omitempty"`
+	InventoryItemUUID   string  `json:"inventoryItemUuid,omitempty"`
+	Description         string  `json:"description,omitempty"`
+	Quantity            float64 `json:"quantity"`
+	UnitPrice           float64 `json:"unitPrice"`
+	DiscountPercent     float64 `json:"discountPercent"`
+	TaxRateID           *int    `json:"taxRateId,omitempty"`
 }
 
 // BillPayment is one live vendor_bill_payment row (AD-7).

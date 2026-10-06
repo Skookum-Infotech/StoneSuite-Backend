@@ -25,6 +25,7 @@ type lockedMemo struct {
 	statusCode string
 	grandTotal float64
 	refunded   float64 // credit already paid back to the customer via refunds
+	currencyID *int    // credit_memo_currency; nil = unspecified
 }
 
 // lockCreditMemoForUpdate loads + row-locks a live credit memo by uuid inside
@@ -34,12 +35,12 @@ type lockedMemo struct {
 func lockCreditMemoForUpdate(ctx context.Context, tx pgx.Tx, memoUUID string) (lockedMemo, error) {
 	var lm lockedMemo
 	err := tx.QueryRow(ctx, `
-		SELECT cm.credit_memo_id, cm.credit_memo_customer_id, rs.record_status_code, cm.credit_memo_grand_total, cm.credit_memo_refunded_total
+		SELECT cm.credit_memo_id, cm.credit_memo_customer_id, rs.record_status_code, cm.credit_memo_grand_total, cm.credit_memo_refunded_total, cm.credit_memo_currency
 		FROM credit_memo cm
 		JOIN lkp_record_status rs ON rs.record_status_id = cm.credit_memo_status
 		WHERE cm.credit_memo_uuid = $1 AND cm.credit_memo_deleted_at IS NULL
 		FOR UPDATE OF cm`, memoUUID,
-	).Scan(&lm.internalID, &lm.customerID, &lm.statusCode, &lm.grandTotal, &lm.refunded)
+	).Scan(&lm.internalID, &lm.customerID, &lm.statusCode, &lm.grandTotal, &lm.refunded, &lm.currencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedMemo{}, ErrNotFound
 	}
@@ -139,6 +140,11 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID string
 	}
 	if li.CustomerID != lm.customerID {
 		return nil, ClientError{Msg: "Invoice belongs to a different customer than the credit memo."}
+	}
+	if msg, err := invoice.CurrencyConflictMsg(ctx, tx, "credit memo", lm.currencyID, "invoice", li.CurrencyID); err != nil {
+		return nil, err
+	} else if msg != "" {
+		return nil, ClientError{Msg: msg}
 	}
 	if !invoice.PayableStatuses[li.StatusCode] {
 		return nil, ClientError{Msg: "Cannot apply credit to a " + li.StatusCode + " invoice; it must be sent first."}

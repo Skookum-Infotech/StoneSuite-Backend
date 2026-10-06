@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/invoice"
 	"stonesuite-backend/vendorbill"
 )
 
@@ -21,6 +22,7 @@ type lockedVendorPayment struct {
 	vendorID   int
 	statusCode string
 	amount     float64
+	currencyID *int // vendor_payment_currency; nil = unspecified
 }
 
 // lockVendorPaymentForUpdate loads and row-locks a live vendor payment by
@@ -32,12 +34,12 @@ type lockedVendorPayment struct {
 func lockVendorPaymentForUpdate(ctx context.Context, tx pgx.Tx, vendorPaymentUUID string) (lockedVendorPayment, error) {
 	var lp lockedVendorPayment
 	err := tx.QueryRow(ctx, `
-		SELECT vp.vendor_payment_id, vp.vendor_payment_vendor_id, rs.record_status_code, vp.vendor_payment_amount
+		SELECT vp.vendor_payment_id, vp.vendor_payment_vendor_id, rs.record_status_code, vp.vendor_payment_amount, vp.vendor_payment_currency
 		FROM vendor_payment vp
 		JOIN lkp_record_status rs ON rs.record_status_id = vp.vendor_payment_status
 		WHERE vp.vendor_payment_uuid = $1 AND vp.vendor_payment_deleted_at IS NULL
 		FOR UPDATE OF vp`, vendorPaymentUUID,
-	).Scan(&lp.internalID, &lp.vendorID, &lp.statusCode, &lp.amount)
+	).Scan(&lp.internalID, &lp.vendorID, &lp.statusCode, &lp.amount, &lp.currencyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedVendorPayment{}, ErrNotFound
 	}
@@ -115,6 +117,11 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID, vendorBil
 	}
 	if li.VendorID != lp.vendorID {
 		return nil, ClientError{Msg: "Vendor bill belongs to a different vendor than the payment."}
+	}
+	if msg, err := invoice.CurrencyConflictMsg(ctx, tx, "payment", lp.currencyID, "vendor bill", li.CurrencyID); err != nil {
+		return nil, err
+	} else if msg != "" {
+		return nil, ClientError{Msg: msg}
 	}
 	if !vendorbill.PayableStatuses[li.StatusCode] {
 		return nil, ClientError{Msg: "Cannot apply payment to a " + li.StatusCode + " vendor bill; it must be approved first."}

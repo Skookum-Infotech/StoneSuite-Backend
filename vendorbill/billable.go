@@ -3,7 +3,10 @@
 // with no database so they can be table-tested; store_convert.go does the I/O.
 package vendorbill
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // convertibleStatuses are the purchase order statuses a bill may be raised
 // from: anything that has received goods. Partially Received is included so a
@@ -61,4 +64,46 @@ func planConversion(lines []poSourceLine) ([]poSourceLine, error) {
 		return nil, ClientError{Msg: "Nothing has been received on this purchase order yet, so there is nothing to bill."}
 	}
 	return nil, ClientError{Msg: "Everything received on this purchase order has already been billed."}
+}
+
+// linkedQty is one edited bill line that references a purchase order line.
+type linkedQty struct {
+	lineNumber int
+	poItemID   int
+	quantity   float64
+}
+
+// planLinkedQuantities totals the edited bill's quantity per purchase order
+// line and checks each total against what is still billable to this bill:
+// received minus what OTHER live non-void bills claim. source.qtyBilled counts
+// every live non-void bill including this one, so this bill's current claim
+// (current) is subtracted back out. Lines without a link never reach here.
+// Returns the new conversion quantity per purchase order line id; a line the
+// bill no longer references is absent.
+func planLinkedQuantities(source []poSourceLine, current map[int]float64, linked []linkedQty) (map[int]float64, error) {
+	byID := make(map[int]poSourceLine, len(source))
+	for _, s := range source {
+		byID[s.internalID] = s
+	}
+	totals := map[int]float64{}
+	firstLine := map[int]int{}
+	for _, l := range linked {
+		if _, seen := firstLine[l.poItemID]; !seen {
+			firstLine[l.poItemID] = l.lineNumber
+		}
+		totals[l.poItemID] = roundQty(totals[l.poItemID] + l.quantity)
+	}
+	for id, total := range totals {
+		s, ok := byID[id]
+		if !ok {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: purchase order line not found.", firstLine[id])}
+		}
+		others := roundQty(s.qtyBilled - current[id])
+		if limit := billableQuantity(s.qtyReceived, others); total > limit {
+			return nil, ClientError{Msg: fmt.Sprintf(
+				"Line %d: quantity %v exceeds the %v still billable for this purchase order line (received minus billed on other bills).",
+				firstLine[id], total, limit)}
+		}
+	}
+	return totals, nil
 }

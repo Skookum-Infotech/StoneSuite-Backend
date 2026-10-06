@@ -60,12 +60,16 @@ func activeApproverCount(ctx context.Context, q workflow.Querier, recordTypeID, 
 
 // signOffCount returns how many distinct approvers have signed off on an
 // estimate at a status.
-func signOffCount(ctx context.Context, q workflow.Querier, estimateInternalID, statusID int) (int, error) {
+// Only votes from approvers still active for the record type count.
+func signOffCount(ctx context.Context, q workflow.Querier, recordTypeID, estimateInternalID, statusID int) (int, error) {
 	var n int
 	if err := q.QueryRow(ctx, `
-		SELECT COUNT(*) FROM estimate_approval
-		WHERE estimate_id = $1 AND record_status_id = $2`,
-		estimateInternalID, statusID).Scan(&n); err != nil {
+		SELECT COUNT(*) FROM estimate_approval ap
+		WHERE ap.estimate_id = $1 AND ap.record_status_id = $2
+		  AND EXISTS(SELECT 1 FROM estimate_approver ea
+			WHERE ea.record_type_id = $3 AND ea.record_status_id = ap.record_status_id
+			  AND ea.approver_employee_id = ap.approver_employee_id AND ea.is_active)`,
+		estimateInternalID, statusID, recordTypeID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count estimate approvals: %w", err)
 	}
 	return n, nil
@@ -150,7 +154,7 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmplo
 		return nil, fmt.Errorf("record estimate approval: %w", err)
 	}
 
-	approved, err := signOffCount(ctx, tx, internalID, curStatusID)
+	approved, err := signOffCount(ctx, tx, recordTypeID, internalID, curStatusID)
 	if err != nil {
 		return nil, err
 	}

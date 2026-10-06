@@ -13,20 +13,24 @@ import (
 )
 
 // resolvedLine is a line after catalog/free-text resolution, ready to price
-// and insert. It never carries a purchase_order_item_id (AD-8) -- that
-// lineage FK is set only by the convert path (store_convert.go), never here.
+// and insert. purchaseOrderItemUUID is the requested PO-line link (Update
+// only); syncConversionOnEdit validates it against the bill's own purchase
+// order and stamps purchaseOrderItemID, which insertLines persists. Create
+// leaves both empty (AD-8).
 type resolvedLine struct {
-	lineNumber      int
-	inventoryItemID *int
-	sku, name, desc string
-	unitID          *int
-	unitCode        string
-	quantity        float64
-	unitPrice       float64
-	discountPercent float64
-	taxRateID       *int
-	taxPercent      float64
-	money           LineMoney
+	purchaseOrderItemUUID string
+	purchaseOrderItemID   *int
+	lineNumber            int
+	inventoryItemID       *int
+	sku, name, desc       string
+	unitID                *int
+	unitCode              string
+	quantity              float64
+	unitPrice             float64
+	discountPercent       float64
+	taxRateID             *int
+	taxPercent            float64
+	money                 LineMoney
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -57,11 +61,12 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 		}
 
 		rl := resolvedLine{
-			lineNumber:      in.LineNumber,
-			quantity:        in.Quantity,
-			unitPrice:       in.UnitPrice,
-			discountPercent: in.DiscountPercent,
-			taxRateID:       in.TaxRateID,
+			lineNumber:            in.LineNumber,
+			quantity:              in.Quantity,
+			unitPrice:             in.UnitPrice,
+			discountPercent:       in.DiscountPercent,
+			taxRateID:             in.TaxRateID,
+			purchaseOrderItemUUID: in.PurchaseOrderItemID,
 		}
 
 		if in.InventoryItemUUID != "" {
@@ -109,23 +114,24 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 }
 
 // insertLines bulk-inserts resolved lines as vendor_bill_item rows.
-// purchase_order_item_id is always NULL here (AD-8) -- populated only by
-// store_convert.go's own separate insert path.
+// purchase_order_item_id is NULL for manual lines and carries the PO-line link
+// for lines kept linked through an edit (see syncConversionOnEdit); the convert
+// path (store_convert.go) has its own separate insert.
 func insertLines(ctx context.Context, tx pgx.Tx, vbInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO vendor_bill_item (
-				vendor_bill_id, line_number, inventory_item_id,
+				vendor_bill_id, line_number, inventory_item_id, purchase_order_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
 				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)`,
+			) VALUES ($1,$2,$3,$19, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)`,
 			vbInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), l.purchaseOrderItemID,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

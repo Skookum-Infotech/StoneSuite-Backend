@@ -7259,9 +7259,10 @@ CREATE TABLE IF NOT EXISTS vendor_bill_conversion (
 -- order line. A PO line's "already billed" quantity is the sum of these over
 -- bills that are live and not VOID, which is what lets ConvertFromPurchaseOrder
 -- bill only the received-but-not-yet-billed quantity. Recorded here rather than
--- read off vendor_bill_item because editing a bill re-inserts its lines with no
--- purchase_order_item_id (store_update.go), so that link cannot be trusted
--- after an edit. A conversion always writes at least one row here.
+-- read off vendor_bill_item because a manually added line carries no
+-- purchase_order_item_id. Editing a draft bill preserves the link on lines the
+-- client sends it for and rewrites these rows from the edited quantities
+-- (store_update_conversion.go). A conversion always writes at least one row here.
 CREATE TABLE IF NOT EXISTS vendor_bill_conversion_line (
     vendor_bill_conversion_id INTEGER       NOT NULL REFERENCES vendor_bill_conversion(vendor_bill_conversion_id) ON DELETE CASCADE,
     purchase_order_item_id    INTEGER       NOT NULL REFERENCES purchase_order_item(purchase_order_item_id) ON DELETE CASCADE,
@@ -9146,3 +9147,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_cutting_selection_piece ON fabrication_cutt
 ALTER TABLE fabrication_job ADD COLUMN IF NOT EXISTS job_create_request_id VARCHAR(64) NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_fj_create_request ON fabrication_job(sales_order_id, job_create_request_id)
     WHERE job_create_request_id IS NOT NULL AND fabrication_job_deleted_at IS NULL;
+
+-- Idempotent legacy settlement: a replayed POST /invoices/{uuid}/payment or
+-- /vendor-bills/{uuid}/payment carrying the same Idempotency-Key returns the
+-- settlement it already recorded instead of duplicating it. Existing rows keep NULL.
+ALTER TABLE payment ADD COLUMN IF NOT EXISTS idempotency_key TEXT NULL;
+ALTER TABLE payment ADD COLUMN IF NOT EXISTS idempotency_invoice_id INTEGER NULL REFERENCES invoice(invoice_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_idempotency ON payment(idempotency_invoice_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+ALTER TABLE vendor_bill_payment ADD COLUMN IF NOT EXISTS idempotency_key TEXT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vbp_idempotency ON vendor_bill_payment(vendor_bill_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;

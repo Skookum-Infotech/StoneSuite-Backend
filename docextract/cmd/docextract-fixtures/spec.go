@@ -56,6 +56,7 @@ type docSpec struct {
 	notes     []string
 	totals    []kv
 	exp       expectedDoc
+	raw       func() []pdftest.Page // a hand-laid layout that skips the standard template
 }
 
 type expectedDoc struct {
@@ -79,6 +80,9 @@ func (s docSpec) expected() expectedDoc { return s.exp }
 func (s docSpec) render() (string, []byte) {
 	if s.docx {
 		return s.name + ".docx", pdftest.BuildDocx(s.docxBlocks())
+	}
+	if s.raw != nil {
+		return s.name + ".pdf", pdftest.Build(s.raw(), pdftest.Options{})
 	}
 	return s.name + ".pdf", pdftest.Build(s.pages(), pdftest.Options{})
 }

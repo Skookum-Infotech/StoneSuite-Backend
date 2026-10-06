@@ -15,9 +15,11 @@ const (
 )
 
 var (
-	totalsRe     = regexp.MustCompile(`(?i)^(sub\s*-?\s*total|total|grand\s+total|amount\s+due|balance\s+due|order\s+total|invoice\s+total|sales\s+tax|tax|vat)\b`)
-	skipRowRe    = regexp.MustCompile(`(?i)^(page\s+\d+(\s+of\s+\d+)?|\d+\s+of\s+\d+)$`)
-	notePrefixRe = regexp.MustCompile(`(?i)^(notes?\b|nb\b|comments?\b|please\b|\*)`)
+	totalsRe  = regexp.MustCompile(`(?i)^(sub\s*-?\s*total|total|grand\s+total|amount\s+due|balance\s+due|order\s+total|invoice\s+total|sales\s+tax|tax|vat)\b`)
+	skipRowRe = regexp.MustCompile(`(?i)^(page\s+\d+(\s+of\s+\d+)?|\d+\s+of\s+\d+)$`)
+	// notePrefixRe starts a note instead of continuing a description: remarks
+	// and contact boilerplate a buyer types into the description column.
+	notePrefixRe = regexp.MustCompile(`(?i)^(notes?\b|nb\b|comments?\b|please\b|\*|if\s+you\s+have\b|questions?\b|contact\b)`)
 )
 
 // tableResult is the output of parseTable.
@@ -69,6 +71,8 @@ func pagePitch(rows []Row) float64 {
 }
 
 func (tp *tableParser) page(p PageRows) error {
+	// Pitch comes from the table's own rows: letterhead rows a couple of
+	// points apart would otherwise make every wrapped description look far away.
 	pitch := pagePitch(p.Rows)
 	start, last := -1, -1
 	if tp.active {
@@ -76,6 +80,7 @@ func (tp *tableParser) page(p PageRows) error {
 	}
 	for i, r := range p.Rows {
 		if cols, ok := detectTableHeader(r); ok {
+			pitch = pagePitch(p.Rows[i+1:])
 			tp.cols = cols
 			if !tp.active {
 				tp.res.Found = true
@@ -124,8 +129,30 @@ func validQty(ws []Word) bool {
 	return issue == ""
 }
 
+var currencySignRe = regexp.MustCompile(`^[-(]?[$€£]$`)
+
+// maxNumericCellWords bounds a numeric cell ("$ 12.00" is two words); a
+// longer run in a numeric column is prose that spilled across it.
+const maxNumericCellWords = 2
+
+// numericCell reports whether a cell reads as a number: a short run that
+// starts with a digit-bearing word, or a currency sign and one. Garbled
+// numbers ("1,2O0.00") still count, so they are flagged on their line instead
+// of silently becoming a note; prose that spills into a numeric column
+// ("form 01-339") does not.
+func numericCell(ws []Word) bool {
+	if len(ws) == 0 || len(ws) > maxNumericCellWords {
+		return false
+	}
+	first := ws[0].Text
+	if currencySignRe.MatchString(first) && len(ws) > 1 {
+		first = ws[1].Text
+	}
+	return hasDigit(first)
+}
+
 func (tp *tableParser) row(page, idx int, r Row, cells map[colRole][]Word, gap, pitch float64) error {
-	hasNum := len(cells[roleQty]) > 0 || len(cells[rolePrice]) > 0 || len(cells[roleAmount]) > 0
+	hasNum := numericCell(cells[roleQty]) || numericCell(cells[rolePrice]) || numericCell(cells[roleAmount])
 	text := strings.TrimSpace(r.Text())
 	if !hasNum {
 		tp.noNumbers(page, idx, text, cells, gap, pitch)

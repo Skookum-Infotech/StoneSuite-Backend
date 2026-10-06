@@ -28,6 +28,13 @@ type labelSpec struct {
 	below  bool // the value may sit in the row beneath the label
 	re     *regexp.Regexp
 	reject func(rest string) bool
+	// labelOnly: a bare word that is also ordinary prose ("Buyer") counts only
+	// when it starts the row or is followed by a colon.
+	labelOnly bool
+	// nearBelow: the value may sit a few rows under the label in its column,
+	// with unrelated rows (a letterhead address) in between: a boxed
+	// "Purchase Order / 00865-D7231" title.
+	nearBelow bool
 }
 
 var totalRejectRe = regexp.MustCompile(`(?i)^\s*(qty|quantity|units?|items?|lines?|weight|pieces?|pcs)\b`)
@@ -38,10 +45,10 @@ var labelSpecs = []labelSpec{
 	{key: keyDelivery, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:delivery\s+date|ship(?:ping)?\s+date|date\s+required|required\s+(?:by|date)|need(?:ed)?\s+by|due\s+date|requested\s+(?:delivery|ship)(?:\s+date)?|delivery\s+by|ship\s+by)\b`)},
 	{key: keyOrderDate, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:order\s+date|date\s+ordered|po\s+date|date\s+of\s+order)\b`)},
 	{key: keyPO, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:(?:customer|your|buyer'?s?)\s+)?(?:p\.?\s?o\.?|purchase\s+order|order)\s*(?:#|no\b\.?|number)`)},
-	{key: keyPO, prio: 1, below: false, re: regexp.MustCompile(`(?i)\b(?:(?:customer|your|buyer'?s?)\s+)?(?:p\.?o\.?|purchase\s+order)\b`)},
+	{key: keyPO, prio: 1, below: false, nearBelow: true, re: regexp.MustCompile(`(?i)\b(?:(?:customer|your|buyer'?s?)\s+)?(?:p\.?o\.?|purchase\s+order)\b`)},
 	{key: keyShipTo, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|ship(?:ping)?\s+address|delivery\s+address|job\s*site)\b`)},
 	{key: keyBillTo, prio: 3, below: true, re: regexp.MustCompile(`(?i)\b(?:bill(?:ed)?\s+to|sold\s+to|invoice\s+to)\b`)},
-	{key: keyBillTo, prio: 1, below: true, re: regexp.MustCompile(`(?i)\b(?:customer(?:\s+name)?|buyer)\b`)},
+	{key: keyBillTo, prio: 1, below: true, labelOnly: true, re: regexp.MustCompile(`(?i)\b(?:customer(?:\s+name)?|buyer)\b`)},
 	{key: keyTerms, prio: 1, below: true, re: regexp.MustCompile(`(?i)\b(?:payment\s+terms|terms(?:\s+of\s+payment)?|terms)\b`)},
 	{key: keySubtotal, prio: 1, below: true, re: regexp.MustCompile(`(?i)\bsub\s*-?\s*total\b`)},
 	{key: keyTotal, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:grand\s+total|order\s+total|invoice\s+total|total\s+due|amount\s+due|balance\s+due)\b`)},
@@ -106,6 +113,9 @@ func findHits(rows []hrow) []labelHit {
 				if sp.reject != nil && sp.reject(h.text[m[1]:]) {
 					continue
 				}
+				if sp.labelOnly && !standaloneLabel(h.text[:m[0]], h.text[m[1]:]) {
+					continue
+				}
 				claimed = append(claimed, [2]int{m[0], m[1]})
 				hits = append(hits, labelHit{spec: sp, ri: ri, start: m[0], end: m[1], x: h.row.Words[h.wordAt(m[0])].X})
 			}
@@ -122,6 +132,12 @@ func findHits(rows []hrow) []labelHit {
 		all = append(all, hits...)
 	}
 	return all
+}
+
+// standaloneLabel reports whether a label sits where a label would: at the
+// start of the row, or directly followed by a colon.
+func standaloneLabel(before, rest string) bool {
+	return strings.TrimSpace(before) == "" || strings.HasPrefix(strings.TrimLeft(rest, " "), ":")
 }
 
 func overlaps(claimed [][2]int, s, e int) bool {
@@ -152,6 +168,40 @@ func belowSeg(rows []hrow, h labelHit) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// maxNearBelowRows and maxNearBelowDY bound how far under a nearBelow label
+// its value may sit.
+const (
+	maxNearBelowRows = 4
+	maxNearBelowDY   = 36.0
+)
+
+// nearBelowSegs returns, top to bottom, the text in the label's column of each
+// row a few rows and points under the label; rows with nothing in that column
+// are skipped. The caller picks the first candidate that fits (a boxed
+// "Purchase Order" title may carry a word such as "EXTRA" above the number).
+func nearBelowSegs(rows []hrow, h labelHit) []string {
+	top := rows[h.ri]
+	prev := top
+	var out []string
+	for ri := h.ri + 1; ri < len(rows) && ri <= h.ri+maxNearBelowRows; ri++ {
+		cur := rows[ri]
+		if !adjacent(prev, cur) || top.row.Y-cur.row.Y > maxNearBelowDY {
+			break
+		}
+		var parts []string
+		for _, w := range cur.row.Words {
+			if w.X >= h.x-alignTol && w.X < h.nextX {
+				parts = append(parts, w.Text)
+			}
+		}
+		if len(parts) > 0 {
+			out = append(out, strings.TrimSpace(strings.Join(parts, " ")))
+		}
+		prev = cur
+	}
+	return out
 }
 
 func adjacent(a, b hrow) bool { return a.page == b.page && b.idx == a.idx+1 }

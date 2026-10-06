@@ -1,0 +1,63 @@
+{
+  "header": {
+    "bill_to": "Lakeview Homes\n4410 Commerce Parkway, Suite 200\nFrisco, TX 75034",
+    "currency": "USD",
+    "customer_name": "Lakeview Homes",
+    "order_date": "2026-05-06",
+    "po_number": "00412-K5521",
+    "ship_to": "118 Juniper Court\nCelina, TX 75009\nPrairie Ridge 50s\nLot 12 Blk C Sect 3",
+    "subtotal": "3557.00",
+    "tax": "15.51",
+    "total": "3572.51"
+  },
+  "lines": [
+    {
+      "sku": "",
+      "description": "Countertops Labor/Turnkey (P/O)",
+      "qty": "1",
+      "uom": "",
+      "unit_price": "3212.51",
+      "amount": "3212.51"
+    },
+    {
+      "sku": "",
+      "description": "Countertops Labor/Turnkey (P/O) 0600 - KITCHEN CTOPS - PERIMETER AND ISLAND",
+      "qty": "83",
+      "uom": "",
+      "unit_price": "25.00",
+      "amount": "2075.00"
+    },
+    {
+      "sku": "",
+      "description": "Countertops Labor/Turnkey (P/O) 0605 - KITCHEN 4\" SPLASH",
+      "qty": "9",
+      "uom": "",
+      "unit_price": "-25.00",
+      "amount": "-225.00"
+    },
+    {
+      "sku": "",
+      "description": "Countertops Labor/Turnkey (P/O) 0578 - DINING HUTCH OPTION COUNTERTOPS Option: 1450-32",
+      "qty": "11",
+      "uom": "",
+      "unit_price": "25.00",
+      "amount": "275.00"
+    },
+    {
+      "sku": "93310E",
+      "description": "Kitchen Sink - Stainless Steel Single Undermount - Installed",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "188.00",
+      "amount": "188.00"
+    },
+    {
+      "sku": "990017",
+      "description": "Negotiated Price Adjustment",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "-1968.51",
+      "amount": "-1968.51"
+    }
+  ]
+}

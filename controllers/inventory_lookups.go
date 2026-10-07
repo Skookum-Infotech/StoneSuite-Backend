@@ -1,13 +1,17 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/cache"
 	"stonesuite-backend/inventory"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
@@ -27,10 +31,47 @@ import (
 //	POST   /api/tenant/inventory/lookups/{kind}       — add an entry
 //	PATCH  /api/tenant/inventory/lookups/{kind}/{id}  — edit an entry
 //	DELETE /api/tenant/inventory/lookups/{kind}/{id}  — soft-delete an entry
-type InventoryLookupOps struct{}
+type InventoryLookupOps struct {
+	// reads caches the vocabulary payloads per tenant. The permission check
+	// still runs on every request; only the DB read is skipped. Any write
+	// through this handler group drops the tenant's entries.
+	reads *cache.TTLCache[string, map[string]any]
+}
+
+const (
+	// lookupCacheTTL is the backstop for writes made on another instance.
+	lookupCacheTTL = 60 * time.Second
+	// lookupCacheMax bounds cached payloads (tenants x kinds x inactive flag).
+	lookupCacheMax = 2000
+	lookupCacheKey = "inventory-lookups"
+)
 
 // NewInventoryLookupOps constructs the handler group.
-func NewInventoryLookupOps() *InventoryLookupOps { return &InventoryLookupOps{} }
+func NewInventoryLookupOps() *InventoryLookupOps {
+	return &InventoryLookupOps{reads: cache.NewWithMax[string, map[string]any](lookupCacheTTL, lookupCacheMax)}
+}
+
+// cachedRead serves a tenant-scoped vocabulary read through the cache; parts
+// distinguish variants (kind, includeInactive). An unresolved tenant bypasses
+// the cache rather than risk a shared key.
+func (h *InventoryLookupOps) cachedRead(ctx context.Context, parts []string, load func() (map[string]any, error)) (map[string]any, error) {
+	t, err := tenancy.TenantFromContext(ctx)
+	if err != nil || h.reads == nil {
+		return load()
+	}
+	key := cache.TenantKey("", t.ID, lookupCacheKey, parts...)
+	return h.reads.GetOrLoad(key, load)
+}
+
+// invalidate drops every cached vocabulary payload for the request's tenant.
+func (h *InventoryLookupOps) invalidate(ctx context.Context) {
+	t, err := tenancy.TenantFromContext(ctx)
+	if err != nil || h.reads == nil {
+		return
+	}
+	prefix := cache.TenantKey("", t.ID, lookupCacheKey)
+	h.reads.DeleteFunc(func(k string) bool { return strings.HasPrefix(k, prefix) })
+}
 
 // authLookup resolves JWT + tenant pool + the inventory_lookup:<action> grant.
 //
@@ -68,13 +109,20 @@ func (h *InventoryLookupOps) All(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := inventory.AllLookups(r.Context(), pool)
+	out, err := h.cachedRead(r.Context(), []string{"all"}, func() (map[string]any, error) {
+		return inventory.AllLookups(r.Context(), pool)
+	})
 	if err != nil {
 		inventoryFail(w, err, "Failed to load inventory lookups.")
 		return
 	}
-	out["success"] = true
-	writeJSON(w, http.StatusOK, out)
+	// Copy: the cached map is shared and must stay read-only.
+	resp := make(map[string]any, len(out)+1)
+	for k, v := range out {
+		resp[k] = v
+	}
+	resp["success"] = true
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // List GET /api/tenant/inventory/lookups/{kind}
@@ -84,12 +132,19 @@ func (h *InventoryLookupOps) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeInactive := r.URL.Query().Get("includeInactive") == "true"
-	items, err := inventory.ListLookup(r.Context(), pool, r.PathValue("kind"), includeInactive)
+	kind := r.PathValue("kind")
+	out, err := h.cachedRead(r.Context(), []string{kind, strconv.FormatBool(includeInactive)}, func() (map[string]any, error) {
+		items, err := inventory.ListLookup(r.Context(), pool, kind, includeInactive)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"success": true, "records": items}, nil
+	})
 	if err != nil {
 		inventoryFail(w, err, "Failed to load lookup.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": items})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // Create POST /api/tenant/inventory/lookups/{kind}
@@ -104,6 +159,7 @@ func (h *InventoryLookupOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := inventory.CreateLookup(r.Context(), pool, r.PathValue("kind"), in, resolveEmployeeID(r, identityID))
+	h.invalidate(r.Context())
 	if err != nil {
 		inventoryFail(w, err, "Failed to create lookup entry.")
 		return
@@ -129,7 +185,9 @@ func (h *InventoryLookupOps) Update(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
-	if err := inventory.UpdateLookup(r.Context(), pool, r.PathValue("kind"), id, in, resolveEmployeeID(r, identityID)); err != nil {
+	err = inventory.UpdateLookup(r.Context(), pool, r.PathValue("kind"), id, in, resolveEmployeeID(r, identityID))
+	h.invalidate(r.Context())
+	if err != nil {
 		inventoryFail(w, err, "Failed to update lookup entry.")
 		return
 	}
@@ -147,7 +205,9 @@ func (h *InventoryLookupOps) Delete(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "Lookup entry not found.")
 		return
 	}
-	if err := inventory.DeleteLookup(r.Context(), pool, r.PathValue("kind"), id, resolveEmployeeID(r, identityID)); err != nil {
+	err = inventory.DeleteLookup(r.Context(), pool, r.PathValue("kind"), id, resolveEmployeeID(r, identityID))
+	h.invalidate(r.Context())
+	if err != nil {
 		inventoryFail(w, err, "Failed to delete lookup entry.")
 		return
 	}

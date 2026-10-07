@@ -53,6 +53,11 @@ import (
 	"stonesuite-backend/workflow"
 )
 
+// corsAllowedHeaders lists the request headers a browser may send cross-origin.
+// Idempotency-Key must stay here: without it the preflight for a replay-safe
+// settlement call is rejected and the browser never sends the request.
+const corsAllowedHeaders = "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key"
+
 func main() {
 	// 1. Load Configurations and fail fast on insecure/invalid config.
 	config.Load()
@@ -1592,7 +1597,7 @@ func main() {
 		}
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+		w.Header().Set("Access-Control-Allow-Headers", corsAllowedHeaders)
 
 		// Handle Preflight OPTIONS requests immediately
 		if r.Method == http.MethodOptions {

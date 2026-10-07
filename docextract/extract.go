@@ -81,7 +81,11 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 		return Result{}, "", err
 	}
 	method = MethodParser
-	if keys := salesOrderLLMKeys(&res); len(res.Unresolved) > 0 && len(keys) > 0 && opts.LLM != nil {
+	// The model only fills gaps in something that is recognisably an order.
+	// Asked about a document that isn't one (a spec sheet, a timesheet) it
+	// can only invent: it once returned a form's section heading as both the
+	// customer and the PO number.
+	if keys := salesOrderLLMKeys(&res); len(res.Unresolved) > 0 && len(keys) > 0 && opts.LLM != nil && !notRecognized(&res) {
 		if applied := runLLM(ctx, &res, keys, opts); applied {
 			method = MethodParserLLM
 			res.Unresolved = salesOrderUnresolved(&res)

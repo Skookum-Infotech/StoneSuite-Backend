@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -80,8 +81,9 @@ func ApplyLLM(r *Result, raw, residual string) ([]string, error) {
 		return nil, fmt.Errorf("llm reply is not valid JSON: %w", err)
 	}
 	grounded := normalizeForGrounding(residual)
-	var applied []string
-	for key, set := range llmSetters(r) {
+	setters := llmSetters(r)
+	vals := map[string]string{}
+	for key := range setters {
 		rawVal, present := fields[key]
 		if !present {
 			continue
@@ -95,11 +97,43 @@ func ApplyLLM(r *Result, raw, residual string) ([]string, error) {
 		if norm == "" || uuidRe.MatchString(val) || !strings.Contains(grounded, norm) {
 			continue
 		}
-		if set(val) {
+		vals[key] = val
+	}
+	dropSharedValues(vals)
+	var applied []string
+	for key, val := range vals {
+		if setters[key](val) {
 			applied = append(applied, key)
 		}
 	}
+	sort.Strings(applied)
 	return applied, nil
+}
+
+// dropSharedValues removes every value the model gave for more than one key.
+// A customer name is never also the PO number; one string answering two
+// questions means the model latched onto a heading, not a field.
+func dropSharedValues(vals map[string]string) {
+	keysByVal := map[string][]string{}
+	for k, v := range vals {
+		n := normalizeForGrounding(v)
+		keysByVal[n] = append(keysByVal[n], k)
+	}
+	for _, keys := range keysByVal {
+		if len(keys) < 2 {
+			continue
+		}
+		for _, k := range keys {
+			delete(vals, k)
+		}
+	}
+}
+
+// validPONumber applies the parser's PO rules to a model answer: one token
+// (no spaces), with a digit, that is not a date.
+func validPONumber(v string) bool {
+	tok := strings.TrimRight(poTokenRe.FindString(v), ".-/_")
+	return tok != "" && tok == v && hasDigit(tok) && !isDateToken(tok)
 }
 
 // llmField builds a check-confidence document field from an accepted LLM value.
@@ -119,7 +153,7 @@ func llmSetters(r *Result) map[string]func(string) bool {
 			return true
 		},
 		KeyPONumber: func(v string) bool {
-			if h.PONumber.Found() {
+			if h.PONumber.Found() || !validPONumber(v) {
 				return false
 			}
 			h.PONumber = llmField(v)

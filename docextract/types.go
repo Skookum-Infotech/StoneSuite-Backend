@@ -122,6 +122,9 @@ type Line struct {
 	Qty         Field    `json:"qty"`
 	UnitPrice   Field    `json:"unitPrice"`
 	Amount      Field    `json:"amount"`
+	// Detail is extra description that is not part of the item's name
+	// (an order form area's finish, edge and cutouts); never used to match.
+	Detail string `json:"detail,omitempty"`
 
 	QtyMilli       int64    `json:"qtyMilli"`
 	UnitPriceCents Cents    `json:"unitPriceCents"`
@@ -144,6 +147,9 @@ type Header struct {
 	Discount     Field `json:"discount"`
 	Total        Field `json:"total"`
 	Currency     Field `json:"currency"`
+	// Notes is free text for the order memo (an order form's special
+	// instructions and job contact); empty for a priced PO.
+	Notes Field `json:"notes"`
 }
 
 // Revision marks a document that amends or replaces an earlier one.
@@ -152,11 +158,13 @@ type Revision struct {
 	ReferencedNumber string `json:"referencedNumber,omitempty"`
 }
 
-// Word is one positioned word on a row.
+// Word is one positioned word on a row. Form marks a value typed into a
+// fillable-form field (as opposed to text printed on the page).
 type Word struct {
 	X    float64 `json:"x"`
 	W    float64 `json:"w"`
 	Text string  `json:"text"`
+	Form bool    `json:"form,omitempty"`
 }
 
 // Row is one visual text row; rows are ordered top to bottom (Y descending).

@@ -1,0 +1,37 @@
+{
+  "header": {
+    "currency": "USD",
+    "customer_name": "Lakeview Homes",
+    "delivery_date": "2026-11-13",
+    "notes": "Special instructions: NO POP-UP OUTLET\nBuilder contact: Dana Reyes, 214-555-0142, dana.reyes@lakeviewhomes.com\nCommunity: Brookfield. Plan: Aspen-C. Measure date: 11/3/26.",
+    "order_date": "",
+    "po_number": "",
+    "ship_to": "418 Willow Bend\nCelina 75009"
+  },
+  "lines": [
+    {
+      "sku": "",
+      "description": "CALACATTA LUX",
+      "qty": "1",
+      "uom": "",
+      "unit_price": "",
+      "amount": ""
+    },
+    {
+      "sku": "",
+      "description": "CALACATTA LUX",
+      "qty": "1",
+      "uom": "",
+      "unit_price": "",
+      "amount": ""
+    },
+    {
+      "sku": "440185",
+      "description": "440185 DOUBLE WHITE",
+      "qty": "1",
+      "uom": "",
+      "unit_price": "",
+      "amount": ""
+    }
+  ]
+}

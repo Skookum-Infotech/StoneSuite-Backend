@@ -125,7 +125,11 @@ func readPage(r *pdf.Reader, num int) (rows []Row, err error) {
 	if p.V.IsNull() {
 		return nil, fmt.Errorf("page %d: not found", num)
 	}
-	return buildRows(p.Content().Text), nil
+	rows = buildRows(p.Content().Text)
+	for _, layer := range xobjectLayers(p) {
+		rows = overlayRows(rows, buildRows(layer))
+	}
+	return mergeFormWords(rows, pageFormValues(p.V)), nil
 }
 
 // buildRows groups per-glyph text into Y-ordered rows of X-ordered words.

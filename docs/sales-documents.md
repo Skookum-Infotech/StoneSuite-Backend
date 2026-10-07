@@ -72,6 +72,24 @@ decision are flagged Needs review; use the Needs review button (or Alt+Down and
 Alt+Up) to jump between them. When you correct a customer or item, StoneSuite
 remembers it for the next document from that customer.
 
+You can also upload a builder's fillable countertop order form (the PDF a
+builder fills in with job details and one box per area, such as Kitchen,
+Island or Bath 2). StoneSuite reads what was typed into the form:
+
+- The install date becomes the expected delivery date, and the install address
+  and city/zip become the ship-to address. Pick the state, because the form
+  doesn't give one.
+- The customer is suggested from the builder's email address (for example
+  highlandhomes.com suggests Highland Homes). Always check this suggestion.
+- The special instructions, builder contact, community, plan and measure date
+  are added to the order's memo.
+- Each filled area becomes a line, with its color as the item and its finish,
+  edge, backsplash, cutouts, faucet spread and notes in the line description.
+  A sink model becomes its own line under that area.
+
+Order forms have no prices or PO number, so set the price on each line and
+enter the builder's PO number when you have it.
+
 If a sales order with the same customer and PO number already exists, you are
 warned and can open the existing order or choose Create anyway. You are asked
 only once per document.

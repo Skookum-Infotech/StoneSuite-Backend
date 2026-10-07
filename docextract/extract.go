@@ -85,7 +85,10 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 	// Asked about a document that isn't one (a spec sheet, a timesheet) it
 	// can only invent: it once returned a form's section heading as both the
 	// customer and the PO number.
-	if keys := salesOrderLLMKeys(&res); len(res.Unresolved) > 0 && len(keys) > 0 && opts.LLM != nil && !notRecognized(&res) {
+	//
+	// An order form has no PO number or order date by design, and its only
+	// customer clue is an email domain; the model could only guess.
+	if keys := salesOrderLLMKeys(&res); len(res.Unresolved) > 0 && len(keys) > 0 && opts.LLM != nil && !notRecognized(&res) && res.ClassifiedAs != ClassOrderForm {
 		if applied := runLLM(ctx, &res, keys, opts); applied {
 			method = MethodParserLLM
 			res.Unresolved = salesOrderUnresolved(&res)
@@ -113,6 +116,15 @@ func notRecognized(res *Result) bool {
 
 // buildSalesOrder runs the deterministic stages over res.Pages.
 func buildSalesOrder(res *Result, lim Limits, opts Options) error {
+	if form, ok := parseOrderForm(res.Pages); ok {
+		res.ClassifiedAs = ClassOrderForm
+		applyOrderForm(res, form, opts.OwnCompanyNames)
+		if len(res.Lines) > lim.MaxLines {
+			return newInputError(FailLineCap, fmt.Sprintf("%d lines exceeds the cap of %d", len(res.Lines), lim.MaxLines))
+		}
+		finishSalesOrder(res, orderFormKeys(form), []string{ClassOrderForm})
+		return nil
+	}
 	res.ClassifiedAs = Classify(res.Pages)
 	if ClassMismatch(res.DocType, res.ClassifiedAs) {
 		res.Warnings = append(res.Warnings, WarnDocLooksLike+res.ClassifiedAs)
@@ -144,16 +156,30 @@ func buildSalesOrder(res *Result, lim Limits, opts Options) error {
 	}
 	h := res.Header
 	res.Checks = rec(amounts, fieldCents(h.Subtotal), fieldCents(h.Tax), fieldCents(h.Shipping), fieldCents(h.Discount), fieldCents(h.Total))
+	res.residualSpans = tbl.Spans
+	finishSalesOrder(res, ho.Keys, tbl.Roles)
+	return nil
+}
 
+// finishSalesOrder runs the checks every sales-order layout shares: required
+// and recommended fields, injection phrases and the layout fingerprint.
+func finishSalesOrder(res *Result, keys, roles []string) {
 	res.Unresolved = salesOrderUnresolved(res)
 	res.Warnings = append(res.Warnings, salesOrderRecommendedWarnings(res)...)
 	res.Injection = ScanInjection(fullText(res.Pages))
 	if len(res.Injection) > 0 {
 		res.Warnings = append(res.Warnings, WarnInjectionPhrases)
 	}
-	res.LayoutFingerprint = fingerprint(ho.Keys, tbl.Roles)
-	res.residualSpans = tbl.Spans
-	return nil
+	res.LayoutFingerprint = fingerprint(keys, roles)
+}
+
+// orderFormKeys are the header labels the form filled, for the fingerprint.
+func orderFormKeys(f orderForm) []string {
+	keys := make([]string, 0, len(f.Header))
+	for k := range f.Header {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // fieldCents parses a normalised money field value; unparseable is zero.

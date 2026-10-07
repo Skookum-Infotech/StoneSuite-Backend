@@ -48,8 +48,13 @@ type Text struct {
 	S    string
 }
 
-// Page is a list of positioned strings.
-type Page struct{ Texts []Text }
+// Page is a list of positioned strings plus optional form fields and form
+// XObject layers (see form.go).
+type Page struct {
+	Texts  []Text
+	Fields []Field
+	Layers []Layer
+}
 
 // Options controls optional PDF features.
 type Options struct {
@@ -81,7 +86,13 @@ func Build(pages []Page, opts Options) []byte {
 		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", id, body)
 		return id
 	}
-	obj("<< /Type /Catalog /Pages 2 0 R >>")
+	form := layoutFields(pages)
+	layers := layoutLayers(pages, 4+2*len(pages)+len(form.bodies))
+	catalog := "<< /Type /Catalog /Pages 2 0 R >>"
+	if len(form.top) > 0 {
+		catalog = fmt.Sprintf("<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [%s] >> >>", refs(form.top))
+	}
+	obj(catalog)
 	kids := make([]string, len(pages))
 	for i := range pages {
 		kids[i] = fmt.Sprintf("%d 0 R", 4+2*i)
@@ -92,12 +103,23 @@ func Build(pages []Page, opts Options) []byte {
 	for i, p := range pages {
 		pageID := 4 + 2*i
 		contentID := pageID + 1
-		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >> >> >>", contentID))
-		stream := enc.apply(contentID, content(p))
+		annots := ""
+		if len(form.widgets[i]) > 0 {
+			annots = fmt.Sprintf(" /Annots [%s]", refs(form.widgets[i]))
+		}
+		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R /Resources << /Font << /F1 3 0 R >>%s >>%s >>",
+			contentID, layers.resources(i), annots))
+		stream := enc.apply(contentID, append(content(p), layers.draw(i)...))
 		offsets = append(offsets, buf.Len())
 		fmt.Fprintf(&buf, "%d 0 obj\n<< /Length %d >>\nstream\n", contentID, len(stream))
 		buf.Write(stream)
 		buf.WriteString("\nendstream\nendobj\n")
+	}
+	for _, body := range form.bodies {
+		obj(body)
+	}
+	for _, body := range layers.bodies {
+		obj(body)
 	}
 	trailerExtra := ""
 	if opts.Signed {

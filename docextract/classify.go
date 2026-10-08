@@ -11,6 +11,11 @@ const (
 	ClassEstimate      = "estimate"
 	ClassVendorBill    = "vendor_bill"
 	ClassCreditMemo    = "credit_memo"
+	// ClassOrderForm is a filled customer order/spec form (a builder's
+	// countertop order form): an order, just not a priced PO. It is set only
+	// when the form's fields were actually read (parseOrderForm), never from
+	// a title, so a priced PDF headed "Order Form" is handled as a PO.
+	ClassOrderForm = "order_form"
 )
 
 const (
@@ -75,7 +80,7 @@ func ClassMismatch(target DocType, class string) bool {
 	}
 	switch target {
 	case DocTypeSalesOrder:
-		return class != ClassPurchaseOrder && class != ClassSalesOrder
+		return class != ClassPurchaseOrder && class != ClassSalesOrder && class != ClassOrderForm
 	case DocTypePurchaseOrder:
 		return class != ClassPurchaseOrder && class != ClassSalesOrder && class != ClassQuote
 	case DocTypeVendorBill:

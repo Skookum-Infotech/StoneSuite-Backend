@@ -19,7 +19,7 @@ var moneyTokenRe = regexp.MustCompile(`[$€£]\s?\d|\d[\d,]*\.\d{2}\b`)
 func PrunePages(pages []PageRows) []PageRows {
 	var kept []PageRows
 	for i, p := range pages {
-		if i == 0 || pageHasDensity(p) {
+		if i == 0 || pageHasDensity(p) || pageHasFormValues(p) {
 			kept = append(kept, p)
 		}
 	}
@@ -52,4 +52,17 @@ func pageHasDensity(p PageRows) bool {
 // hasDigit reports whether s contains an ASCII digit.
 func hasDigit(s string) bool {
 	return strings.IndexFunc(s, unicode.IsDigit) >= 0
+}
+
+// pageHasFormValues reports whether something was typed into a fillable field
+// on the page; a filled form page is always part of the order.
+func pageHasFormValues(p PageRows) bool {
+	for _, r := range p.Rows {
+		for _, w := range r.Words {
+			if w.Form {
+				return true
+			}
+		}
+	}
+	return false
 }

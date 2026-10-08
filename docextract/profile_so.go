@@ -35,7 +35,8 @@ func salesOrderRecommendedWarnings(r *Result) []string {
 	if !r.Header.PONumber.Found() {
 		out = append(out, WarnMissingPONumber)
 	}
-	if !r.Header.OrderDate.Found() {
+	// An order form never carries an order date; saying so is noise.
+	if !r.Header.OrderDate.Found() && r.ClassifiedAs != ClassOrderForm {
 		out = append(out, WarnMissingOrderDate)
 	}
 	return out

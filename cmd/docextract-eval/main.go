@@ -161,7 +161,7 @@ func headerValues(h docextract.Header) map[string]string {
 		"customer_name": h.CustomerName.Value, "payment_terms": h.PaymentTerms.Value,
 		"subtotal": h.Subtotal.Value, "tax": h.Tax.Value, "shipping": h.Shipping.Value,
 		"discount": h.Discount.Value, "total": h.Total.Value, "currency": h.Currency.Value,
-		"bill_to": h.BillTo.Value, "ship_to": h.ShipTo.Value,
+		"bill_to": h.BillTo.Value, "ship_to": h.ShipTo.Value, "notes": h.Notes.Value,
 	}
 }
 

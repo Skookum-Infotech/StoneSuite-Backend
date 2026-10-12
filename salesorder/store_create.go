@@ -26,6 +26,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
 		return nil, ClientError{Msg: "Sales tax percent must be between 0 and 100."}
 	}
+	// The installation date is checked up front (no DB needed). Blank is allowed
+	// here — the HTTP layer is what makes it mandatory — and then no schedule is
+	// planned until a later update supplies one.
+	today := scheduleClock()
+	installDate := strings.TrimSpace(in.InstallDate)
+	var plannedInstall time.Time
+	if installDate != "" {
+		d, err := validateInstallDate(installDate, today)
+		if err != nil {
+			return nil, err
+		}
+		plannedInstall = d
+	}
 	// CustomFields is stored as-is, unvalidated: there is no admin-configurable
 	// field-definition set for the relational sales_order module yet. It must
 	// NOT be validated against the workflow keyed "sales_order" — that is an
@@ -105,6 +118,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 		{"sales_order_date", orNow(in.OrderDate), "::date"},
 		{"sales_order_expected_delivery", nullableDate(in.ExpectedDelivery), "::date"},
 		{"sales_order_payment_due_date", dueDate, "::date"},
+		{"sales_order_scheduled_install_date", nullableDate(installDate), "::date"},
 		{"sales_order_sales_tax_percent", in.SalesTaxPercent, ""},
 		{"sales_order_memo", in.Memo, ""},
 		{"sales_order_notes", in.Notes, ""},
@@ -154,6 +168,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorE
 	// needs is held back from every other order from this moment.
 	if err := reserveStock(ctx, tx, internalID, lines, lineIDs, actorEmployeeID); err != nil {
 		return nil, err
+	}
+	if installDate != "" {
+		if err := syncSchedule(ctx, tx, internalID, planOrderDate(in.OrderDate, today), plannedInstall, today, true, actorEmployeeID); err != nil {
+			return nil, err
+		}
 	}
 
 	writeHistory(ctx, tx, internalID, "create", nil, &draftStatusID, actorEmployeeID)

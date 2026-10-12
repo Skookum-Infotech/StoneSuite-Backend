@@ -9158,3 +9158,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_idempotency ON payment(idempotency_
 ALTER TABLE vendor_bill_payment ADD COLUMN IF NOT EXISTS idempotency_key TEXT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vbp_idempotency ON vendor_bill_payment(vendor_bill_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+-- Scheduled installation date. NULL on every existing order: the API requires it
+-- on create/update, and the Scheduling tab shows an empty state until one is set.
+ALTER TABLE sales_order ADD COLUMN IF NOT EXISTS sales_order_scheduled_install_date DATE NULL;
+
+-- sales_order_schedule -- the auto-planned production schedule, one row per
+-- activity (23 per order), generated when an order's installation date is first
+-- set or changes. scheduled_at / completed_at are wall-clock times with no zone,
+-- like every other TIMESTAMP here; the API returns them as plain "yyyy-mm-ddThh:mm:ss".
+-- 'Overdue' is derived by the client (scheduled in the past and not completed).
+CREATE TABLE IF NOT EXISTS sales_order_schedule (
+    sales_order_schedule_id  SERIAL       PRIMARY KEY,
+    sales_order_id           INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    activity_code            VARCHAR(40)  NOT NULL,
+    activity_sequence        SMALLINT     NOT NULL,
+    schedule_status          VARCHAR(12)  NOT NULL DEFAULT 'scheduled',
+    scheduled_at             TIMESTAMP    NOT NULL,
+    completed_at             TIMESTAMP        NULL,
+    completed_by             INTEGER          NULL REFERENCES employee(employee_id),
+    schedule_notes           TEXT         NOT NULL DEFAULT '',
+    schedule_updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    schedule_updated_by      INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_so_schedule_activity   UNIQUE (sales_order_id, activity_code),
+    CONSTRAINT chk_so_schedule_status    CHECK (schedule_status IN ('scheduled','completed')),
+    CONSTRAINT chk_so_schedule_completed CHECK ((schedule_status = 'completed') = (completed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_so_schedule_order ON sales_order_schedule (sales_order_id, activity_sequence);
+-- The Activity Planner reads one activity group across every order by date, so
+-- it looks rows up by activity first -- the per-order index above can't serve it.
+CREATE INDEX IF NOT EXISTS idx_so_schedule_activity_time ON sales_order_schedule (activity_code, scheduled_at);

@@ -1198,6 +1198,9 @@ func main() {
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/convert", tenantChain(so.Convert))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
+		mux.Handle("GET /api/tenant/sales-orders/schedule", tenantChain(so.ScheduleFeed))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/schedule", tenantChain(so.Schedule))
+		mux.Handle("PATCH /api/tenant/sales-orders/{uuid}/schedule/{code}", tenantChain(so.UpdateScheduleActivity))
 
 		// Fabrication & Installation: a production job spawned from a sales order,
 		// tracking a stone order through 16 shop-floor statuses with serialized

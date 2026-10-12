@@ -76,6 +76,7 @@ const orderSelect = `
 	       to_char(so.sales_order_date,'YYYY-MM-DD'),
 	       COALESCE(to_char(so.sales_order_expected_delivery,'YYYY-MM-DD'),''),
 	       COALESCE(to_char(so.sales_order_payment_due_date,'YYYY-MM-DD'),''),
+	       COALESCE(to_char(so.sales_order_scheduled_install_date,'YYYY-MM-DD'),''),
 	       so.sales_order_po_number, so.sales_order_reference_number, so.sales_order_memo,
 	       so.sales_order_notes, so.sales_order_internal_notes, so.sales_order_terms_conditions,
 	       so.sales_order_payment_terms, so.sales_order_price_level, so.sales_order_currency,
@@ -117,7 +118,7 @@ func scanOrder(row pgx.Row) (*Order, orderMeta, error) {
 	if err := row.Scan(
 		&o.ID, &o.Number, &o.Status, &o.StatusCode, &o.ApprovalStatus,
 		&o.Customer.ID, &o.Customer.Name, &o.OwnerUserID,
-		&o.OrderDate, &o.ExpectedDelivery, &o.PaymentDueDate,
+		&o.OrderDate, &o.ExpectedDelivery, &o.PaymentDueDate, &o.InstallDate,
 		&o.PONumber, &o.ReferenceNumber, &o.Memo,
 		&o.Notes, &o.InternalNotes, &o.TermsConditions,
 		&o.PaymentTermsID, &o.PriceLevelID, &o.CurrencyID,

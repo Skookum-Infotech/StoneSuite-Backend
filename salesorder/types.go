@@ -42,12 +42,19 @@ type LineInput2 struct {
 
 // orderFields is the header payload shared by create and update (everything
 // except the customer, which is fixed at creation and never changes).
+//
+// InstallDate ("yyyy-mm-dd", wire name scheduledInstallDate) is the date the
+// order is to be installed. The HTTP layer refuses a blank one and the store
+// refuses a past one; setting or changing it (re)plans the order's production
+// schedule (schedule.go). The store itself reads blank as "leave as is", so
+// internal callers need not supply one.
 type orderFields struct {
 	PONumber           string         `json:"poNumber"`
 	ReferenceNumber    string         `json:"referenceNumber"`
 	OrderDate          string         `json:"orderDate"`        // "yyyy-mm-dd"
 	ExpectedDelivery   string         `json:"expectedDelivery"` // "yyyy-mm-dd"
 	PaymentDueDate     string         `json:"paymentDueDate"`   // "yyyy-mm-dd"; blank ⇒ derived from terms (AD-8)
+	InstallDate        string         `json:"scheduledInstallDate"`
 	PaymentTermsID     *int           `json:"paymentTermsId"`
 	PriceLevelID       *int           `json:"priceLevelId"`
 	CurrencyID         *int           `json:"currencyId"`
@@ -147,6 +154,7 @@ type Order struct {
 	OrderDate         string      `json:"orderDate"`
 	ExpectedDelivery  string      `json:"expectedDelivery,omitempty"`
 	PaymentDueDate    string      `json:"paymentDueDate,omitempty"`
+	InstallDate       string      `json:"scheduledInstallDate,omitempty"`
 	PONumber          string      `json:"poNumber,omitempty"`
 	ReferenceNumber   string      `json:"referenceNumber,omitempty"`
 	Memo              string      `json:"memo,omitempty"`

@@ -18197,6 +18197,37 @@
         ]
       }
     },
+    "/api/tenant/sales-orders/schedule": {
+      "get": {
+        "operationId": "get_tenant_sales_orders_schedule",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "so.ScheduleFeed",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/sales-orders/search": {
       "post": {
         "operationId": "post_tenant_sales_orders_search",
@@ -18668,6 +18699,96 @@
           }
         ],
         "summary": "so.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/schedule": {
+      "get": {
+        "operationId": "get_tenant_sales_orders_uuid_schedule",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "so.Schedule",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/schedule/{code}": {
+      "patch": {
+        "operationId": "patch_tenant_sales_orders_uuid_schedule_code",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "so.UpdateScheduleActivity",
         "tags": [
           "tenant"
         ]

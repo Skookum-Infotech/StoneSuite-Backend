@@ -28,11 +28,32 @@ quote's details.
 A Sales Order is the customer's confirmed order, created from Sales → Sales
 Orders → New Sales Order (or by converting a quote). Its statuses are Draft,
 Pending Approval, Approved, Open, Partially Filled, Filled, or Cancelled. A
-sales order detail page also has an Inventory tab alongside its Overview,
-Items, Audit, and Files tabs. Once Approved, Open, Partially Filled, or
-Filled, it can be converted into an Invoice with the Convert to Invoice
+sales order detail page also has Inventory and Scheduling tabs alongside its
+Overview, Items, Audit, and Files tabs. Once Approved, Open, Partially Filled,
+or Filled, it can be converted into an Invoice with the Convert to Invoice
 button. A sales order is also the starting point for a fabrication job — see
 `fabrication.md`.
+
+Every sales order needs a Scheduled Installation Date (in Primary Information;
+today or later). Saving it plans the order's production schedule, which the
+Scheduling tab lists from Created through Installation Completed: Template,
+Material Allocation, Engineering, WIP Bin Transfer, Saw, Edges, Quality Control
+and Installation, each with a status, a scheduled date and time, a completed-on
+time and notes. The dates are spread evenly from the order date to the
+installation date, with Installation In Progress and Completed on the
+installation date itself. Anyone who can edit the order can mark an activity
+completed, move its date or time, and add notes. Changing the installation date
+re-plans every activity that is not completed yet. An order made before this
+field existed, or by converting a quote, has no schedule until a date is set on
+the order.
+
+Calendar → Activity Planner lays those schedules out across every order you can
+see, one activity at a time. Pick Template, Engineering, Bin Transfer, Saw,
+Edges, Quality Control, Installation or Invoicing, and each order appears as a
+job card on the day and time it is planned for. Switch the columns between Day
+(hours), Week and Month. A card links to its order's Scheduling tab; on the
+Invoicing tab the cards are the invoices made from your orders, listed on
+their due date, and link to the invoice. Cancelled orders are left out.
 
 A sales order checks your stock when you save it. If any line asks for more of
 an item than is free — what is on hand, less what other orders are already

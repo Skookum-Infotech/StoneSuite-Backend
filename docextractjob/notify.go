@@ -13,11 +13,25 @@ import (
 const (
 	eventDocExtractReady = "document_extraction_ready"
 	channelInApp         = "in_app"
-	// reviewLinkFormat is the New Sales Order route with the handoff query param.
-	reviewLinkFormat = "/sales/sales_order/new?fromDocument=%s"
+	// reviewLinkSuffix is the handoff query param on a New <document> route.
+	reviewLinkSuffix = "/new?fromDocument=%s"
 	notifyTitleFmt   = "Document ready: %s"
-	notifyBody       = "Review the extracted values and create your sales order."
+	notifyBodyFmt    = "Review the extracted values and create your %s."
 )
+
+// reviewTarget is where the "document ready" notification points for one doc type.
+type reviewTarget struct {
+	basePath string // frontend list route; the review form is basePath + reviewLinkSuffix
+	noun     string // what the document becomes, for the body text
+}
+
+// reviewTargetByDocType holds the frontend route and wording per doc type; it
+// must match documentRoutes() in the WebUI (lib/documentExtractionRoutes.ts).
+var reviewTargetByDocType = map[string]reviewTarget{
+	string(docextract.DocTypeSalesOrder):    {basePath: "/sales/sales_order", noun: "sales order"},
+	string(docextract.DocTypePurchaseOrder): {basePath: "/purchases/purchase_order", noun: "purchase order"},
+	string(docextract.DocTypeVendorBill):    {basePath: "/purchases/vendor_bill", noun: "vendor bill"},
+}
 
 // resourceByDocType maps a doc type to the RBAC resource the bell filters on.
 var resourceByDocType = map[string]string{
@@ -59,6 +73,10 @@ func notifyReady(ctx context.Context, send NotifyFunc, tenantID string, ex *Extr
 	if send == nil {
 		return
 	}
+	target, ok := reviewTargetByDocType[ex.DocType]
+	if !ok {
+		target = reviewTargetByDocType[string(docextract.DocTypeSalesOrder)]
+	}
 	req := services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  []services.RecipientTarget{{UserID: ex.OwnerIdentityID}},
@@ -67,8 +85,8 @@ func notifyReady(ctx context.Context, send NotifyFunc, tenantID string, ex *Extr
 		Resource:    resourceByDocType[ex.DocType],
 		ResourceID:  ex.ID,
 		Title:       fmt.Sprintf(notifyTitleFmt, ex.FileName),
-		Body:        notifyBody,
-		Link:        fmt.Sprintf(reviewLinkFormat, ex.ID),
+		Body:        fmt.Sprintf(notifyBodyFmt, target.noun),
+		Link:        target.basePath + fmt.Sprintf(reviewLinkSuffix, ex.ID),
 		Channels:    []string{channelInApp},
 	}
 	if err := send(ctx, req); err != nil {

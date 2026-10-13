@@ -84,3 +84,64 @@ func TestChecker_QuoteEstimateReferences(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }
+
+func TestChecker_VendorDocuments(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	tag := uniq()
+	short := tag[len(tag)-9:]
+	vendor := seedVendor(t, pool, "Dupv"+tag, "ACT_")
+	other := seedVendor(t, pool, "Elsev"+tag, "ACT_")
+	bill, _ := seedVendorBill(t, pool, vendor, "VBIL-1"+short, "INV-000"+short, "DRFT", 12000)
+	seedVendorBill(t, pool, other, "VBIL-2"+short, "INV-000"+short, "DRFT", 12000)
+	po, _ := seedPurchaseOrder(t, pool, vendor, "PORD-1"+short, "QT-"+short, "DRFT", 5000)
+	seedPurchaseOrder(t, pool, other, "PORD-2"+short, "QT-"+short, "DRFT", 5000)
+	c := NewChecker(pool)
+
+	t.Run("same vendor and normalized invoice number, amount as extra signal", func(t *testing.T) {
+		got, err := c.Check(ctx, DuplicateInput{DocType: docextract.DocTypeVendorBill, VendorUUID: vendor,
+			InvoiceNumber: "#" + short, TotalCents: 12000, HasTotal: true})
+		require.NoError(t, err)
+		require.Len(t, got, 1, "the other vendor's identical number must not match")
+		assert.Equal(t, DupSameInvoice, got[0].Kind)
+		assert.Equal(t, bill, got[0].RecordUUID)
+		assert.Contains(t, got[0].Reason, "same amount")
+	})
+	t.Run("different amount still matches without the amount signal", func(t *testing.T) {
+		got, err := c.Check(ctx, DuplicateInput{DocType: docextract.DocTypeVendorBill, VendorUUID: vendor,
+			InvoiceNumber: short, TotalCents: 1, HasTotal: true})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.NotContains(t, got[0].Reason, "same amount")
+	})
+	t.Run("no vendor or no number means no bill match", func(t *testing.T) {
+		for _, in := range []DuplicateInput{
+			{DocType: docextract.DocTypeVendorBill, InvoiceNumber: short},
+			{DocType: docextract.DocTypeVendorBill, VendorUUID: vendor},
+		} {
+			got, err := c.Check(ctx, in)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		}
+	})
+	t.Run("purchase order reference is a same_reference warning", func(t *testing.T) {
+		got, err := c.Check(ctx, DuplicateInput{DocType: docextract.DocTypePurchaseOrder, VendorUUID: vendor, PONumber: "qt " + short})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, DupSameReference, got[0].Kind)
+		assert.Equal(t, po, got[0].RecordUUID)
+	})
+	t.Run("purchase order matches the vendor quoting our own PO number", func(t *testing.T) {
+		own, _ := seedPurchaseOrder(t, pool, vendor, "PORD-000"+short, "", "DRFT", 5000)
+		got, err := c.Check(ctx, DuplicateInput{DocType: docextract.DocTypePurchaseOrder, VendorUUID: vendor, PONumber: "PO-" + short})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, DupSameReference, got[0].Kind)
+		assert.Equal(t, own, got[0].RecordUUID)
+	})
+	t.Run("a bill's PO number never duplicates against purchase orders", func(t *testing.T) {
+		got, err := c.Check(ctx, DuplicateInput{DocType: docextract.DocTypeVendorBill, VendorUUID: vendor, PONumber: "qt " + short})
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}

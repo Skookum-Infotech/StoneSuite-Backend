@@ -99,13 +99,16 @@ type labelHit struct {
 }
 
 // findHits locates every label in the flattened rows.
-func findHits(rows []hrow) []labelHit {
+func findHits(rows []hrow) []labelHit { return findHitsWith(rows, labelSpecs) }
+
+// findHitsWith locates every label of the given spec list in the rows.
+func findHitsWith(rows []hrow, specs []labelSpec) []labelHit {
 	var all []labelHit
 	for ri, h := range rows {
 		var claimed [][2]int
 		var hits []labelHit
-		for si := range labelSpecs {
-			sp := &labelSpecs[si]
+		for si := range specs {
+			sp := &specs[si]
 			for _, m := range sp.re.FindAllStringIndex(h.text, -1) {
 				if overlaps(claimed, m[0], m[1]) {
 					continue

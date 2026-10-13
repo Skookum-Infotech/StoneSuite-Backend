@@ -28,6 +28,9 @@ func RecordCompletion(ctx context.Context, pool *pgxpool.Pool, extractionID, own
 	if !validUUID(saved.CustomerUUID) {
 		saved.CustomerUUID = "" // never let a malformed client id reach a ::uuid cast
 	}
+	if !validUUID(saved.VendorUUID) {
+		saved.VendorUUID = ""
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin record completion: %w", err)
@@ -59,13 +62,14 @@ func RecordCompletion(ctx context.Context, pool *pgxpool.Pool, extractionID, own
 	if err := insertFeedback(ctx, tx, extractionID, res, DiffFeedback(res, saved)); err != nil {
 		return err
 	}
-	if learnCustomer(res, saved) {
-		if err := upsertPartyAlias(ctx, tx, duplicate.Key(res.Extracted.Header.CustomerName.Value), saved.CustomerUUID, ownerIdentityID); err != nil {
+	p := partyOf(res, saved)
+	if learnParty(p) {
+		if err := upsertPartyAlias(ctx, tx, p.kind, duplicate.Key(p.docName), p.savedUUID, ownerIdentityID); err != nil {
 			return err
 		}
 	}
-	if validUUID(saved.CustomerUUID) {
-		if err := upsertItemAliases(ctx, tx, saved.CustomerUUID, learnItems(res, saved), ownerIdentityID); err != nil {
+	if validUUID(p.savedUUID) {
+		if err := upsertItemAliases(ctx, tx, p.savedUUID, learnItems(res, saved), ownerIdentityID); err != nil {
 			return err
 		}
 	}
@@ -94,18 +98,30 @@ func insertFeedback(ctx context.Context, tx pgx.Tx, extractionID string, res Res
 	return nil
 }
 
-// upsertPartyAlias remembers that aliasKey means the customer partyUUID. Hits
-// restart at 1 when the alias is re-pointed at a different customer.
-func upsertPartyAlias(ctx context.Context, tx pgx.Tx, aliasKey, partyUUID, createdBy string) error {
+// partyAliasSource is the SELECT that yields (party uuid) for a live party of
+// each alias kind; $3 is the uuid. A forged uuid selects nothing.
+var partyAliasSource = map[string]string{
+	partyKindCustomer: `SELECT c.customer_uuid FROM customer c WHERE c.customer_uuid = $3::uuid AND c.customer_deleted_at IS NULL`,
+	partyKindVendor:   `SELECT v.vendor_uuid FROM vendor v WHERE v.vendor_uuid = $3::uuid AND v.vendor_deleted_at IS NULL`,
+}
+
+// upsertPartyAlias remembers that aliasKey means the party partyUUID of the
+// given kind (customer or vendor). Hits restart at 1 when the alias is
+// re-pointed at a different party.
+func upsertPartyAlias(ctx context.Context, tx pgx.Tx, kind, aliasKey, partyUUID, createdBy string) error {
+	source, ok := partyAliasSource[kind]
+	if !ok {
+		return fmt.Errorf("upsert party alias: unknown party kind %q", kind)
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO document_party_alias (party_kind, alias_key, party_uuid, created_by)
-		SELECT $1, $2, c.customer_uuid, $4
-		FROM customer c WHERE c.customer_uuid = $3::uuid AND c.customer_deleted_at IS NULL
+		SELECT $1, $2, src.party_uuid, $4
+		FROM (`+source+`) AS src(party_uuid)
 		ON CONFLICT (party_kind, alias_key) DO UPDATE
 		SET hits = CASE WHEN document_party_alias.party_uuid = EXCLUDED.party_uuid THEN document_party_alias.hits + 1 ELSE 1 END,
 		    party_uuid = EXCLUDED.party_uuid,
 		    last_used_at = NOW()`,
-		partyKindCustomer, aliasKey, partyUUID, createdBy); err != nil {
+		kind, aliasKey, partyUUID, createdBy); err != nil {
 		return fmt.Errorf("upsert party alias: %w", err)
 	}
 	return nil

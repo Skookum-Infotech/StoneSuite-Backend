@@ -2,12 +2,16 @@ package docextract
 
 // Required-field keys reported in Result.Unresolved.
 const (
-	KeyCustomerName = "customer_name"
-	KeyLines        = "lines"
-	KeyPONumber     = "po_number"
-	KeyOrderDate    = "order_date"
-	KeyDeliveryDate = "delivery_date"
-	KeyPaymentTerms = "payment_terms"
+	KeyCustomerName  = "customer_name"
+	KeyLines         = "lines"
+	KeyPONumber      = "po_number"
+	KeyOrderDate     = "order_date"
+	KeyDeliveryDate  = "delivery_date"
+	KeyPaymentTerms  = "payment_terms"
+	KeyVendorName    = "vendor_name"
+	KeyInvoiceNumber = "invoice_number"
+	KeyInvoiceDate   = "invoice_date"
+	KeyDueDate       = "due_date"
 )
 
 // salesOrderUnresolved lists required sales-order fields the parser could not

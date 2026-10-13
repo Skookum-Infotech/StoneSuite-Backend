@@ -26,6 +26,10 @@ var (
 // HeaderOptions tunes header extraction.
 type HeaderOptions struct {
 	OwnCompanyNames []string
+	// DocType selects the label vocabulary; the zero value is a sales order.
+	DocType DocType
+	// Class is the document's classified title (quote, purchase_order, ...).
+	Class string
 }
 
 // headerOut is the parsed header plus bookkeeping for the caller.
@@ -37,22 +41,10 @@ type headerOut struct {
 
 // parseHeader extracts the sales-order header from rows outside the line table.
 func parseHeader(pages []PageRows, spans map[int][2]int, opts HeaderOptions) headerOut {
-	var rows []hrow
-	var fullText strings.Builder
-	for _, p := range pages {
-		sp, hasSpan := spans[p.Page]
-		for i, r := range p.Rows {
-			fullText.WriteString(r.Text())
-			fullText.WriteByte('\n')
-			if hasSpan && i >= sp[0] && i <= sp[1] {
-				continue
-			}
-			if len(ScanInjection(r.Text())) > 0 {
-				continue // instructions aimed at the model never feed a field
-			}
-			rows = append(rows, newHRow(p.Page, i, r))
-		}
+	if opts.DocType == DocTypePurchaseOrder || opts.DocType == DocTypeVendorBill {
+		return parseVendorHeader(pages, spans, opts)
 	}
+	rows, fullText := headerRows(pages, spans)
 	hits := findHits(rows)
 	out := headerOut{}
 	h := &out.Header
@@ -98,12 +90,34 @@ func parseHeader(pages []PageRows, spans map[int][2]int, opts HeaderOptions) hea
 	h.Shipping = extractMoney(rows, hits, keyShipping)
 	h.Discount = extractMoney(rows, hits, keyDiscount)
 	h.Total = extractMoney(rows, hits, keyTotal)
-	h.Currency, warn = detectCurrency(fullText.String())
+	h.Currency, warn = detectCurrency(fullText)
 	out.Warnings = append(out.Warnings, warn...)
-	if taxInclRe.MatchString(fullText.String()) {
+	if taxInclRe.MatchString(fullText) {
 		out.Warnings = append(out.Warnings, WarnTaxInclusive)
 	}
 	return out
+}
+
+// headerRows flattens the rows outside the line table (minus rows carrying
+// injection phrases) and also returns the whole document text.
+func headerRows(pages []PageRows, spans map[int][2]int) ([]hrow, string) {
+	var rows []hrow
+	var fullText strings.Builder
+	for _, p := range pages {
+		sp, hasSpan := spans[p.Page]
+		for i, r := range p.Rows {
+			fullText.WriteString(r.Text())
+			fullText.WriteByte('\n')
+			if hasSpan && i >= sp[0] && i <= sp[1] {
+				continue
+			}
+			if len(ScanInjection(r.Text())) > 0 {
+				continue // instructions aimed at the model never feed a field
+			}
+			rows = append(rows, newHRow(p.Page, i, r))
+		}
+	}
+	return rows, fullText.String()
 }
 
 // segments returns the candidate value texts for a hit: inline first, then below.
@@ -178,8 +192,19 @@ func extractDate(rows []hrow, hits []labelHit, key string) (Field, []string) {
 
 // extractMoney returns the last money figure beside the best label.
 func extractMoney(rows []hrow, hits []labelHit, key string) Field {
+	return extractMoneyWith(rows, hits, key, false)
+}
+
+// extractMoneyWith is extractMoney; keepSign reads the inline figure from the
+// raw text after the label, so a leading minus ("Total -$10.00", a credit)
+// survives the separator trim that would otherwise eat it.
+func extractMoneyWith(rows []hrow, hits []labelHit, key string, keepSign bool) Field {
 	for _, h := range hitsFor(hits, key, true) {
-		for _, seg := range segments(rows, h) {
+		segs := segments(rows, h)
+		if keepSign {
+			segs[0] = rows[h.ri].text[h.end:h.nextStart]
+		}
+		for _, seg := range segs {
 			if tok, ok := lastMoney(seg); ok {
 				c, issue := ParseMoney(tok)
 				if issue == IssueEUDecimal || issue == IssueInvalid {

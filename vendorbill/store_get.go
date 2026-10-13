@@ -30,13 +30,16 @@ const vbSelect = `
 	       vb.vendor_bill_amount_paid, vb.vendor_bill_balance_due,
 	       vb.vendor_bill_custom_fields,
 	       vb.vendor_bill_created_at, vb.vendor_bill_updated_at, vb.vendor_bill_record_version,
-	       vb.vendor_bill_id, vb.vendor_bill_status, vb.vendor_bill_vendor_id
+	       vb.vendor_bill_id, vb.vendor_bill_status, vb.vendor_bill_vendor_id,
+	       COALESCE(cu.id::text,'')
 	FROM vendor_bill vb
 	JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
 	JOIN vendor v ON v.vendor_id = vb.vendor_bill_vendor_id
 	LEFT JOIN purchase_order po ON po.purchase_order_id = vb.vendor_bill_purchase_order_id
 	LEFT JOIN employee oe ON oe.employee_id = vb.vendor_bill_owner_id
-	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
+	LEFT JOIN users ou ON ou.id = oe.employee_user_id
+	LEFT JOIN employee ce ON ce.employee_id = vb.vendor_bill_created_by
+	LEFT JOIN users cu ON cu.id = ce.employee_user_id`
 
 // vbMeta carries the internal numeric ids a vendor bill row has but the API
 // response deliberately does not expose. Search needs them to mint a keyset
@@ -72,7 +75,7 @@ func scanVendorBill(row pgx.Row) (*VendorBill, vbMeta, error) {
 		&b.Adjustment, &b.GrandTotal,
 		&b.AmountPaid, &b.BalanceDue,
 		&custom, &b.CreatedAt, &b.UpdatedAt, &b.RecordVersion,
-		&meta.internalID, &meta.statusID, &meta.vendorID,
+		&meta.internalID, &meta.statusID, &meta.vendorID, &b.CreatedByUserID,
 	)
 	if err != nil {
 		return nil, vbMeta{}, err

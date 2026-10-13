@@ -94,12 +94,15 @@ const orderSelect = `
 	       so.sales_order_subtotal, so.sales_order_discount_total, so.sales_order_tax_total,
 	       so.sales_order_shipping_charge, so.sales_order_adjustment, so.sales_order_grand_total,
 	       so.sales_order_created_at, so.sales_order_updated_at,
-	       so.sales_order_status, so.sales_order_customer_id
+	       so.sales_order_status, so.sales_order_customer_id,
+	       COALESCE(cu.id::text,'')
 	FROM sales_order so
 	JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 	JOIN customer c ON c.customer_id = so.sales_order_customer_id
 	LEFT JOIN employee oe ON oe.employee_id = so.sales_order_owner_id
-	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
+	LEFT JOIN users ou ON ou.id = oe.employee_user_id
+	LEFT JOIN employee ce ON ce.employee_id = so.sales_order_created_by
+	LEFT JOIN users cu ON cu.id = ce.employee_user_id`
 
 // orderMeta carries the internal numeric ids a sales order row has but the API
 // response does not expose. Search needs them to mint a keyset cursor for
@@ -136,7 +139,7 @@ func scanOrder(row pgx.Row) (*Order, orderMeta, error) {
 		&o.Subtotal, &o.DiscountTotal, &o.TaxTotal,
 		&o.ShippingCharge, &o.Adjustment, &o.GrandTotal,
 		&o.CreatedAt, &o.UpdatedAt,
-		&meta.statusID, &meta.customerID,
+		&meta.statusID, &meta.customerID, &o.CreatedByUserID,
 	); err != nil {
 		return nil, orderMeta{}, err
 	}

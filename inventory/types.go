@@ -45,6 +45,12 @@ type Item struct {
 	// defaults to.
 	PurchaseUnitPrice float64 `json:"purchaseUnitPrice"`
 
+	// DimensionUnit is the unit this item's slabs' length and width are measured
+	// in: mm, cm, in, ft or m. A document line copies it when the item is picked,
+	// so one line never mixes units and a saved line keeps the unit it was
+	// entered in. Inches unless set.
+	DimensionUnit string `json:"dimensionUnit"`
+
 	// TrackStock says whether a sales order line for this item is checked against
 	// stock and reserves it. False for an item with no stock to run out of (a
 	// service, delivery or labour charge). Always true for a slab-tracked item.
@@ -93,6 +99,11 @@ type CreateItemInput struct {
 	// plain bool would read a client that predates the field as "turn off".
 	// Nil on create means tracked.
 	TrackStock *bool `json:"trackStock,omitempty"`
+
+	// DimensionUnit is a string so an omitted field means "leave as it is" on
+	// update (an older client must not reset an item to cm by saving) and cm on
+	// create. Otherwise one of mm, cm, in, ft, m.
+	DimensionUnit string `json:"dimensionUnit,omitempty"`
 
 	// KitIDs, when present, makes exactly these kits (external uuids) the item's
 	// kits. Absent (nil) leaves its memberships alone — an older client that

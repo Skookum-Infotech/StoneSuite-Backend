@@ -69,6 +69,10 @@ type PrintLine struct {
 	// consecutive lines with the same KitName prints under one heading row
 	// carrying that name; the lines themselves print exactly as any other.
 	KitName string
+	// Size is the slab size and count the line was priced from, already formatted
+	// ("300 x 150 cm, 2 slabs"; "" for a line without them). It prints under the
+	// item name so the table's fixed column layout is untouched.
+	Size string
 }
 
 // PrintableDoc is the module-agnostic input to Render.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -31,6 +32,7 @@ type resolvedLine struct {
 	taxRateID             *int
 	taxPercent            float64
 	money                 LineMoney
+	dims                  linedim.Dims
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -50,7 +52,8 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		if in.Quantity <= 0 {
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
+		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
 		if in.UnitPrice < 0 {
@@ -78,6 +81,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			rl.inventoryItemID = &id
 			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
+			if dimIn.Unit == "" {
+				dimIn.Unit = item.dimensionUnit
+			}
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice
 			}
@@ -92,6 +98,17 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 		} else {
 			rl.name = in.Description
 			rl.desc = in.Description
+		}
+
+		// Length x width x slabs, when given, IS the quantity: derived here so a
+		// stale client can never store one that disagrees with its dimensions.
+		sized, dimMsg := linedim.Resolve(dimIn, rl.unitCode)
+		if dimMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
+		}
+		rl.dims = sized.Dims
+		if sized.Derived {
+			rl.quantity = sized.Quantity
 		}
 
 		if rl.taxRateID != nil {
@@ -125,13 +142,14 @@ func insertLines(ctx context.Context, tx pgx.Tx, vbInternalID int, lines []resol
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3,$19, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)`,
+				item_created_by, dim_length, dim_width, slabs, dim_unit
+			) VALUES ($1,$2,$3,$19, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $20,$21,$22,$23)`,
 			vbInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
 			nullableInt(actorEmployeeID), l.purchaseOrderItemID,
+			l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(),
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

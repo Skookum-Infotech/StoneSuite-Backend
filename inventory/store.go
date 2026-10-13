@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -47,6 +48,15 @@ func validateItemInput(in *CreateItemInput) error {
 	}
 	if in.ThicknessMM < 0 {
 		return ClientError{Msg: "Thickness cannot be negative."}
+	}
+	// Blank stays blank — create defaults it and update keeps what the item has —
+	// so only a stated unit is checked.
+	if strings.TrimSpace(in.DimensionUnit) != "" {
+		unit, ok := linedim.NormalizeUnit(in.DimensionUnit)
+		if !ok {
+			return ClientError{Msg: "Length/width unit must be one of " + strings.Join(linedim.Units, ", ") + "."}
+		}
+		in.DimensionUnit = unit
 	}
 	// Default rather than reject: every row that existed before this column was
 	// added is 'quantity', and an omitted field on an existing client must keep

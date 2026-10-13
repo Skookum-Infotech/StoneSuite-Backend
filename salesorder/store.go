@@ -152,7 +152,8 @@ const itemSelect = `
 	       soi.sku, soi.item_name, soi.description, COALESCE(soi.unit_code,''),
 	       soi.quantity, soi.unit_price, soi.discount_percent, soi.tax_percent,
 	       soi.line_subtotal, soi.line_discount, soi.line_tax, soi.line_total,
-	       soi.line_fulfilled_quantity, soi.kit_uuid::text, soi.kit_name
+	       soi.line_fulfilled_quantity, soi.kit_uuid::text, soi.kit_name,
+	       soi.dim_length, soi.dim_width, soi.slabs, soi.dim_unit
 	FROM sales_order_item soi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = soi.inventory_item_id
 	WHERE soi.sales_order_id = $1 AND soi.item_deleted_at IS NULL
@@ -166,6 +167,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
 		&l.FulfilledQuantity, &l.KitID, &l.KitName,
+		&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit,
 	)
 	l.Status = lineStatus(l.FulfilledQuantity, l.Quantity)
 	return l, err

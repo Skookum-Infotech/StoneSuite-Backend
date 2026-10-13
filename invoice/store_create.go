@@ -222,13 +222,13 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, kit_uuid, kit_name
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
 			newID, rl.in.LineNumber, rl.invItemID,
 			rl.itemName, rl.sku, rl.in.Description, rl.unitID, rl.unitCode,
 			rl.in.Quantity, rl.in.UnitPrice, rl.in.DiscountPercent, rl.in.TaxRateID, rl.taxPercent,
 			lineMoney[i].Subtotal, lineMoney[i].Discount, lineMoney[i].Tax, lineMoney[i].Total,
-			nullableInt(actorEmployeeID), kitUUID, kitName,
+			nullableInt(actorEmployeeID), kitUUID, kitName, rl.dims.Length, rl.dims.Width, rl.dims.Slabs, rl.dims.StoredUnit(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert invoice line %d: %w", rl.in.LineNumber, err)

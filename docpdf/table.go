@@ -90,6 +90,9 @@ func rowHeight(pdf *fpdf.Fpdf, ln PrintLine) float64 {
 		pdf.SetFont(fontFace, "", 8)
 		h += float64(len(pdf.SplitLines([]byte(ln.Description), itemW))) * descLineH
 	}
+	if ln.Size != "" {
+		h += descLineH
+	}
 	return h
 }
 
@@ -163,6 +166,12 @@ func drawLineRow(pdf *fpdf.Fpdf, sym string, ln PrintLine, idx int, h float64) {
 		setText(pdf, colSubtle)
 		pdf.SetX(marginX + rowPadX)
 		pdf.MultiCell(itemW, descLineH, ln.Description, "", "L", false)
+	}
+	if ln.Size != "" {
+		pdf.SetFont(fontFace, "", 8)
+		setText(pdf, colSubtle)
+		pdf.SetX(marginX + rowPadX)
+		pdf.CellFormat(itemW, descLineH, ln.Size, "", 1, "L", false, 0, "")
 	}
 
 	cells := []struct {

@@ -10,20 +10,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/kitref"
+	"stonesuite-backend/linedim"
 )
 
 // resolvedLine is one line item after item/tax resolution + money calc, ready
 // to insert.
 type resolvedLine struct {
-	in         InvoiceLineInput
-	invItemID  *int
-	sku        string
-	itemName   string
-	unitID     *int
-	unitCode   string
-	taxPercent float64
-	money      LineMoney
-	kit        kitref.Ref // the kit the line was added from; zero for none
+	in          InvoiceLineInput
+	invItemID   *int
+	sku         string
+	itemName    string
+	unitID      *int
+	unitCode    string
+	taxPercent  float64
+	money       LineMoney
+	kit         kitref.Ref // the kit the line was added from; zero for none
+	dims        linedim.Dims
+	itemDimUnit string // the catalog item's length/width unit, a line's default
 }
 
 // resolveLine snapshots a line's catalog data (if any) and computes its money.
@@ -51,15 +54,16 @@ func resolveLine(ctx context.Context, pool *pgxpool.Pool, in InvoiceLineInput, h
 	rl := resolvedLine{in: in, itemName: in.Description, kit: kit}
 	if in.InventoryItemUUID != "" {
 		var id int
-		var sku, name, desc, unitCode string
+		var sku, name, desc, unitCode, dimUnit string
 		var unitID *int
 		err := pool.QueryRow(ctx, `
 			SELECT inventory_item_id, inventory_item_sku, inventory_item_name,
-			       inventory_item_description, inventory_item_unit_id, u.unit_code
+			       inventory_item_description, inventory_item_unit_id, u.unit_code,
+			       i.inventory_item_dimension_unit
 			FROM inventory_item i
 			JOIN lkp_unit u ON u.unit_id = i.inventory_item_unit_id
 			WHERE i.inventory_item_uuid = $1 AND i.inventory_item_deleted_at IS NULL`, in.InventoryItemUUID,
-		).Scan(&id, &sku, &name, &desc, &unitID, &unitCode)
+		).Scan(&id, &sku, &name, &desc, &unitID, &unitCode, &dimUnit)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return resolvedLine{}, ClientError{Msg: "Unknown or deleted inventory item on line " + fmt.Sprint(in.LineNumber) + "."}
 		}
@@ -77,6 +81,18 @@ func resolveLine(ctx context.Context, pool *pgxpool.Pool, in InvoiceLineInput, h
 		}
 		rl.unitID = unitID
 		rl.unitCode = unitCode
+		rl.itemDimUnit = dimUnit
+	}
+
+	// Length x width x slabs, when given, IS the quantity: derived here so a
+	// stale client can never store one that disagrees with its dimensions.
+	sized, dimMsg := linedim.Resolve(linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: unitOr(in.DimensionUnit, rl.itemDimUnit)}, rl.unitCode)
+	if dimMsg != "" {
+		return resolvedLine{}, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
+	}
+	rl.dims = sized.Dims
+	if sized.Derived {
+		rl.in.Quantity = sized.Quantity
 	}
 
 	taxPercent := headerTaxPercent
@@ -90,6 +106,14 @@ func resolveLine(ctx context.Context, pool *pgxpool.Pool, in InvoiceLineInput, h
 		taxPercent = pct
 	}
 	rl.taxPercent = taxPercent
-	rl.money = ComputeLine(LineInput{Quantity: in.Quantity, UnitPrice: in.UnitPrice, DiscountPercent: in.DiscountPercent, TaxPercent: taxPercent})
+	rl.money = ComputeLine(LineInput{Quantity: rl.in.Quantity, UnitPrice: in.UnitPrice, DiscountPercent: in.DiscountPercent, TaxPercent: taxPercent})
 	return rl, nil
+}
+
+// unitOr returns the unit a client sent, or the fallback when it sent none.
+func unitOr(sent, fallback string) string {
+	if strings.TrimSpace(sent) != "" {
+		return sent
+	}
+	return fallback
 }

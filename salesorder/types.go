@@ -44,6 +44,16 @@ type LineInput2 struct {
 	// line's pricing, stock or conversion depends on them (see package kitref).
 	KitUUID string `json:"kitUuid"`
 	KitName string `json:"kitName"`
+
+	// Length / Width / Slabs give the size of one slab and how many slabs the
+	// line covers. With length and width both set the line's quantity is derived
+	// from them (see package linedim), so the quantity sent is ignored.
+	Length *float64 `json:"length"`
+	Width  *float64 `json:"width"`
+	Slabs  *int     `json:"slabs"`
+	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
+	// ft, m). Blank takes the item's unit, then inches.
+	DimensionUnit string `json:"dimensionUnit"`
 }
 
 // orderFields is the header payload shared by create and update (everything
@@ -124,6 +134,13 @@ type Line struct {
 	// one group under that kit's heading.
 	KitID   *string `json:"kitId,omitempty"`
 	KitName string  `json:"kitName,omitempty"`
+
+	// Length / Width / Slabs are the slab size and count the line was priced
+	// from, when it was entered that way; the quantity above is their area.
+	Length        *float64 `json:"length,omitempty"`
+	Width         *float64 `json:"width,omitempty"`
+	Slabs         *int     `json:"slabs,omitempty"`
+	DimensionUnit string   `json:"dimensionUnit,omitempty"`
 
 	// Fulfillment (schema.org OrderItem.orderItemStatus, AD-9). FulfilledQuantity
 	// is the stored rollup of the line's allocations; Status is derived from it.

@@ -39,6 +39,14 @@ type LineInput struct {
 	// ExpectedSlabs is how many slabs a slab-tracked line is expected to bring
 	// (optional, informational). Refused on any other line.
 	ExpectedSlabs *int `json:"expectedSlabs"`
+	// Length / Width give the size of one slab; with ExpectedSlabs as the slab
+	// count they make the line's quantity their area (see package linedim), so the
+	// quantity sent is then ignored.
+	Length *float64 `json:"length"`
+	Width  *float64 `json:"width"`
+	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
+	// ft, m). Blank takes the item's unit, then inches.
+	DimensionUnit string `json:"dimensionUnit"`
 }
 
 // purchaseOrderFields is the header payload shared by create and update
@@ -115,6 +123,11 @@ type Line struct {
 	// drives receiving, pricing and billing.
 	ExpectedSlabs *int `json:"expectedSlabs,omitempty"`
 	SlabsReceived int  `json:"slabsReceived,omitempty"`
+	// Length / Width are the slab size the line was priced from, when it was
+	// entered that way; ExpectedSlabs is the matching slab count.
+	Length        *float64 `json:"length,omitempty"`
+	Width         *float64 `json:"width,omitempty"`
+	DimensionUnit string   `json:"dimensionUnit,omitempty"`
 }
 
 // PurchaseOrder is the full API response for a purchase order header (+

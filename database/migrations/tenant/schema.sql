@@ -9379,3 +9379,64 @@ DO $$ BEGIN
         UPDATE inventory_item SET inventory_item_purchase_unit_price = inventory_item_unit_price;
     END IF;
 END $$;
+
+-- Length / width / slabs on document lines.
+--
+-- Stone is priced by area but sold and ordered by the slab. A line may state the
+-- size of one slab (length x width) and how many slabs it covers; when length and
+-- width are both set the line's quantity is DERIVED from them (length x width x
+-- slabs, in the line's area unit -- see package linedim), so the numbers printed
+-- beside a quantity can never disagree with it. They are descriptive only:
+-- money, stock holds, receiving and conversions all keep running off `quantity`.
+--
+-- Length and width share ONE unit (dim_unit), copied from the inventory item when
+-- the line is added and kept on the line, so a saved document never changes when
+-- its item is later switched to another unit.
+--
+-- NULL length/width means "not stated" (every row that exists today); dim_unit
+-- defaults to inches. The purchase order line has no `slabs` column of its
+-- own: its slab count is the existing `expected_slabs` (6c above).
+
+-- The unit an item's slabs are measured in. Inches unless set.
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_dimension_unit VARCHAR(2) NOT NULL DEFAULT 'in'
+    CHECK (inventory_item_dimension_unit IN ('mm','cm','in','ft','m'));
+
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE purchase_order_item  ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE purchase_order_item  ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE purchase_order_item  ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+
+-- A database that applied the block above while its default was centimetres keeps
+-- that default on the column; this brings it in line. Only the default changes --
+-- a unit already stored on an item or line is left exactly as it was.
+ALTER TABLE inventory_item       ALTER COLUMN inventory_item_dimension_unit SET DEFAULT 'in';
+ALTER TABLE estimate_item        ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE quote_item           ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE sales_order_item     ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE invoice_item         ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE purchase_order_item  ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE vendor_bill_item     ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE requisition_item     ALTER COLUMN dim_unit SET DEFAULT 'in';

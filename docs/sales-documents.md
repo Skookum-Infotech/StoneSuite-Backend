@@ -11,6 +11,20 @@ adds all of that kit's items as lines under a full-width kit heading (see Kits i
 onto the exported and emailed PDF; the lines themselves are priced and taxed
 like any other line, so totals are unaffected.
 
+Lines measured in Sq ft or Sq m can also state the size of one slab — **Length**
+and **Width** — and how many **Slabs** the line covers. Length and width are
+always in the same unit, which comes from the inventory item (set on the item
+as **Length / Width Unit**: mm, cm, in, ft or m; inches unless changed) and is kept
+on the line, so changing an item's unit later never alters a saved document.
+When length and width are both filled in, the line's quantity is no longer
+typed: it is length × width × slabs converted to the item's area unit (rounded
+to three decimals), so a 120 × 60 in slab is exactly 50 sq ft and 2 of them are
+100 sq ft. Leave Slabs blank and one slab is assumed. Amount and Total are then
+quantity × the per-area unit price, less discount, plus tax, exactly as for any
+other line. Without a size, the line behaves as before. Size, unit and slab
+count carry through every conversion and onto the exported and emailed PDF;
+they are not available on lines measured in anything but an area unit.
+
 ## Estimates
 
 An Estimate is a rough, early-stage price for a customer, created from

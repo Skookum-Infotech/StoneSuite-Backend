@@ -53,8 +53,9 @@ func seedVendorAndItem(t *testing.T, pool *pgxpool.Pool) (vendorUUID, itemUUID s
 	}
 
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
-		VALUES ($1, $2, 1, 25.00, 1) RETURNING inventory_item_uuid`,
+		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price,
+			inventory_item_purchase_unit_price, inventory_item_created_by)
+		VALUES ($1, $2, 1, 40.00, 25.00, 1) RETURNING inventory_item_uuid`,
 		"POSKU-"+suffix, "Test PO Item "+suffix).Scan(&itemUUID); err != nil {
 		t.Fatalf("seed inventory item: %v", err)
 	}
@@ -90,7 +91,8 @@ func TestCreate_SnapshotsAndTotals(t *testing.T) {
 	if len(got.Items) != 1 {
 		t.Fatalf("len(Items) = %d, want 1", len(got.Items))
 	}
-	// unit price snapshotted from inventory_item (25.00) since request left UnitPrice at 0.
+	// unit price snapshotted from the item's PURCHASING price (25.00, its selling
+	// price is 40.00) since request left UnitPrice at 0.
 	if got.Items[0].UnitPrice != 25 {
 		t.Errorf("Items[0].UnitPrice = %v, want 25", got.Items[0].UnitPrice)
 	}

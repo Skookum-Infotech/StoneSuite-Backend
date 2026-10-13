@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/kitref"
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -26,6 +28,8 @@ type resolvedLine struct {
 	taxRateID       *int
 	taxPercent      float64
 	money           LineMoney
+	kit             kitref.Ref // the kit the line was added from; zero for none
+	dims            linedim.Dims
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -45,11 +49,17 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		if in.Quantity <= 0 {
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
+		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
 		if in.UnitPrice < 0 {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: unit price cannot be negative.", in.LineNumber)}
+		}
+
+		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+		if kitMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
 		}
 
 		rl := resolvedLine{
@@ -58,6 +68,7 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			unitPrice:       in.UnitPrice,
 			discountPercent: in.DiscountPercent,
 			taxRateID:       in.TaxRateID,
+			kit:             kit,
 		}
 
 		if in.InventoryItemUUID != "" {
@@ -69,6 +80,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			rl.inventoryItemID = &id
 			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
+			if dimIn.Unit == "" {
+				dimIn.Unit = item.dimensionUnit
+			}
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice
 			}
@@ -86,6 +100,17 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			// rejected by this same check.
 			rl.name = in.Description
 			rl.desc = in.Description
+		}
+
+		// Length x width x slabs, when given, IS the quantity: derived here so a
+		// stale client can never store one that disagrees with its dimensions.
+		sized, dimMsg := linedim.Resolve(dimIn, rl.unitCode)
+		if dimMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
+		}
+		rl.dims = sized.Dims
+		if sized.Derived {
+			rl.quantity = sized.Quantity
 		}
 
 		if rl.taxRateID != nil {
@@ -110,19 +135,20 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 // insertLines bulk-inserts resolved lines as estimate_item rows.
 func insertLines(ctx context.Context, tx pgx.Tx, estimateInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
+		kitUUID, kitName := l.kit.Args()
 		_, err := tx.Exec(ctx, `
 			INSERT INTO estimate_item (
 				estimate_id, line_number, inventory_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)`,
+				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20, $21,$22,$23,$24)`,
 			estimateInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), kitUUID, kitName, l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(),
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

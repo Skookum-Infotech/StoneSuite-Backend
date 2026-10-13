@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-567 endpoints across 7 surfaces, read from `main.go`.
+576 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 481 |
+| staff token + tenant | 490 |
 | portal token + tenant | 28 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -327,7 +327,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 480 endpoints
+## `tenant` — 489 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -671,6 +671,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Get` |
 | `PATCH` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Update` |
 | `GET` | `/api/tenant/inventory/items/{uuid}/history` | staff token + tenant | `inv.History` |
+| `GET` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.ListKits` |
+| `POST` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.CreateKit` |
+| `POST` | `/api/tenant/inventory/kits/search` | staff token + tenant | `inv.SearchKits` |
+| `DELETE` | `/api/tenant/inventory/kits/{uuid}` | staff token + tenant | `inv.DeleteKit` |
+| `GET` | `/api/tenant/inventory/kits/{uuid}` | staff token + tenant | `inv.GetKit` |
+| `PATCH` | `/api/tenant/inventory/kits/{uuid}` | staff token + tenant | `inv.UpdateKit` |
 | `GET` | `/api/tenant/inventory/lookups` | staff token + tenant | `invLookup.All` |
 | `GET` | `/api/tenant/inventory/lookups/{kind}` | staff token + tenant | `invLookup.List` |
 | `POST` | `/api/tenant/inventory/lookups/{kind}` | staff token + tenant | `invLookup.Create` |
@@ -888,6 +894,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 |---|---|---|---|
 | `GET` | `/api/tenant/sales-orders` | staff token + tenant | `so.List` |
 | `POST` | `/api/tenant/sales-orders` | staff token + tenant | `so.Create` |
+| `GET` | `/api/tenant/sales-orders/schedule` | staff token + tenant | `so.ScheduleFeed` |
 | `POST` | `/api/tenant/sales-orders/search` | staff token + tenant | `so.Search` |
 | `DELETE` | `/api/tenant/sales-orders/{uuid}` | staff token + tenant | `so.Delete` |
 | `GET` | `/api/tenant/sales-orders/{uuid}` | staff token + tenant | `so.Get` |
@@ -899,6 +906,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/sales-orders/{uuid}/inventory` | staff token + tenant | `so.Inventory` |
 | `ANY` | `/api/tenant/sales-orders/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/reject` | staff token + tenant | `so.Reject` |
+| `GET` | `/api/tenant/sales-orders/{uuid}/schedule` | staff token + tenant | `so.Schedule` |
+| `PATCH` | `/api/tenant/sales-orders/{uuid}/schedule/{code}` | staff token + tenant | `so.UpdateScheduleActivity` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/transition` | staff token + tenant | `so.Transition` |
 
 ### search

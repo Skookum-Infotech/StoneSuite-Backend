@@ -30,12 +30,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID, custInternalID int
-	var statusCode string
+	var statusCode, storedInstall string
 	err = tx.QueryRow(ctx, `
-		SELECT so.sales_order_id, so.sales_order_customer_id, rs.record_status_code
+		SELECT so.sales_order_id, so.sales_order_customer_id, rs.record_status_code,
+		       COALESCE(to_char(so.sales_order_scheduled_install_date,'YYYY-MM-DD'),'')
 		FROM sales_order so JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, uuid,
-	).Scan(&internalID, &custInternalID, &statusCode)
+	).Scan(&internalID, &custInternalID, &statusCode, &storedInstall)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -44,6 +45,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	}
 	if statusCode == "FILL" || statusCode == "CANC" {
 		return nil, ClientError{Msg: "A filled or cancelled order cannot be edited."}
+	}
+	// A blank date leaves the stored one alone; the date already on the order is
+	// accepted even once it has slipped into the past; only a different date is
+	// checked (not in the past) and re-plans the schedule.
+	today := scheduleClock()
+	installDate, installSet, installChanged, err := resolveUpdateInstallDate(in.InstallDate, storedInstall, today)
+	if err != nil {
+		return nil, err
 	}
 
 	_, custName, defBilling, defShipping, err := customerSnapshotByInternalID(ctx, tx, custInternalID)
@@ -107,6 +116,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	}
 	cv = append(cv, addrColVals("sales_order_bill", billing)...)
 	cv = append(cv, addrColVals("sales_order_ship", shipping)...)
+	if installSet {
+		cv = append(cv, colVal{"sales_order_scheduled_install_date", installDate.Format(scheduleDateLayout), "::date"})
+	}
 	cv = append(cv, colVal{"sales_order_updated_by", nullableInt(actorEmployeeID), ""})
 
 	updateSQL, updateArgs := buildUpdateSet("sales_order", []any{uuid}, cv,
@@ -136,6 +148,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	// released first, so it does not compete with itself.
 	if err := reserveStock(ctx, tx, internalID, lines, lineIDs, actorEmployeeID); err != nil {
 		return nil, err
+	}
+	// Re-plan only when the date changed (or the order has no schedule yet), so
+	// a planner's edits to individual rows survive an unrelated save.
+	if installSet {
+		if err := syncSchedule(ctx, tx, internalID, planOrderDate(in.OrderDate, today), installDate, today, installChanged, actorEmployeeID); err != nil {
+			return nil, err
+		}
 	}
 
 	writeHistory(ctx, tx, internalID, "update", nil, nil, actorEmployeeID)

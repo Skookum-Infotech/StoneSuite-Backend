@@ -21,11 +21,12 @@ sections:
 
 - **Workspace** — CRM (Leads, Prospects, Customers), Sales (Estimates,
   Quotes, Sales Orders, Installation / Fabrication, Invoices, Payments,
-  Credit Memos, Refunds), Purchases (Vendors, Requisitions, Purchase Orders,
-  Item Receipts, Vendor Bills, Vendor Payments, Vendor Credits, Expenses),
-  Inventory (Items, Inventory, Bundles, Bin Management, Locations,
-  Adjust Inventory, Transfer Inventory, Inventory Count), and Finance
-  (Journal Entries, Chart of Accounts, Accounting Periods, Default Accounts).
+  Credit Memos, Refunds), Calendar (Activity Planner), Purchases (Vendors,
+  Requisitions, Purchase Orders, Item Receipts, Vendor Bills, Vendor
+  Payments, Vendor Credits, Expenses), Inventory (Items, Inventory,
+  Bundles, Bin Management, Locations, Adjust Inventory, Transfer
+  Inventory, Inventory Count), and Finance (Journal Entries, Chart of
+  Accounts, Accounting Periods, Default Accounts).
 - **Configure** — Configuration, where administrators manage Company Info,
   Workflows, Roles & Access, Users, Customer Portal Users, Record Numbering,
   Dashboard Widgets, Inventory Setup, SAML Setup, Audit Log, and Import Data.

@@ -9158,3 +9158,285 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_idempotency ON payment(idempotency_
 ALTER TABLE vendor_bill_payment ADD COLUMN IF NOT EXISTS idempotency_key TEXT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_vbp_idempotency ON vendor_bill_payment(vendor_bill_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+-- Scheduled installation date. NULL on every existing order: the API requires it
+-- on create/update, and the Scheduling tab shows an empty state until one is set.
+ALTER TABLE sales_order ADD COLUMN IF NOT EXISTS sales_order_scheduled_install_date DATE NULL;
+
+-- sales_order_schedule -- the auto-planned production schedule, one row per
+-- activity (11 per order: Created, Template, Material Allocation, Engineering,
+-- WIP Bin Transfer, Saw, Edges, Quality Control, Installation Ready, Installation
+-- Picked, Installation), generated when an order's installation date is first
+-- set or changes. An activity is a piece of work; where it stands is
+-- schedule_status (pending -> in_progress -> completed), never part of its code.
+-- scheduled_at / completed_at are wall-clock times with no zone, like every
+-- other TIMESTAMP here; the API returns them as plain "yyyy-mm-ddThh:mm:ss".
+-- 'Overdue' is derived by the client (pending, with its scheduled time past).
+CREATE TABLE IF NOT EXISTS sales_order_schedule (
+    sales_order_schedule_id  SERIAL       PRIMARY KEY,
+    sales_order_id           INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    activity_code            VARCHAR(40)  NOT NULL,
+    activity_sequence        SMALLINT     NOT NULL,
+    schedule_status          VARCHAR(12)  NOT NULL DEFAULT 'pending',
+    scheduled_at             TIMESTAMP    NOT NULL,
+    completed_at             TIMESTAMP        NULL,
+    completed_by             INTEGER          NULL REFERENCES employee(employee_id),
+    schedule_notes           TEXT         NOT NULL DEFAULT '',
+    schedule_updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    schedule_updated_by      INTEGER          NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_so_schedule_activity   UNIQUE (sales_order_id, activity_code),
+    CONSTRAINT chk_so_schedule_status    CHECK (schedule_status IN ('pending','in_progress','completed')),
+    CONSTRAINT chk_so_schedule_completed CHECK ((schedule_status = 'completed') = (completed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_so_schedule_order ON sales_order_schedule (sales_order_id, activity_sequence);
+-- The Activity Planner reads one activity group across every order by date, so
+-- it looks rows up by activity first -- the per-order index above can't serve it.
+CREATE INDEX IF NOT EXISTS idx_so_schedule_activity_time ON sales_order_schedule (activity_code, scheduled_at);
+
+-- ---------------------------------------------------------------------------
+-- Schedules planned before activities and statuses were separated.
+--
+-- The first catalog had 23 activities whose names carried a status
+-- ("Template Scheduled" / "Template In Progress" / "Template Completed",
+-- "Saw Pending", ...), and the row status was only 'scheduled' | 'completed'.
+-- Both blocks below are no-ops on a database that never held that shape, and on
+-- every boot after the first.
+-- ---------------------------------------------------------------------------
+
+-- 1. Status vocabulary: scheduled -> pending, plus the new in_progress. The
+--    CHECK is dropped before the rewrite and re-added after it, which is the
+--    same widening idiom the other status constraints in this file use.
+DO $$
+BEGIN
+    ALTER TABLE sales_order_schedule DROP CONSTRAINT IF EXISTS chk_so_schedule_status;
+    ALTER TABLE sales_order_schedule ALTER COLUMN schedule_status SET DEFAULT 'pending';
+    UPDATE sales_order_schedule SET schedule_status = 'pending' WHERE schedule_status = 'scheduled';
+    ALTER TABLE sales_order_schedule ADD CONSTRAINT chk_so_schedule_status
+        CHECK (schedule_status IN ('pending','in_progress','completed'));
+END $$;
+
+-- 2. Activities: each retired stage row folds into the one activity it was a
+--    stage of, per order. The folded row keeps what a planner would otherwise
+--    have to re-enter:
+--      * status      -- completed when the closing stage was, else in_progress
+--                       when the middle stage was, else pending
+--      * scheduled   -- the earliest stage's slot (when the activity begins)
+--      * completed   -- the closing stage's completed_at / completed_by
+--      * notes       -- every stage's note, in plan order, newest-last
+--    Rows whose code survives (created, wip_bin_transfer, installation_ready,
+--    installation_picked) are only renumbered.
+DO $$
+BEGIN
+    UPDATE sales_order_schedule s
+       SET activity_sequence = v.seq
+      FROM (VALUES ('created', 1), ('wip_bin_transfer', 5),
+                   ('installation_ready', 9), ('installation_picked', 10)) AS v(code, seq)
+     WHERE s.activity_code = v.code AND s.activity_sequence <> v.seq;
+
+    IF EXISTS (
+        SELECT 1 FROM sales_order_schedule
+         WHERE activity_code IN (
+               'template_scheduled', 'template_in_progress', 'template_completed',
+               'material_allocation_pending', 'material_allocated',
+               'engineering_pending', 'engineering_in_progress', 'engineering_completed',
+               'saw_pending', 'saw_in_progress', 'saw_completed',
+               'edges_pending', 'edges_in_progress', 'edges_completed',
+               'quality_control_pending', 'quality_control_in_progress', 'quality_control_completed',
+               'installation_in_progress', 'installation_completed')
+    ) THEN
+        WITH remap(old_code, new_code, new_seq, stage) AS (
+            VALUES
+                ('template_scheduled',          'template',            2, 'first'),
+                ('template_in_progress',        'template',            2, 'middle'),
+                ('template_completed',          'template',            2, 'last'),
+                ('material_allocation_pending', 'material_allocation', 3, 'first'),
+                ('material_allocated',          'material_allocation', 3, 'last'),
+                ('engineering_pending',         'engineering',         4, 'first'),
+                ('engineering_in_progress',     'engineering',         4, 'middle'),
+                ('engineering_completed',       'engineering',         4, 'last'),
+                ('saw_pending',                 'saw',                 6, 'first'),
+                ('saw_in_progress',             'saw',                 6, 'middle'),
+                ('saw_completed',               'saw',                 6, 'last'),
+                ('edges_pending',               'edges',               7, 'first'),
+                ('edges_in_progress',           'edges',               7, 'middle'),
+                ('edges_completed',             'edges',               7, 'last'),
+                ('quality_control_pending',     'quality_control',     8, 'first'),
+                ('quality_control_in_progress', 'quality_control',     8, 'middle'),
+                ('quality_control_completed',   'quality_control',     8, 'last'),
+                ('installation_in_progress',    'installation',       11, 'middle'),
+                ('installation_completed',      'installation',       11, 'last')
+        ),
+        retired AS (
+            DELETE FROM sales_order_schedule s
+             USING remap m
+             WHERE s.activity_code = m.old_code
+            RETURNING s.sales_order_id, s.activity_sequence, s.schedule_status, s.scheduled_at,
+                      s.completed_at, s.completed_by, s.schedule_notes,
+                      s.schedule_updated_at, s.schedule_updated_by,
+                      m.new_code, m.new_seq, m.stage
+        )
+        INSERT INTO sales_order_schedule
+            (sales_order_id, activity_code, activity_sequence, schedule_status, scheduled_at,
+             completed_at, completed_by, schedule_notes, schedule_updated_at, schedule_updated_by)
+        SELECT r.sales_order_id, r.new_code, r.new_seq,
+               CASE
+                   WHEN bool_or(r.stage = 'last'   AND r.schedule_status = 'completed') THEN 'completed'
+                   WHEN bool_or(r.stage = 'middle' AND r.schedule_status = 'completed') THEN 'in_progress'
+                   ELSE 'pending'
+               END,
+               (array_agg(r.scheduled_at ORDER BY r.activity_sequence))[1],
+               (array_agg(r.completed_at ORDER BY r.activity_sequence DESC)
+                   FILTER (WHERE r.stage = 'last' AND r.schedule_status = 'completed'))[1],
+               (array_agg(r.completed_by ORDER BY r.activity_sequence DESC)
+                   FILTER (WHERE r.stage = 'last' AND r.schedule_status = 'completed'))[1],
+               COALESCE(LEFT(string_agg(NULLIF(r.schedule_notes, ''), E'\n' ORDER BY r.activity_sequence), 2000), ''),
+               max(r.schedule_updated_at),
+               (array_agg(r.schedule_updated_by ORDER BY r.schedule_updated_at DESC))[1]
+          FROM retired r
+         GROUP BY r.sales_order_id, r.new_code, r.new_seq;
+    END IF;
+END $$;
+
+-- inventory_kit -- a named group of catalogue items that are sold together
+-- ("Kitchen"). Picking a kit on a document line adds its member items as
+-- ordinary lines under a kit heading; the kit itself is never a priced line, so
+-- nothing about stock, tax or totals knows kits exist. Soft-deleted like the
+-- item catalogue, which frees the name for reuse.
+CREATE TABLE IF NOT EXISTS inventory_kit (
+    inventory_kit_id             SERIAL        PRIMARY KEY,
+    inventory_kit_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_kit_name           VARCHAR(100)  NOT NULL,
+    inventory_kit_description    TEXT          NOT NULL DEFAULT '',
+    inventory_kit_is_active      BOOLEAN       NOT NULL DEFAULT TRUE,
+    inventory_kit_created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_kit_created_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_kit_updated_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_kit_updated_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_kit_deleted_at     TIMESTAMP         NULL,
+    inventory_kit_deleted_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_kit_record_version INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_kit_uuid UNIQUE (inventory_kit_uuid),
+    CONSTRAINT chk_inventory_kit_soft_delete CHECK (
+        (inventory_kit_deleted_at IS NULL AND inventory_kit_deleted_by IS NULL) OR
+        (inventory_kit_deleted_at IS NOT NULL AND inventory_kit_deleted_by IS NOT NULL)
+    )
+);
+-- Name unique among live kits (case-insensitive). Unlike items this table is new,
+-- so the index can't meet pre-existing duplicate rows; the application check in
+-- inventory/kit_duplicate.go gives the friendly answer and this is the backstop.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_kit_name_active
+    ON inventory_kit (LOWER(inventory_kit_name)) WHERE inventory_kit_deleted_at IS NULL;
+
+-- inventory_kit_item -- which items a kit holds, and how many of each a line
+-- gets by default. An item can be in several kits.
+CREATE TABLE IF NOT EXISTS inventory_kit_item (
+    inventory_kit_item_id  SERIAL        PRIMARY KEY,
+    inventory_kit_id       INTEGER       NOT NULL REFERENCES inventory_kit(inventory_kit_id) ON DELETE CASCADE,
+    inventory_item_id      INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    kit_item_quantity      DECIMAL(14,3) NOT NULL DEFAULT 1,
+    kit_item_position      INTEGER       NOT NULL DEFAULT 0,
+    CONSTRAINT uq_inventory_kit_item  UNIQUE (inventory_kit_id, inventory_item_id),
+    CONSTRAINT chk_inventory_kit_item_qty CHECK (kit_item_quantity > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_inventory_kit_item_item ON inventory_kit_item (inventory_item_id);
+
+-- Kit heading on document lines. A line added from a kit remembers the kit's
+-- uuid (what makes consecutive lines one group) and the name it had at the time,
+-- so renaming or deleting the kit never rewrites a saved document. There is no
+-- foreign key on purpose: the label outlives the kit. Both are NULL/'' for a
+-- line that was not added from a kit, i.e. every row that exists today.
+ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+
+-- Purchasing unit price on an inventory item.
+--
+-- An item used to carry one price, inventory_item_unit_price, that sales and
+-- purchasing documents both defaulted a line from. It is now the SELLING price
+-- (sales documents, unchanged), and this column is what a purchase order, vendor
+-- bill or requisition line defaults to.
+--
+-- Added inside a column-existence guard rather than ADD COLUMN IF NOT EXISTS so
+-- the backfill runs exactly once: every item that exists today gets its current
+-- price as its purchasing price (a line on an open document must not suddenly
+-- default to 0.00), and a later boot must never overwrite a purchasing price
+-- someone has since set to something else.
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'inventory_item'::regclass
+          AND attname = 'inventory_item_purchase_unit_price'
+          AND NOT attisdropped
+    ) THEN
+        ALTER TABLE inventory_item
+            ADD COLUMN inventory_item_purchase_unit_price DECIMAL(15,2) NOT NULL DEFAULT 0
+            CONSTRAINT chk_inventory_item_purchase_unit_price CHECK (inventory_item_purchase_unit_price >= 0);
+        UPDATE inventory_item SET inventory_item_purchase_unit_price = inventory_item_unit_price;
+    END IF;
+END $$;
+
+-- Length / width / slabs on document lines.
+--
+-- Stone is priced by area but sold and ordered by the slab. A line may state the
+-- size of one slab (length x width) and how many slabs it covers; when length and
+-- width are both set the line's quantity is DERIVED from them (length x width x
+-- slabs, in the line's area unit -- see package linedim), so the numbers printed
+-- beside a quantity can never disagree with it. They are descriptive only:
+-- money, stock holds, receiving and conversions all keep running off `quantity`.
+--
+-- Length and width share ONE unit (dim_unit), copied from the inventory item when
+-- the line is added and kept on the line, so a saved document never changes when
+-- its item is later switched to another unit.
+--
+-- NULL length/width means "not stated" (every row that exists today); dim_unit
+-- defaults to inches. The purchase order line has no `slabs` column of its
+-- own: its slab count is the existing `expected_slabs` (6c above).
+
+-- The unit an item's slabs are measured in. Inches unless set.
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_dimension_unit VARCHAR(2) NOT NULL DEFAULT 'in'
+    CHECK (inventory_item_dimension_unit IN ('mm','cm','in','ft','m'));
+
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE quote_item           ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE sales_order_item     ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE invoice_item         ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE purchase_order_item  ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE purchase_order_item  ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE purchase_order_item  ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE vendor_bill_item     ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);
+ALTER TABLE requisition_item     ADD COLUMN IF NOT EXISTS dim_unit   VARCHAR(2) NOT NULL DEFAULT 'in' CHECK (dim_unit IN ('mm','cm','in','ft','m'));
+
+-- A database that applied the block above while its default was centimetres keeps
+-- that default on the column; this brings it in line. Only the default changes --
+-- a unit already stored on an item or line is left exactly as it was.
+ALTER TABLE inventory_item       ALTER COLUMN inventory_item_dimension_unit SET DEFAULT 'in';
+ALTER TABLE estimate_item        ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE quote_item           ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE sales_order_item     ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE invoice_item         ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE purchase_order_item  ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE vendor_bill_item     ALTER COLUMN dim_unit SET DEFAULT 'in';
+ALTER TABLE requisition_item     ALTER COLUMN dim_unit SET DEFAULT 'in';

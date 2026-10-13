@@ -35,6 +35,9 @@ const (
 	colWhite    colour = 0xffffff
 	colLime     colour = 0xc2f589 // StoneSuite lime, for use on the dark ink
 	colLimeDeep colour = 0x84cc16 // lime accent for use on white
+	colKitTint  colour = 0xede9fe // violet-100: a kit's heading row, as in the app's tables
+	colKitInk   colour = 0x4c1d95 // violet-900: the kit heading's text
+	colKitRule  colour = 0xc4b5fd // violet-300: the rule under it
 )
 
 // mastheadGradientStops are the masthead band's background, left to right:

@@ -32,6 +32,10 @@ type poSourceLine struct {
 	discountPercent     float64
 	taxRateID           *int
 	taxPercent          float64
+	length              *float64 // slab size/count the line was ordered by
+	width               *float64
+	slabs               *int // the PO line's expected slabs
+	dimUnit             string
 	inventoryItemUUID   string // empty for a free-text line
 }
 
@@ -76,6 +80,7 @@ const poSourceLinesSQL = `
 		             AND rs.record_status_code <> 'VOID'
 		       ), 0),
 		       poi.unit_price, poi.discount_percent, poi.tax_rate_id, poi.tax_percent,
+		       poi.dim_length, poi.dim_width, poi.expected_slabs, poi.dim_unit,
 		       COALESCE(ii.inventory_item_uuid::text, '')
 		FROM purchase_order_item poi
 		LEFT JOIN inventory_item ii ON ii.inventory_item_id = poi.inventory_item_id
@@ -97,6 +102,7 @@ func queryPurchaseOrderSourceLines(ctx context.Context, q workflow.Querier, poIn
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.qtyReceived, &l.qtyBilled,
 			&l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
+			&l.length, &l.width, &l.slabs, &l.dimUnit,
 			&l.inventoryItemUUID,
 		); err != nil {
 			return nil, fmt.Errorf("scan purchase order line: %w", err)

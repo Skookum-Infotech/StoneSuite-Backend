@@ -19,6 +19,7 @@ func ToPrintable(po PurchaseOrder, seller docpdf.Seller) docpdf.PrintableDoc {
 			SKU: it.SKU, Name: it.ItemName, Description: it.Description, UnitCode: it.UnitCode,
 			Quantity: it.Quantity, UnitPrice: it.UnitPrice, DiscountPercent: it.DiscountPercent,
 			TaxPercent: it.TaxPercent, LineTotal: it.LineTotal,
+			Size: docpdf.SizeText(it.Length, it.Width, it.ExpectedSlabs, it.DimensionUnit),
 		})
 	}
 	return docpdf.PrintableDoc{

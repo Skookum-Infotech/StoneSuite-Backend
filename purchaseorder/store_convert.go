@@ -74,6 +74,10 @@ type requisitionSourceLine struct {
 	unitCode            string
 	quantity            float64
 	unitPrice           float64
+	length              *float64 // slab size the line was priced from, carried over
+	width               *float64
+	slabs               *int // becomes the PO line's expected slabs
+	dimUnit             string
 }
 
 // loadRequisitionSourceLines loads a live requisition's lines by its internal id.
@@ -81,7 +85,8 @@ func loadRequisitionSourceLines(ctx context.Context, tx pgx.Tx, requisitionInter
 	rows, err := tx.Query(ctx, `
 		SELECT requisition_item_uuid, line_number, inventory_item_id,
 		       item_name, sku, description, unit_id, COALESCE(unit_code,''),
-		       quantity, estimated_unit_price
+		       quantity, estimated_unit_price,
+		       dim_length, dim_width, slabs, dim_unit
 		FROM requisition_item
 		WHERE requisition_id = $1 AND item_deleted_at IS NULL
 		ORDER BY line_number`, requisitionInternalID)
@@ -96,6 +101,7 @@ func loadRequisitionSourceLines(ctx context.Context, tx pgx.Tx, requisitionInter
 			&l.uuid, &l.lineNumber, &l.inventoryItemID,
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.unitPrice,
+			&l.length, &l.width, &l.slabs, &l.dimUnit,
 		); err != nil {
 			return nil, fmt.Errorf("scan requisition line: %w", err)
 		}
@@ -130,14 +136,14 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, poInternalID int, line
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,0,$11, $12,$13,$14,$15, $16)
+				item_created_by, expected_slabs, dim_length, dim_width, dim_unit
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,0,$11, $12,$13,$14,$15, $16, $17,$18,$19,$20)
 			RETURNING purchase_order_item_uuid`,
 			poInternalID, l.lineNumber, l.inventoryItemID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, headerTaxPercent,
 			money.Subtotal, money.Discount, money.Tax, money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), l.slabs, l.length, l.width, l.dimUnit,
 		).Scan(&newLineUUID)
 		if err != nil {
 			return nil, fmt.Errorf("insert converted purchase order item: %w", err)

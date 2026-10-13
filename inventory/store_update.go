@@ -43,12 +43,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 	err = tx.QueryRow(ctx, `
 		SELECT inventory_item_id, inventory_item_sku, inventory_item_name, inventory_item_unit_price,
 		       inventory_item_tracking, inventory_item_thickness_mm, inventory_item_is_active,
-		       inventory_item_track_stock
+		       inventory_item_track_stock, inventory_item_purchase_unit_price,
+		       inventory_item_dimension_unit
 		FROM inventory_item
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL
 		FOR UPDATE`, uuid).Scan(
 		&itemID, &before.SKU, &before.Name, &before.UnitPrice,
-		&before.Tracking, &before.ThicknessMM, &before.IsActive, &before.TrackStock)
+		&before.Tracking, &before.ThicknessMM, &before.IsActive, &before.TrackStock,
+		&before.PurchaseUnitPrice, &before.DimensionUnit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -77,6 +79,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 	}
 	in.TrackStock = &trackStock
 
+	// Likewise an omitted length/width unit leaves the item's unit as it is.
+	if in.DimensionUnit == "" {
+		in.DimensionUnit = before.DimensionUnit
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE inventory_item SET
 			inventory_item_sku = $2, inventory_item_name = $3, inventory_item_description = $4,
@@ -89,14 +96,16 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 			inventory_item_barcode = $16, inventory_item_default_warehouse_id = $17,
 			inventory_item_track_stock = $18,
 			inventory_item_updated_at = NOW(), inventory_item_updated_by = $19,
+			inventory_item_purchase_unit_price = $20,
+			inventory_item_dimension_unit = $21,
 			inventory_item_record_version = inventory_item_record_version + 1
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL`,
-		uuid, in.SKU, in.Name, in.Description, in.UnitID, in.UnitPrice,
+		uuid, in.SKU, in.Name, in.Description, in.UnitID, *in.UnitPrice,
 		nullableIntPtr(in.CurrencyID), nullableIntPtr(in.TaxRateID), custom,
 		in.Tracking, nullableIntPtr(in.MaterialID), nullableIntPtr(in.ColorID),
 		nullableIntPtr(in.FinishID), in.ThicknessMM, nullableIntPtr(in.OriginCountryID),
 		in.Barcode, nullableIntPtr(in.DefaultWarehouseID), trackStock,
-		nullableInt(actorEmployeeID))
+		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice, in.DimensionUnit)
 	if err != nil {
 		return mapItemWriteErr(err, "update")
 	}
@@ -106,6 +115,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 
 	for _, d := range itemDiff(before, in) {
 		if err := writeItemHistory(ctx, tx, itemID, "update", d.field, d.old, d.new, actorEmployeeID); err != nil {
+			return err
+		}
+	}
+	if in.KitIDs != nil {
+		if err := setItemKits(ctx, tx, itemID, in.KitIDs, actorEmployeeID); err != nil {
 			return err
 		}
 	}
@@ -129,9 +143,18 @@ func itemDiff(before Item, in CreateItemInput) []fieldDiff {
 	}
 	add("sku", before.SKU, in.SKU)
 	add("name", before.Name, in.Name)
-	add("unitPrice", strconv.FormatFloat(before.UnitPrice, 'f', 2, 64),
-		strconv.FormatFloat(in.UnitPrice, 'f', 2, 64))
+	// Validation has already refused a nil price; the guards keep the diff safe
+	// for a caller that builds an input by hand.
+	if in.UnitPrice != nil {
+		add("unitPrice", strconv.FormatFloat(before.UnitPrice, 'f', 2, 64),
+			strconv.FormatFloat(*in.UnitPrice, 'f', 2, 64))
+	}
+	if in.PurchaseUnitPrice != nil {
+		add("purchaseUnitPrice", strconv.FormatFloat(before.PurchaseUnitPrice, 'f', 2, 64),
+			strconv.FormatFloat(*in.PurchaseUnitPrice, 'f', 2, 64))
+	}
 	add("tracking", before.Tracking, in.Tracking)
+	add("dimensionUnit", before.DimensionUnit, in.DimensionUnit)
 	if in.TrackStock != nil {
 		add("trackStock", strconv.FormatBool(before.TrackStock), strconv.FormatBool(*in.TrackStock))
 	}

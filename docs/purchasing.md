@@ -44,6 +44,18 @@ receiving can show, for example, "11 of about 12 slabs" — it is only a count t
 check the delivery against, and the exact area is measured when the slabs
 arrive.
 
+An area line can also state the size of one slab — **Length** and **Width**,
+both in the unit set on the inventory item (**Length / Width Unit**: mm, cm,
+in, ft or m) — alongside its **Slabs** count (the same expected-slabs count
+described above). With length and width filled in, the quantity is worked out
+as length × width × slabs in the item's area unit rather than typed, so
+120 × 60 in × 4 slabs is 200 sq ft; leave Slabs blank and one slab is
+assumed. The line keeps the unit it was entered in. The same three columns appear on Requisition and Vendor Bill lines. A
+Requisition's size and slab count carry onto the purchase order created from
+it, and a Vendor Bill converted from an order carries them only when it bills
+the line's full ordered quantity — a partial bill keeps just the billed
+quantity.
+
 ## Item Receipts
 
 An Item Receipt records goods physically received against a purchase order,

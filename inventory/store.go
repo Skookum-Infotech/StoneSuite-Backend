@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -30,11 +31,32 @@ func validateItemInput(in *CreateItemInput) error {
 	if in.UnitID <= 0 {
 		return ClientError{Msg: "A unit of measure is required."}
 	}
-	if in.UnitPrice < 0 {
-		return ClientError{Msg: "Unit price cannot be negative."}
+	// Both prices are required. They are pointers so an omitted field is told
+	// apart from an explicit 0, which is a legitimate price for a service or
+	// labour item.
+	if in.UnitPrice == nil {
+		return ClientError{Msg: "Selling unit price is required."}
+	}
+	if *in.UnitPrice < 0 {
+		return ClientError{Msg: "Selling unit price cannot be negative."}
+	}
+	if in.PurchaseUnitPrice == nil {
+		return ClientError{Msg: "Purchasing unit price is required."}
+	}
+	if *in.PurchaseUnitPrice < 0 {
+		return ClientError{Msg: "Purchasing unit price cannot be negative."}
 	}
 	if in.ThicknessMM < 0 {
 		return ClientError{Msg: "Thickness cannot be negative."}
+	}
+	// Blank stays blank — create defaults it and update keeps what the item has —
+	// so only a stated unit is checked.
+	if strings.TrimSpace(in.DimensionUnit) != "" {
+		unit, ok := linedim.NormalizeUnit(in.DimensionUnit)
+		if !ok {
+			return ClientError{Msg: "Length/width unit must be one of " + strings.Join(linedim.Units, ", ") + "."}
+		}
+		in.DimensionUnit = unit
 	}
 	// Default rather than reject: every row that existed before this column was
 	// added is 'quantity', and an omitted field on an existing client must keep
@@ -128,6 +150,11 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Item, error) {
 		}
 		return nil, fmt.Errorf("get inventory item: %w", err)
 	}
+	kits, err := itemKitsByUUID(ctx, pool, uuid)
+	if err != nil {
+		return nil, err
+	}
+	it.Kits = kits
 	return it, nil
 }
 

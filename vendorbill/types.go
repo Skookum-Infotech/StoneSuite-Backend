@@ -41,6 +41,15 @@ type Line struct {
 	LineDiscount        float64 `json:"lineDiscount"`
 	LineTax             float64 `json:"lineTax"`
 	LineTotal           float64 `json:"lineTotal"`
+
+	// Length / Width / Slabs are the slab size and count the line was priced
+	// from, when it was entered that way; the quantity above is their area.
+	Length *float64 `json:"length,omitempty"`
+	Width  *float64 `json:"width,omitempty"`
+	Slabs  *int     `json:"slabs,omitempty"`
+	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
+	// ft, m). Blank takes the item's unit, then inches.
+	DimensionUnit string `json:"dimensionUnit,omitempty"`
 }
 
 // LineInput is one line of a create/update request. PurchaseOrderItemID is the
@@ -59,6 +68,14 @@ type LineInput struct {
 	UnitPrice           float64 `json:"unitPrice"`
 	DiscountPercent     float64 `json:"discountPercent"`
 	TaxRateID           *int    `json:"taxRateId,omitempty"`
+
+	// Length / Width / Slabs give the size of one slab and how many slabs the
+	// line covers. With length and width both set the line's quantity is derived
+	// from them (see package linedim), so the quantity sent is ignored.
+	Length        *float64 `json:"length,omitempty"`
+	Width         *float64 `json:"width,omitempty"`
+	Slabs         *int     `json:"slabs,omitempty"`
+	DimensionUnit string   `json:"dimensionUnit,omitempty"`
 }
 
 // BillPayment is one live vendor_bill_payment row (AD-7).

@@ -24,10 +24,16 @@ func ResolveDoc(ctx context.Context, pool *pgxpool.Pool, ex *Extraction, sha str
 		return ResultDoc{}, err
 	}
 	in := DuplicateInput{
-		CustomerUUID: resolution.Customer.UUID,
-		PONumber:     extracted.Header.PONumber.Value,
-		Revision:     extracted.Revision,
-		QuoteRef:     extracted.QuoteRef,
+		DocType:       extracted.DocType,
+		CustomerUUID:  resolution.Customer.UUID,
+		VendorUUID:    resolution.Vendor.UUID,
+		InvoiceNumber: extracted.Header.InvoiceNumber.Value,
+		PONumber:      extracted.Header.PONumber.Value,
+		Revision:      extracted.Revision,
+		QuoteRef:      extracted.QuoteRef,
+	}
+	if in.DocType == docextract.DocTypeVendorBill {
+		in.PONumber = "" // a bill's PO number is a reference to our order, not its own number
 	}
 	if f := extracted.Header.Total; f.Found() {
 		if cents, issue := docextract.ParseMoney(f.Value); docextract.NumberFlagsUsable(issue) {
@@ -48,6 +54,9 @@ func ResolveDoc(ctx context.Context, pool *pgxpool.Pool, ex *Extraction, sha str
 	}
 	if resolution.Lines == nil {
 		resolution.Lines = []LineMatch{}
+	}
+	if resolution.LinkedPO != nil && resolution.LinkedPO.Lines == nil {
+		resolution.LinkedPO.Lines = []LinkedPOLine{}
 	}
 	all := append([]Duplicate{}, dups...)
 	return ResultDoc{Extracted: extracted, Resolution: resolution, Duplicates: append(all, found...)}, nil

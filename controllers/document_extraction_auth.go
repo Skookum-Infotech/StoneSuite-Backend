@@ -59,22 +59,18 @@ func checkFromPool(ctx context.Context, c *docExtractCaller, res authz.Resource,
 	return authz.Check(ctx, c.pool, c.identityID, res, act)
 }
 
-// resourceForDocType maps a doc type to its RBAC resource. An unsupported or
-// unknown type answers 400 and returns false.
+// resourceForDocType maps a doc type to its RBAC resource. An unknown type
+// answers 400 and returns false.
 func resourceForDocType(w http.ResponseWriter, docType docextract.DocType) (authz.Resource, bool) {
 	if res, ok := docExtractResources[docType]; ok {
 		return res, true
-	}
-	if _, known := docExtractUnsupported[docType]; known {
-		fail(w, http.StatusBadRequest, "Creating a "+string(docType)+" from a document is not supported yet.")
-		return "", false
 	}
 	fail(w, http.StatusBadRequest, "Unknown document type.")
 	return "", false
 }
 
 // requireCreate enforces Require(<docType resource>, create): 400 for an
-// unsupported doc type, 403 (after a permission_denied security log) on denial.
+// unknown doc type, 403 (after a permission_denied security log) on denial.
 func (h *DocExtractOps) requireCreate(w http.ResponseWriter, r *http.Request, c *docExtractCaller, docType docextract.DocType) bool {
 	resource, ok := resourceForDocType(w, docType)
 	if !ok {

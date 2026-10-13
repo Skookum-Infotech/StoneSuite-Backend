@@ -34,6 +34,7 @@ type fakeDocStore struct {
 	discarded  []string
 	queuedWith []string
 	getErr     error
+	ready      []docextractjob.Extraction
 }
 
 func (f *fakeDocStore) Create(_ context.Context, p docextractjob.CreateParams) (*docextractjob.Extraction, error) {
@@ -64,7 +65,7 @@ func (f *fakeDocStore) GetInternal(_ context.Context, id string) (*docextractjob
 }
 
 func (f *fakeDocStore) ListReadyForOwner(context.Context, string) ([]docextractjob.Extraction, error) {
-	return nil, nil
+	return f.ready, nil
 }
 
 func (f *fakeDocStore) Discard(_ context.Context, id, _ string) (string, error) {
@@ -195,7 +196,6 @@ func TestDocExtract_Create_Gates(t *testing.T) {
 		wantCode int
 		wantBody string
 	}{
-		{"purchase order not supported yet", `{"docType":"purchase_order","fileName":"a.pdf","sizeBytes":5,"contentType":"application/pdf"}`, nil, 400, "not supported yet"},
 		{"unknown doc type", `{"docType":"nope","fileName":"a.pdf","sizeBytes":5,"contentType":"application/pdf"}`, nil, 400, "Unknown document type"},
 		{"bad json", `{`, nil, 400, "Invalid request body"},
 		{"permission denied", createBody, func(e *docExtractEnv) { e.allow = false }, 403, "permission"},

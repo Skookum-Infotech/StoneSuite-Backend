@@ -1,0 +1,31 @@
+{
+  "header": {
+    "currency": "USD",
+    "delivery_date": "2026-04-20",
+    "order_date": "2026-04-02",
+    "payment_terms": "Net 30",
+    "po_number": "EP-5521",
+    "subtotal": "2980.00",
+    "total": "2980.00",
+    "vendor_name": "Granite Works LLC"
+  },
+  "lines": [
+    {
+      "sku": "GR-500",
+      "description": "Granite slab Absolute Black",
+      "qty": "4",
+      "uom": "EA",
+      "unit_price": "700.00",
+      "amount": "2800.00"
+    },
+    {
+      "sku": "TL-90",
+      "description": "Tile adhesive 25kg bag",
+      "qty": "10",
+      "uom": "EA",
+      "unit_price": "18.00",
+      "amount": "180.00"
+    }
+  ],
+  "class": "purchase_order"
+}

@@ -43,7 +43,8 @@ func plain(s string) string {
 }
 
 func allSpecs() []docSpec {
-	return append(append(specsA(), specsB()...), builderPOSpec(), builderExtraPOSpec(), orderFormSpec())
+	so := append(append(specsA(), specsB()...), builderPOSpec(), builderExtraPOSpec(), orderFormSpec())
+	return append(append(so, purchaseOrderSpecs()...), vendorBillSpecs()...)
 }
 
 func specsA() []docSpec {

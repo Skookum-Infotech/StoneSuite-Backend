@@ -180,6 +180,7 @@ type Order struct {
 	NextStatusCodes   []string    `json:"nextStatusCodes"` // legal next-moves now, an unconfigured approval checkpoint collapsed out (approvalchain.NextStatusCodes)
 	Customer          CustomerRef `json:"customer"`
 	OwnerUserID       string      `json:"-"`
+	CreatedByUserID   string      `json:"-"`
 	OrderDate         string      `json:"orderDate"`
 	ExpectedDelivery  string      `json:"expectedDelivery,omitempty"`
 	PaymentDueDate    string      `json:"paymentDueDate,omitempty"`

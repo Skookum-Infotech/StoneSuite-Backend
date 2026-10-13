@@ -12,7 +12,7 @@ const (
 )
 
 var (
-	chargeRe       = regexp.MustCompile(`(?i)^(freight|shipping|ship(?:ping)?\s*(?:&|and)\s*handling|handling|fuel(?:\s+surcharge)?|delivery(?:\s+(?:fee|charge))?|discount|deposit|surcharge|misc(?:ellaneous)?\s+charge)\b`)
+	chargeRe       = regexp.MustCompile(`(?i)^(freight|shipping|ship(?:ping)?\s*(?:&|and)\s*handling|handling|fuel(?:\s+surcharge)?|delivery(?:\s+(?:fee|charge))?|discount|deposit|surcharge|misc(?:ellaneous)?\s+charge|less\s+(?:a\s+)?(?:deposit|payment|credit)s?(?:\s+(?:received|applied))?|payments?\s+(?:received|applied)|amount\s+paid)\b`)
 	addonVocabRe   = regexp.MustCompile(`(?i)\b(edge|edging|cutouts?|sinks?|sealer|install(?:ation)?|template|templating|polish|backsplash)\b`)
 	addonPrefixRe  = regexp.MustCompile(`(?i)^(\+|w/|add\b|add-?on\b)`)
 	trailingUnitRe = regexp.MustCompile(`^([\d.,\-]+)\s+([A-Za-z][A-Za-z0-9./²]*)$`)

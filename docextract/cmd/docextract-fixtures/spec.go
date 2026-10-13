@@ -39,6 +39,7 @@ type kv struct{ Label, Amount string }
 
 // docSpec describes one fixture; its expected output is stated explicitly.
 type docSpec struct {
+	kind      string // output directory (document type); "" is sales_order
 	name      string
 	docx      bool
 	title     string
@@ -64,6 +65,10 @@ type expectedDoc struct {
 	Lines    []expectedLine    `json:"lines"`
 	Revision string            `json:"revision,omitempty"`
 	QuoteRef string            `json:"quote_ref,omitempty"`
+	// Class is the expected classified title; Warnings are warnings that must
+	// be present (not an exhaustive list). Both are omitted for sales orders.
+	Class    string   `json:"class,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type expectedLine struct {

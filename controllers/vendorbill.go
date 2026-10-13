@@ -188,10 +188,13 @@ func (h *VendorBillOps) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	bill, err := vendorbill.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
+		if writeVBDuplicate(w, r, pool, identityID, err) {
+			return
+		}
 		vbFail(w, err, "Failed to create vendor bill.")
 		return
 	}
-	auditVB(r, pool, identityID, "create", bill.ID, nil, bill)
+	auditVBMeta(r, pool, identityID, "create", bill.ID, nil, bill, vbCreateExtraMeta(bill))
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "vendorBill": bill})
 }
 
@@ -231,10 +234,13 @@ func (h *VendorBillOps) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	after, err := vendorbill.Update(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))
 	if err != nil {
+		if writeVBDuplicate(w, r, pool, identityID, err) {
+			return
+		}
 		vbFail(w, err, "Failed to update vendor bill.")
 		return
 	}
-	auditVB(r, pool, identityID, "update", uuid, before, after)
+	auditVBMeta(r, pool, identityID, "update", uuid, before, after, vbCreateExtraMeta(after))
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": after})
 }
 

@@ -1,0 +1,10 @@
+{
+  "header": {
+    "currency": "USD"
+  },
+  "lines": null,
+  "class": "statement",
+  "warnings": [
+    "document_looks_like_statement"
+  ]
+}

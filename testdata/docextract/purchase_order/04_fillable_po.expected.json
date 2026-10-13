@@ -1,0 +1,21 @@
+{
+  "header": {
+    "currency": "USD",
+    "order_date": "2026-05-06",
+    "po_number": "FP-7001",
+    "subtotal": "930.00",
+    "total": "930.00",
+    "vendor_name": "Summit Slab Co"
+  },
+  "lines": [
+    {
+      "sku": "MB-77",
+      "description": "Carrara marble vanity top",
+      "qty": "3",
+      "uom": "EA",
+      "unit_price": "310.00",
+      "amount": "930.00"
+    }
+  ],
+  "class": "purchase_order"
+}

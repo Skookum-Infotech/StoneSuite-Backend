@@ -142,6 +142,7 @@ type PurchaseOrder struct {
 	NextStatusCodes []string  `json:"nextStatusCodes"` // legal next-moves now, an unconfigured approval checkpoint collapsed out (approvalchain.NextStatusCodes)
 	Vendor          VendorRef `json:"vendor"`
 	OwnerUserID     string    `json:"-"`
+	CreatedByUserID string    `json:"-"`
 	OrderDate       string    `json:"orderDate"`
 	ExpectedDate    string    `json:"expectedDate,omitempty"`
 	ReferenceNumber string    `json:"referenceNumber,omitempty"`

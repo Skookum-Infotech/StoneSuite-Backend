@@ -1,5 +1,5 @@
-// Command docextract-fixtures regenerates the synthetic sales-order fixtures
-// under testdata/docextract/sales_order (PDF/DOCX plus .expected.json).
+// Command docextract-fixtures regenerates the synthetic fixtures under
+// testdata/docextract/<document type>/ (PDF/DOCX plus .expected.json).
 package main
 
 import (
@@ -16,7 +16,7 @@ const (
 )
 
 func main() {
-	out := flag.String("out", "testdata/docextract/sales_order", "output directory")
+	out := flag.String("out", "testdata/docextract", "fixture root; one sub-directory per document type")
 	flag.Parse()
 	if err := run(*out); err != nil {
 		fmt.Fprintln(os.Stderr, "docextract-fixtures:", err)
@@ -24,11 +24,19 @@ func main() {
 	}
 }
 
-func run(dir string) error {
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
+// defaultKind is the directory of specs that do not name one.
+const defaultKind = "sales_order"
+
+func run(root string) error {
 	for _, s := range allSpecs() {
+		kind := s.kind
+		if kind == "" {
+			kind = defaultKind
+		}
+		dir := filepath.Join(root, kind)
+		if err := os.MkdirAll(dir, dirPerm); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
 		file, data := s.render()
 		if err := os.WriteFile(filepath.Join(dir, file), data, filePerm); err != nil {
 			return fmt.Errorf("write %s: %w", file, err)

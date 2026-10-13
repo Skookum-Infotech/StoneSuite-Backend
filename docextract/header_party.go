@@ -192,13 +192,7 @@ func letterheadName(s string, own []string) bool {
 	if !strings.ContainsFunc(s, unicode.IsLetter) || isOwnCompany(s, own) {
 		return false
 	}
-	low := strings.ToLower(s)
-	for _, k := range classKeywords {
-		if strings.HasPrefix(low, k.phrase) {
-			return false
-		}
-	}
-	return true
+	return !isTitleText(s)
 }
 
 // joinWords joins word texts with single spaces.

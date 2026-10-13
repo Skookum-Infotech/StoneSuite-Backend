@@ -18,6 +18,11 @@ import (
 
 const percent = 100.0
 
+// evaluated are the document types with golden fixtures.
+var evaluated = map[docextract.DocType]bool{
+	docextract.DocTypeSalesOrder: true, docextract.DocTypePurchaseOrder: true, docextract.DocTypeVendorBill: true,
+}
+
 var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 
 type expectedLine struct {
@@ -35,27 +40,42 @@ type tally struct {
 	headerHit, headerTotal int
 	lineHit, lineTotal     int
 	parserOK, docs         int
+	llmCalls               int
 }
+
+// countingLLM answers every request with an empty object and counts the
+// calls, so the eval reports how often the fallback would be consulted
+// without ever changing a result.
+type countingLLM struct{ calls *int }
+
+func (c countingLLM) Generate(context.Context, string, string) (string, error) {
+	*c.calls++
+	return "{}", nil
+}
+
+// ownCompanyDefault is the tenant name the synthetic fixtures treat as "us".
+const ownCompanyDefault = "Elevation Stone"
 
 func main() {
 	dir := flag.String("dir", "testdata/docextract", "golden fixture root")
+	own := flag.String("own", ownCompanyDefault, "own company name, excluded as a party")
 	flag.Parse()
-	if err := run(*dir); err != nil {
+	if err := run(*dir, []string{*own}); err != nil {
 		fmt.Fprintln(os.Stderr, "docextract-eval:", err)
 		os.Exit(1)
 	}
 }
 
-func run(root string) error {
+func run(root string, own []string) error {
 	typeDirs, err := os.ReadDir(root)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", root, err)
 	}
 	for _, td := range typeDirs {
-		if !td.IsDir() || docextract.DocType(td.Name()) != docextract.DocTypeSalesOrder {
+		if !td.IsDir() || !evaluated[docextract.DocType(td.Name())] {
 			continue
 		}
-		t, err := evalDir(filepath.Join(root, td.Name()), docextract.DocType(td.Name()))
+		t, err := evalDir(filepath.Join(root, td.Name()), docextract.DocType(td.Name()), own)
 		if err != nil {
 			return err
 		}
@@ -64,7 +84,7 @@ func run(root string) error {
 	return nil
 }
 
-func evalDir(dir string, dt docextract.DocType) (tally, error) {
+func evalDir(dir string, dt docextract.DocType, own []string) (tally, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.expected.json"))
 	if err != nil {
 		return tally{}, fmt.Errorf("glob %s: %w", dir, err)
@@ -86,7 +106,7 @@ func evalDir(dir string, dt docextract.DocType) (tally, error) {
 			return tally{}, fmt.Errorf("read %s: %w", doc, err)
 		}
 		t.docs++
-		res, _, xerr := docextract.Extract(context.Background(), b, dt, docextract.Options{})
+		res, _, xerr := docextract.Extract(context.Background(), b, dt, docextract.Options{OwnCompanyNames: own, LLM: countingLLM{calls: &t.llmCalls}})
 		scoreDoc(&t, filepath.Base(doc), exp, res, xerr)
 	}
 	return t, nil
@@ -124,7 +144,7 @@ func report(name string, t tally) {
 	fmt.Printf("  header exact-match: %.1f%% (%d/%d)\n", pct(t.headerHit, t.headerTotal), t.headerHit, t.headerTotal)
 	fmt.Printf("  line recall:        %.1f%% (%d/%d)\n", pct(t.lineHit, t.lineTotal), t.lineHit, t.lineTotal)
 	fmt.Printf("  parser-only success: %.1f%% (%d/%d)\n", pct(t.parserOK, t.docs), t.parserOK, t.docs)
-	fmt.Println("  LLM-call rate:      0.0% (eval runs with no LLM)")
+	fmt.Printf("  LLM-call rate:      %.1f%% (%d/%d; stub model answers nothing)\n", pct(t.llmCalls, t.docs), t.llmCalls, t.docs)
 }
 
 func pct(a, b int) float64 {
@@ -162,6 +182,8 @@ func headerValues(h docextract.Header) map[string]string {
 		"subtotal": h.Subtotal.Value, "tax": h.Tax.Value, "shipping": h.Shipping.Value,
 		"discount": h.Discount.Value, "total": h.Total.Value, "currency": h.Currency.Value,
 		"bill_to": h.BillTo.Value, "ship_to": h.ShipTo.Value, "notes": h.Notes.Value,
+		"vendor_name": h.VendorName.Value, "invoice_number": h.InvoiceNumber.Value,
+		"invoice_date": h.InvoiceDate.Value, "due_date": h.DueDate.Value,
 	}
 }
 

@@ -11,11 +11,9 @@ func TestScheduleGroupCodes(t *testing.T) {
 		group string
 		want  []string
 	}{
-		{"Template", []string{"template_scheduled", "template_in_progress", "template_completed"}},
+		{"Template", []string{"template"}},
 		{"WIP Bin Transfer", []string{"wip_bin_transfer"}},
-		{"Installation", []string{
-			"installation_ready", "installation_picked", "installation_in_progress", "installation_completed",
-		}},
+		{"Installation", []string{"installation_ready", "installation_picked", "installation"}},
 		{"Created", []string{"created"}},
 		{"Invoicing", nil}, // invoices are not part of an order's schedule
 		{"template", nil},  // group names match exactly

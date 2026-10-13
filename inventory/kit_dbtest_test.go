@@ -297,7 +297,8 @@ func TestItem_CreateIntoKitsAndSetKitsFromTheItemForm(t *testing.T) {
 	bath := kitOf(t, uniqueName("Bathroom"))
 
 	item, err := Create(ctx, pool, CreateItemInput{
-		SKU: uniqueName("KSKU"), Name: uniqueName("Faucet"), UnitID: 1, UnitPrice: 10,
+		SKU: uniqueName("KSKU"), Name: uniqueName("Faucet"), UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6),
 		KitIDs: []string{kitchen.ID, bath.ID, kitchen.ID}, // a repeat is harmless
 	}, 1)
 	if err != nil {
@@ -318,7 +319,8 @@ func TestItem_CreateIntoKitsAndSetKitsFromTheItemForm(t *testing.T) {
 	}
 
 	// Omitted kitIds: the item stays in both kits.
-	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: item.Name, UnitID: 1}, 1); err != nil {
+	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: item.Name, UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6)}, 1); err != nil {
 		t.Fatalf("Update without kitIds: %v", err)
 	}
 	if again, _ := Get(ctx, pool, item.ID); len(again.Kits) != 2 {
@@ -327,6 +329,7 @@ func TestItem_CreateIntoKitsAndSetKitsFromTheItemForm(t *testing.T) {
 
 	// Keep kitchen, leave bathroom.
 	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: item.Name, UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6),
 		KitIDs: []string{kitchen.ID}}, 1); err != nil {
 		t.Fatalf("Update with kitIds: %v", err)
 	}
@@ -341,6 +344,7 @@ func TestItem_CreateIntoKitsAndSetKitsFromTheItemForm(t *testing.T) {
 
 	// An explicit empty list takes the item out of every kit.
 	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: item.Name, UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6),
 		KitIDs: []string{}}, 1); err != nil {
 		t.Fatalf("Update with empty kitIds: %v", err)
 	}
@@ -371,6 +375,7 @@ func TestItem_UnknownKitIsRefusedAndNothingIsSaved(t *testing.T) {
 
 	err := Update(ctx, pool, item.ID, CreateItemInput{
 		SKU: item.SKU, Name: "Renamed " + item.Name, UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6),
 		KitIDs: []string{"00000000-0000-4000-8000-000000000000"},
 	}, 1)
 	if !IsClientError(err) {
@@ -387,7 +392,8 @@ func TestItem_KitsListIsEmptyForListRowsAndFullForGet(t *testing.T) {
 	ctx := context.Background()
 	kit := kitOf(t, uniqueName("Garage"))
 	item, err := Create(ctx, pool, CreateItemInput{
-		SKU: uniqueName("GSKU"), Name: uniqueName("Shelf"), UnitID: 1, KitIDs: []string{kit.ID},
+		SKU: uniqueName("GSKU"), Name: uniqueName("Shelf"), UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6), KitIDs: []string{kit.ID},
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)

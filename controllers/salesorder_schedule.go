@@ -57,7 +57,7 @@ func (h *SalesOrderOps) Schedule(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateScheduleActivity PATCH /api/tenant/sales-orders/{uuid}/schedule/{code}
-// body: {"status":"scheduled|completed","scheduledAt":"yyyy-mm-ddThh:mm",
+// body: {"status":"pending|in_progress|completed","scheduledAt":"yyyy-mm-ddThh:mm",
 // "completedAt":"yyyy-mm-ddThh:mm","notes":"..."} — every field optional.
 // Gated on sales_order:update, like editing the order itself.
 func (h *SalesOrderOps) UpdateScheduleActivity(w http.ResponseWriter, r *http.Request) {

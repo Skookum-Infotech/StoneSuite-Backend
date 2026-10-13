@@ -63,8 +63,9 @@ func newPOResendEnv(t *testing.T) *poResendEnv {
 		VALUES ($1, $2, 'Organization', $3, 1) RETURNING vendor_uuid`,
 		vndrTypeID, activeStatusID, "Resend Vendor "+suffix).Scan(&vendorUUID))
 	require.NoError(t, pool.QueryRow(ctx, `
-		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price, inventory_item_created_by)
-		VALUES ($1, $2, 1, 25.00, 1) RETURNING inventory_item_uuid`,
+		INSERT INTO inventory_item (inventory_item_sku, inventory_item_name, inventory_item_unit_id, inventory_item_unit_price,
+			inventory_item_purchase_unit_price, inventory_item_created_by)
+		VALUES ($1, $2, 1, 25.00, 25.00, 1) RETURNING inventory_item_uuid`,
 		"RESEND-SKU-"+suffix, "Resend Item "+suffix).Scan(&itemUUID))
 
 	in := purchaseorder.CreatePurchaseOrderInput{VendorUUID: vendorUUID}

@@ -2,6 +2,7 @@ package salesorder
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,17 +36,20 @@ func formatPlan(plan []plannedActivity) map[string]string {
 }
 
 func TestScheduleCatalog_Invariants(t *testing.T) {
-	const want = 23
+	const want = 11
 	if len(scheduleCatalog) != want {
 		t.Fatalf("catalog has %d activities, want %d", len(scheduleCatalog), want)
 	}
 	if scheduleCatalog[0].Code != ActivityCreated {
 		t.Errorf("first activity = %q, want %q", scheduleCatalog[0].Code, ActivityCreated)
 	}
-	if got := scheduleCatalog[want-1].Code; got != ActivityInstallationCompleted {
-		t.Errorf("last activity = %q, want %q", got, ActivityInstallationCompleted)
+	if got := scheduleCatalog[want-1].Code; got != ActivityInstallation {
+		t.Errorf("last activity = %q, want %q", got, ActivityInstallation)
 	}
 	codeShape := regexp.MustCompile(`^[a-z][a-z_]*$`)
+	// Pending / in progress / completed are a row's status, so none of them may
+	// appear in the name of an activity.
+	statusWord := regexp.MustCompile(`(?i)\b(pending|in progress|completed|scheduled|allocated)\b`)
 	seen := map[string]bool{}
 	for _, d := range scheduleCatalog {
 		if seen[d.Code] {
@@ -58,36 +62,28 @@ func TestScheduleCatalog_Invariants(t *testing.T) {
 		if d.Group == "" || d.Name == "" {
 			t.Errorf("activity %q needs a group and a name", d.Code)
 		}
+		if statusWord.MatchString(d.Name) || strings.HasSuffix(d.Code, "_pending") ||
+			strings.HasSuffix(d.Code, "_in_progress") || strings.HasSuffix(d.Code, "_completed") {
+			t.Errorf("activity %q (%q) carries a status word; that belongs in the row's status", d.Code, d.Name)
+		}
 	}
 }
 
-// The schedule the product owner approved: an order on Oct 12 installing Nov 10
-// spreads the 22 planned activities evenly, with the two install-day rows pinned.
-func TestPlanSchedule_EvenSpreadMatchesTheApprovedExample(t *testing.T) {
+// An order on Oct 12 installing Nov 10 spreads the 10 planned activities evenly
+// over the 29 days, with Installation pinned to the installation date.
+func TestPlanSchedule_EvenSpreadAcrossTheWindow(t *testing.T) {
 	got := formatPlan(planSchedule(planCodes(), day("2026-10-12"), day("2026-11-10")))
 	want := map[string]string{
-		"template_scheduled":          "2026-10-13T09:00",
-		"template_in_progress":        "2026-10-15T09:00",
-		"template_completed":          "2026-10-16T09:00",
-		"material_allocation_pending": "2026-10-17T09:00",
-		"material_allocated":          "2026-10-19T09:00",
-		"engineering_pending":         "2026-10-20T09:00",
-		"engineering_in_progress":     "2026-10-21T09:00",
-		"engineering_completed":       "2026-10-23T09:00",
-		"wip_bin_transfer":            "2026-10-24T09:00",
-		"saw_pending":                 "2026-10-25T09:00",
-		"saw_in_progress":             "2026-10-27T09:00",
-		"saw_completed":               "2026-10-28T09:00",
-		"edges_pending":               "2026-10-29T09:00",
-		"edges_in_progress":           "2026-10-30T09:00",
-		"edges_completed":             "2026-11-01T09:00",
-		"quality_control_pending":     "2026-11-02T09:00",
-		"quality_control_in_progress": "2026-11-03T09:00",
-		"quality_control_completed":   "2026-11-05T09:00",
-		"installation_ready":          "2026-11-06T09:00",
-		"installation_picked":         "2026-11-07T09:00",
-		"installation_in_progress":    "2026-11-10T09:00",
-		"installation_completed":      "2026-11-10T17:00",
+		"template":            "2026-10-15T09:00",
+		"material_allocation": "2026-10-18T09:00",
+		"engineering":         "2026-10-21T09:00",
+		"wip_bin_transfer":    "2026-10-24T09:00",
+		"saw":                 "2026-10-27T09:00",
+		"edges":               "2026-10-29T09:00",
+		"quality_control":     "2026-11-01T09:00",
+		"installation_ready":  "2026-11-04T09:00",
+		"installation_picked": "2026-11-07T09:00",
+		"installation":        "2026-11-10T09:00",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("planned %d activities, want %d", len(got), len(want))
@@ -132,11 +128,8 @@ func TestPlanSchedule_NeverGoesBackwardsAndEndsOnInstallDay(t *testing.T) {
 			}
 			got := formatPlan(plan)
 			inst := install.Format("2006-01-02")
-			if got[ActivityInstallationInProgress] != inst+"T09:00" {
-				t.Errorf("installation_in_progress = %s, want %sT09:00", got[ActivityInstallationInProgress], inst)
-			}
-			if got[ActivityInstallationCompleted] != inst+"T17:00" {
-				t.Errorf("installation_completed = %s, want %sT17:00", got[ActivityInstallationCompleted], inst)
+			if got[ActivityInstallation] != inst+"T09:00" {
+				t.Errorf("installation = %s, want %sT09:00", got[ActivityInstallation], inst)
 			}
 		})
 	}
@@ -145,15 +138,15 @@ func TestPlanSchedule_NeverGoesBackwardsAndEndsOnInstallDay(t *testing.T) {
 // A re-plan spreads only what is left, so the first remaining activity is not
 // stranded far from today because earlier ones were already done.
 func TestPlanSchedule_ReplanSpreadsOnlyTheRemainingActivities(t *testing.T) {
-	remaining := []string{"saw_pending", "saw_in_progress", "saw_completed", ActivityInstallationInProgress, ActivityInstallationCompleted}
+	remaining := []string{"saw", "edges", "quality_control", "installation_picked", ActivityInstallation}
 	got := formatPlan(planSchedule(remaining, day("2026-10-12"), day("2026-10-17")))
-	// 5 days over 5 activities: one per day, install-day rows pinned.
+	// 5 days over 5 activities: one per day, Installation pinned to the last.
 	want := map[string]string{
-		"saw_pending":                  "2026-10-13T09:00",
-		"saw_in_progress":              "2026-10-14T09:00",
-		"saw_completed":                "2026-10-15T09:00",
-		ActivityInstallationInProgress: "2026-10-17T09:00",
-		ActivityInstallationCompleted:  "2026-10-17T17:00",
+		"saw":                 "2026-10-13T09:00",
+		"edges":               "2026-10-14T09:00",
+		"quality_control":     "2026-10-15T09:00",
+		"installation_picked": "2026-10-16T09:00",
+		ActivityInstallation:  "2026-10-17T09:00",
 	}
 	for code, w := range want {
 		if got[code] != w {

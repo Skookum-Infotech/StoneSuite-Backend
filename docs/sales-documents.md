@@ -42,16 +42,18 @@ button. A sales order is also the starting point for a fabrication job — see
 
 Every sales order needs a Scheduled Installation Date (in Primary Information;
 today or later). Saving it plans the order's production schedule, which the
-Scheduling tab lists from Created through Installation Completed: Template,
-Material Allocation, Engineering, WIP Bin Transfer, Saw, Edges, Quality Control
-and Installation, each with a status, a scheduled date and time, a completed-on
-time and notes. The dates are spread evenly from the order date to the
-installation date, with Installation In Progress and Completed on the
-installation date itself. Anyone who can edit the order can mark an activity
-completed, move its date or time, and add notes. Changing the installation date
-re-plans every activity that is not completed yet. An order made before this
-field existed, or by converting a quote, has no schedule until a date is set on
-the order.
+Scheduling tab lists from Created through Installation: Template, Material
+Allocation, Engineering, WIP Bin Transfer, Saw, Edges, Quality Control,
+Installation Ready, Installation Picked and Installation. Each activity has a
+status (Pending, In Progress or Completed), a scheduled date and time, a
+completed-on time and notes. A Pending activity whose time has passed shows as
+Overdue. The dates are spread evenly from the order date to the installation
+date, with Installation on the installation date itself. Anyone who can edit the
+order can set an activity's status, move its date or time, and add notes.
+Changing the installation date re-plans every Pending activity; ones that are In
+Progress or Completed stay where they are. An order made before this field
+existed, or by converting a quote, has no schedule until a date is set on the
+order.
 
 Calendar → Activity Planner lays those schedules out across every order you can
 see, one activity at a time. Pick Template, Engineering, Bin Transfer, Saw,

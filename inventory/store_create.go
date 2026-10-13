@@ -45,15 +45,15 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 			inventory_item_tracking, inventory_item_material_id, inventory_item_color_id,
 			inventory_item_finish_id, inventory_item_thickness_mm, inventory_item_origin_country_id,
 			inventory_item_barcode, inventory_item_default_warehouse_id, inventory_item_track_stock,
-			inventory_item_created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			inventory_item_created_by, inventory_item_purchase_unit_price
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING inventory_item_uuid, inventory_item_id`,
-		in.SKU, in.Name, in.Description, in.UnitID, in.UnitPrice,
+		in.SKU, in.Name, in.Description, in.UnitID, *in.UnitPrice,
 		nullableIntPtr(in.CurrencyID), nullableIntPtr(in.TaxRateID), custom,
 		in.Tracking, nullableIntPtr(in.MaterialID), nullableIntPtr(in.ColorID),
 		nullableIntPtr(in.FinishID), in.ThicknessMM, nullableIntPtr(in.OriginCountryID),
 		in.Barcode, nullableIntPtr(in.DefaultWarehouseID), in.TrackStock == nil || *in.TrackStock,
-		nullableInt(actorEmployeeID),
+		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice,
 	).Scan(&newUUID, &newID)
 	if err != nil {
 		return nil, mapItemWriteErr(err, "insert")

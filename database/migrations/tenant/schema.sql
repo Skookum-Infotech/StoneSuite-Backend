@@ -9164,16 +9164,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_vbp_idempotency ON vendor_bill_payment(vend
 ALTER TABLE sales_order ADD COLUMN IF NOT EXISTS sales_order_scheduled_install_date DATE NULL;
 
 -- sales_order_schedule -- the auto-planned production schedule, one row per
--- activity (23 per order), generated when an order's installation date is first
--- set or changes. scheduled_at / completed_at are wall-clock times with no zone,
--- like every other TIMESTAMP here; the API returns them as plain "yyyy-mm-ddThh:mm:ss".
--- 'Overdue' is derived by the client (scheduled in the past and not completed).
+-- activity (11 per order: Created, Template, Material Allocation, Engineering,
+-- WIP Bin Transfer, Saw, Edges, Quality Control, Installation Ready, Installation
+-- Picked, Installation), generated when an order's installation date is first
+-- set or changes. An activity is a piece of work; where it stands is
+-- schedule_status (pending -> in_progress -> completed), never part of its code.
+-- scheduled_at / completed_at are wall-clock times with no zone, like every
+-- other TIMESTAMP here; the API returns them as plain "yyyy-mm-ddThh:mm:ss".
+-- 'Overdue' is derived by the client (pending, with its scheduled time past).
 CREATE TABLE IF NOT EXISTS sales_order_schedule (
     sales_order_schedule_id  SERIAL       PRIMARY KEY,
     sales_order_id           INTEGER      NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
     activity_code            VARCHAR(40)  NOT NULL,
     activity_sequence        SMALLINT     NOT NULL,
-    schedule_status          VARCHAR(12)  NOT NULL DEFAULT 'scheduled',
+    schedule_status          VARCHAR(12)  NOT NULL DEFAULT 'pending',
     scheduled_at             TIMESTAMP    NOT NULL,
     completed_at             TIMESTAMP        NULL,
     completed_by             INTEGER          NULL REFERENCES employee(employee_id),
@@ -9181,13 +9185,117 @@ CREATE TABLE IF NOT EXISTS sales_order_schedule (
     schedule_updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     schedule_updated_by      INTEGER          NULL REFERENCES employee(employee_id),
     CONSTRAINT uq_so_schedule_activity   UNIQUE (sales_order_id, activity_code),
-    CONSTRAINT chk_so_schedule_status    CHECK (schedule_status IN ('scheduled','completed')),
+    CONSTRAINT chk_so_schedule_status    CHECK (schedule_status IN ('pending','in_progress','completed')),
     CONSTRAINT chk_so_schedule_completed CHECK ((schedule_status = 'completed') = (completed_at IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_so_schedule_order ON sales_order_schedule (sales_order_id, activity_sequence);
 -- The Activity Planner reads one activity group across every order by date, so
 -- it looks rows up by activity first -- the per-order index above can't serve it.
 CREATE INDEX IF NOT EXISTS idx_so_schedule_activity_time ON sales_order_schedule (activity_code, scheduled_at);
+
+-- ---------------------------------------------------------------------------
+-- Schedules planned before activities and statuses were separated.
+--
+-- The first catalog had 23 activities whose names carried a status
+-- ("Template Scheduled" / "Template In Progress" / "Template Completed",
+-- "Saw Pending", ...), and the row status was only 'scheduled' | 'completed'.
+-- Both blocks below are no-ops on a database that never held that shape, and on
+-- every boot after the first.
+-- ---------------------------------------------------------------------------
+
+-- 1. Status vocabulary: scheduled -> pending, plus the new in_progress. The
+--    CHECK is dropped before the rewrite and re-added after it, which is the
+--    same widening idiom the other status constraints in this file use.
+DO $$
+BEGIN
+    ALTER TABLE sales_order_schedule DROP CONSTRAINT IF EXISTS chk_so_schedule_status;
+    ALTER TABLE sales_order_schedule ALTER COLUMN schedule_status SET DEFAULT 'pending';
+    UPDATE sales_order_schedule SET schedule_status = 'pending' WHERE schedule_status = 'scheduled';
+    ALTER TABLE sales_order_schedule ADD CONSTRAINT chk_so_schedule_status
+        CHECK (schedule_status IN ('pending','in_progress','completed'));
+END $$;
+
+-- 2. Activities: each retired stage row folds into the one activity it was a
+--    stage of, per order. The folded row keeps what a planner would otherwise
+--    have to re-enter:
+--      * status      -- completed when the closing stage was, else in_progress
+--                       when the middle stage was, else pending
+--      * scheduled   -- the earliest stage's slot (when the activity begins)
+--      * completed   -- the closing stage's completed_at / completed_by
+--      * notes       -- every stage's note, in plan order, newest-last
+--    Rows whose code survives (created, wip_bin_transfer, installation_ready,
+--    installation_picked) are only renumbered.
+DO $$
+BEGIN
+    UPDATE sales_order_schedule s
+       SET activity_sequence = v.seq
+      FROM (VALUES ('created', 1), ('wip_bin_transfer', 5),
+                   ('installation_ready', 9), ('installation_picked', 10)) AS v(code, seq)
+     WHERE s.activity_code = v.code AND s.activity_sequence <> v.seq;
+
+    IF EXISTS (
+        SELECT 1 FROM sales_order_schedule
+         WHERE activity_code IN (
+               'template_scheduled', 'template_in_progress', 'template_completed',
+               'material_allocation_pending', 'material_allocated',
+               'engineering_pending', 'engineering_in_progress', 'engineering_completed',
+               'saw_pending', 'saw_in_progress', 'saw_completed',
+               'edges_pending', 'edges_in_progress', 'edges_completed',
+               'quality_control_pending', 'quality_control_in_progress', 'quality_control_completed',
+               'installation_in_progress', 'installation_completed')
+    ) THEN
+        WITH remap(old_code, new_code, new_seq, stage) AS (
+            VALUES
+                ('template_scheduled',          'template',            2, 'first'),
+                ('template_in_progress',        'template',            2, 'middle'),
+                ('template_completed',          'template',            2, 'last'),
+                ('material_allocation_pending', 'material_allocation', 3, 'first'),
+                ('material_allocated',          'material_allocation', 3, 'last'),
+                ('engineering_pending',         'engineering',         4, 'first'),
+                ('engineering_in_progress',     'engineering',         4, 'middle'),
+                ('engineering_completed',       'engineering',         4, 'last'),
+                ('saw_pending',                 'saw',                 6, 'first'),
+                ('saw_in_progress',             'saw',                 6, 'middle'),
+                ('saw_completed',               'saw',                 6, 'last'),
+                ('edges_pending',               'edges',               7, 'first'),
+                ('edges_in_progress',           'edges',               7, 'middle'),
+                ('edges_completed',             'edges',               7, 'last'),
+                ('quality_control_pending',     'quality_control',     8, 'first'),
+                ('quality_control_in_progress', 'quality_control',     8, 'middle'),
+                ('quality_control_completed',   'quality_control',     8, 'last'),
+                ('installation_in_progress',    'installation',       11, 'middle'),
+                ('installation_completed',      'installation',       11, 'last')
+        ),
+        retired AS (
+            DELETE FROM sales_order_schedule s
+             USING remap m
+             WHERE s.activity_code = m.old_code
+            RETURNING s.sales_order_id, s.activity_sequence, s.schedule_status, s.scheduled_at,
+                      s.completed_at, s.completed_by, s.schedule_notes,
+                      s.schedule_updated_at, s.schedule_updated_by,
+                      m.new_code, m.new_seq, m.stage
+        )
+        INSERT INTO sales_order_schedule
+            (sales_order_id, activity_code, activity_sequence, schedule_status, scheduled_at,
+             completed_at, completed_by, schedule_notes, schedule_updated_at, schedule_updated_by)
+        SELECT r.sales_order_id, r.new_code, r.new_seq,
+               CASE
+                   WHEN bool_or(r.stage = 'last'   AND r.schedule_status = 'completed') THEN 'completed'
+                   WHEN bool_or(r.stage = 'middle' AND r.schedule_status = 'completed') THEN 'in_progress'
+                   ELSE 'pending'
+               END,
+               (array_agg(r.scheduled_at ORDER BY r.activity_sequence))[1],
+               (array_agg(r.completed_at ORDER BY r.activity_sequence DESC)
+                   FILTER (WHERE r.stage = 'last' AND r.schedule_status = 'completed'))[1],
+               (array_agg(r.completed_by ORDER BY r.activity_sequence DESC)
+                   FILTER (WHERE r.stage = 'last' AND r.schedule_status = 'completed'))[1],
+               COALESCE(LEFT(string_agg(NULLIF(r.schedule_notes, ''), E'\n' ORDER BY r.activity_sequence), 2000), ''),
+               max(r.schedule_updated_at),
+               (array_agg(r.schedule_updated_by ORDER BY r.schedule_updated_at DESC))[1]
+          FROM retired r
+         GROUP BY r.sales_order_id, r.new_code, r.new_seq;
+    END IF;
+END $$;
 
 -- inventory_kit -- a named group of catalogue items that are sold together
 -- ("Kitchen"). Picking a kit on a document line adds its member items as
@@ -9245,3 +9353,29 @@ ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
 ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
 ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
 ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+
+-- Purchasing unit price on an inventory item.
+--
+-- An item used to carry one price, inventory_item_unit_price, that sales and
+-- purchasing documents both defaulted a line from. It is now the SELLING price
+-- (sales documents, unchanged), and this column is what a purchase order, vendor
+-- bill or requisition line defaults to.
+--
+-- Added inside a column-existence guard rather than ADD COLUMN IF NOT EXISTS so
+-- the backfill runs exactly once: every item that exists today gets its current
+-- price as its purchasing price (a line on an open document must not suddenly
+-- default to 0.00), and a later boot must never overwrite a purchasing price
+-- someone has since set to something else.
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'inventory_item'::regclass
+          AND attname = 'inventory_item_purchase_unit_price'
+          AND NOT attisdropped
+    ) THEN
+        ALTER TABLE inventory_item
+            ADD COLUMN inventory_item_purchase_unit_price DECIMAL(15,2) NOT NULL DEFAULT 0
+            CONSTRAINT chk_inventory_item_purchase_unit_price CHECK (inventory_item_purchase_unit_price >= 0);
+        UPDATE inventory_item SET inventory_item_purchase_unit_price = inventory_item_unit_price;
+    END IF;
+END $$;

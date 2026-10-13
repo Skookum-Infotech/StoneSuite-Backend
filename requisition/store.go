@@ -188,11 +188,13 @@ type itemSnapshot struct {
 
 // resolveInventoryItem loads a catalog item's snapshot fields by its external
 // uuid. Returns ClientError when the uuid does not resolve to a live item.
+// unitPrice is the item's PURCHASING price (what a line defaults to), not its
+// selling price.
 func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) (*itemSnapshot, error) {
 	var s itemSnapshot
 	err := q.QueryRow(ctx, `
 		SELECT ii.inventory_item_id, ii.inventory_item_sku, ii.inventory_item_name, ii.inventory_item_description,
-		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price
+		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_purchase_unit_price
 		FROM inventory_item ii
 		LEFT JOIN lkp_unit u ON u.unit_id = ii.inventory_item_unit_id
 		WHERE ii.inventory_item_uuid = $1 AND ii.inventory_item_deleted_at IS NULL`, uuid).Scan(

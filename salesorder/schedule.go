@@ -17,7 +17,12 @@ import (
 // The auto-planned production schedule. Setting an order's scheduled
 // installation date generates one sales_order_schedule row per activity below,
 // spread evenly from the order date to the installation date; planners then
-// mark rows completed, nudge their dates, and add notes.
+// move rows through pending, in progress and completed, nudge their dates, and
+// add notes.
+//
+// An activity is a piece of work (Template, Saw, Edges ...), never a stage of
+// it: "pending", "in progress" and "completed" are the row's status, so they
+// are not repeated in activity names.
 
 // ErrActivityNotFound is returned when an order has no schedule row for the
 // requested activity code (an unknown code, or no installation date set yet).
@@ -25,24 +30,23 @@ var ErrActivityNotFound = errors.New("schedule activity not found")
 
 // Activity codes the planner treats specially.
 const (
-	ActivityCreated                = "created"
-	ActivityInstallationInProgress = "installation_in_progress"
-	ActivityInstallationCompleted  = "installation_completed"
+	ActivityCreated      = "created"
+	ActivityInstallation = "installation"
 )
 
 // Row statuses. "Overdue" is not stored: a client derives it from a scheduled
-// time in the past on a row that is still 'scheduled'.
+// time in the past on a row that is still 'pending' (a row someone has started
+// is not late, and a completed one is done).
 const (
-	ScheduleStatusScheduled = "scheduled"
-	ScheduleStatusCompleted = "completed"
+	ScheduleStatusPending    = "pending"
+	ScheduleStatusInProgress = "in_progress"
+	ScheduleStatusCompleted  = "completed"
 )
 
 const (
 	scheduleDateLayout = "2006-01-02"
-	// scheduleStartHour is the wall-clock hour every planned activity starts at;
-	// Installation Completed closes the day at scheduleCloseHour instead.
+	// scheduleStartHour is the wall-clock hour every planned activity starts at.
 	scheduleStartHour = 9
-	scheduleCloseHour = 17
 	// installDateGraceDays lets a caller whose local "today" is still yesterday
 	// in UTC (the Americas, in the evening) pick today without a false "past".
 	installDateGraceDays = 1
@@ -67,28 +71,16 @@ type scheduleActivityDef struct {
 // activity_sequence is its 1-based position here.
 var scheduleCatalog = []scheduleActivityDef{
 	{ActivityCreated, "Created", "Created"},
-	{"template_scheduled", "Template", "Template Scheduled"},
-	{"template_in_progress", "Template", "Template In Progress"},
-	{"template_completed", "Template", "Template Completed"},
-	{"material_allocation_pending", "Material Allocation", "Material Allocation Pending"},
-	{"material_allocated", "Material Allocation", "Material Allocated"},
-	{"engineering_pending", "Engineering", "Engineering Pending"},
-	{"engineering_in_progress", "Engineering", "Engineering In Progress"},
-	{"engineering_completed", "Engineering", "Engineering Completed"},
+	{"template", "Template", "Template"},
+	{"material_allocation", "Material Allocation", "Material Allocation"},
+	{"engineering", "Engineering", "Engineering"},
 	{"wip_bin_transfer", "WIP Bin Transfer", "WIP Bin Transfer"},
-	{"saw_pending", "Saw", "Saw Pending"},
-	{"saw_in_progress", "Saw", "Saw In Progress"},
-	{"saw_completed", "Saw", "Saw Completed"},
-	{"edges_pending", "Edges", "Edges Pending"},
-	{"edges_in_progress", "Edges", "Edges In Progress"},
-	{"edges_completed", "Edges", "Edges Completed"},
-	{"quality_control_pending", "Quality Control", "Quality Control Pending"},
-	{"quality_control_in_progress", "Quality Control", "Quality Control In Progress"},
-	{"quality_control_completed", "Quality Control", "Quality Control Completed"},
+	{"saw", "Saw", "Saw"},
+	{"edges", "Edges", "Edges"},
+	{"quality_control", "Quality Control", "Quality Control"},
 	{"installation_ready", "Installation", "Installation Ready"},
 	{"installation_picked", "Installation", "Installation Picked"},
-	{ActivityInstallationInProgress, "Installation", "Installation In Progress"},
-	{ActivityInstallationCompleted, "Installation", "Installation Completed"},
+	{ActivityInstallation, "Installation", "Installation"},
 }
 
 // scheduleActivityByCode indexes scheduleCatalog by code.
@@ -118,10 +110,9 @@ type plannedActivity struct {
 // evenly across the whole days from start up to installDate: with m codes, the
 // j-th (1-based) lands round(j × span / m) days after start, so the last lands
 // on the installation date and a window shorter than m days simply shares days.
-// Installation In Progress and Installation Completed are always pinned to the
-// installation date itself (the rows before them still spread, so Ready and
-// Picked sit just ahead of it). Every activity starts at 09:00 except
-// Installation Completed, which closes the day at 17:00.
+// Installation is always pinned to the installation date itself (the rows
+// before it still spread, so Ready and Picked sit just ahead of it). Every
+// activity starts at 09:00.
 //
 // A start after installDate is capped to it, so nothing is ever planned past
 // the installation date.
@@ -137,15 +128,10 @@ func planSchedule(codes []string, start, installDate time.Time) []plannedActivit
 		// Round-half-up of (j+1)×span/m using integers only.
 		day := (2*(j+1)*span + m) / (2 * m)
 		d := start.AddDate(0, 0, day)
-		hour := scheduleStartHour
-		switch code {
-		case ActivityInstallationInProgress:
+		if code == ActivityInstallation {
 			d = install
-		case ActivityInstallationCompleted:
-			d = install
-			hour = scheduleCloseHour
 		}
-		out = append(out, plannedActivity{code: code, at: d.Add(time.Duration(hour) * time.Hour)})
+		out = append(out, plannedActivity{code: code, at: d.Add(scheduleStartHour * time.Hour)})
 	}
 	return out
 }
@@ -231,21 +217,22 @@ const upsertActivitySQL = `
 	    activity_sequence = EXCLUDED.activity_sequence,
 	    schedule_updated_at = CURRENT_TIMESTAMP,
 	    schedule_updated_by = EXCLUDED.schedule_updated_by
-	WHERE sales_order_schedule.schedule_status <> 'completed'`
+	WHERE sales_order_schedule.schedule_status = 'pending'`
 
 // syncSchedule brings an order's schedule in line with its installation date,
 // inside the caller's transaction. It plans when replan is set (the date was
 // just entered or changed) or the order has no schedule yet; otherwise it
 // leaves the rows alone, so a planner's edits survive an unrelated order save.
-// Completed activities are never moved, and the remaining ones are spread
-// from the later of the order date and today up to the installation date.
+// Activities that are in progress or completed are never moved -- the work
+// already began at its slot -- and the pending ones are spread from the later
+// of the order date and today up to the installation date.
 func syncSchedule(ctx context.Context, tx pgx.Tx, orderID int, orderDate, installDate, today time.Time, replan bool, actorEmployeeID int) error {
 	rows, err := tx.Query(ctx,
 		`SELECT activity_code, schedule_status FROM sales_order_schedule WHERE sales_order_id = $1`, orderID)
 	if err != nil {
 		return fmt.Errorf("load sales order schedule: %w", err)
 	}
-	completed := map[string]bool{}
+	started := map[string]bool{}
 	existing := 0
 	for rows.Next() {
 		var code, status string
@@ -254,8 +241,8 @@ func syncSchedule(ctx context.Context, tx pgx.Tx, orderID int, orderDate, instal
 			return fmt.Errorf("scan sales order schedule: %w", err)
 		}
 		existing++
-		if status == ScheduleStatusCompleted {
-			completed[code] = true
+		if status != ScheduleStatusPending {
+			started[code] = true
 		}
 	}
 	rows.Close()
@@ -274,7 +261,7 @@ func syncSchedule(ctx context.Context, tx pgx.Tx, orderID int, orderDate, instal
 
 	var codes []string
 	for _, def := range scheduleCatalog {
-		if def.Code == ActivityCreated || completed[def.Code] {
+		if def.Code == ActivityCreated || started[def.Code] {
 			continue
 		}
 		codes = append(codes, def.Code)
@@ -313,7 +300,7 @@ type ScheduleActivity struct {
 	Sequence    int    `json:"sequence"`
 	Group       string `json:"group"`
 	Name        string `json:"name"`
-	Status      string `json:"status"` // scheduled | completed
+	Status      string `json:"status"` // pending | in_progress | completed
 	ScheduledAt string `json:"scheduledAt"`
 	CompletedAt string `json:"completedAt,omitempty"`
 	Notes       string `json:"notes"`
@@ -374,7 +361,7 @@ func Schedule(ctx context.Context, q workflow.Querier, orderUUID string) ([]Sche
 // ActivityPatch is a partial update to one schedule row; nil fields are left
 // as they are.
 type ActivityPatch struct {
-	Status      *string `json:"status"`      // scheduled | completed
+	Status      *string `json:"status"`      // pending | in_progress | completed
 	ScheduledAt *string `json:"scheduledAt"` // "yyyy-mm-ddThh:mm"
 	CompletedAt *string `json:"completedAt"` // only with status completed; defaults to now
 	Notes       *string `json:"notes"`
@@ -383,8 +370,9 @@ type ActivityPatch struct {
 // UpdateActivity applies a planner's edit to one row of an order's schedule and
 // returns the row as stored. Marking a row completed stamps who and when
 // (completedAt defaults to now and may be backdated, never future-dated);
-// returning it to scheduled clears both. The Created row is recorded by the
-// system, so its status is fixed — its date and notes can still be edited.
+// moving it back to pending or in progress clears both. The Created row is
+// recorded by the system, so its status is fixed — its date and notes can still
+// be edited.
 //
 // Unlike Update, this is allowed on a filled or cancelled order: finishing the
 // schedule bookkeeping should not be blocked by the order having closed.
@@ -433,8 +421,10 @@ func UpdateActivity(ctx context.Context, pool *pgxpool.Pool, orderUUID, code str
 	newStatus := status
 	if p.Status != nil {
 		newStatus = strings.TrimSpace(*p.Status)
-		if newStatus != ScheduleStatusScheduled && newStatus != ScheduleStatusCompleted {
-			return nil, ClientError{Msg: "Status must be scheduled or completed."}
+		switch newStatus {
+		case ScheduleStatusPending, ScheduleStatusInProgress, ScheduleStatusCompleted:
+		default:
+			return nil, ClientError{Msg: "Status must be pending, in progress or completed."}
 		}
 		if code == ActivityCreated && newStatus != status {
 			return nil, ClientError{Msg: "The Created activity is recorded automatically and cannot be changed."}

@@ -39,6 +39,12 @@ type Item struct {
 	Barcode            string  `json:"barcode"`
 	DefaultWarehouseID *int    `json:"defaultWarehouseId,omitempty"`
 
+	// UnitPrice above is the SELLING price: what a sales document line defaults
+	// to. The JSON name is kept so every sales-side reader is untouched.
+	// PurchaseUnitPrice is what a purchase order, vendor bill or requisition line
+	// defaults to.
+	PurchaseUnitPrice float64 `json:"purchaseUnitPrice"`
+
 	// TrackStock says whether a sales order line for this item is checked against
 	// stock and reserves it. False for an item with no stock to run out of (a
 	// service, delivery or labour charge). Always true for a slab-tracked item.
@@ -64,10 +70,15 @@ type CreateItemInput struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
 	UnitID       int            `json:"unitId"`
-	UnitPrice    float64        `json:"unitPrice"`
 	CurrencyID   *int           `json:"currencyId,omitempty"`
 	TaxRateID    *int           `json:"taxRateId,omitempty"`
 	CustomFields map[string]any `json:"customFields"`
+
+	// UnitPrice (selling) and PurchaseUnitPrice are both required. They are
+	// pointers because a plain float64 cannot tell an omitted field from an
+	// explicit 0, and 0 is a legitimate price for a service or labour item.
+	UnitPrice         *float64 `json:"unitPrice"`
+	PurchaseUnitPrice *float64 `json:"purchaseUnitPrice"`
 
 	Tracking           string  `json:"tracking"`
 	MaterialID         *int    `json:"materialId,omitempty"`

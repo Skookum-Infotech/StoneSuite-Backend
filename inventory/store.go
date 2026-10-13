@@ -30,8 +30,20 @@ func validateItemInput(in *CreateItemInput) error {
 	if in.UnitID <= 0 {
 		return ClientError{Msg: "A unit of measure is required."}
 	}
-	if in.UnitPrice < 0 {
-		return ClientError{Msg: "Unit price cannot be negative."}
+	// Both prices are required. They are pointers so an omitted field is told
+	// apart from an explicit 0, which is a legitimate price for a service or
+	// labour item.
+	if in.UnitPrice == nil {
+		return ClientError{Msg: "Selling unit price is required."}
+	}
+	if *in.UnitPrice < 0 {
+		return ClientError{Msg: "Selling unit price cannot be negative."}
+	}
+	if in.PurchaseUnitPrice == nil {
+		return ClientError{Msg: "Purchasing unit price is required."}
+	}
+	if *in.PurchaseUnitPrice < 0 {
+		return ClientError{Msg: "Purchasing unit price cannot be negative."}
 	}
 	if in.ThicknessMM < 0 {
 		return ClientError{Msg: "Thickness cannot be negative."}

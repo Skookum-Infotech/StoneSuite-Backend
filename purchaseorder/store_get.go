@@ -38,12 +38,15 @@ const poSelect = `
 	       po.purchase_order_subtotal, po.purchase_order_discount_total, po.purchase_order_tax_total,
 	       po.purchase_order_shipping_charge, po.purchase_order_adjustment, po.purchase_order_grand_total,
 	       po.purchase_order_created_at, po.purchase_order_updated_at,
-	       po.purchase_order_status, po.purchase_order_vendor_id
+	       po.purchase_order_status, po.purchase_order_vendor_id,
+	       COALESCE(cu.id::text,'')
 	FROM purchase_order po
 	JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 	JOIN vendor v ON v.vendor_id = po.purchase_order_vendor_id
 	LEFT JOIN employee oe ON oe.employee_id = po.purchase_order_owner_id
-	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
+	LEFT JOIN users ou ON ou.id = oe.employee_user_id
+	LEFT JOIN employee ce ON ce.employee_id = po.purchase_order_created_by
+	LEFT JOIN users cu ON cu.id = ce.employee_user_id`
 
 // poMeta carries the internal numeric ids a purchase order row has but the API
 // response deliberately does not expose. Search needs them to mint a keyset
@@ -75,7 +78,7 @@ func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, poMeta, error) {
 		&p.Subtotal, &p.DiscountTotal, &p.TaxTotal,
 		&p.ShippingCharge, &p.Adjustment, &p.GrandTotal,
 		&p.CreatedAt, &p.UpdatedAt,
-		&meta.statusID, &meta.vendorID,
+		&meta.statusID, &meta.vendorID, &p.CreatedByUserID,
 	); err != nil {
 		return nil, poMeta{}, err
 	}

@@ -31,10 +31,15 @@ func vbSnapshot(b *vendorbill.VendorBill) map[string]any {
 // auditVB records a Vendor Bill mutation in the unified audit_logs table.
 // Best-effort: failures are logged, never returned, mirroring auditPO.
 func auditVB(r *http.Request, pool *pgxpool.Pool, identityID, action, recordID string, oldBill, newBill *vendorbill.VendorBill) {
+	auditVBMeta(r, pool, identityID, action, recordID, oldBill, newBill, nil)
+}
+
+// auditVBMeta is auditVB with extra audit metadata (e.g. a duplicate override).
+func auditVBMeta(r *http.Request, pool *pgxpool.Pool, identityID, action, recordID string, oldBill, newBill *vendorbill.VendorBill, extraMeta map[string]any) {
 	ctx := r.Context()
 	actorUserID, _ := workflow.UserIDByIdentity(ctx, pool, identityID)
 	if err := workflow.LogAuditFull(ctx, pool, actorUserID, action, "vendor_bill", recordID, "vendor_bill",
-		vbSnapshot(oldBill), vbSnapshot(newBill), nil,
+		vbSnapshot(oldBill), vbSnapshot(newBill), extraMeta,
 		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
 		log.Printf("vendorbill: audit %s %s: %v", action, recordID, err)
 	}

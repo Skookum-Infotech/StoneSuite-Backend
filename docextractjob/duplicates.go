@@ -31,14 +31,20 @@ type Checker struct{ db workflow.Querier }
 // NewChecker builds a Checker over a tenant pool or transaction.
 func NewChecker(db workflow.Querier) *Checker { return &Checker{db: db} }
 
-// DuplicateInput is what the sales-order checks need from the extraction.
+// DuplicateInput is what the duplicate checks need from the extraction. An
+// empty DocType means a sales order.
 type DuplicateInput struct {
-	CustomerUUID string // resolved customer; "" skips the customer-scoped checks
-	PONumber     string
-	TotalCents   int64
-	HasTotal     bool
-	Revision     *docextract.Revision
-	QuoteRef     string
+	DocType       docextract.DocType
+	CustomerUUID  string // resolved customer; "" skips the customer-scoped checks
+	VendorUUID    string // resolved vendor (purchase order / vendor bill); "" skips the vendor-scoped checks
+	InvoiceNumber string // vendor bill: the vendor's own invoice number
+	// PONumber is the customer PO on a sales order and the document's own
+	// reference number on a purchase order.
+	PONumber   string
+	TotalCents int64
+	HasTotal   bool
+	Revision   *docextract.Revision
+	QuoteRef   string
 }
 
 // soCandidate is one sales order considered for a duplicate / revision match.
@@ -52,6 +58,12 @@ type soCandidate struct {
 // quote/estimate reference findings. It does not include same-file hits (see
 // Store.DuplicateBySHA).
 func (c *Checker) Check(ctx context.Context, in DuplicateInput) ([]Duplicate, error) {
+	switch in.DocType {
+	case docextract.DocTypeVendorBill:
+		return c.vendorBillFindings(ctx, in)
+	case docextract.DocTypePurchaseOrder:
+		return c.purchaseOrderFindings(ctx, in)
+	}
 	var out []Duplicate
 	so, err := c.salesOrderFindings(ctx, in)
 	if err != nil {
@@ -166,10 +178,12 @@ func (c *Checker) loadSalesOrders(ctx context.Context, customerUUID string, refN
 // Generic duplicate reasons, used when the caller cannot read the matched
 // record: they say a match exists without naming its number or status.
 const (
-	genericReasonSamePO    = "Possible duplicate of an existing sales order (same PO number)"
-	genericReasonRevision  = "This looks like a revision of an existing sales order"
-	genericReasonReference = "References an existing quote or estimate"
-	genericReasonDefault   = "Possible duplicate of an existing record"
+	genericReasonSamePO     = "Possible duplicate of an existing sales order (same PO number)"
+	genericReasonRevision   = "This looks like a revision of an existing sales order"
+	genericReasonReference  = "References an existing quote or estimate"
+	genericReasonInvoice    = "Possible duplicate of an existing vendor bill (same vendor invoice number)"
+	genericReasonReference2 = "Possible duplicate of an existing purchase order (same reference number)"
+	genericReasonDefault    = "Possible duplicate of an existing record"
 )
 
 // GenericReason returns a reason for kind that names no record, for callers
@@ -182,6 +196,10 @@ func GenericReason(kind string) string {
 		return genericReasonRevision
 	case DupQuoteRef, DupEstimateRef:
 		return genericReasonReference
+	case DupSameInvoice:
+		return genericReasonInvoice
+	case DupSameReference:
+		return genericReasonReference2
 	case DupSameFile:
 		return reasonSameFile
 	default:

@@ -1,0 +1,48 @@
+{
+  "header": {
+    "currency": "USD",
+    "due_date": "2026-07-17",
+    "invoice_date": "2026-06-02",
+    "invoice_number": "SB-770215",
+    "payment_terms": "Net 45",
+    "po_number": "EP-5602",
+    "shipping": "204.00",
+    "subtotal": "4800.50",
+    "total": "5004.50",
+    "vendor_name": "Stonebridge Imports Inc"
+  },
+  "lines": [
+    {
+      "sku": "SL-101",
+      "description": "Quartzite slab Taj Mahal",
+      "qty": "2",
+      "uom": "EA",
+      "unit_price": "1450.00",
+      "amount": "2900.00"
+    },
+    {
+      "sku": "SL-102",
+      "description": "Quartzite slab Fantasy Brown",
+      "qty": "1",
+      "uom": "EA",
+      "unit_price": "1380.0000",
+      "amount": "1380.00"
+    },
+    {
+      "sku": "SK-7",
+      "description": "Undermount sink bowl",
+      "qty": "3",
+      "uom": "EA",
+      "unit_price": "129.5000",
+      "amount": "388.50"
+    },
+    {
+      "sku": "AD-5",
+      "description": "Epoxy adhesive kit",
+      "qty": "6",
+      "uom": "EA",
+      "unit_price": "22.00",
+      "amount": "132.00"
+    }
+  ]
+}

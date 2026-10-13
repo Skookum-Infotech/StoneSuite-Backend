@@ -82,6 +82,46 @@ Paid, or Void — the same progression an Invoice you send to your own
 customers follows, just on the vendor side. Vendor Payments and Vendor
 Credits are applied against a bill to move it toward Paid.
 
+## Create a purchase order or vendor bill from a document
+
+When your workspace has it turned on, Purchases → Purchase Orders and
+Purchases → Vendor Bills each have an Upload button. Pick a PDF or Word file
+(up to 10 MB and 20 pages), or drag it onto the page. StoneSuite reads the
+document, matches the vendor and items to your records, and opens the new
+form already filled in. Nothing is saved until you review it and press Save.
+You need permission to create that kind of document, and the button is greyed
+out when AI features are off for your workspace. Scanned images and
+password-protected files can't be read; enter those manually.
+
+On a purchase order you can upload a vendor's quote or proforma, a purchase
+order from another system, or a builder's fillable countertop order form. The
+document's own number is kept as the reference number. A builder's order form
+has no prices, so set the price on each line, and pick the vendor yourself.
+The builder is added to the notes, not used as the vendor.
+
+On a vendor bill, upload the vendor's invoice. The vendor, invoice number,
+invoice date, terms and lines come from the document. If the bill shows no due
+date but its terms are Net 30 (or another Net term), the due date is worked out
+from the invoice date and marked Needs review.
+
+- The vendor is suggested from the document. Always check the suggestion; when
+  you correct it, StoneSuite remembers it for the next document from that vendor.
+- If the bill mentions one of your purchase order numbers, StoneSuite links the
+  bill to that order when it belongs to the same vendor and has received items
+  that haven't been billed yet. Your bill's lines and prices still come from the
+  vendor's invoice, and each line you link is billed against the matching
+  received item. If you can't view that purchase order, or it can't be linked,
+  you'll see a short reason instead and the bill is created without the link.
+- If a bill with the same vendor and invoice number already exists, you'll see
+  a duplicate warning and the bill is not saved. Choose Create anyway only when
+  you are sure it is a different bill. The same check applies to bills entered
+  by hand.
+- On a purchase order, a warning appears when another order from that vendor
+  has the same reference number; you can still save.
+
+Documents waiting for review appear under Pending documents on the list for
+24 hours.
+
 ## Vendor Payments
 
 A Vendor Payment records money you've paid to a vendor, created from

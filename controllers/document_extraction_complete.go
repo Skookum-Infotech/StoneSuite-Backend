@@ -1,7 +1,9 @@
 package controllers
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -9,13 +11,18 @@ import (
 
 	"stonesuite-backend/docextract"
 	"stonesuite-backend/docextractjob"
+	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/salesorder"
+	"stonesuite-backend/vendorbill"
 	"stonesuite-backend/workflow"
 )
 
 // docExtractUUIDRe matches a canonical UUID; a client-supplied record id is
 // checked with it so a malformed one is a 404, never a database cast error.
 var docExtractUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// errDocRecordNotFound reports that the record claimed at /complete does not exist.
+var errDocRecordNotFound = errors.New("record not found")
 
 type docExtractCompleteRequest struct {
 	RecordUUID string                    `json:"recordUuid"`
@@ -65,21 +72,55 @@ func (h *DocExtractOps) Complete(w http.ResponseWriter, r *http.Request) {
 	if err := docextractjob.RecordCompletion(r.Context(), c.pool, ex.ID, c.identityID, req.RecordUUID, req.Saved); err != nil {
 		slog.ErrorContext(r.Context(), "doc extract: record completion", "extractionId", ex.ID, "error", err)
 	}
-	h.auditCreatedFromDocument(r, c, ex, req.RecordUUID)
+	h.audit(r, c, ex, req.RecordUUID)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
-// callerCreatedRecord verifies the claimed record is a live sales order of the
-// extraction's doc type that the caller created (an order has no created-by on
-// its API shape; its owner defaults to the creator, so the owner is the caller's user). Any failure
-// is a 404, logged as doc_extract_idor when the record exists but isn't theirs.
-func (h *DocExtractOps) callerCreatedRecord(w http.ResponseWriter, r *http.Request, c *docExtractCaller, ex *docextractjob.Extraction, recordUUID string) bool {
-	if docextract.DocType(ex.DocType) != docextract.DocTypeSalesOrder {
-		fail(w, http.StatusNotFound, "Record not found.")
-		return false
+// loadRecordOwner returns the owning and the creating users.id of the live
+// record of docType with the given uuid (creator is empty when unknown); a
+// missing record is errDocRecordNotFound.
+func loadRecordOwner(ctx context.Context, c *docExtractCaller, docType docextract.DocType, uuid string) (owner, creator string, err error) {
+	switch docType {
+	case docextract.DocTypeSalesOrder:
+		o, err := salesorder.Get(ctx, c.pool, uuid)
+		if errors.Is(err, salesorder.ErrNotFound) {
+			return "", "", errDocRecordNotFound
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("load sales order: %w", err)
+		}
+		return o.OwnerUserID, o.CreatedByUserID, nil
+	case docextract.DocTypePurchaseOrder:
+		o, err := purchaseorder.Get(ctx, c.pool, uuid)
+		if errors.Is(err, purchaseorder.ErrNotFound) {
+			return "", "", errDocRecordNotFound
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("load purchase order: %w", err)
+		}
+		return o.OwnerUserID, o.CreatedByUserID, nil
+	case docextract.DocTypeVendorBill:
+		o, err := vendorbill.Get(ctx, c.pool, uuid)
+		if errors.Is(err, vendorbill.ErrNotFound) {
+			return "", "", errDocRecordNotFound
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("load vendor bill: %w", err)
+		}
+		return o.OwnerUserID, o.CreatedByUserID, nil
+	default:
+		return "", "", errDocRecordNotFound
 	}
-	order, err := salesorder.Get(r.Context(), c.pool, recordUUID)
-	if errors.Is(err, salesorder.ErrNotFound) {
+}
+
+// callerCreatedRecord verifies the claimed record is a live record of the
+// extraction's doc type that the caller created (the record counts as
+// theirs when they created it or own it, since the owner can be reassigned on
+// create). Any failure is a 404, logged as doc_extract_idor
+// when the record exists but isn't theirs.
+func (h *DocExtractOps) callerCreatedRecord(w http.ResponseWriter, r *http.Request, c *docExtractCaller, ex *docextractjob.Extraction, recordUUID string) bool {
+	owner, creator, err := h.recordOwner(r.Context(), c, docextract.DocType(ex.DocType), recordUUID)
+	if errors.Is(err, errDocRecordNotFound) {
 		fail(w, http.StatusNotFound, "Record not found.")
 		return false
 	}
@@ -88,8 +129,8 @@ func (h *DocExtractOps) callerCreatedRecord(w http.ResponseWriter, r *http.Reque
 		fail(w, http.StatusInternalServerError, "Failed to complete document extraction.")
 		return false
 	}
-	callerUserID, uerr := workflow.UserIDByIdentity(r.Context(), c.pool, c.identityID)
-	mine := uerr == nil && callerUserID != "" && order.OwnerUserID == callerUserID
+	callerUserID, uerr := h.callerUserID(r.Context(), c)
+	mine := uerr == nil && callerUserID != "" && (creator == callerUserID || owner == callerUserID)
 	if !mine {
 		logSecurityEvent(r, eventDocExtractIDOR, "identity", c.identityID, "extraction", ex.ID, "record", recordUUID)
 		fail(w, http.StatusNotFound, "Record not found.")
@@ -98,11 +139,12 @@ func (h *DocExtractOps) callerCreatedRecord(w http.ResponseWriter, r *http.Reque
 	return true
 }
 
-// auditCreatedFromDocument writes the creation provenance on the sales order's
+// auditCreatedFromDocument writes the creation provenance on the created record's
 // own audit trail. Best-effort: a failure is logged, never returned.
 func (h *DocExtractOps) auditCreatedFromDocument(r *http.Request, c *docExtractCaller, ex *docextractjob.Extraction, recordUUID string) {
 	ctx := r.Context()
-	actorUserID, _ := workflow.UserIDByIdentity(ctx, c.pool, c.identityID)
+	actorUserID, _ := h.callerUserID(ctx, c)
+	entity := ex.DocType
 	extra := map[string]any{
 		"extraction_id": ex.ID,
 		"file_name":     ex.FileName,
@@ -110,7 +152,7 @@ func (h *DocExtractOps) auditCreatedFromDocument(r *http.Request, c *docExtractC
 		"method":        ex.Method,
 		"model":         ex.Model,
 	}
-	if err := workflow.LogAuditFull(ctx, c.pool, actorUserID, auditActionCreatedFromDocument, "sales_order", recordUUID, "sales_order",
+	if err := workflow.LogAuditFull(ctx, c.pool, actorUserID, auditActionCreatedFromDocument, entity, recordUUID, entity,
 		nil, nil, extra, clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
 		slog.WarnContext(ctx, "doc extract: audit created_from_document", "extractionId", ex.ID, "error", err)
 	}

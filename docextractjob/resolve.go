@@ -104,9 +104,43 @@ type TermsMatch struct {
 	Code string `json:"code"`
 }
 
-// Resolution is everything resolved server-side for one extraction.
+// PartyMatch is a resolved customer or vendor; the shapes are identical.
+type PartyMatch = CustomerMatch
+
+// LinkedPOLine is one line of the purchase order a vendor bill references,
+// for tying the bill's lines to it (purchaseOrderItemId on save).
+type LinkedPOLine struct {
+	ID                string `json:"id"` // purchase_order_item uuid
+	LineNumber        int    `json:"lineNumber"`
+	InventoryItemUUID string `json:"inventoryItemUuid,omitempty"`
+	Description       string `json:"description"`
+	QtyMilli          int64  `json:"qtyMilli"`
+	// BillableQtyMilli is received and not yet billed: what a bill may still
+	// claim against this line without over-billing.
+	BillableQtyMilli int64 `json:"billableQtyMilli"`
+	UnitPriceCents   int64 `json:"unitPriceCents"`
+}
+
+// LinkedPO is the purchase order a vendor bill's PO reference resolved to.
+// Billable is false when the order has received nothing (or everything
+// received is already billed): the bill may still reference it, but its
+// lines cannot link. Reason explains a refused link for the review screen.
+type LinkedPO struct {
+	UUID     string         `json:"uuid,omitempty"`
+	Number   string         `json:"number,omitempty"`
+	Status   string         `json:"status,omitempty"`
+	Billable bool           `json:"billable"`
+	Reason   string         `json:"reason,omitempty"`
+	Lines    []LinkedPOLine `json:"lines"`
+}
+
+// Resolution is everything resolved server-side for one extraction. A sales
+// order resolves Customer; a purchase order or vendor bill resolves Vendor
+// (and a bill its LinkedPO). The party not used by the doc type is zero.
 type Resolution struct {
 	Customer     CustomerMatch `json:"customer"`
+	Vendor       PartyMatch    `json:"vendor"`
+	LinkedPO     *LinkedPO     `json:"linkedPurchaseOrder,omitempty"`
 	PaymentTerms *TermsMatch   `json:"paymentTerms,omitempty"`
 	Lines        []LineMatch   `json:"lines"`
 }
@@ -132,9 +166,21 @@ type ResultDoc struct {
 	Duplicates []Duplicate       `json:"duplicates"`
 }
 
-// Resolve resolves the customer, payment terms and line items of res. The
-// customer and each line item are looked up in batched queries (one per kind).
+// Resolve resolves the party, payment terms and line items of res. A sales
+// order resolves its customer; a purchase order or vendor bill resolves its
+// vendor (and a bill the purchase order it references). Each lookup kind is
+// batched into one query.
 func (r *Resolver) Resolve(ctx context.Context, res docextract.Result) (Resolution, error) {
+	switch res.DocType {
+	case docextract.DocTypePurchaseOrder, docextract.DocTypeVendorBill:
+		return r.resolveVendorDoc(ctx, res)
+	default:
+		return r.resolveSalesOrder(ctx, res)
+	}
+}
+
+// resolveSalesOrder resolves a sales order's customer, terms and items.
+func (r *Resolver) resolveSalesOrder(ctx context.Context, res docextract.Result) (Resolution, error) {
 	cust, err := r.ResolveCustomer(ctx, res.Header.CustomerName.Value)
 	if err != nil {
 		return Resolution{}, fmt.Errorf("resolve customer: %w", err)
@@ -145,6 +191,29 @@ func (r *Resolver) Resolve(ctx context.Context, res docextract.Result) (Resoluti
 	}
 	if out.Lines, err = r.ResolveItems(ctx, cust.UUID, res.Lines); err != nil {
 		return Resolution{}, fmt.Errorf("resolve items: %w", err)
+	}
+	return out, nil
+}
+
+// resolveVendorDoc resolves a purchase order or vendor bill: the vendor, the
+// payment terms, the lines (item aliases are keyed by the vendor uuid) and, for
+// a bill, the purchase order its PO reference points at.
+func (r *Resolver) resolveVendorDoc(ctx context.Context, res docextract.Result) (Resolution, error) {
+	vendor, err := r.ResolveVendor(ctx, res.Header.VendorName.Value)
+	if err != nil {
+		return Resolution{}, fmt.Errorf("resolve vendor: %w", err)
+	}
+	out := Resolution{Vendor: vendor}
+	if out.PaymentTerms, err = r.ResolvePaymentTerms(ctx, res.Header.PaymentTerms.Value); err != nil {
+		return Resolution{}, fmt.Errorf("resolve payment terms: %w", err)
+	}
+	if out.Lines, err = r.ResolveItems(ctx, vendor.UUID, res.Lines); err != nil {
+		return Resolution{}, fmt.Errorf("resolve items: %w", err)
+	}
+	if res.DocType == docextract.DocTypeVendorBill {
+		if out.LinkedPO, err = r.ResolveLinkedPO(ctx, vendor.UUID, res.Header.PONumber.Value); err != nil {
+			return Resolution{}, fmt.Errorf("resolve linked purchase order: %w", err)
+		}
 	}
 	return out, nil
 }

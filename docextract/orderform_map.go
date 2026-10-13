@@ -36,6 +36,14 @@ var builderSuffixes = []string{"homebuilders", "builders", "homes", "constructio
 
 // applyOrderForm fills res from a parsed order form.
 func applyOrderForm(res *Result, f orderForm, own []string) {
+	applyOrderFormAs(res, f, own, false)
+}
+
+// applyOrderFormAs fills res from a parsed order form. With vendorSide set
+// (a purchase order) the builder is our customer, not the party to order
+// from: nothing names a customer or a vendor, and the builder's name and
+// email stay in Notes for the buyer to read.
+func applyOrderFormAs(res *Result, f orderForm, own []string, vendorSide bool) {
 	h := &res.Header
 	// No amounts on a form, so nothing to convert: the single-entity default.
 	h.Currency = Field{Value: currencyUSD, Source: SourceDefault, Confidence: ConfHigh}
@@ -54,7 +62,7 @@ func applyOrderForm(res *Result, f orderForm, own []string) {
 		}
 		h.ShipTo = ofField(ship, "Install Address "+addr.Text, addr, ConfHigh)
 	}
-	if email, ok := f.Header[ofEmail]; ok {
+	if email, ok := f.Header[ofEmail]; ok && !vendorSide {
 		if name := customerFromEmail(email.Text); name != "" && !isOwnCompany(name, own) {
 			// Inferred from a domain, never printed: always for review.
 			h.CustomerName = ofField(name, "Email "+email.Text, email, ConfCheck)

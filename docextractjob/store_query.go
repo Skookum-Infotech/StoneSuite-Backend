@@ -12,13 +12,19 @@ import (
 
 // Duplicate kinds reported by the duplicate and reference checks.
 const (
-	DupSameFile     = "same_file"
-	DupSamePO       = "same_po"
-	DupRevision     = "revision"
-	DupQuoteRef     = "quote_reference"
-	DupEstimateRef  = "estimate_reference"
-	reasonSameFile  = "This file was already uploaded"
-	maxDupLookupRow = 5
+	DupSameFile    = "same_file"
+	DupSamePO      = "same_po"
+	DupRevision    = "revision"
+	DupQuoteRef    = "quote_reference"
+	DupEstimateRef = "estimate_reference"
+	// DupSameInvoice: a live vendor bill from the same vendor with the same
+	// (normalized) vendor invoice number. Blocking, like DupSamePO.
+	DupSameInvoice = "same_invoice"
+	// DupSameReference: a live purchase order to the same vendor with the same
+	// (normalized) reference number. A warning only.
+	DupSameReference = "same_reference"
+	reasonSameFile   = "This file was already uploaded"
+	maxDupLookupRow  = 5
 )
 
 // CountCreatedToday counts extractions created since 00:00 UTC today in this

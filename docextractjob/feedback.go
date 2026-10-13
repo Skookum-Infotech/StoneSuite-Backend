@@ -13,6 +13,10 @@ const (
 	FieldPONumber  = "po_number"
 	FieldOrderDate = "order_date"
 	FieldLineItem  = "line_item"
+	// Purchase order / vendor bill fields.
+	FieldVendor        = "vendor"
+	FieldInvoiceNumber = "invoice_number"
+	FieldInvoiceDate   = "invoice_date"
 )
 
 // SavedLine is one saved sales-order line, carrying the document text it came from.
@@ -22,12 +26,19 @@ type SavedLine struct {
 	ItemUUID       string `json:"itemUuid"`
 }
 
-// SavedValues are the values the user actually saved, sent on /complete.
+// SavedValues are the values the user actually saved, sent on /complete. The
+// document type is taken from the stored extraction, not from here: a sales
+// order fills CustomerUUID; a purchase order fills VendorUUID, PONumber (its
+// reference number) and OrderDate; a vendor bill fills VendorUUID,
+// InvoiceNumber, InvoiceDate and PONumber (the order it references).
 type SavedValues struct {
-	CustomerUUID string      `json:"customerUuid"`
-	PONumber     string      `json:"poNumber"`
-	OrderDate    string      `json:"orderDate"`
-	Lines        []SavedLine `json:"lines"`
+	CustomerUUID  string      `json:"customerUuid"`
+	VendorUUID    string      `json:"vendorUuid"`
+	PONumber      string      `json:"poNumber"`
+	OrderDate     string      `json:"orderDate"`
+	InvoiceNumber string      `json:"invoiceNumber"`
+	InvoiceDate   string      `json:"invoiceDate"`
+	Lines         []SavedLine `json:"lines"`
 }
 
 // FeedbackRow is one extracted-vs-final correction. Values are field values
@@ -43,9 +54,10 @@ type FeedbackRow struct {
 // extraction resolved. Lines the user added by hand (no matching document
 // line) are skipped.
 func DiffFeedback(res ResultDoc, saved SavedValues) []FeedbackRow {
-	party := saved.CustomerUUID
+	p := partyOf(res, saved)
+	party := p.savedUUID
 	if party == "" {
-		party = res.Resolution.Customer.UUID
+		party = p.resolved.UUID
 	}
 	var out []FeedbackRow
 	add := func(field, extracted, final string) {
@@ -54,9 +66,14 @@ func DiffFeedback(res ResultDoc, saved SavedValues) []FeedbackRow {
 			out = append(out, FeedbackRow{PartyUUID: party, Field: field, Extracted: extracted, Final: final})
 		}
 	}
-	add(FieldCustomer, res.Resolution.Customer.UUID, saved.CustomerUUID)
+	add(p.field, p.resolved.UUID, p.savedUUID)
 	add(FieldPONumber, res.Extracted.Header.PONumber.Value, saved.PONumber)
-	add(FieldOrderDate, res.Extracted.Header.OrderDate.Value, saved.OrderDate)
+	if res.Extracted.DocType == docextract.DocTypeVendorBill {
+		add(FieldInvoiceNumber, res.Extracted.Header.InvoiceNumber.Value, saved.InvoiceNumber)
+		add(FieldInvoiceDate, res.Extracted.Header.InvoiceDate.Value, saved.InvoiceDate)
+	} else {
+		add(FieldOrderDate, res.Extracted.Header.OrderDate.Value, saved.OrderDate)
+	}
 	for _, sl := range saved.Lines {
 		m := findLineMatch(res, sl)
 		if m == nil {
@@ -113,13 +130,11 @@ func findLineMatch(res ResultDoc, sl SavedLine) *LineMatch {
 // already learned (to bump its hit count), or a confirmed fuzzy pre-pick. An
 // exact auto-match teaches nothing.
 func learnCustomer(res ResultDoc, saved SavedValues) bool {
-	if !validUUID(saved.CustomerUUID) || duplicate.Key(res.Extracted.Header.CustomerName.Value) == "" {
-		return false
-	}
-	c := res.Resolution.Customer
-	// Learn a correction, refresh a learned alias, and remember a fuzzy pre-pick
-	// the reviewer confirmed, so the same document is a sure match next time.
-	return c.UUID != saved.CustomerUUID || c.Source == docextract.SourceLearned || c.Confidence == docextract.ConfCheck
+	return learnParty(partyLearning{
+		docName:   res.Extracted.Header.CustomerName.Value,
+		resolved:  res.Resolution.Customer,
+		savedUUID: saved.CustomerUUID,
+	})
 }
 
 // aliasEntry is one item alias to upsert.

@@ -9,6 +9,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"stonesuite-backend/workflow"
 )
 
 // poSourceLine is one live purchase_order_item row's frozen values, copied
@@ -30,6 +32,7 @@ type poSourceLine struct {
 	discountPercent     float64
 	taxRateID           *int
 	taxPercent          float64
+	inventoryItemUUID   string // empty for a free-text line
 }
 
 // loadPurchaseOrderSourceLines loads a live purchase order's lines by its
@@ -52,7 +55,14 @@ func loadPurchaseOrderSourceLines(ctx context.Context, tx pgx.Tx, poInternalID i
 		FOR UPDATE`, poInternalID); err != nil {
 		return nil, fmt.Errorf("lock purchase order lines: %w", err)
 	}
-	rows, err := tx.Query(ctx, `
+	return queryPurchaseOrderSourceLines(ctx, tx, poInternalID)
+}
+
+// poSourceLinesSQL reads a purchase order's live lines with the received and
+// already-billed quantities ($1 = purchase order internal id). It is the one
+// copy of the billed-quantity rule, shared by the convert path (which locks the
+// lines in a separate statement first) and the read-only BillableLines.
+const poSourceLinesSQL = `
 		SELECT poi.purchase_order_item_id, poi.purchase_order_item_uuid, poi.line_number, poi.inventory_item_id,
 		       poi.item_name, poi.sku, poi.description, poi.unit_id, COALESCE(poi.unit_code,''),
 		       poi.quantity, poi.qty_received,
@@ -65,10 +75,16 @@ func loadPurchaseOrderSourceLines(ctx context.Context, tx pgx.Tx, poInternalID i
 		           WHERE cl.purchase_order_item_id = poi.purchase_order_item_id
 		             AND rs.record_status_code <> 'VOID'
 		       ), 0),
-		       poi.unit_price, poi.discount_percent, poi.tax_rate_id, poi.tax_percent
+		       poi.unit_price, poi.discount_percent, poi.tax_rate_id, poi.tax_percent,
+		       COALESCE(ii.inventory_item_uuid::text, '')
 		FROM purchase_order_item poi
+		LEFT JOIN inventory_item ii ON ii.inventory_item_id = poi.inventory_item_id
 		WHERE poi.purchase_order_id = $1 AND poi.item_deleted_at IS NULL
-		ORDER BY poi.line_number`, poInternalID)
+		ORDER BY poi.line_number`
+
+// queryPurchaseOrderSourceLines runs poSourceLinesSQL for one purchase order.
+func queryPurchaseOrderSourceLines(ctx context.Context, q workflow.Querier, poInternalID int) ([]poSourceLine, error) {
+	rows, err := q.Query(ctx, poSourceLinesSQL, poInternalID)
 	if err != nil {
 		return nil, fmt.Errorf("load purchase order lines: %w", err)
 	}
@@ -81,13 +97,14 @@ func loadPurchaseOrderSourceLines(ctx context.Context, tx pgx.Tx, poInternalID i
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.qtyReceived, &l.qtyBilled,
 			&l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
+			&l.inventoryItemUUID,
 		); err != nil {
 			return nil, fmt.Errorf("scan purchase order line: %w", err)
 		}
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("iterate purchase order lines: %w", err)
 	}
 	return out, nil
 }

@@ -30,14 +30,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID int
-	var statusCode string
+	var internalID, vendorInternalID int
+	var statusCode, currentInvoice string
 	err = tx.QueryRow(ctx, `
-		SELECT vb.vendor_bill_id, rs.record_status_code
+		SELECT vb.vendor_bill_id, rs.record_status_code, vb.vendor_bill_vendor_id, vb.vendor_bill_vendor_invoice_number
 		FROM vendor_bill vb JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
 		WHERE vb.vendor_bill_uuid = $1 AND vb.vendor_bill_deleted_at IS NULL
 		FOR UPDATE OF vb`, uuid,
-	).Scan(&internalID, &statusCode)
+	).Scan(&internalID, &statusCode, &vendorInternalID, &currentInvoice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -46,6 +46,15 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 	}
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft vendor bill can be edited. Recall it to draft first."}
+	}
+
+	// A changed, non-empty invoice number must not collide with another live
+	// bill of the same vendor (the bill itself is excluded).
+	dupUUID := ""
+	if norm := NormalizeDocNumber(in.VendorInvoiceNumber); norm != "" && norm != NormalizeDocNumber(currentInvoice) {
+		if dupUUID, _, err = guardDuplicateInvoice(ctx, tx, vendorInternalID, in.VendorInvoiceNumber, in.AllowDuplicate, uuid); err != nil {
+			return nil, err
+		}
 	}
 
 	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
@@ -116,5 +125,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update vendor bill: %w", err)
 	}
-	return Get(ctx, pool, uuid)
+	out, err := Get(ctx, pool, uuid)
+	if err != nil {
+		return nil, err
+	}
+	out.DuplicateOverride = dupUUID != ""
+	out.DuplicateOfUUID = dupUUID
+	return out, nil
 }

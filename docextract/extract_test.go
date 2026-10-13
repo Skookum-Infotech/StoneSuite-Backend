@@ -98,7 +98,7 @@ func TestExtract_InputErrors(t *testing.T) {
 		{"empty", nil, DocTypeSalesOrder, Options{}, FailEmpty},
 		{"too large", poPDF([]string{"ACME"}), DocTypeSalesOrder, Options{Limits: Limits{MaxBytes: 100}}, FailTooLarge},
 		{"wrong type", []byte("hello"), DocTypeSalesOrder, Options{}, FailUnsupportedType},
-		{"vendor bill not yet supported", poPDF([]string{"ACME"}), DocTypeVendorBill, Options{}, FailUnsupportedType},
+		{"unknown doc type", poPDF([]string{"ACME"}), DocType("estimate"), Options{}, FailUnsupportedType},
 		{"page cap", pdftest.Build([]pdftest.Page{{Texts: []pdftest.Text{{X: 1, Y: 1, S: "a 1"}}}, {}, {}}, pdftest.Options{}), DocTypeSalesOrder, Options{Limits: Limits{MaxPages: 2}}, FailPageCap},
 		{"scanned", pdftest.Build([]pdftest.Page{{}}, pdftest.Options{}), DocTypeSalesOrder, Options{}, FailScanned},
 	}

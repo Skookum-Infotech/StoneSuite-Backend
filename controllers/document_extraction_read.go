@@ -16,6 +16,9 @@ import (
 // queryStatusReady is the only status filter GET /document-extractions accepts.
 const queryStatusReady = "ready"
 
+// queryDocType is the optional doc-type filter of GET /document-extractions.
+const queryDocType = "docType"
+
 // docExtractFailureMessages maps a failure code to the user-facing message; %s
 // is the uploaded file's name. Each states the reason and the next step.
 var docExtractFailureMessages = map[string]string{
@@ -83,6 +86,9 @@ var duplicateResources = map[string]authz.Resource{
 	docextractjob.DupRevision:    authz.ResourceSalesOrder,
 	docextractjob.DupQuoteRef:    authz.ResourceQuote,
 	docextractjob.DupEstimateRef: authz.ResourceEstimate,
+
+	docextractjob.DupSameInvoice:   authz.ResourceVendorBill,
+	docextractjob.DupSameReference: authz.ResourcePurchaseOrder,
 }
 
 // filterDuplicates keeps a duplicate's record link only when canRead allows the
@@ -140,20 +146,20 @@ func (h *DocExtractOps) Get(w http.ResponseWriter, r *http.Request) {
 		} else {
 			doc = fresh
 		}
-		doc.Duplicates = filterDuplicates(doc.Duplicates, h.newReadGate(r, c).canRead)
+		h.scopeResultDoc(r, c, &doc)
 		view.Result = &doc
 	}
 	if ex.Status == docextractjob.StatusUsed || ex.Status == docextractjob.StatusAttached {
-		if ex.RecordUUID != "" && canReadSO(r, c.pool, c.identityID, ex.RecordUUID) {
+		if ex.RecordUUID != "" && h.canReadCreatedRecord(r, c, docextract.DocType(ex.DocType), ex.RecordUUID) {
 			view.RecordUUID = ex.RecordUUID
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "extraction": view})
 }
 
-// List handles GET /api/tenant/document-extractions?status=ready: the caller's
-// own non-expired ready extractions (no result body), limited to the doc types
-// the caller may create.
+// List handles GET /api/tenant/document-extractions?status=ready[&docType=x]: the
+// caller's own non-expired ready extractions (no result body), limited to the
+// doc types the caller may create (and to docType when given).
 func (h *DocExtractOps) List(w http.ResponseWriter, r *http.Request) {
 	if !h.enabled(w) {
 		return
@@ -166,15 +172,25 @@ func (h *DocExtractOps) List(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "status=ready is required.")
 		return
 	}
+	if dt := r.URL.Query().Get(queryDocType); dt != "" {
+		if _, known := docExtractResources[docextract.DocType(dt)]; !known {
+			fail(w, http.StatusBadRequest, "Unknown document type.")
+			return
+		}
+	}
 	rows, err := c.store.ListReadyForOwner(r.Context(), c.identityID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "doc extract: list ready", "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to list document extractions.")
 		return
 	}
+	wantType := r.URL.Query().Get(queryDocType)
 	allowed := map[string]bool{}
 	out := make([]docExtractView, 0, len(rows))
 	for i := range rows {
+		if wantType != "" && rows[i].DocType != wantType {
+			continue
+		}
 		ok, seen := allowed[rows[i].DocType]
 		if !seen {
 			ok = h.mayCreate(r, c, docextract.DocType(rows[i].DocType))

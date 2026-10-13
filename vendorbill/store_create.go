@@ -13,7 +13,11 @@ import (
 // snapshots the vendor name (AD-2), resolves and prices every line (AD-3,
 // AD-9), computes header totals, assigns the VBIL number (AD-10), and starts
 // the bill at DRFT (AD-5). CustomFields is validated and nil-guarded before
-// the insert -- vendor_bill_custom_fields is NOT NULL DEFAULT '{}'.
+// the insert -- vendor_bill_custom_fields is NOT NULL DEFAULT '{}'. A live
+// bill of the same vendor with the same normalized vendor invoice number is a
+// *DuplicateDocumentError unless in.AllowDuplicate (store_create_dupguard.go).
+// Lines carrying purchaseOrderItemId under a purchaseOrderUuid record a
+// conversion at the bill's quantities (store_create_linked.go).
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, actorEmployeeID int) (*VendorBill, error) {
 	if strings.TrimSpace(in.VendorUUID) == "" {
 		return nil, ClientError{Msg: "A vendor is required."}
@@ -36,6 +40,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 		return nil, err
 	}
 
+	dupUUID, _, err := guardDuplicateInvoice(ctx, tx, vendorInternalID, in.VendorInvoiceNumber, in.AllowDuplicate, "")
+	if err != nil {
+		return nil, err
+	}
+
 	poID, err := resolvePurchaseOrderLineage(ctx, tx, in.PurchaseOrderUUID, vendorInternalID)
 	if err != nil {
 		return nil, err
@@ -45,8 +54,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	if err != nil {
 		return nil, err
 	}
-	if anyLinked(lines) {
-		return nil, ClientError{Msg: "Lines cannot link to purchase order lines on create; convert the purchase order instead."}
+	linkPlan, err := planLinkedCreate(ctx, tx, poID, lines)
+	if err != nil {
+		return nil, err
 	}
 	lineMoney := make([]LineMoney, len(lines))
 	for i, l := range lines {
@@ -122,11 +132,25 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 		return nil, err
 	}
 
+	if linkPlan != nil {
+		if err := recordLinkedConversion(ctx, tx, internalID, newUUID, linkPlan, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
+
 	writeHistory(ctx, tx, internalID, "create", nil, &draftStatusID, actorEmployeeID)
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor bill: %w", err)
 	}
 	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
-	return Get(ctx, pool, newUUID)
+	bill, err := Get(ctx, pool, newUUID)
+	if err != nil {
+		return nil, err
+	}
+	if dupUUID != "" {
+		bill.DuplicateOverride = true
+		bill.DuplicateOfUUID = dupUUID
+	}
+	return bill, nil
 }

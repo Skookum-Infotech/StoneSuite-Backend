@@ -15,6 +15,7 @@ import (
 	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/workflow"
 )
 
 // Machine-readable codes on document-extraction responses.
@@ -40,15 +41,11 @@ const (
 )
 
 // docExtractResources maps the supported doc types to the RBAC resource that
-// gates them. Only sales_order is accepted in this slice.
+// gates them.
 var docExtractResources = map[docextract.DocType]authz.Resource{
-	docextract.DocTypeSalesOrder: authz.ResourceSalesOrder,
-}
-
-// docExtractUnsupported are valid doc types whose handlers are not built yet.
-var docExtractUnsupported = map[docextract.DocType]struct{}{
-	docextract.DocTypePurchaseOrder: {},
-	docextract.DocTypeVendorBill:    {},
+	docextract.DocTypeSalesOrder:    authz.ResourceSalesOrder,
+	docextract.DocTypePurchaseOrder: authz.ResourcePurchaseOrder,
+	docextract.DocTypeVendorBill:    authz.ResourceVendorBill,
 }
 
 // docExtractUploads maps an accepted upload extension to its content type.
@@ -138,6 +135,12 @@ type DocExtractOps struct {
 	aiAvailable func(ctx context.Context, caller *docExtractCaller) (bool, error)
 	// notifyIfReady sends the ready notification when the job already finished.
 	notifyIfReady func(ctx context.Context, caller *docExtractCaller, id string)
+	// recordOwner returns the owning and the creating users.id of a live record of docType.
+	recordOwner func(ctx context.Context, c *docExtractCaller, docType docextract.DocType, uuid string) (owner, creator string, err error)
+	// audit writes the created_from_document trail entry on the new record.
+	audit func(r *http.Request, c *docExtractCaller, ex *docextractjob.Extraction, recordUUID string)
+	// callerUserID returns the tenant users.id of the caller's identity.
+	callerUserID func(ctx context.Context, c *docExtractCaller) (string, error)
 }
 
 // NewDocExtractOps constructs the handler group. r2 may be nil (the endpoints
@@ -149,6 +152,11 @@ func NewDocExtractOps(r2 *storage.Client, queue docExtractQueue, cpPool *pgxpool
 	h.check = checkFromPool
 	h.objectsFor = h.r2Objects
 	h.aiAvailable = h.settingsAvailable
+	h.recordOwner = loadRecordOwner
+	h.audit = h.auditCreatedFromDocument
+	h.callerUserID = func(ctx context.Context, c *docExtractCaller) (string, error) {
+		return workflow.UserIDByIdentity(ctx, c.pool, c.identityID)
+	}
 	h.notifyIfReady = func(ctx context.Context, c *docExtractCaller, id string) {
 		docextractjob.NotifyIfReady(ctx, docextractjob.NewStore(c.pool), services.SendNotification, c.tenant.ID, id)
 	}

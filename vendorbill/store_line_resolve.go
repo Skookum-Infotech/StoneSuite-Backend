@@ -13,10 +13,10 @@ import (
 )
 
 // resolvedLine is a line after catalog/free-text resolution, ready to price
-// and insert. purchaseOrderItemUUID is the requested PO-line link (Update
-// only); syncConversionOnEdit validates it against the bill's own purchase
-// order and stamps purchaseOrderItemID, which insertLines persists. Create
-// leaves both empty (AD-8).
+// and insert. purchaseOrderItemUUID is the requested PO-line link;
+// planLinkedCreate (Create) or syncConversionOnEdit (Update) validates it
+// against the bill's purchase order and stamps purchaseOrderItemID, which
+// insertLines persists (AD-8).
 type resolvedLine struct {
 	purchaseOrderItemUUID string
 	purchaseOrderItemID   *int

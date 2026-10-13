@@ -48,7 +48,8 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 			err = newInputError(FailCorrupt, fmt.Sprintf("extraction panic: %v", x))
 		}
 	}()
-	if docType != DocTypeSalesOrder {
+	prof, ok := profileFor(docType)
+	if !ok {
 		return Result{}, "", newInputError(FailUnsupportedType, "document type "+string(docType)+" is not supported yet")
 	}
 	lim := opts.Limits.withDefaults()
@@ -77,24 +78,24 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 	if err := ctx.Err(); err != nil {
 		return Result{}, "", fmt.Errorf("extract cancelled: %w", err)
 	}
-	if err := buildSalesOrder(&res, lim, opts); err != nil {
+	if err := prof.build(&res, lim, opts); err != nil {
 		return Result{}, "", err
 	}
 	method = MethodParser
-	// The model only fills gaps in something that is recognisably an order.
-	// Asked about a document that isn't one (a spec sheet, a timesheet) it
-	// can only invent: it once returned a form's section heading as both the
-	// customer and the PO number.
-	//
-	// An order form has no PO number or order date by design, and its only
-	// customer clue is an email domain; the model could only guess.
-	if keys := salesOrderLLMKeys(&res); len(res.Unresolved) > 0 && len(keys) > 0 && opts.LLM != nil && !notRecognized(&res) && res.ClassifiedAs != ClassOrderForm {
+	// The model only fills gaps in something that is recognisably the right
+	// kind of document. Asked about one that isn't (a spec sheet, a timesheet)
+	// it can only invent: it once returned a form's section heading as both
+	// the customer and the PO number.
+	if keys := prof.llmKeys(&res); len(res.Unresolved) > 0 && len(keys) > 0 && opts.LLM != nil && llmAllowed(&res, prof) {
 		if applied := runLLM(ctx, &res, keys, opts); applied {
 			method = MethodParserLLM
-			res.Unresolved = salesOrderUnresolved(&res)
+			if prof.post != nil {
+				prof.post(&res)
+			}
+			res.Unresolved = prof.unresolved(&res)
 		}
 	}
-	if notRecognized(&res) {
+	if prof.notRecognized(&res) {
 		res.Warnings = append(res.Warnings, WarnNotRecognized)
 	}
 	// Empty, never null, on the wire: clients iterate these without a guard.
@@ -107,13 +108,6 @@ func Extract(ctx context.Context, b []byte, docType DocType, opts Options) (res 
 	return res, method, nil
 }
 
-// notRecognized reports a document with no title class, no line table, no PO
-// number and no customer: almost certainly not a purchase order at all.
-func notRecognized(res *Result) bool {
-	return res.ClassifiedAs == "" && len(res.Lines) == 0 &&
-		!res.Header.PONumber.Found() && !res.Header.CustomerName.Found()
-}
-
 // buildSalesOrder runs the deterministic stages over res.Pages.
 func buildSalesOrder(res *Result, lim Limits, opts Options) error {
 	if form, ok := parseOrderForm(res.Pages); ok {
@@ -122,7 +116,7 @@ func buildSalesOrder(res *Result, lim Limits, opts Options) error {
 		if len(res.Lines) > lim.MaxLines {
 			return newInputError(FailLineCap, fmt.Sprintf("%d lines exceeds the cap of %d", len(res.Lines), lim.MaxLines))
 		}
-		finishSalesOrder(res, orderFormKeys(form), []string{ClassOrderForm})
+		finishDoc(res, orderFormKeys(form), []string{ClassOrderForm}, salesOrderProfile())
 		return nil
 	}
 	res.ClassifiedAs = Classify(res.Pages)
@@ -144,33 +138,9 @@ func buildSalesOrder(res *Result, lim Limits, opts Options) error {
 	res.Revision = DetectRevision(res.Pages)
 	res.QuoteRef = DetectQuoteRef(res.Pages)
 
-	rec := opts.ReconcileFn
-	if rec == nil {
-		rec = Reconcile
-	}
-	var amounts []Cents
-	for _, l := range res.Lines {
-		if l.Amount.Found() && !hasFlag(l.Flags, FlagAmountUnparsed) {
-			amounts = append(amounts, l.AmountCents)
-		}
-	}
-	h := res.Header
-	res.Checks = rec(amounts, fieldCents(h.Subtotal), fieldCents(h.Tax), fieldCents(h.Shipping), fieldCents(h.Discount), fieldCents(h.Total))
-	res.residualSpans = tbl.Spans
-	finishSalesOrder(res, ho.Keys, tbl.Roles)
+	reconcileResult(res, tbl, opts)
+	finishDoc(res, ho.Keys, tbl.Roles, salesOrderProfile())
 	return nil
-}
-
-// finishSalesOrder runs the checks every sales-order layout shares: required
-// and recommended fields, injection phrases and the layout fingerprint.
-func finishSalesOrder(res *Result, keys, roles []string) {
-	res.Unresolved = salesOrderUnresolved(res)
-	res.Warnings = append(res.Warnings, salesOrderRecommendedWarnings(res)...)
-	res.Injection = ScanInjection(fullText(res.Pages))
-	if len(res.Injection) > 0 {
-		res.Warnings = append(res.Warnings, WarnInjectionPhrases)
-	}
-	res.LayoutFingerprint = fingerprint(keys, roles)
 }
 
 // orderFormKeys are the header labels the form filled, for the fingerprint.
@@ -239,7 +209,7 @@ func residualText(pages []PageRows, spans map[int][2]int) string {
 // field was applied. Failures only add a warning.
 func runLLM(ctx context.Context, res *Result, keys []string, opts Options) bool {
 	residual := residualText(res.Pages, res.residualSpans)
-	system, user, err := BuildPrompt(residual, keys, opts.TokenBudget)
+	system, user, err := BuildPromptFor(res.DocType, residual, keys, opts.TokenBudget)
 	if err != nil {
 		if errors.Is(err, ErrContextBudget) {
 			res.Warnings = append(res.Warnings, WarnContextBudget)
@@ -262,10 +232,15 @@ func runLLM(ctx context.Context, res *Result, keys []string, opts Options) bool 
 		res.Warnings = append(res.Warnings, WarnAIUnavailable)
 		return false
 	}
-	// A customer PO names us as the vendor; the model must not put us back as the customer.
+	// A customer PO names us as the vendor; the model must not put us back as
+	// the customer. Likewise it must never answer our own name as the vendor.
 	if slices.Contains(applied, KeyCustomerName) && isOwnCompany(res.Header.CustomerName.Value, opts.OwnCompanyNames) {
 		res.Header.CustomerName = notFound()
 		applied = slices.DeleteFunc(applied, func(k string) bool { return k == KeyCustomerName })
+	}
+	if slices.Contains(applied, KeyVendorName) && isOwnCompany(res.Header.VendorName.Value, opts.OwnCompanyNames) {
+		res.Header.VendorName = notFound()
+		applied = slices.DeleteFunc(applied, func(k string) bool { return k == KeyVendorName })
 	}
 	return len(applied) > 0
 }

@@ -132,7 +132,11 @@ type Line struct {
 	Flags          []string `json:"flags,omitempty"`
 }
 
-// Header holds the sales-order header fields.
+// Header holds the header fields of every supported document type. A sales
+// order uses CustomerName; a purchase order or vendor bill uses VendorName
+// (the party that is not us). On a purchase order PONumber is the document's
+// own number (our PO number, or the vendor's quote number) and DeliveryDate is
+// the expected date; on a vendor bill PONumber is the PO it references.
 type Header struct {
 	PONumber     Field `json:"poNumber"`
 	OrderDate    Field `json:"orderDate"`
@@ -150,6 +154,12 @@ type Header struct {
 	// Notes is free text for the order memo (an order form's special
 	// instructions and job contact); empty for a priced PO.
 	Notes Field `json:"notes"`
+
+	// Vendor-side fields (purchase order, vendor bill).
+	VendorName    Field `json:"vendorName"`
+	InvoiceNumber Field `json:"invoiceNumber"` // the vendor's invoice number on a bill
+	InvoiceDate   Field `json:"invoiceDate"`   // becomes the bill date
+	DueDate       Field `json:"dueDate"`
 }
 
 // Revision marks a document that amends or replaces an earlier one.

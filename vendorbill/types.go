@@ -45,9 +45,11 @@ type Line struct {
 
 // LineInput is one line of a create/update request. PurchaseOrderItemID is the
 // purchase order line uuid exactly as Line.PurchaseOrderItemID returns it, so a
-// converted bill's lines round-trip through an edit. It is honoured only by
-// Update on a bill converted from a purchase order (Create rejects it): the
-// lineage is established by the convert path, Update merely preserves it.
+// converted bill's lines round-trip through an edit. Create honours it only
+// together with CreateVendorBillInput.PurchaseOrderUUID (the lines then record a
+// conversion at the bill's quantities); Update honours it only on a bill that
+// already has a conversion (convert path or linked create), where it preserves
+// the lineage.
 type LineInput struct {
 	LineNumber          int     `json:"lineNumber"`
 	PurchaseOrderItemID string  `json:"purchaseOrderItemId,omitempty"`
@@ -94,19 +96,29 @@ type vendorBillFields struct {
 
 // CreateVendorBillInput is the request payload for POST /api/tenant/vendor-bills.
 // PurchaseOrderUUID optionally links the bill to one of the same vendor's
-// purchase orders as a plain reference (see resolvePurchaseOrderLineage): it
-// copies no lines and records no billed quantity -- only the convert endpoint
-// does that (AD-8). Update deliberately has no such field, so the link is
-// fixed at creation like the vendor.
+// purchase orders (AD-8). With no line carrying purchaseOrderItemId it is a
+// plain reference (see resolvePurchaseOrderLineage): no lines are copied and no
+// billed quantity is recorded. When at least one line carries a
+// purchaseOrderItemId, Create records a conversion exactly like the convert
+// endpoint -- but at the bill's own quantities, only for a billable (PART/RCVD/
+// CLSD) order of the same vendor, never over-billing received-minus-billed;
+// unlinked lines (freight etc.) are allowed alongside. Update deliberately has
+// no purchase order field, so the link is fixed at creation like the vendor.
+// AllowDuplicate lets the create proceed past a live same-vendor bill with the
+// same normalized vendor invoice number (store_create_dupguard.go).
 type CreateVendorBillInput struct {
 	VendorUUID        string `json:"vendorUuid"`
 	PurchaseOrderUUID string `json:"purchaseOrderUuid,omitempty"`
+	AllowDuplicate    bool   `json:"allowDuplicate,omitempty"`
 	vendorBillFields
 }
 
 // UpdateVendorBillInput mirrors CreateVendorBillInput minus the vendor and
 // purchase order (a vendor bill's vendor is fixed after creation -- AD-2).
 type UpdateVendorBillInput struct {
+	// AllowDuplicate lets an invoice-number change proceed past a live same-vendor
+	// bill with the same normalized number (store_create_dupguard.go).
+	AllowDuplicate bool `json:"allowDuplicate,omitempty"`
 	vendorBillFields
 }
 
@@ -114,6 +126,11 @@ type UpdateVendorBillInput struct {
 // + payments, when loaded by Get). OwnerUserID backs the controller's IDOR
 // scope check and is never serialized.
 type VendorBill struct {
+	// DuplicateOverride / DuplicateOfUUID are set by Create (never persisted or
+	// serialized) when AllowDuplicate bypassed an existing same-invoice bill.
+	DuplicateOverride bool   `json:"-"`
+	DuplicateOfUUID   string `json:"-"`
+
 	ID     string `json:"id"`
 	Number string `json:"vendorBillNumber"`
 
@@ -129,6 +146,7 @@ type VendorBill struct {
 	PurchaseOrder *PurchaseOrderRef `json:"purchaseOrder,omitempty"` // nullable lineage (AD-8)
 
 	OwnerUserID     string `json:"-"`
+	CreatedByUserID string `json:"-"`
 	OwnerEmployeeID *int   `json:"ownerEmployeeId,omitempty"`
 
 	VendorInvoiceNumber string `json:"vendorInvoiceNumber"`

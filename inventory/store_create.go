@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/linedim"
 )
 
 // Create inserts a new inventory item and records the creation in history.
@@ -33,6 +35,10 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 		return nil, err
 	}
 
+	dimensionUnit := in.DimensionUnit
+	if dimensionUnit == "" {
+		dimensionUnit = linedim.DefaultUnit
+	}
 	var (
 		newUUID string
 		newID   int
@@ -45,15 +51,15 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 			inventory_item_tracking, inventory_item_material_id, inventory_item_color_id,
 			inventory_item_finish_id, inventory_item_thickness_mm, inventory_item_origin_country_id,
 			inventory_item_barcode, inventory_item_default_warehouse_id, inventory_item_track_stock,
-			inventory_item_created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			inventory_item_created_by, inventory_item_purchase_unit_price, inventory_item_dimension_unit
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		RETURNING inventory_item_uuid, inventory_item_id`,
-		in.SKU, in.Name, in.Description, in.UnitID, in.UnitPrice,
+		in.SKU, in.Name, in.Description, in.UnitID, *in.UnitPrice,
 		nullableIntPtr(in.CurrencyID), nullableIntPtr(in.TaxRateID), custom,
 		in.Tracking, nullableIntPtr(in.MaterialID), nullableIntPtr(in.ColorID),
 		nullableIntPtr(in.FinishID), in.ThicknessMM, nullableIntPtr(in.OriginCountryID),
 		in.Barcode, nullableIntPtr(in.DefaultWarehouseID), in.TrackStock == nil || *in.TrackStock,
-		nullableInt(actorEmployeeID),
+		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice, dimensionUnit,
 	).Scan(&newUUID, &newID)
 	if err != nil {
 		return nil, mapItemWriteErr(err, "insert")
@@ -61,6 +67,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 
 	if err := writeItemHistory(ctx, tx, newID, "create", "", "", in.SKU, actorEmployeeID); err != nil {
 		return nil, err
+	}
+	if in.KitIDs != nil {
+		if err := setItemKits(ctx, tx, newID, in.KitIDs, actorEmployeeID); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create inventory item: %w", err)

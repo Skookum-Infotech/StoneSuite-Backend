@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"stonesuite-backend/kitref"
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -52,14 +54,15 @@ func customerSnapshot(ctx context.Context, q workflow.Querier, customerUUID stri
 
 // itemSnapshot is what a line needs from its catalog item at add time.
 type itemSnapshot struct {
-	internalID int
-	sku        string
-	name       string
-	desc       string
-	unitID     *int
-	unitCode   string
-	unitPrice  float64
-	taxRateID  *int
+	internalID    int
+	sku           string
+	name          string
+	desc          string
+	unitID        *int
+	unitCode      string
+	unitPrice     float64
+	taxRateID     *int
+	dimensionUnit string // the item's length/width unit, a line's default
 }
 
 // resolveInventoryItem loads a catalog item's snapshot fields by its external
@@ -68,11 +71,12 @@ func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) 
 	var s itemSnapshot
 	err := q.QueryRow(ctx, `
 		SELECT ii.inventory_item_id, ii.inventory_item_sku, ii.inventory_item_name, ii.inventory_item_description,
-		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id
+		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id,
+		       ii.inventory_item_dimension_unit
 		FROM inventory_item ii
 		LEFT JOIN lkp_unit u ON u.unit_id = ii.inventory_item_unit_id
 		WHERE ii.inventory_item_uuid = $1 AND ii.inventory_item_deleted_at IS NULL`, uuid).Scan(
-		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID)
+		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID, &s.dimensionUnit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "Unknown inventory item: " + uuid}
 	}
@@ -110,6 +114,8 @@ type resolvedLine struct {
 	taxRateID       *int
 	taxPercent      float64
 	money           LineMoney
+	kit             kitref.Ref // the kit the line was added from; zero for none
+	dims            linedim.Dims
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -129,7 +135,8 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		if in.Quantity <= 0 {
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
+		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
 		if in.UnitPrice < 0 {
@@ -139,6 +146,11 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: discount percent must be between 0 and 100.", in.LineNumber)}
 		}
 
+		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+		if kitMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
+		}
+
 		rl := resolvedLine{
 			lineNumber:      in.LineNumber,
 			warehouseID:     in.WarehouseID,
@@ -146,6 +158,7 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			unitPrice:       in.UnitPrice,
 			discountPercent: in.DiscountPercent,
 			taxRateID:       in.TaxRateID,
+			kit:             kit,
 		}
 
 		if in.InventoryItemUUID != "" {
@@ -162,6 +175,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 				rl.desc = d
 			}
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
+			if dimIn.Unit == "" {
+				dimIn.Unit = item.dimensionUnit
+			}
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice
 			}
@@ -175,6 +191,17 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			rl.sku = strings.TrimSpace(in.SKU)
 			rl.name = strings.TrimSpace(in.ItemName)
 			rl.unitCode = strings.TrimSpace(in.UnitCode)
+		}
+
+		// Length x width x slabs, when given, IS the quantity: derived here so a
+		// stale client can never store one that disagrees with its dimensions.
+		sized, dimMsg := linedim.Resolve(dimIn, rl.unitCode)
+		if dimMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
+		}
+		rl.dims = sized.Dims
+		if sized.Derived {
+			rl.quantity = sized.Quantity
 		}
 
 		if rl.taxRateID != nil {

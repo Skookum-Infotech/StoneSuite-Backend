@@ -14,11 +14,38 @@ properties specific to stone). Items are the building block every other
 inventory record — slabs, bundles, adjustments, transfers, counts — refers
 back to.
 
+An item has two prices, and both are required: a Purchasing Unit Price, what you
+pay for it, and a Selling Unit Price, what you charge. A purchase order, vendor
+bill or requisition line fills in the purchasing price when you pick the item,
+and a quote, estimate, sales order or invoice line fills in the selling price.
+Either way the price on the line is yours to change; the item's own price is only
+the starting point. A price of 0 is allowed, for a delivery or labour item.
+
 An item's Track stock setting decides whether a sales order for it is checked
 against stock and holds it. It is on for every item unless you switch it off,
 which you should for anything with no stock to run out of — a delivery,
 installation or labour charge. A slab-tracked item is always tracked, and its
 switch cannot be turned off.
+
+## Kits
+
+A Kit/Package is a named group of items that are sold together — "Kitchen", for
+example. Create one from Inventory → Items → Kit/Packages → New Kit/Package: give
+it a name and add the items it holds, each with the quantity a line gets by
+default. An item can be in several kits. An item's own form has a Kit/Packages
+field too, so you can file an item into kits as you create it. Kit names are
+unique, whatever their case or spacing; a deleted kit's name can be used again.
+A kit that is switched Inactive no longer shows up in the item pickers.
+
+On any document line, type a kit's name in the item box and pick it: the kit's
+items are added as ordinary lines, each with its own price, tax and quantity
+that you can still change. On a Quote, Estimate, Sales Order or Invoice the
+lines sit under a kit heading — a full-width violet row naming the kit — which
+is kept when the document is saved, converted, exported to PDF or sent to the
+customer. The kit is only a heading: the lines are priced, taxed and checked
+against stock exactly like any other, and later editing or deleting the kit
+never changes a document it was used on. If the name you type is not a kit,
+the picker offers Add as a new kit.
 
 ## Units and Slabs
 

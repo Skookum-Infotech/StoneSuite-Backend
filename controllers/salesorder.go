@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -33,6 +34,9 @@ import (
 //	POST   /api/tenant/sales-orders/{uuid}/convert       — convert to an Invoice
 //	GET    /api/tenant/sales-orders/{uuid}/inventory     — inventory tab
 //	GET    /api/tenant/sales-orders/{uuid}/audit         — audit trail
+//	GET    /api/tenant/sales-orders/schedule             — cross-order schedule calendar feed
+//	GET    /api/tenant/sales-orders/{uuid}/schedule      — planned production schedule
+//	PATCH  /api/tenant/sales-orders/{uuid}/schedule/{code} — update one schedule activity
 type SalesOrderOps struct {
 	cp *tenancy.ControlPlane
 }
@@ -117,6 +121,8 @@ func soFail(w http.ResponseWriter, err error, serverMsg string) {
 	switch {
 	case errors.Is(err, salesorder.ErrNotFound):
 		fail(w, http.StatusNotFound, "Sales order not found.")
+	case errors.Is(err, salesorder.ErrActivityNotFound):
+		fail(w, http.StatusNotFound, "Schedule activity not found.")
 	case errors.Is(err, salesorder.ErrInvalidTransition),
 		errors.Is(err, salesorder.ErrApprovalRequired),
 		errors.Is(err, salesorder.ErrApprovalNotRequired):
@@ -194,6 +200,10 @@ func (h *SalesOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
 		return
 	}
+	if strings.TrimSpace(in.InstallDate) == "" {
+		fail(w, http.StatusBadRequest, errInstallDateRequired)
+		return
+	}
 	order, err := salesorder.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		if writeSODuplicate(w, r, pool, identityID, err) {
@@ -237,6 +247,10 @@ func (h *SalesOrderOps) Update(w http.ResponseWriter, r *http.Request) {
 	var in salesorder.UpdateOrderInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if strings.TrimSpace(in.InstallDate) == "" {
+		fail(w, http.StatusBadRequest, errInstallDateRequired)
 		return
 	}
 	after, err := salesorder.Update(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))

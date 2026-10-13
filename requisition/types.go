@@ -18,6 +18,16 @@ type LineInput struct {
 	Description        string  `json:"description"`
 	Quantity           float64 `json:"quantity"`
 	EstimatedUnitPrice float64 `json:"estimatedUnitPrice"`
+
+	// Length / Width / Slabs give the size of one slab and how many slabs the
+	// line covers. With length and width both set the line's quantity is derived
+	// from them (see package linedim), so the quantity sent is ignored.
+	Length *float64 `json:"length"`
+	Width  *float64 `json:"width"`
+	Slabs  *int     `json:"slabs"`
+	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
+	// ft, m). Blank takes the item's unit, then inches.
+	DimensionUnit string `json:"dimensionUnit"`
 }
 
 // requisitionFields is the header payload shared by create and update.
@@ -66,6 +76,13 @@ type Line struct {
 	Quantity           float64 `json:"quantity"`
 	EstimatedUnitPrice float64 `json:"estimatedUnitPrice"`
 	EstimatedAmount    float64 `json:"estimatedAmount"`
+
+	// Length / Width / Slabs are the slab size and count the line was priced
+	// from, when it was entered that way; the quantity above is their area.
+	Length        *float64 `json:"length,omitempty"`
+	Width         *float64 `json:"width,omitempty"`
+	Slabs         *int     `json:"slabs,omitempty"`
+	DimensionUnit string   `json:"dimensionUnit,omitempty"`
 }
 
 // Requisition is the full API response for a requisition header (+ lines,

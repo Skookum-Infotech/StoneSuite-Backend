@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -27,6 +28,9 @@ type resolvedLine struct {
 	taxPercent      float64
 	money           LineMoney
 	expectedSlabs   *int
+	length          *float64
+	width           *float64
+	dimUnit         string // the unit length and width are measured in; "" = not stated
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -46,7 +50,12 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		if in.Quantity <= 0 {
+		// The slab count on a sized line is the existing expected-slabs field.
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Unit: in.DimensionUnit}
+		if !dimIn.IsZero() {
+			dimIn.Slabs = in.ExpectedSlabs
+		}
+		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
 		if in.UnitPrice < 0 {
@@ -73,18 +82,21 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 				rl.desc = in.Description
 			}
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
+			if dimIn.Unit == "" {
+				dimIn.Unit = item.dimensionUnit
+			}
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice
 			}
 			if rl.taxRateID == nil {
 				rl.taxRateID = item.taxRateID
 			}
-			if err := validateExpectedSlabs(in.LineNumber, in.ExpectedSlabs, item.tracking); err != nil {
+			if err := validateExpectedSlabs(in.LineNumber, in.ExpectedSlabs, item.tracking, item.unitCode); err != nil {
 				return nil, err
 			}
 			rl.expectedSlabs = in.ExpectedSlabs
 		} else if in.ExpectedSlabs != nil {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: expected slabs only apply to a slab-tracked inventory item.", in.LineNumber)}
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: expected slabs only apply to a slab-tracked inventory item or one measured in SQFT or SQM.", in.LineNumber)}
 		} else if strings.TrimSpace(in.Description) == "" {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: either an inventory item or a description is required.", in.LineNumber)}
 		} else {
@@ -95,6 +107,19 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			// by this same check (mirrors estimate/invoice).
 			rl.name = in.Description
 			rl.desc = in.Description
+		}
+
+		// Length x width x slabs, when given, IS the quantity: derived here so a
+		// stale client can never store one that disagrees with its dimensions.
+		if !dimIn.IsZero() {
+			sized, dimMsg := linedim.Resolve(dimIn, rl.unitCode)
+			if dimMsg != "" {
+				return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
+			}
+			rl.length, rl.width, rl.dimUnit = sized.Dims.Length, sized.Dims.Width, sized.Dims.StoredUnit()
+			if sized.Derived {
+				rl.quantity = sized.Quantity
+			}
 		}
 
 		if rl.taxRateID != nil {
@@ -120,14 +145,16 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 // 400 rather than a meaningless number on the order.
 const maxExpectedSlabs = 10000
 
-// validateExpectedSlabs checks a line's optional expected slab count. It is only
-// meaningful for a slab-tracked item, and must be a positive whole number.
-func validateExpectedSlabs(lineNo int, expected *int, tracking string) error {
+// validateExpectedSlabs checks a line's optional expected slab count. It is
+// meaningful for a slab-tracked item and for any line measured in an area unit
+// (where it is the Slabs of a length x width x slabs line), and must be a
+// positive whole number.
+func validateExpectedSlabs(lineNo int, expected *int, tracking, unitCode string) error {
 	if expected == nil {
 		return nil
 	}
-	if tracking != trackingSerialized {
-		return ClientError{Msg: fmt.Sprintf("Line %d: expected slabs only apply to a slab-tracked inventory item.", lineNo)}
+	if tracking != trackingSerialized && !linedim.IsAreaUnit(unitCode) {
+		return ClientError{Msg: fmt.Sprintf("Line %d: expected slabs only apply to a slab-tracked inventory item or one measured in SQFT or SQM.", lineNo)}
 	}
 	if *expected <= 0 || *expected > maxExpectedSlabs {
 		return ClientError{Msg: fmt.Sprintf("Line %d: expected slabs must be between 1 and %d.", lineNo, maxExpectedSlabs)}
@@ -138,19 +165,23 @@ func validateExpectedSlabs(lineNo int, expected *int, tracking string) error {
 // insertLines bulk-inserts resolved lines as purchase_order_item rows.
 func insertLines(ctx context.Context, tx pgx.Tx, poInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
+		dimUnit := l.dimUnit
+		if dimUnit == "" {
+			dimUnit = linedim.DefaultUnit
+		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO purchase_order_item (
 				purchase_order_id, line_number, inventory_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, expected_slabs
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19)`,
+				item_created_by, expected_slabs, dim_length, dim_width, dim_unit
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19, $20,$21,$22)`,
 			poInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID), l.expectedSlabs,
+			nullableInt(actorEmployeeID), l.expectedSlabs, l.length, l.width, dimUnit,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

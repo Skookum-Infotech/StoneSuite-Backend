@@ -117,6 +117,12 @@ type quoteSourceLine struct {
 	taxRateID           *int
 	taxPercent          float64
 	money               LineMoney
+	kitUUID             *string // the kit heading the line sits under, carried over
+	kitName             string
+	length              *float64 // slab size/count the line was priced from, carried over
+	width               *float64
+	slabs               *int
+	dimUnit             string
 }
 
 // loadQuoteSourceLines loads a live quote's lines by its internal id.
@@ -125,7 +131,9 @@ func loadQuoteSourceLines(ctx context.Context, tx pgx.Tx, quoteInternalID int) (
 		SELECT quote_item_uuid, line_number, inventory_item_id,
 		       item_name, sku, description, unit_id, COALESCE(unit_code,''),
 		       quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
-		       line_subtotal, line_discount, line_tax, line_total
+		       line_subtotal, line_discount, line_tax, line_total,
+		       kit_uuid::text, kit_name,
+		       dim_length, dim_width, slabs, dim_unit
 		FROM quote_item
 		WHERE quote_id = $1 AND item_deleted_at IS NULL
 		ORDER BY line_number`, quoteInternalID)
@@ -141,6 +149,8 @@ func loadQuoteSourceLines(ctx context.Context, tx pgx.Tx, quoteInternalID int) (
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
 			&l.money.Subtotal, &l.money.Discount, &l.money.Tax, &l.money.Total,
+			&l.kitUUID, &l.kitName,
+			&l.length, &l.width, &l.slabs, &l.dimUnit,
 		); err != nil {
 			return nil, fmt.Errorf("scan quote line: %w", err)
 		}
@@ -172,14 +182,14 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, orderInternalID int, l
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)
+				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20, $21,$22,$23,$24)
 			RETURNING sales_order_item_uuid, sales_order_item_id`,
 			orderInternalID, l.lineNumber, l.inventoryItemID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), l.kitUUID, l.kitName, l.length, l.width, l.slabs, l.dimUnit,
 		).Scan(&newLineUUID, &newLineID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("insert converted sales order item: %w", err)

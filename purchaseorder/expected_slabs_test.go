@@ -15,6 +15,7 @@ func TestValidateExpectedSlabs(t *testing.T) {
 		name     string
 		expected *int
 		tracking string
+		unit     string
 		wantErr  string
 	}{
 		{name: "not stated on a slab line", expected: nil, tracking: "serialized"},
@@ -23,6 +24,8 @@ func TestValidateExpectedSlabs(t *testing.T) {
 		{name: "one slab", expected: intPtr(1), tracking: "serialized"},
 		{name: "the largest allowed", expected: intPtr(maxExpectedSlabs), tracking: "serialized"},
 		{name: "on a quantity line", expected: intPtr(12), tracking: "quantity", wantErr: "slab-tracked"},
+		{name: "on a quantity line measured in sqft", expected: intPtr(12), tracking: "quantity", unit: "SQFT"},
+		{name: "on a quantity line measured in each", expected: intPtr(12), tracking: "quantity", unit: "EA", wantErr: "slab-tracked"},
 		{name: "on a line with no item tracking", expected: intPtr(12), tracking: "", wantErr: "slab-tracked"},
 		{name: "zero", expected: intPtr(0), tracking: "serialized", wantErr: "between 1 and"},
 		{name: "negative", expected: intPtr(-3), tracking: "serialized", wantErr: "between 1 and"},
@@ -30,7 +33,7 @@ func TestValidateExpectedSlabs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateExpectedSlabs(3, tc.expected, tc.tracking)
+			err := validateExpectedSlabs(3, tc.expected, tc.tracking, tc.unit)
 			if tc.wantErr == "" {
 				assert.NoError(t, err)
 				return

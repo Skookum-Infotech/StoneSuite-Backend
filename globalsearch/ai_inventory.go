@@ -69,6 +69,9 @@ func loadInventoryItemAI(ctx context.Context, pool *pgxpool.Pool, id string) (AI
 		"tracking":         it.Tracking,
 		"barcode":          it.Barcode,
 	}
+	// unit_price above is the selling price; a question about what we pay for an
+	// item reads this one.
+	core["purchase_unit_price"] = it.PurchaseUnitPrice
 	return AIRecord{Doc: rag.RecordDoc{WorkflowKey: "inventory_item", StateName: status, Core: core, Priority: aiPriorityInventory}}, nil
 }
 

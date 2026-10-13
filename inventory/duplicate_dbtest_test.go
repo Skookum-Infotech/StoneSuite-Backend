@@ -19,10 +19,11 @@ import (
 func createNamed(t *testing.T, pool *pgxpool.Pool, name string) *Item {
 	t.Helper()
 	item, err := Create(context.Background(), pool, CreateItemInput{
-		SKU:       fmt.Sprintf("SKU-%d", time.Now().UnixNano()),
-		Name:      name,
-		UnitID:    1,
-		UnitPrice: 10,
+		SKU:               fmt.Sprintf("SKU-%d", time.Now().UnixNano()),
+		Name:              name,
+		UnitID:            1,
+		UnitPrice:         priceOf(10),
+		PurchaseUnitPrice: priceOf(6),
 	}, 1)
 	if err != nil {
 		t.Fatalf("Create %q: %v", name, err)
@@ -56,9 +57,11 @@ func TestCreate_SameNameIsRejected_EvenUnderAnotherSKU(t *testing.T) {
 
 	for _, variant := range []string{name, strings.ToUpper(name), "  " + strings.ToLower(name) + "  ", strings.Replace(name, " ", "   ", 1)} {
 		_, err := Create(context.Background(), pool, CreateItemInput{
-			SKU:    fmt.Sprintf("OTHER-%d", time.Now().UnixNano()),
-			Name:   variant,
-			UnitID: 1,
+			SKU:               fmt.Sprintf("OTHER-%d", time.Now().UnixNano()),
+			Name:              variant,
+			UnitID:            1,
+			UnitPrice:         priceOf(10),
+			PurchaseUnitPrice: priceOf(6),
 		}, 1)
 		requireDuplicate(t, err, first.ID)
 	}
@@ -76,7 +79,8 @@ func TestCreate_InactiveItemStillBlocksTheName(t *testing.T) {
 		t.Fatalf("deactivate: %v", err)
 	}
 
-	_, err := Create(ctx, pool, CreateItemInput{SKU: fmt.Sprintf("SKU-%d", time.Now().UnixNano()), Name: name, UnitID: 1}, 1)
+	_, err := Create(ctx, pool, CreateItemInput{SKU: fmt.Sprintf("SKU-%d", time.Now().UnixNano()), Name: name, UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6)}, 1)
 	d := requireDuplicate(t, err, first.ID)
 	if d.ExistingStatus != "Inactive" {
 		t.Errorf("ExistingStatus = %q, want Inactive", d.ExistingStatus)
@@ -99,7 +103,8 @@ func TestUpdate_RenameOntoAnExistingItemIsRejected(t *testing.T) {
 	taken := createNamed(t, pool, uniqueName("Taken Slab"))
 	other := createNamed(t, pool, uniqueName("Other Slab"))
 
-	err := Update(context.Background(), pool, other.ID, CreateItemInput{SKU: other.SKU, Name: taken.Name, UnitID: 1}, 1)
+	err := Update(context.Background(), pool, other.ID, CreateItemInput{SKU: other.SKU, Name: taken.Name, UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6)}, 1)
 	requireDuplicate(t, err, taken.ID)
 }
 
@@ -108,10 +113,12 @@ func TestUpdate_KeepingTheNameOrRenamingToAFreeOneIsAllowed(t *testing.T) {
 	ctx := context.Background()
 	item := createNamed(t, pool, uniqueName("Steady Slab"))
 
-	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: item.Name, UnitID: 1, UnitPrice: 99}, 1); err != nil {
+	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: item.Name, UnitID: 1,
+		UnitPrice: priceOf(99), PurchaseUnitPrice: priceOf(60)}, 1); err != nil {
 		t.Fatalf("Update keeping the same name: %v", err)
 	}
-	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: uniqueName("Renamed Slab"), UnitID: 1}, 1); err != nil {
+	if err := Update(ctx, pool, item.ID, CreateItemInput{SKU: item.SKU, Name: uniqueName("Renamed Slab"), UnitID: 1,
+		UnitPrice: priceOf(10), PurchaseUnitPrice: priceOf(6)}, 1); err != nil {
 		t.Fatalf("Update to a free name: %v", err)
 	}
 }
@@ -127,7 +134,8 @@ func TestUpdate_PreExistingDuplicateCanStillBeEdited(t *testing.T) {
 		t.Fatalf("force a duplicate name: %v", err)
 	}
 
-	if err := Update(ctx, pool, b.ID, CreateItemInput{SKU: b.SKU, Name: a.Name, UnitID: 1, UnitPrice: 5}, 1); err != nil {
+	if err := Update(ctx, pool, b.ID, CreateItemInput{SKU: b.SKU, Name: a.Name, UnitID: 1,
+		UnitPrice: priceOf(5), PurchaseUnitPrice: priceOf(3)}, 1); err != nil {
 		t.Fatalf("Update of a pre-existing duplicate (name unchanged): %v", err)
 	}
 }

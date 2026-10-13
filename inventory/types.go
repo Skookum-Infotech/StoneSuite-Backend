@@ -39,10 +39,26 @@ type Item struct {
 	Barcode            string  `json:"barcode"`
 	DefaultWarehouseID *int    `json:"defaultWarehouseId,omitempty"`
 
+	// UnitPrice above is the SELLING price: what a sales document line defaults
+	// to. The JSON name is kept so every sales-side reader is untouched.
+	// PurchaseUnitPrice is what a purchase order, vendor bill or requisition line
+	// defaults to.
+	PurchaseUnitPrice float64 `json:"purchaseUnitPrice"`
+
+	// DimensionUnit is the unit this item's slabs' length and width are measured
+	// in: mm, cm, in, ft or m. A document line copies it when the item is picked,
+	// so one line never mixes units and a saved line keeps the unit it was
+	// entered in. Inches unless set.
+	DimensionUnit string `json:"dimensionUnit"`
+
 	// TrackStock says whether a sales order line for this item is checked against
 	// stock and reserves it. False for an item with no stock to run out of (a
 	// service, delivery or labour charge). Always true for a slab-tracked item.
 	TrackStock bool `json:"trackStock"`
+
+	// Kits are the kits this item is in. Filled by Get only — list and search
+	// rows leave it out, so a catalogue page costs no extra query per row.
+	Kits []KitRef `json:"kits,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -60,10 +76,15 @@ type CreateItemInput struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
 	UnitID       int            `json:"unitId"`
-	UnitPrice    float64        `json:"unitPrice"`
 	CurrencyID   *int           `json:"currencyId,omitempty"`
 	TaxRateID    *int           `json:"taxRateId,omitempty"`
 	CustomFields map[string]any `json:"customFields"`
+
+	// UnitPrice (selling) and PurchaseUnitPrice are both required. They are
+	// pointers because a plain float64 cannot tell an omitted field from an
+	// explicit 0, and 0 is a legitimate price for a service or labour item.
+	UnitPrice         *float64 `json:"unitPrice"`
+	PurchaseUnitPrice *float64 `json:"purchaseUnitPrice"`
 
 	Tracking           string  `json:"tracking"`
 	MaterialID         *int    `json:"materialId,omitempty"`
@@ -78,6 +99,17 @@ type CreateItemInput struct {
 	// plain bool would read a client that predates the field as "turn off".
 	// Nil on create means tracked.
 	TrackStock *bool `json:"trackStock,omitempty"`
+
+	// DimensionUnit is a string so an omitted field means "leave as it is" on
+	// update (an older client must not reset an item to cm by saving) and cm on
+	// create. Otherwise one of mm, cm, in, ft, m.
+	DimensionUnit string `json:"dimensionUnit,omitempty"`
+
+	// KitIDs, when present, makes exactly these kits (external uuids) the item's
+	// kits. Absent (nil) leaves its memberships alone — an older client that
+	// predates kits must not empty them by saving — while an explicit empty list
+	// takes the item out of every kit.
+	KitIDs []string `json:"kitIds,omitempty"`
 }
 
 // Page is one page of a keyset-paginated item search.

@@ -37,10 +37,11 @@ func newItem(t *testing.T, pool *pgxpool.Pool, actorEmployeeID int) *Item {
 	t.Helper()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	item, err := Create(context.Background(), pool, CreateItemInput{
-		SKU:       "SKU-" + suffix,
-		Name:      "Test Item " + suffix,
-		UnitID:    1,
-		UnitPrice: 25.00,
+		SKU:               "SKU-" + suffix,
+		Name:              "Test Item " + suffix,
+		UnitID:            1,
+		UnitPrice:         priceOf(25.00),
+		PurchaseUnitPrice: priceOf(15.00),
 	}, actorEmployeeID)
 	if err != nil {
 		t.Fatalf("Create: %v", err)

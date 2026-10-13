@@ -12,6 +12,7 @@ const (
 	colTotalW = 22.0
 
 	tableHeadH  = 8.0
+	kitHeadH    = 7.0 // a kit's heading row, between the table header and its lines
 	tableRadius = 1.5
 	rowPadX     = 3.0
 	rowPadY     = 2.2
@@ -89,22 +90,61 @@ func rowHeight(pdf *fpdf.Fpdf, ln PrintLine) float64 {
 		pdf.SetFont(fontFace, "", 8)
 		h += float64(len(pdf.SplitLines([]byte(ln.Description), itemW))) * descLineH
 	}
+	if ln.Size != "" {
+		h += descLineH
+	}
 	return h
 }
 
 // drawLineTable draws the header and one row per line, repeating the header on
 // each continuation page. Rows are measured before they are drawn so a row
 // never straddles a page break and its zebra fill matches its height.
+//
+// A line added from a kit sits under a heading row naming the kit: drawn when the
+// kit changes, kept with the first line of its group (a heading is never left
+// alone at the foot of a page), and repeated at the top of the next page when a
+// group runs across the break.
 func drawLineTable(pdf *fpdf.Fpdf, d PrintableDoc) {
 	drawLineTableHeader(pdf)
+	group := ""
 	for i, ln := range d.Lines {
 		h := rowHeight(pdf, ln)
-		if pdf.GetY()+h > pageBottomY {
+		newGroup := ln.KitName != group
+		need := h
+		if newGroup && ln.KitName != "" {
+			need += kitHeadH
+		}
+		if pdf.GetY()+need > pageBottomY {
 			pdf.AddPage()
 			drawLineTableHeader(pdf)
+			// A group carried over the break gets its heading again, marked as
+			// continued; a new group's heading is drawn just below.
+			if !newGroup && ln.KitName != "" {
+				drawKitHeading(pdf, ln.KitName+" (continued)")
+			}
 		}
+		if newGroup && ln.KitName != "" {
+			drawKitHeading(pdf, ln.KitName)
+		}
+		group = ln.KitName
 		drawLineRow(pdf, d.CurrencySymbol, ln, i, h)
 	}
+}
+
+// drawKitHeading draws a kit's heading row — a full-width violet band, so a
+// kit reads as a header over its lines — and leaves the cursor at its bottom.
+func drawKitHeading(pdf *fpdf.Fpdf, name string) {
+	y := pdf.GetY()
+	setFill(pdf, colKitTint)
+	pdf.Rect(marginX, y, contentW, kitHeadH, "F")
+	pdf.SetFont(fontFace, "B", 8)
+	setText(pdf, colKitInk)
+	pdf.SetXY(marginX+rowPadX, y)
+	pdf.CellFormat(contentW-2*rowPadX, kitHeadH, "KIT "+emDash+" "+name, "", 0, "L", false, 0, "")
+	setDraw(pdf, colKitRule)
+	pdf.SetLineWidth(hairlineW)
+	pdf.Line(marginX, y+kitHeadH, marginX+contentW, y+kitHeadH)
+	pdf.SetXY(marginX, y+kitHeadH)
 }
 
 // drawLineRow draws row idx (zebra-filled when odd) of height h at the cursor
@@ -126,6 +166,12 @@ func drawLineRow(pdf *fpdf.Fpdf, sym string, ln PrintLine, idx int, h float64) {
 		setText(pdf, colSubtle)
 		pdf.SetX(marginX + rowPadX)
 		pdf.MultiCell(itemW, descLineH, ln.Description, "", "L", false)
+	}
+	if ln.Size != "" {
+		pdf.SetFont(fontFace, "", 8)
+		setText(pdf, colSubtle)
+		pdf.SetX(marginX + rowPadX)
+		pdf.CellFormat(itemW, descLineH, ln.Size, "", 1, "L", false, 0, "")
 	}
 
 	cells := []struct {

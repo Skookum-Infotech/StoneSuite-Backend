@@ -30,6 +30,10 @@ type poSourceLine struct {
 	discountPercent     float64
 	taxRateID           *int
 	taxPercent          float64
+	length              *float64 // slab size/count the line was ordered by
+	width               *float64
+	slabs               *int // the PO line's expected slabs
+	dimUnit             string
 }
 
 // loadPurchaseOrderSourceLines loads a live purchase order's lines by its
@@ -65,7 +69,8 @@ func loadPurchaseOrderSourceLines(ctx context.Context, tx pgx.Tx, poInternalID i
 		           WHERE cl.purchase_order_item_id = poi.purchase_order_item_id
 		             AND rs.record_status_code <> 'VOID'
 		       ), 0),
-		       poi.unit_price, poi.discount_percent, poi.tax_rate_id, poi.tax_percent
+		       poi.unit_price, poi.discount_percent, poi.tax_rate_id, poi.tax_percent,
+		       poi.dim_length, poi.dim_width, poi.expected_slabs, poi.dim_unit
 		FROM purchase_order_item poi
 		WHERE poi.purchase_order_id = $1 AND poi.item_deleted_at IS NULL
 		ORDER BY poi.line_number`, poInternalID)
@@ -81,6 +86,7 @@ func loadPurchaseOrderSourceLines(ctx context.Context, tx pgx.Tx, poInternalID i
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.qtyReceived, &l.qtyBilled,
 			&l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
+			&l.length, &l.width, &l.slabs, &l.dimUnit,
 		); err != nil {
 			return nil, fmt.Errorf("scan purchase order line: %w", err)
 		}

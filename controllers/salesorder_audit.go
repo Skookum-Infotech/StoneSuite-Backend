@@ -23,6 +23,7 @@ func soSnapshot(o *salesorder.Order) map[string]any {
 		"status":           o.Status,
 		"customerId":       o.Customer.ID,
 		"grandTotal":       o.GrandTotal,
+		"installDate":      o.InstallDate,
 	}
 }
 

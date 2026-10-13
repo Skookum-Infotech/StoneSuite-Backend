@@ -29,6 +29,8 @@ import (
 //	GET    /api/tenant/inventory/items/{uuid}       — get item
 //	PATCH  /api/tenant/inventory/items/{uuid}       — update item
 //	DELETE /api/tenant/inventory/items/{uuid}       — soft delete item
+//
+// Kit routes (inventory_kits.go) live on the same handler group and the same grant.
 type InventoryOps struct{}
 
 // NewInventoryOps constructs the handler group.

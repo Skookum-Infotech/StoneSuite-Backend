@@ -38,16 +38,39 @@ type LineInput2 struct {
 	TaxRateID         *int     `json:"taxRateId"`
 	TaxPercent        *float64 `json:"taxPercent"`
 	WarehouseID       *int     `json:"warehouseId"`
+
+	// KitUUID / KitName say the line was added from a kit, so a document groups
+	// it under that kit's heading. They are a label only: nothing about the
+	// line's pricing, stock or conversion depends on them (see package kitref).
+	KitUUID string `json:"kitUuid"`
+	KitName string `json:"kitName"`
+
+	// Length / Width / Slabs give the size of one slab and how many slabs the
+	// line covers. With length and width both set the line's quantity is derived
+	// from them (see package linedim), so the quantity sent is ignored.
+	Length *float64 `json:"length"`
+	Width  *float64 `json:"width"`
+	Slabs  *int     `json:"slabs"`
+	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
+	// ft, m). Blank takes the item's unit, then inches.
+	DimensionUnit string `json:"dimensionUnit"`
 }
 
 // orderFields is the header payload shared by create and update (everything
 // except the customer, which is fixed at creation and never changes).
+//
+// InstallDate ("yyyy-mm-dd", wire name scheduledInstallDate) is the date the
+// order is to be installed. The HTTP layer refuses a blank one and the store
+// refuses a past one; setting or changing it (re)plans the order's production
+// schedule (schedule.go). The store itself reads blank as "leave as is", so
+// internal callers need not supply one.
 type orderFields struct {
 	PONumber           string         `json:"poNumber"`
 	ReferenceNumber    string         `json:"referenceNumber"`
 	OrderDate          string         `json:"orderDate"`        // "yyyy-mm-dd"
 	ExpectedDelivery   string         `json:"expectedDelivery"` // "yyyy-mm-dd"
 	PaymentDueDate     string         `json:"paymentDueDate"`   // "yyyy-mm-dd"; blank ⇒ derived from terms (AD-8)
+	InstallDate        string         `json:"scheduledInstallDate"`
 	PaymentTermsID     *int           `json:"paymentTermsId"`
 	PriceLevelID       *int           `json:"priceLevelId"`
 	CurrencyID         *int           `json:"currencyId"`
@@ -106,6 +129,19 @@ type Line struct {
 	LineTax         float64 `json:"lineTax"`
 	LineTotal       float64 `json:"lineTotal"`
 
+	// KitID / KitName are set on a line that was added from a kit: the kit's uuid
+	// and the name it had at the time. Consecutive lines with the same KitID are
+	// one group under that kit's heading.
+	KitID   *string `json:"kitId,omitempty"`
+	KitName string  `json:"kitName,omitempty"`
+
+	// Length / Width / Slabs are the slab size and count the line was priced
+	// from, when it was entered that way; the quantity above is their area.
+	Length        *float64 `json:"length,omitempty"`
+	Width         *float64 `json:"width,omitempty"`
+	Slabs         *int     `json:"slabs,omitempty"`
+	DimensionUnit string   `json:"dimensionUnit,omitempty"`
+
 	// Fulfillment (schema.org OrderItem.orderItemStatus, AD-9). FulfilledQuantity
 	// is the stored rollup of the line's allocations; Status is derived from it.
 	FulfilledQuantity float64 `json:"fulfilledQuantity"`
@@ -147,6 +183,7 @@ type Order struct {
 	OrderDate         string      `json:"orderDate"`
 	ExpectedDelivery  string      `json:"expectedDelivery,omitempty"`
 	PaymentDueDate    string      `json:"paymentDueDate,omitempty"`
+	InstallDate       string      `json:"scheduledInstallDate,omitempty"`
 	PONumber          string      `json:"poNumber,omitempty"`
 	ReferenceNumber   string      `json:"referenceNumber,omitempty"`
 	Memo              string      `json:"memo,omitempty"`

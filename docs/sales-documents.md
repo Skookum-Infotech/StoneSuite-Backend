@@ -5,6 +5,26 @@ Quote can become a Sales Order, and a Sales Order can become an Invoice.
 Payments, Credit Memos, and Refunds apply against a customer's invoices.
 Each document type lives under the Sales section of the sidebar.
 
+On an Estimate, Quote, Sales Order or Invoice, picking a kit in a line's item box
+adds all of that kit's items as lines under a full-width kit heading (see Kits in
+`inventory.md`). The heading carries through every conversion in the chain and
+onto the exported and emailed PDF; the lines themselves are priced and taxed
+like any other line, so totals are unaffected.
+
+Lines measured in Sq ft or Sq m can also state the size of one slab — **Length**
+and **Width** — and how many **Slabs** the line covers. Length and width are
+always in the same unit, which comes from the inventory item (set on the item
+as **Length / Width Unit**: mm, cm, in, ft or m; inches unless changed) and is kept
+on the line, so changing an item's unit later never alters a saved document.
+When length and width are both filled in, the line's quantity is no longer
+typed: it is length × width × slabs converted to the item's area unit (rounded
+to three decimals), so a 120 × 60 in slab is exactly 50 sq ft and 2 of them are
+100 sq ft. Leave Slabs blank and one slab is assumed. Amount and Total are then
+quantity × the per-area unit price, less discount, plus tax, exactly as for any
+other line. Without a size, the line behaves as before. Size, unit and slab
+count carry through every conversion and onto the exported and emailed PDF;
+they are not available on lines measured in anything but an area unit.
+
 ## Estimates
 
 An Estimate is a rough, early-stage price for a customer, created from
@@ -28,11 +48,34 @@ quote's details.
 A Sales Order is the customer's confirmed order, created from Sales → Sales
 Orders → New Sales Order (or by converting a quote). Its statuses are Draft,
 Pending Approval, Approved, Open, Partially Filled, Filled, or Cancelled. A
-sales order detail page also has an Inventory tab alongside its Overview,
-Items, Audit, and Files tabs. Once Approved, Open, Partially Filled, or
-Filled, it can be converted into an Invoice with the Convert to Invoice
+sales order detail page also has Inventory and Scheduling tabs alongside its
+Overview, Items, Audit, and Files tabs. Once Approved, Open, Partially Filled,
+or Filled, it can be converted into an Invoice with the Convert to Invoice
 button. A sales order is also the starting point for a fabrication job — see
 `fabrication.md`.
+
+Every sales order needs a Scheduled Installation Date (in Primary Information;
+today or later). Saving it plans the order's production schedule, which the
+Scheduling tab lists from Created through Installation: Template, Material
+Allocation, Engineering, WIP Bin Transfer, Saw, Edges, Quality Control,
+Installation Ready, Installation Picked and Installation. Each activity has a
+status (Pending, In Progress or Completed), a scheduled date and time, a
+completed-on time and notes. A Pending activity whose time has passed shows as
+Overdue. The dates are spread evenly from the order date to the installation
+date, with Installation on the installation date itself. Anyone who can edit the
+order can set an activity's status, move its date or time, and add notes.
+Changing the installation date re-plans every Pending activity; ones that are In
+Progress or Completed stay where they are. An order made before this field
+existed, or by converting a quote, has no schedule until a date is set on the
+order.
+
+Calendar → Activity Planner lays those schedules out across every order you can
+see, one activity at a time. Pick Template, Engineering, Bin Transfer, Saw,
+Edges, Quality Control, Installation or Invoicing, and each order appears as a
+job card on the day and time it is planned for. Switch the columns between Day
+(hours), Week and Month. A card links to its order's Scheduling tab; on the
+Invoicing tab the cards are the invoices made from your orders, listed on
+their due date, and link to the invoice. Cancelled orders are left out.
 
 A sales order checks your stock when you save it. If any line asks for more of
 an item than is free — what is on hand, less what other orders are already

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
 
@@ -23,6 +24,7 @@ type resolvedLine struct {
 	quantity        float64
 	unitPrice       float64
 	money           LineMoney
+	dims            linedim.Dims
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -41,7 +43,8 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		if in.Quantity <= 0 {
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
+		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
 		if in.EstimatedUnitPrice < 0 {
@@ -63,6 +66,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 			rl.inventoryItemID = &id
 			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
+			if dimIn.Unit == "" {
+				dimIn.Unit = item.dimensionUnit
+			}
 			if rl.unitPrice == 0 {
 				rl.unitPrice = item.unitPrice
 			}
@@ -76,6 +82,17 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 			// by this same check (mirrors purchaseorder/estimate/invoice).
 			rl.name = in.Description
 			rl.desc = in.Description
+		}
+
+		// Length x width x slabs, when given, IS the quantity: derived here so a
+		// stale client can never store one that disagrees with its dimensions.
+		sized, dimMsg := linedim.Resolve(dimIn, rl.unitCode)
+		if dimMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
+		}
+		rl.dims = sized.Dims
+		if sized.Derived {
+			rl.quantity = sized.Quantity
 		}
 
 		rl.money = ComputeLine(CalcLineInput{Quantity: rl.quantity, EstimatedUnitPrice: rl.unitPrice})
@@ -92,12 +109,12 @@ func insertLines(ctx context.Context, tx pgx.Tx, reqnInternalID int, lines []res
 				requisition_id, line_number, inventory_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, estimated_unit_price, estimated_amount,
-				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11, $12)`,
+				item_created_by, dim_length, dim_width, slabs, dim_unit
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11, $12, $13,$14,$15,$16)`,
 			reqnInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.money.EstimatedAmount,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(),
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

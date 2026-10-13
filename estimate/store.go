@@ -263,14 +263,15 @@ func addrColVals(prefix string, a AddressInput) []colVal {
 
 // itemSnapshot is what a line needs from its catalog item at add time.
 type itemSnapshot struct {
-	internalID int
-	sku        string
-	name       string
-	desc       string
-	unitID     *int
-	unitCode   string
-	unitPrice  float64
-	taxRateID  *int
+	internalID    int
+	sku           string
+	name          string
+	desc          string
+	unitID        *int
+	unitCode      string
+	unitPrice     float64
+	taxRateID     *int
+	dimensionUnit string // the item's length/width unit, a line's default
 }
 
 // resolveInventoryItem loads a catalog item's snapshot fields by its external
@@ -279,11 +280,12 @@ func resolveInventoryItem(ctx context.Context, q workflow.Querier, uuid string) 
 	var s itemSnapshot
 	err := q.QueryRow(ctx, `
 		SELECT ii.inventory_item_id, ii.inventory_item_sku, ii.inventory_item_name, ii.inventory_item_description,
-		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id
+		       ii.inventory_item_unit_id, COALESCE(u.unit_code,''), ii.inventory_item_unit_price, ii.inventory_item_tax_rate_id,
+		       ii.inventory_item_dimension_unit
 		FROM inventory_item ii
 		LEFT JOIN lkp_unit u ON u.unit_id = ii.inventory_item_unit_id
 		WHERE ii.inventory_item_uuid = $1 AND ii.inventory_item_deleted_at IS NULL`, uuid).Scan(
-		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID)
+		&s.internalID, &s.sku, &s.name, &s.desc, &s.unitID, &s.unitCode, &s.unitPrice, &s.taxRateID, &s.dimensionUnit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ClientError{Msg: "Unknown inventory item: " + uuid}
 	}
@@ -392,7 +394,9 @@ const itemSelect = `
 	       ii.inventory_item_uuid,
 	       ei.sku, ei.item_name, ei.description, COALESCE(ei.unit_code,''),
 	       ei.quantity, ei.unit_price, ei.discount_percent, ei.tax_percent,
-	       ei.line_subtotal, ei.line_discount, ei.line_tax, ei.line_total
+	       ei.line_subtotal, ei.line_discount, ei.line_tax, ei.line_total,
+	       ei.kit_uuid::text, ei.kit_name,
+	       ei.dim_length, ei.dim_width, ei.slabs, ei.dim_unit
 	FROM estimate_item ei
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = ei.inventory_item_id
 	WHERE ei.estimate_id = $1 AND ei.item_deleted_at IS NULL
@@ -405,6 +409,8 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
+		&l.KitID, &l.KitName,
+		&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit,
 	)
 	return l, err
 }

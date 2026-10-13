@@ -399,7 +399,8 @@ const itemSelect = `
 	       ii.inventory_item_uuid,
 	       ei.sku, ei.item_name, ei.description, COALESCE(ei.unit_code,''),
 	       ei.quantity, ei.unit_price, ei.discount_percent, ei.tax_percent,
-	       ei.line_subtotal, ei.line_discount, ei.line_tax, ei.line_total
+	       ei.line_subtotal, ei.line_discount, ei.line_tax, ei.line_total,
+	       ei.kit_uuid::text, ei.kit_name
 	FROM quote_item ei
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = ei.inventory_item_id
 	WHERE ei.quote_id = $1 AND ei.item_deleted_at IS NULL
@@ -412,6 +413,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
+		&l.KitID, &l.KitName,
 	)
 	return l, err
 }

@@ -5,6 +5,12 @@ Quote can become a Sales Order, and a Sales Order can become an Invoice.
 Payments, Credit Memos, and Refunds apply against a customer's invoices.
 Each document type lives under the Sales section of the sidebar.
 
+On an Estimate, Quote, Sales Order or Invoice, picking a kit in a line's item box
+adds all of that kit's items as lines under a full-width kit heading (see Kits in
+`inventory.md`). The heading carries through every conversion in the chain and
+onto the exported and emailed PDF; the lines themselves are priced and taxed
+like any other line, so totals are unaffected.
+
 ## Estimates
 
 An Estimate is a rough, early-stage price for a customer, created from

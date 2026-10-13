@@ -65,6 +65,10 @@ type PrintLine struct {
 	DiscountPercent float64
 	TaxPercent      float64
 	LineTotal       float64
+	// KitName is the kit the line was added from ("" for none). A run of
+	// consecutive lines with the same KitName prints under one heading row
+	// carrying that name; the lines themselves print exactly as any other.
+	KitName string
 }
 
 // PrintableDoc is the module-agnostic input to Render.

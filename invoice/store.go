@@ -125,7 +125,8 @@ const lineSelect = `
 	SELECT ii.invoice_item_uuid, ii.line_number, COALESCE(inv.inventory_item_uuid::text,''), COALESCE(soi.sales_order_item_uuid::text,''),
 	       ii.sku, ii.item_name, ii.description, ii.unit_id, ii.unit_code,
 	       ii.quantity, ii.unit_price, ii.discount_percent, ii.tax_rate_id, ii.tax_percent,
-	       ii.line_subtotal, ii.line_discount, ii.line_tax, ii.line_total
+	       ii.line_subtotal, ii.line_discount, ii.line_tax, ii.line_total,
+	       ii.kit_uuid::text, ii.kit_name
 	FROM invoice_item ii
 	LEFT JOIN inventory_item inv ON inv.inventory_item_id = ii.inventory_item_id
 	LEFT JOIN sales_order_item soi ON soi.sales_order_item_id = ii.sales_order_item_id
@@ -145,7 +146,8 @@ func loadLines(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Line,
 		if err := rows.Scan(&l.ID, &l.LineNumber, &invItemUUID, &soItemUUID,
 			&l.SKU, &l.ItemName, &l.Description, &l.UnitID, &l.UnitCode,
 			&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxRateID, &l.TaxPercent,
-			&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal); err != nil {
+			&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
+			&l.KitID, &l.KitName); err != nil {
 			return nil, fmt.Errorf("scan invoice line: %w", err)
 		}
 		if invItemUUID != "" {

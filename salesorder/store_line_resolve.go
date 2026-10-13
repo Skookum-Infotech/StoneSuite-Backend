@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"stonesuite-backend/kitref"
 	"stonesuite-backend/workflow"
 )
 
@@ -110,6 +111,7 @@ type resolvedLine struct {
 	taxRateID       *int
 	taxPercent      float64
 	money           LineMoney
+	kit             kitref.Ref // the kit the line was added from; zero for none
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -139,6 +141,11 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: discount percent must be between 0 and 100.", in.LineNumber)}
 		}
 
+		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+		if kitMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
+		}
+
 		rl := resolvedLine{
 			lineNumber:      in.LineNumber,
 			warehouseID:     in.WarehouseID,
@@ -146,6 +153,7 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput2, h
 			unitPrice:       in.UnitPrice,
 			discountPercent: in.DiscountPercent,
 			taxRateID:       in.TaxRateID,
+			kit:             kit,
 		}
 
 		if in.InventoryItemUUID != "" {

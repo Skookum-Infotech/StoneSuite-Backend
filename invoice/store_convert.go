@@ -127,6 +127,8 @@ type salesOrderSourceLine struct {
 	taxRateID           *int
 	taxPercent          float64
 	money               LineMoney
+	kitUUID             *string // the kit heading the line sits under, carried over
+	kitName             string
 }
 
 // loadSalesOrderSourceLines loads a live sales order's lines by its internal id.
@@ -135,7 +137,8 @@ func loadSalesOrderSourceLines(ctx context.Context, tx pgx.Tx, salesOrderInterna
 		SELECT sales_order_item_id, line_number, inventory_item_id,
 		       item_name, sku, description, unit_id, COALESCE(unit_code,''),
 		       quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
-		       line_subtotal, line_discount, line_tax, line_total
+		       line_subtotal, line_discount, line_tax, line_total,
+		       kit_uuid::text, kit_name
 		FROM sales_order_item
 		WHERE sales_order_id = $1 AND item_deleted_at IS NULL
 		ORDER BY line_number`, salesOrderInternalID)
@@ -151,6 +154,7 @@ func loadSalesOrderSourceLines(ctx context.Context, tx pgx.Tx, salesOrderInterna
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
 			&l.money.Subtotal, &l.money.Discount, &l.money.Tax, &l.money.Total,
+			&l.kitUUID, &l.kitName,
 		); err != nil {
 			return nil, fmt.Errorf("scan sales order line: %w", err)
 		}
@@ -179,13 +183,13 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, invoiceInternalID int,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19)`,
+				item_created_by, kit_uuid, kit_name
+			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19, $20,$21)`,
 			invoiceInternalID, l.lineNumber, l.inventoryItemID, l.internalID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), l.kitUUID, l.kitName,
 		)
 		if err != nil {
 			return fmt.Errorf("insert converted invoice item: %w", err)

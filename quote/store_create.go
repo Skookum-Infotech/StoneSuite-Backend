@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/kitref"
 	"stonesuite-backend/workflow"
 )
 
@@ -27,6 +28,7 @@ type resolvedLine struct {
 	taxRateID       *int
 	taxPercent      float64
 	money           LineMoney
+	kit             kitref.Ref // the kit the line was added from; zero for none
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -53,12 +55,18 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: unit price cannot be negative.", in.LineNumber)}
 		}
 
+		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+		if kitMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
+		}
+
 		rl := resolvedLine{
 			lineNumber:      in.LineNumber,
 			quantity:        in.Quantity,
 			unitPrice:       in.UnitPrice,
 			discountPercent: in.DiscountPercent,
 			taxRateID:       in.TaxRateID,
+			kit:             kit,
 		}
 
 		if in.InventoryItemUUID != "" {
@@ -104,19 +112,20 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 // insertLines bulk-inserts resolved lines as quote_item rows.
 func insertLines(ctx context.Context, tx pgx.Tx, quoteInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
+		kitUUID, kitName := l.kit.Args()
 		_, err := tx.Exec(ctx, `
 			INSERT INTO quote_item (
 				quote_id, line_number, inventory_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18)`,
+				item_created_by, kit_uuid, kit_name
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20)`,
 			quoteInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), kitUUID, kitName,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

@@ -62,6 +62,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 	if err := writeItemHistory(ctx, tx, newID, "create", "", "", in.SKU, actorEmployeeID); err != nil {
 		return nil, err
 	}
+	if in.KitIDs != nil {
+		if err := setItemKits(ctx, tx, newID, in.KitIDs, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create inventory item: %w", err)
 	}

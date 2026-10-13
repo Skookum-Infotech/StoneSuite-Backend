@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/kitref"
 )
 
 // resolvedLine is one line item after item/tax resolution + money calc, ready
@@ -21,6 +23,7 @@ type resolvedLine struct {
 	unitCode   string
 	taxPercent float64
 	money      LineMoney
+	kit        kitref.Ref // the kit the line was added from; zero for none
 }
 
 // resolveLine snapshots a line's catalog data (if any) and computes its money.
@@ -38,9 +41,14 @@ func resolveLine(ctx context.Context, pool *pgxpool.Pool, in InvoiceLineInput, h
 		return resolvedLine{}, ClientError{Msg: "each line needs an inventoryItemUuid or a description."}
 	}
 
+	kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+	if kitMsg != "" {
+		return resolvedLine{}, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
+	}
+
 	// Free-text lines (no catalog item) snapshot the caller's description as
 	// both the item name and the description.
-	rl := resolvedLine{in: in, itemName: in.Description}
+	rl := resolvedLine{in: in, itemName: in.Description, kit: kit}
 	if in.InventoryItemUUID != "" {
 		var id int
 		var sku, name, desc, unitCode string

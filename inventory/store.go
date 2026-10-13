@@ -128,6 +128,11 @@ func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Item, error) {
 		}
 		return nil, fmt.Errorf("get inventory item: %w", err)
 	}
+	kits, err := itemKitsByUUID(ctx, pool, uuid)
+	if err != nil {
+		return nil, err
+	}
+	it.Kits = kits
 	return it, nil
 }
 

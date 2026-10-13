@@ -44,6 +44,10 @@ type Item struct {
 	// service, delivery or labour charge). Always true for a slab-tracked item.
 	TrackStock bool `json:"trackStock"`
 
+	// Kits are the kits this item is in. Filled by Get only — list and search
+	// rows leave it out, so a catalogue page costs no extra query per row.
+	Kits []KitRef `json:"kits,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -78,6 +82,12 @@ type CreateItemInput struct {
 	// plain bool would read a client that predates the field as "turn off".
 	// Nil on create means tracked.
 	TrackStock *bool `json:"trackStock,omitempty"`
+
+	// KitIDs, when present, makes exactly these kits (external uuids) the item's
+	// kits. Absent (nil) leaves its memberships alone — an older client that
+	// predates kits must not empty them by saving — while an explicit empty list
+	// takes the item out of every kit.
+	KitIDs []string `json:"kitIds,omitempty"`
 }
 
 // Page is one page of a keyset-paginated item search.

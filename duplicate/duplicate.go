@@ -21,6 +21,7 @@ const (
 	EntityCustomer = "customer"
 	EntityVendor   = "vendor"
 	EntityItem     = "item"
+	EntityKit      = "kit"
 )
 
 // Error reports that Name is already taken by a live record. The Existing*

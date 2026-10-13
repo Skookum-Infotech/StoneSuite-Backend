@@ -9188,3 +9188,60 @@ CREATE INDEX IF NOT EXISTS idx_so_schedule_order ON sales_order_schedule (sales_
 -- The Activity Planner reads one activity group across every order by date, so
 -- it looks rows up by activity first -- the per-order index above can't serve it.
 CREATE INDEX IF NOT EXISTS idx_so_schedule_activity_time ON sales_order_schedule (activity_code, scheduled_at);
+
+-- inventory_kit -- a named group of catalogue items that are sold together
+-- ("Kitchen"). Picking a kit on a document line adds its member items as
+-- ordinary lines under a kit heading; the kit itself is never a priced line, so
+-- nothing about stock, tax or totals knows kits exist. Soft-deleted like the
+-- item catalogue, which frees the name for reuse.
+CREATE TABLE IF NOT EXISTS inventory_kit (
+    inventory_kit_id             SERIAL        PRIMARY KEY,
+    inventory_kit_uuid           UUID          NOT NULL DEFAULT gen_random_uuid(),
+    inventory_kit_name           VARCHAR(100)  NOT NULL,
+    inventory_kit_description    TEXT          NOT NULL DEFAULT '',
+    inventory_kit_is_active      BOOLEAN       NOT NULL DEFAULT TRUE,
+    inventory_kit_created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_kit_created_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_kit_updated_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inventory_kit_updated_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_kit_deleted_at     TIMESTAMP         NULL,
+    inventory_kit_deleted_by     INTEGER           NULL REFERENCES employee(employee_id),
+    inventory_kit_record_version INTEGER       NOT NULL DEFAULT 1,
+    CONSTRAINT uq_inventory_kit_uuid UNIQUE (inventory_kit_uuid),
+    CONSTRAINT chk_inventory_kit_soft_delete CHECK (
+        (inventory_kit_deleted_at IS NULL AND inventory_kit_deleted_by IS NULL) OR
+        (inventory_kit_deleted_at IS NOT NULL AND inventory_kit_deleted_by IS NOT NULL)
+    )
+);
+-- Name unique among live kits (case-insensitive). Unlike items this table is new,
+-- so the index can't meet pre-existing duplicate rows; the application check in
+-- inventory/kit_duplicate.go gives the friendly answer and this is the backstop.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_kit_name_active
+    ON inventory_kit (LOWER(inventory_kit_name)) WHERE inventory_kit_deleted_at IS NULL;
+
+-- inventory_kit_item -- which items a kit holds, and how many of each a line
+-- gets by default. An item can be in several kits.
+CREATE TABLE IF NOT EXISTS inventory_kit_item (
+    inventory_kit_item_id  SERIAL        PRIMARY KEY,
+    inventory_kit_id       INTEGER       NOT NULL REFERENCES inventory_kit(inventory_kit_id) ON DELETE CASCADE,
+    inventory_item_id      INTEGER       NOT NULL REFERENCES inventory_item(inventory_item_id),
+    kit_item_quantity      DECIMAL(14,3) NOT NULL DEFAULT 1,
+    kit_item_position      INTEGER       NOT NULL DEFAULT 0,
+    CONSTRAINT uq_inventory_kit_item  UNIQUE (inventory_kit_id, inventory_item_id),
+    CONSTRAINT chk_inventory_kit_item_qty CHECK (kit_item_quantity > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_inventory_kit_item_item ON inventory_kit_item (inventory_item_id);
+
+-- Kit heading on document lines. A line added from a kit remembers the kit's
+-- uuid (what makes consecutive lines one group) and the name it had at the time,
+-- so renaming or deleting the kit never rewrites a saved document. There is no
+-- foreign key on purpose: the label outlives the kit. Both are NULL/'' for a
+-- line that was not added from a kit, i.e. every row that exists today.
+ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';

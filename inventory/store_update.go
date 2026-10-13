@@ -109,6 +109,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 			return err
 		}
 	}
+	if in.KitIDs != nil {
+		if err := setItemKits(ctx, tx, itemID, in.KitIDs, actorEmployeeID); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit update inventory item: %w", err)
 	}

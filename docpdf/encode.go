@@ -109,6 +109,7 @@ func toCP1252(pdf *fpdf.Fpdf, d PrintableDoc) PrintableDoc {
 		ln.Name = c.str(ln.Name)
 		ln.Description = c.str(ln.Description)
 		ln.UnitCode = c.str(ln.UnitCode)
+		ln.KitName = c.str(ln.KitName)
 		lines[i] = ln
 	}
 	d.Lines = lines

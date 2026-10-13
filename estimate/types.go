@@ -31,6 +31,12 @@ type LineInput struct {
 	UnitPrice         float64 `json:"unitPrice"`
 	DiscountPercent   float64 `json:"discountPercent"`
 	TaxRateID         *int    `json:"taxRateId"`
+
+	// KitUUID / KitName say the line was added from a kit, so a document groups
+	// it under that kit's heading. A label only: nothing about the line's
+	// pricing or conversion depends on them (see package kitref).
+	KitUUID string `json:"kitUuid"`
+	KitName string `json:"kitName"`
 }
 
 // estimateFields is the header payload shared by create and update (everything
@@ -95,6 +101,12 @@ type Line struct {
 	LineDiscount    float64 `json:"lineDiscount"`
 	LineTax         float64 `json:"lineTax"`
 	LineTotal       float64 `json:"lineTotal"`
+
+	// KitID / KitName are set on a line that was added from a kit: the kit's uuid
+	// and the name it had at the time. Consecutive lines with the same KitID are
+	// one group under that kit's heading.
+	KitID   *string `json:"kitId,omitempty"`
+	KitName string  `json:"kitName,omitempty"`
 }
 
 // Estimate is the full API response for an estimate header (+ lines, when

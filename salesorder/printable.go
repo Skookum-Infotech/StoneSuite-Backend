@@ -11,7 +11,7 @@ func ToPrintable(o Order, seller docpdf.Seller) docpdf.PrintableDoc {
 		lines = append(lines, docpdf.PrintLine{
 			SKU: it.SKU, Name: it.ItemName, Description: it.Description, UnitCode: it.UnitCode,
 			Quantity: it.Quantity, UnitPrice: it.UnitPrice, DiscountPercent: it.DiscountPercent,
-			TaxPercent: it.TaxPercent, LineTotal: it.LineTotal,
+			TaxPercent: it.TaxPercent, LineTotal: it.LineTotal, KitName: it.KitName,
 		})
 	}
 	return docpdf.PrintableDoc{

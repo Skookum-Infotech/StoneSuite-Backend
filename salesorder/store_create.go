@@ -238,20 +238,21 @@ func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []re
 	ids := make([]int, 0, len(lines))
 	for _, l := range lines {
 		var id int
+		kitUUID, kitName := l.kit.Args()
 		err := tx.QueryRow(ctx, `
 			INSERT INTO sales_order_item (
 				sales_order_id, line_number, inventory_item_id, warehouse_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by
-			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19)
+				item_created_by, kit_uuid, kit_name
+			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19, $20,$21)
 			RETURNING sales_order_item_id`,
 			orderInternalID, l.lineNumber, l.inventoryItemID, l.warehouseID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID),
+			nullableInt(actorEmployeeID), kitUUID, kitName,
 		).Scan(&id)
 		if err != nil {
 			if isForeignKeyViolation(err) {

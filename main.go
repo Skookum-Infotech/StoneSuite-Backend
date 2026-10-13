@@ -1038,6 +1038,15 @@ func main() {
 		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
 		mux.Handle("GET /api/tenant/inventory/items/{uuid}/history", tenantChain(inv.History))
 
+		// Kits: named groups of catalog items sold together ("Kitchen"). Same
+		// inventory_item grant as the items they hold.
+		mux.Handle("GET /api/tenant/inventory/kits", tenantChain(inv.ListKits))
+		mux.Handle("POST /api/tenant/inventory/kits/search", tenantChain(inv.SearchKits))
+		mux.Handle("POST /api/tenant/inventory/kits", tenantChain(inv.CreateKit))
+		mux.Handle("GET /api/tenant/inventory/kits/{uuid}", tenantChain(inv.GetKit))
+		mux.Handle("PATCH /api/tenant/inventory/kits/{uuid}", tenantChain(inv.UpdateKit))
+		mux.Handle("DELETE /api/tenant/inventory/kits/{uuid}", tenantChain(inv.DeleteKit))
+
 		// Inventory vocabularies. Registered BEFORE the {uuid} routes above
 		// would matter only if they shared a prefix — they do not, but the
 		// lookups routes are what unblock every inventory form, since nothing

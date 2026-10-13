@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-570 endpoints across 7 surfaces, read from `main.go`.
+576 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 484 |
+| staff token + tenant | 490 |
 | portal token + tenant | 28 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -327,7 +327,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 483 endpoints
+## `tenant` — 489 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -671,6 +671,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Get` |
 | `PATCH` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Update` |
 | `GET` | `/api/tenant/inventory/items/{uuid}/history` | staff token + tenant | `inv.History` |
+| `GET` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.ListKits` |
+| `POST` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.CreateKit` |
+| `POST` | `/api/tenant/inventory/kits/search` | staff token + tenant | `inv.SearchKits` |
+| `DELETE` | `/api/tenant/inventory/kits/{uuid}` | staff token + tenant | `inv.DeleteKit` |
+| `GET` | `/api/tenant/inventory/kits/{uuid}` | staff token + tenant | `inv.GetKit` |
+| `PATCH` | `/api/tenant/inventory/kits/{uuid}` | staff token + tenant | `inv.UpdateKit` |
 | `GET` | `/api/tenant/inventory/lookups` | staff token + tenant | `invLookup.All` |
 | `GET` | `/api/tenant/inventory/lookups/{kind}` | staff token + tenant | `invLookup.List` |
 | `POST` | `/api/tenant/inventory/lookups/{kind}` | staff token + tenant | `invLookup.Create` |

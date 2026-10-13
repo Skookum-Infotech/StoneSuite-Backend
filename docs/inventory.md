@@ -20,6 +20,26 @@ which you should for anything with no stock to run out of — a delivery,
 installation or labour charge. A slab-tracked item is always tracked, and its
 switch cannot be turned off.
 
+## Kits
+
+A Kit is a named group of items that are sold together — "Kitchen", for example.
+Create one from Inventory → Items → Kits → New Kit: give it a name and add the
+items it holds, each with the quantity a line gets by default. An item can be in
+several kits. An item's own form has a Kits field too, so you can file an item
+into kits as you create it. Kit names are unique, whatever their case or
+spacing; a deleted kit's name can be used again. A kit that is switched
+Inactive no longer shows up in the item pickers.
+
+On any document line, type a kit's name in the item box and pick it: the kit's
+items are added as ordinary lines, each with its own price, tax and quantity
+that you can still change. On a Quote, Estimate, Sales Order or Invoice the
+lines sit under a kit heading — a full-width violet row naming the kit — which
+is kept when the document is saved, converted, exported to PDF or sent to the
+customer. The kit is only a heading: the lines are priced, taxed and checked
+against stock exactly like any other, and later editing or deleting the kit
+never changes a document it was used on. If the name you type is not a kit,
+the picker offers Add as a new kit.
+
 ## Units and Slabs
 
 A Unit is an individual physical slab or piece tracked on its own. Every unit

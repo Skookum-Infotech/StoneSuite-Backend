@@ -38,6 +38,12 @@ type LineInput2 struct {
 	TaxRateID         *int     `json:"taxRateId"`
 	TaxPercent        *float64 `json:"taxPercent"`
 	WarehouseID       *int     `json:"warehouseId"`
+
+	// KitUUID / KitName say the line was added from a kit, so a document groups
+	// it under that kit's heading. They are a label only: nothing about the
+	// line's pricing, stock or conversion depends on them (see package kitref).
+	KitUUID string `json:"kitUuid"`
+	KitName string `json:"kitName"`
 }
 
 // orderFields is the header payload shared by create and update (everything
@@ -112,6 +118,12 @@ type Line struct {
 	LineDiscount    float64 `json:"lineDiscount"`
 	LineTax         float64 `json:"lineTax"`
 	LineTotal       float64 `json:"lineTotal"`
+
+	// KitID / KitName are set on a line that was added from a kit: the kit's uuid
+	// and the name it had at the time. Consecutive lines with the same KitID are
+	// one group under that kit's heading.
+	KitID   *string `json:"kitId,omitempty"`
+	KitName string  `json:"kitName,omitempty"`
 
 	// Fulfillment (schema.org OrderItem.orderItemStatus, AD-9). FulfilledQuantity
 	// is the stored rollup of the line's allocations; Status is derived from it.

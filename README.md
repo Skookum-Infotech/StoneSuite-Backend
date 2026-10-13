@@ -21,7 +21,7 @@ See [docs/SAML_SETUP.md](./docs/SAML_SETUP.md) for SAML 2.0 SSO setup (AWS Cogni
 
 ## Stack
 
-Go 1.25 + `net/http` + PostgreSQL (pgx), deployed to Fly.io (scale-to-zero) against Neon Postgres.
+Go 1.26 + `net/http` + PostgreSQL (pgx), deployed to Fly.io (scale-to-zero) against Neon Postgres.
 
 ## Architectural Decisions
 

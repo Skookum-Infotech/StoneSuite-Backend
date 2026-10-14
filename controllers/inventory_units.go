@@ -189,23 +189,32 @@ func (h *InventoryUnitOps) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "unit": u})
 }
 
-// MoveBin PATCH /api/tenant/inventory/units/{uuid}/bin — relocate within the
-// warehouse. Stock-neutral, so it writes no ledger row.
+// binMoveViaTransferMsg is what the retired instant bin move answers with.
+const binMoveViaTransferMsg = "Slabs are moved between bins with a Bin Transfer, so the move can be approved " +
+	"and traced. Create one under Inventory > Bin Transfer."
+
+// refuseDirectBinMove answers a call to the retired instant bin move.
+func refuseDirectBinMove(w http.ResponseWriter) {
+	fail(w, http.StatusConflict, binMoveViaTransferMsg)
+}
+
+// MoveBin PATCH /api/tenant/inventory/units/{uuid}/bin — RETIRED.
+//
+// This used to relocate a unit instantly, with no document and no approval. A
+// bin move is now requested through a Bin Transfer (POST
+// /api/tenant/inventory/bin-transfers), which can be approved under
+// Configuration > Workflows and is applied by Complete. Leaving this live would
+// let anyone holding inventory_unit:update walk around that approval, so it
+// refuses -- after the same authentication and permission check, so a caller
+// without the grant still gets a 403, not a hint.
+//
+// The mover itself (inventory.MoveUnitToBinTx) is unchanged and is what a bin
+// transfer and the fabrication WIP flow call.
 func (h *InventoryUnitOps) MoveBin(w http.ResponseWriter, r *http.Request) {
-	pool, identityID, ok := h.authByUUID(w, r, authz.ActionUpdate)
-	if !ok {
+	if _, _, ok := h.authByUUID(w, r, authz.ActionUpdate); !ok {
 		return
 	}
-	var in inventory.MoveUnitInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	if err := inventory.MoveUnitToBin(r.Context(), pool, r.PathValue("uuid"), in, resolveEmployeeID(r, identityID)); err != nil {
-		inventoryFail(w, err, "Failed to move unit.")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Unit moved."})
+	refuseDirectBinMove(w)
 }
 
 // Scrap POST /api/tenant/inventory/units/{uuid}/scrap

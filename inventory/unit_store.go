@@ -267,3 +267,21 @@ func writeUnitHistory(ctx context.Context, tx pgx.Tx, unitID int, action, field,
 	}
 	return nil
 }
+
+// writeUnitMoveHistory appends a bin_move row, optionally tagged with the bin
+// transfer document that caused it (nil for a move that came from elsewhere).
+// Like writeUnitHistory it is operational only and never touches a ledger.
+func writeUnitMoveHistory(ctx context.Context, tx pgx.Tx, unitID int, oldVal, newVal string,
+	fromBin, toBin *int, note string, binTransferID *int, actorEmployeeID int) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO inventory_unit_history (
+			inventory_slab_id, history_action, history_field,
+			history_old_value, history_new_value,
+			from_bin_id, to_bin_id, history_note, history_by, bin_transfer_id
+		) VALUES ($1,'bin_move','binId',$2,$3,$4,$5,$6,$7,$8)`,
+		unitID, oldVal, newVal, fromBin, toBin, note, nullableInt(actorEmployeeID), binTransferID,
+	); err != nil {
+		return fmt.Errorf("write inventory unit move history: %w", err)
+	}
+	return nil
+}

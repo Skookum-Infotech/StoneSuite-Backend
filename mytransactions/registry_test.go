@@ -55,7 +55,7 @@ func TestSources_WellFormed(t *testing.T) {
 				"a registry fragment must be a single static expression")
 		})
 	}
-	assert.Len(t, Sources(), 26)
+	assert.Len(t, Sources(), 27)
 }
 
 // TestSources_MatchGlobalSearch pins this registry to globalsearch's: same key,

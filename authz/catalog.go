@@ -102,6 +102,12 @@ const (
 	ResourceInventoryTransfer   Resource = "inventory_transfer"   // warehouse-to-warehouse movement
 	ResourceInventoryCount      Resource = "inventory_count"      // cycle count / stock take
 
+	// ResourceBinTransfer is the document that moves slabs between bins. It is
+	// separate from inventory_unit so that raising, approving and completing a
+	// move can be given out independently of editing a unit: approve in
+	// particular is the sign-off the Configure > Workflows approver chain gates.
+	ResourceBinTransfer Resource = "bin_transfer"
+
 	// Finance
 	ResourceChartOfAccount Resource = "chart_of_account"
 	ResourceCashTransfer   Resource = "cash_transfer"
@@ -238,6 +244,16 @@ var catalog = []Permission{
 	{ResourceInventoryCount, ActionDelete},
 	{ResourceInventoryCount, ActionTransition},
 	{ResourceInventoryCount, ActionApprove},
+
+	// Bin transfers: transition covers submit/revise/cancel/complete; approve is
+	// the approver-chain sign-off and the veto (reject), deliberately its own
+	// grant so the person who raises a move is not the one who approves it.
+	{ResourceBinTransfer, ActionCreate},
+	{ResourceBinTransfer, ActionRead},
+	{ResourceBinTransfer, ActionUpdate},
+	{ResourceBinTransfer, ActionDelete},
+	{ResourceBinTransfer, ActionTransition},
+	{ResourceBinTransfer, ActionApprove},
 
 	// Read is separated from the write actions here on purpose: every inventory
 	// form needs the vocabularies to populate its dropdowns, so a bin clerk

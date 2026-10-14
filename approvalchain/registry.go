@@ -326,6 +326,25 @@ var registry = map[string]ModuleConfig{
 		DisplayName: "Vendor Credit",
 		Resource:    "vendor_credit",
 	},
+	// Bin Transfer: a stock-neutral move of slabs between bins. Approved is a
+	// waypoint, not a resting place that anything else depends on -- with nobody
+	// configured to approve, a draft goes straight to Complete (the stone is
+	// moved), hence SkipTargetWhenUngated.
+	"bin_transfer": {
+		RecordTypeCode: "BTRF", ApproverTable: "bin_transfer_approver", ApprovalTable: "bin_transfer_approval",
+		Record: RecordSpec{
+			Table: "bin_transfer", HistoryTable: "bin_transfer_history",
+			IDColumn: "bin_transfer_id", UUIDColumn: "bin_transfer_uuid", StatusColumn: "bin_transfer_status",
+			ApprovalStatusColumn: "bin_transfer_approval_status", ApprovedByColumn: "bin_transfer_approved_by",
+			UpdatedAtColumn: "bin_transfer_updated_at", UpdatedByColumn: "bin_transfer_updated_by",
+			RecordVersionColumn: "bin_transfer_record_version", DeletedAtColumn: "bin_transfer_deleted_at",
+			CreatedAtColumn: "bin_transfer_created_at",
+			OwnerColumn:     "bin_transfer_owner_id", NumberColumn: "bin_transfer_number",
+		},
+		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
+		DisplayName: "Bin Transfer",
+		Resource:    "bin_transfer",
+	},
 }
 
 // ForWorkflowKey returns the approval-chain configuration for a workflow key

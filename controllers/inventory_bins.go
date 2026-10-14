@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -25,6 +26,7 @@ import (
 //	GET    /api/tenant/inventory/bins/tree         — nested by parent
 //	POST   /api/tenant/inventory/bins              — create
 //	GET    /api/tenant/inventory/bins/{uuid}       — get
+//	GET    /api/tenant/inventory/bins/{uuid}/history — what moved in and out
 //	PATCH  /api/tenant/inventory/bins/{uuid}       — update (incl. reparent)
 //	DELETE /api/tenant/inventory/bins/{uuid}       — soft delete
 type InventoryBinOps struct{}
@@ -118,6 +120,47 @@ func (h *InventoryBinOps) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "bin": bin})
+}
+
+// History GET /api/tenant/inventory/bins/{uuid}/history — what has moved into
+// and out of this bin, newest first. ?direction=in|out narrows it; ?cursor and
+// ?limit page it.
+//
+// It names slab serials, so it needs inventory_unit:read as well as
+// inventory_bin:read: reading the bin master alone does not reveal what is in it.
+func (h *InventoryBinOps) History(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, ok := h.auth(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	decision, err := authz.Check(r.Context(), pool, identityID, authz.ResourceInventoryUnit, authz.ActionRead)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		return
+	}
+	if !decision.Allowed {
+		logSecurityEvent(r, "permission_denied",
+			"identity", identityID, "resource", string(authz.ResourceInventoryUnit), "action", string(authz.ActionRead))
+		fail(w, http.StatusForbidden, "You do not have permission to read inventory units.")
+		return
+	}
+	req := inventory.BinHistoryRequest{
+		Cursor:    r.URL.Query().Get("cursor"),
+		Direction: r.URL.Query().Get("direction"),
+	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, perr := strconv.Atoi(l); perr == nil {
+			req.Limit = n
+		}
+	}
+	page, err := inventory.BinHistory(r.Context(), pool, r.PathValue("uuid"), req)
+	if err != nil {
+		inventoryFail(w, err, "Failed to load the bin's history.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "records": page.Records, "nextCursor": page.NextCursor, "hasMore": page.HasMore,
+	})
 }
 
 // Create POST /api/tenant/inventory/bins

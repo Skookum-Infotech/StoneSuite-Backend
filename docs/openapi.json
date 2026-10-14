@@ -11250,6 +11250,421 @@
         ]
       }
     },
+    "/api/tenant/inventory/bin-transfers": {
+      "get": {
+        "operationId": "get_tenant_inventory_bin_transfers",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.List",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_inventory_bin_transfers",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Create",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/search": {
+      "post": {
+        "operationId": "post_tenant_inventory_bin_transfers_search",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Search",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/{uuid}": {
+      "delete": {
+        "operationId": "delete_tenant_inventory_bin_transfers_uuid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Delete",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "get": {
+        "operationId": "get_tenant_inventory_bin_transfers_uuid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Get",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_tenant_inventory_bin_transfers_uuid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Update",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/{uuid}/approve": {
+      "post": {
+        "operationId": "post_tenant_inventory_bin_transfers_uuid_approve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Approve",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/{uuid}/complete": {
+      "post": {
+        "operationId": "post_tenant_inventory_bin_transfers_uuid_complete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Complete",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/{uuid}/history": {
+      "get": {
+        "operationId": "get_tenant_inventory_bin_transfers_uuid_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.History",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_inventory_bin_transfers_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bin-transfers/{uuid}/transition": {
+      "post": {
+        "operationId": "post_tenant_inventory_bin_transfers_uuid_transition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBinTrf.Transition",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/inventory/bins": {
       "get": {
         "operationId": "get_tenant_inventory_bins",
@@ -11455,6 +11870,47 @@
           }
         ],
         "summary": "invBin.Update",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/bins/{uuid}/history": {
+      "get": {
+        "operationId": "get_tenant_inventory_bins_uuid_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invBin.History",
         "tags": [
           "tenant"
         ]

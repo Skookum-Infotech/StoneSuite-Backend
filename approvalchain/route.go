@@ -29,6 +29,7 @@ var moduleRoutes = map[string]moduleRoute{
 	"payment":        {Domain: "sales", Module: "payment"},
 	"credit_memo":    {Domain: "sales", Module: "credit_memo"},
 	"refund":         {Domain: "sales", Module: "refund"},
+	"bin_transfer":   {Domain: "inventory", Module: "bin_transfer"},
 }
 
 // resourceRoute builds a notification's deep-link path for resource+recordID,

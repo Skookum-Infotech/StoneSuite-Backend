@@ -111,7 +111,7 @@ func TestBuildPageSQL(t *testing.T) {
 		assert.Contains(t, sql, "ORDER BY updated_at DESC, type ASC, id ASC LIMIT $3 OFFSET $4")
 		assert.Contains(t, sql, "COUNT(*) OVER () AS total", "one scan yields the page and the filtered total")
 		assert.NotContains(t, sql, " WHERE created_by_me")
-		assert.Equal(t, 26, strings.Count(sql, "UNION ALL")+1, "one branch per source")
+		assert.Equal(t, 27, strings.Count(sql, "UNION ALL")+1, "one branch per source")
 	})
 
 	t.Run("role filters", func(t *testing.T) {

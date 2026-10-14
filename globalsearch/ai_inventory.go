@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/bintransfer"
 	"stonesuite-backend/cashtransfer"
 	"stonesuite-backend/chartofaccounts"
 	"stonesuite-backend/fabrication"
@@ -179,6 +180,48 @@ func loadInventoryTransferAI(ctx context.Context, pool *pgxpool.Pool, id string)
 		core["expected_date"] = *t.ExpectedDate
 	}
 	return AIRecord{Doc: rag.RecordDoc{WorkflowKey: "inventory_transfer", StateName: t.StatusName, Core: core, Priority: aiPriorityStockDoc}}, nil
+}
+
+var _ = addAI("bin_transfer", AIHooks{
+	OwnScoped: true,
+	Label:     "bin transfer",
+	Nouns:     []string{"bin move", "slab move", "putaway", "put-away"},
+	Load:      loadBinTransferAI,
+	Count: func(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID string) (int, error) {
+		return countTable(ctx, pool, scope, identityID, "bin_transfer", "bin_transfer_deleted_at", "bin_transfer_owner_id")
+	},
+	ListLive: func(ctx context.Context, pool *pgxpool.Pool) (map[string]time.Time, error) {
+		return liveTable(ctx, pool, "bin_transfer", "bin_transfer_uuid", "bin_transfer_updated_at", "bin_transfer_deleted_at")
+	},
+})
+
+func loadBinTransferAI(ctx context.Context, pool *pgxpool.Pool, id string) (AIRecord, error) {
+	bt, err := bintransfer.Get(ctx, pool, id)
+	if err != nil {
+		return AIRecord{}, err
+	}
+	core := map[string]any{
+		"number":        bt.Number,
+		"status":        bt.StatusName,
+		"date":          bt.Date,
+		"location":      bt.WarehouseName,
+		"destination":   bt.ToBinSummary,
+		"memo":          bt.Notes,
+		"slab_count":    bt.SlabCount,
+		"total_area":    bt.TotalArea,
+		"owner":         bt.OwnerName,
+		"cancel_reason": bt.CancelReason,
+		"completed_by":  bt.CompletedByName,
+	}
+	serials := make([]string, 0, len(bt.Lines))
+	for _, l := range bt.Lines {
+		serials = append(serials, l.UnitSerial)
+	}
+	core["slabs"] = serials
+	return AIRecord{
+		Doc:         rag.RecordDoc{WorkflowKey: "bin_transfer", StateName: bt.StatusName, Core: core, Priority: aiPriorityStockDoc},
+		OwnerUserID: bt.OwnerUserID,
+	}, nil
 }
 
 var _ = addAI("inventory_count", AIHooks{

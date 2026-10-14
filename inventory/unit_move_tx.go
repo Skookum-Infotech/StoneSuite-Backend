@@ -9,6 +9,19 @@ import (
 
 // MoveUnitToBinTx moves a unit and records history within the caller's transaction.
 func MoveUnitToBinTx(ctx context.Context, tx pgx.Tx, uuid string, in MoveUnitInput, actorEmployeeID int) error {
+	return moveUnitToBinTx(ctx, tx, uuid, in, nil, actorEmployeeID)
+}
+
+// MoveUnitForBinTransferTx moves a unit on behalf of a bin transfer document. It
+// applies exactly the rules of any other bin move and tags the history row it
+// writes with the document, so the unit's and the bin's history link back to it.
+func MoveUnitForBinTransferTx(ctx context.Context, tx pgx.Tx, uuid, binUUID, note string, binTransferID, actorEmployeeID int) error {
+	return moveUnitToBinTx(ctx, tx, uuid, MoveUnitInput{BinUUID: &binUUID, Note: note}, &binTransferID, actorEmployeeID)
+}
+
+// moveUnitToBinTx is the shared body of the two exported movers; binTransferID
+// is nil for a move that did not come from a bin transfer.
+func moveUnitToBinTx(ctx context.Context, tx pgx.Tx, uuid string, in MoveUnitInput, binTransferID *int, actorEmployeeID int) error {
 	u, err := unitByUUID(ctx, tx, uuid, true)
 	if err != nil {
 		return err
@@ -49,8 +62,8 @@ func MoveUnitToBinTx(ctx context.Context, tx pgx.Tx, uuid string, in MoveUnitInp
 		WHERE inventory_slab_id = $1`, u.id, newBin, nullableInt(actorEmployeeID)); err != nil {
 		return mapUnitWriteErr(err, "move")
 	}
-	if err := writeUnitHistory(ctx, tx, u.id, "bin_move", "binId",
-		binLabel(u.binID), binLabel(newBin), u.binID, newBin, nil, in.Note, actorEmployeeID); err != nil {
+	if err := writeUnitMoveHistory(ctx, tx, u.id,
+		binLabel(u.binID), binLabel(newBin), u.binID, newBin, in.Note, binTransferID, actorEmployeeID); err != nil {
 		return err
 	}
 	return nil

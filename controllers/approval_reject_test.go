@@ -28,6 +28,7 @@ func TestRejectHandlers_RequireAuth(t *testing.T) {
 		"credit memo":    NewCreditMemoOps().Reject,
 		"refund":         NewRefundOps(nil).Reject,
 		"vendor credit":  NewVendorCreditOps().Reject,
+		"bin transfer":   NewBinTransferOps().Reject,
 	}
 	for name, fn := range handlers {
 		t.Run(name, func(t *testing.T) {
@@ -57,6 +58,7 @@ func TestRejectErrors_MapToHTTPStatusInEveryModule(t *testing.T) {
 		"credit memo":    creditMemoFail,
 		"refund":         refundFail,
 		"vendor credit":  vendorCreditFail,
+		"bin transfer":   binTransferFail,
 	}
 	errs := []struct {
 		name string

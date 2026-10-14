@@ -1071,6 +1071,7 @@ func main() {
 		mux.Handle("GET /api/tenant/inventory/bins/tree", tenantChain(invBin.Tree))
 		mux.Handle("POST /api/tenant/inventory/bins", tenantChain(invBin.Create))
 		mux.Handle("GET /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Get))
+		mux.Handle("GET /api/tenant/inventory/bins/{uuid}/history", tenantChain(invBin.History))
 		mux.Handle("PATCH /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Update))
 		mux.Handle("DELETE /api/tenant/inventory/bins/{uuid}", tenantChain(invBin.Delete))
 
@@ -1115,6 +1116,22 @@ func main() {
 		mux.Handle("POST /api/tenant/inventory/transfers/{uuid}/ship", tenantChain(invTrf.Ship))
 		mux.Handle("POST /api/tenant/inventory/transfers/{uuid}/receive", tenantChain(invTrf.Receive))
 		mux.Handle("GET /api/tenant/inventory/transfers/{uuid}/history", tenantChain(invTrf.History))
+
+		// Bin transfers: the document that moves slabs between bins inside one
+		// location. Approved through the approvalchain engine like the Sales and
+		// Purchases records; Complete is the only call that moves a slab.
+		invBinTrf := controllers.NewBinTransferOps()
+		mux.Handle("GET /api/tenant/inventory/bin-transfers", tenantChain(invBinTrf.List))
+		mux.Handle("POST /api/tenant/inventory/bin-transfers/search", tenantChain(invBinTrf.Search))
+		mux.Handle("POST /api/tenant/inventory/bin-transfers", tenantChain(invBinTrf.Create))
+		mux.Handle("GET /api/tenant/inventory/bin-transfers/{uuid}", tenantChain(invBinTrf.Get))
+		mux.Handle("PATCH /api/tenant/inventory/bin-transfers/{uuid}", tenantChain(invBinTrf.Update))
+		mux.Handle("DELETE /api/tenant/inventory/bin-transfers/{uuid}", tenantChain(invBinTrf.Delete))
+		mux.Handle("POST /api/tenant/inventory/bin-transfers/{uuid}/transition", tenantChain(invBinTrf.Transition))
+		mux.Handle("POST /api/tenant/inventory/bin-transfers/{uuid}/approve", tenantChain(invBinTrf.Approve))
+		mux.Handle("POST /api/tenant/inventory/bin-transfers/{uuid}/reject", tenantChain(invBinTrf.Reject))
+		mux.Handle("POST /api/tenant/inventory/bin-transfers/{uuid}/complete", tenantChain(invBinTrf.Complete))
+		mux.Handle("GET /api/tenant/inventory/bin-transfers/{uuid}/history", tenantChain(invBinTrf.History))
 
 		invCnt := controllers.NewInventoryCountOps()
 		mux.Handle("GET /api/tenant/inventory/counts", tenantChain(invCnt.List))

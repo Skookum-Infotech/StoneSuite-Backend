@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-576 endpoints across 7 surfaces, read from `main.go`.
+588 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 490 |
+| staff token + tenant | 502 |
 | portal token + tenant | 28 |
 | none (rate-limited) | 20 |
 | none | 18 |
@@ -327,7 +327,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 489 endpoints
+## `tenant` — 501 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -635,12 +635,24 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/inventory/adjustments/{uuid}/history` | staff token + tenant | `invAdj.History` |
 | `POST` | `/api/tenant/inventory/adjustments/{uuid}/post` | staff token + tenant | `invAdj.Post` |
 | `POST` | `/api/tenant/inventory/adjustments/{uuid}/transition` | staff token + tenant | `invAdj.Transition` |
+| `GET` | `/api/tenant/inventory/bin-transfers` | staff token + tenant | `invBinTrf.List` |
+| `POST` | `/api/tenant/inventory/bin-transfers` | staff token + tenant | `invBinTrf.Create` |
+| `POST` | `/api/tenant/inventory/bin-transfers/search` | staff token + tenant | `invBinTrf.Search` |
+| `DELETE` | `/api/tenant/inventory/bin-transfers/{uuid}` | staff token + tenant | `invBinTrf.Delete` |
+| `GET` | `/api/tenant/inventory/bin-transfers/{uuid}` | staff token + tenant | `invBinTrf.Get` |
+| `PATCH` | `/api/tenant/inventory/bin-transfers/{uuid}` | staff token + tenant | `invBinTrf.Update` |
+| `POST` | `/api/tenant/inventory/bin-transfers/{uuid}/approve` | staff token + tenant | `invBinTrf.Approve` |
+| `POST` | `/api/tenant/inventory/bin-transfers/{uuid}/complete` | staff token + tenant | `invBinTrf.Complete` |
+| `GET` | `/api/tenant/inventory/bin-transfers/{uuid}/history` | staff token + tenant | `invBinTrf.History` |
+| `POST` | `/api/tenant/inventory/bin-transfers/{uuid}/reject` | staff token + tenant | `invBinTrf.Reject` |
+| `POST` | `/api/tenant/inventory/bin-transfers/{uuid}/transition` | staff token + tenant | `invBinTrf.Transition` |
 | `GET` | `/api/tenant/inventory/bins` | staff token + tenant | `invBin.List` |
 | `POST` | `/api/tenant/inventory/bins` | staff token + tenant | `invBin.Create` |
 | `GET` | `/api/tenant/inventory/bins/tree` | staff token + tenant | `invBin.Tree` |
 | `DELETE` | `/api/tenant/inventory/bins/{uuid}` | staff token + tenant | `invBin.Delete` |
 | `GET` | `/api/tenant/inventory/bins/{uuid}` | staff token + tenant | `invBin.Get` |
 | `PATCH` | `/api/tenant/inventory/bins/{uuid}` | staff token + tenant | `invBin.Update` |
+| `GET` | `/api/tenant/inventory/bins/{uuid}/history` | staff token + tenant | `invBin.History` |
 | `GET` | `/api/tenant/inventory/bundles` | staff token + tenant | `invBundle.List` |
 | `POST` | `/api/tenant/inventory/bundles` | staff token + tenant | `invBundle.Create` |
 | `DELETE` | `/api/tenant/inventory/bundles/{uuid}` | staff token + tenant | `invBundle.Delete` |

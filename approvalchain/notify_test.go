@@ -165,7 +165,7 @@ func TestAmountColumns_CoverEveryApprovalModuleWithATotal(t *testing.T) {
 			continue
 		}
 		table := cfg.Record.Table
-		if table == "requisition" || table == "fabrication_job" {
+		if table == "requisition" || table == "fabrication_job" || table == "bin_transfer" {
 			continue // no total column
 		}
 		assert.Contains(t, amountColumns, table, "approval module %q has no amount column mapped", key)

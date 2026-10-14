@@ -36,7 +36,11 @@ func inventorySources() []Source {
 	transfer := stockDoc("inventory_transfer", "Inventory Transfer", authz.ResourceInventoryTransfer, "transfer", "transfer")
 	count := stockDoc("inventory_count", "Inventory Count", authz.ResourceInventoryCount, "count", "count")
 
-	return []Source{item, unit, adjustment, transfer, count}
+	// A bin transfer, unlike the three stock documents, has an owner column and its
+	// own search narrows an "own" read grant to it, so the owner column is kept.
+	binTransfer := doc("bin_transfer", "Bin Transfer", authz.ResourceBinTransfer, "inventory", "bin_transfer", "bin_transfer", "bin_transfer")
+
+	return []Source{item, unit, adjustment, transfer, count, binTransfer}
 }
 
 // stockDoc is doc for an inventory document whose columns use a short prefix

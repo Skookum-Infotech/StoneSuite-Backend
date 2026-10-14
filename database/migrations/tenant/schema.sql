@@ -2085,6 +2085,46 @@ IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'expense') THEN
   DELETE FROM _wf_states10 WHERE workflow_key = 'expense';
 END IF;
 
+-- ===== BIN TRANSFER =====
+-- Seeds the workflow row Configure > Workflows lists (approval chain, custom
+-- fields) and Record Numbering keys on. The module's real statuses live in
+-- lkp_record_status for record type BTRF; these states are its display twin,
+-- the same arrangement every relational module here uses.
+IF NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'bin_transfer') THEN
+  INSERT INTO workflows (key, name, description, enabled, is_default, pipeline_order)
+  VALUES ('bin_transfer', 'Bin Transfer', 'Move slabs between bins within a location, with approval.', TRUE, TRUE, 0)
+  RETURNING id INTO v_workflow_id;
+
+  WITH s AS (
+    INSERT INTO workflow_states (workflow_id, key, name, is_initial, is_terminal, sort_order, color) VALUES
+      (v_workflow_id, 'bt_draft',     'BT-Draft',            TRUE,  FALSE, 0, '#64748b'),
+      (v_workflow_id, 'bt_pending',   'BT-Pending Approval', FALSE, FALSE, 1, '#f59e0b'),
+      (v_workflow_id, 'bt_approved',  'BT-Approved',         FALSE, FALSE, 2, '#3b82f6'),
+      (v_workflow_id, 'bt_completed', 'BT-Completed',        FALSE, TRUE,  3, '#22c55e'),
+      (v_workflow_id, 'bt_cancelled', 'BT-Cancelled',        FALSE, TRUE,  4, '#6b7280')
+    RETURNING key, id
+  )
+  INSERT INTO _wf_states10 SELECT 'bin_transfer', key, id FROM s;
+
+  INSERT INTO workflow_transitions (workflow_id, from_state_id, to_state_id, name, guard, sort_order)
+  SELECT v_workflow_id,
+    (SELECT state_id FROM _wf_states10 WHERE workflow_key='bin_transfer' AND state_key=t.fk),
+    (SELECT state_id FROM _wf_states10 WHERE workflow_key='bin_transfer' AND state_key=t.tk),
+    t.name, '{}'::jsonb, t.so
+  FROM (VALUES
+    ('bt_draft',    'bt_pending',   'Submit for Approval', 0),
+    ('bt_draft',    'bt_cancelled', 'Cancel',              1),
+    ('bt_pending',  'bt_approved',  'Approve',             2),
+    ('bt_pending',  'bt_draft',     'Reject',              3),
+    ('bt_pending',  'bt_cancelled', 'Cancel',              4),
+    ('bt_approved', 'bt_completed', 'Complete',            5),
+    ('bt_approved', 'bt_draft',     'Revise',              6),
+    ('bt_approved', 'bt_cancelled', 'Cancel',              7)
+  ) AS t(fk, tk, name, so);
+
+  DELETE FROM _wf_states10 WHERE workflow_key = 'bin_transfer';
+END IF;
+
 END $$;
 
 
@@ -9440,3 +9480,177 @@ ALTER TABLE invoice_item         ALTER COLUMN dim_unit SET DEFAULT 'in';
 ALTER TABLE purchase_order_item  ALTER COLUMN dim_unit SET DEFAULT 'in';
 ALTER TABLE vendor_bill_item     ALTER COLUMN dim_unit SET DEFAULT 'in';
 ALTER TABLE requisition_item     ALTER COLUMN dim_unit SET DEFAULT 'in';
+
+-- =====================================================================
+-- BIN TRANSFER (BTRF) -- a document for moving slabs between bins.
+--
+-- Until now a bin move was an instant PATCH on one unit
+-- (inventory/unit_move_tx.go): no document, no approval, and its only trace a
+-- bin_move row on that one unit. A bin transfer is the same stock-neutral move
+-- with a number, an owner, an optional approval chain (Configure > Workflows >
+-- Bin Transfer) and a history of its own. It writes NO ledger row -- bins locate
+-- units, inventory_stock is keyed (item, warehouse) -- only inventory_unit_history,
+-- exactly as the instant move did, now tagged with the document.
+--
+-- Statuses: DRFT -> PAPV -> APPV -> COMP, or CANC before the stone is moved.
+-- The approval gate is PAPV (target APPV); with no approver configured a draft
+-- goes straight to COMP.
+-- =====================================================================
+
+INSERT INTO lkp_record_type (record_type_code, record_type_code_full, record_type_name,
+    record_type_is_active, record_type_is_system, record_type_created_by) VALUES
+    ('BTRF','bintransfer','Bin Transfer', TRUE,TRUE,1)
+ON CONFLICT (record_type_code) DO NOTHING;
+
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES ('DRFT','Draft'), ('PAPV','Pending Approval'), ('APPV','Approved'),
+             ('COMP','Completed'), ('CANC','Cancelled')) AS v(code, name)
+CROSS JOIN lkp_record_type rt WHERE rt.record_type_code = 'BTRF'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS bin_transfer (
+    bin_transfer_id               SERIAL        PRIMARY KEY,
+    bin_transfer_uuid             UUID          NOT NULL DEFAULT gen_random_uuid(),
+    bin_transfer_number           VARCHAR(20)       NULL,  -- 'BTRF-000001', generated post-insert in Go
+
+    record_type                   INTEGER       NOT NULL REFERENCES lkp_record_type(record_type_id),   -- = BTRF
+    bin_transfer_status           INTEGER       NOT NULL REFERENCES lkp_record_status(record_status_id),
+    bin_transfer_approval_status  VARCHAR(10)   NOT NULL DEFAULT 'none',
+    bin_transfer_approved_by      INTEGER           NULL REFERENCES employee(employee_id),
+
+    -- Every slab and every destination bin must be in this location: bins are
+    -- per-location, and a slab in another yard would be a transfer, not a bin move.
+    warehouse_id                  INTEGER       NOT NULL REFERENCES company_location(company_location_id),
+    bin_transfer_date             DATE          NOT NULL DEFAULT CURRENT_DATE,
+    bin_transfer_notes            TEXT          NOT NULL DEFAULT '',
+    bin_transfer_owner_id         INTEGER           NULL REFERENCES employee(employee_id),
+
+    bin_transfer_completed_at     TIMESTAMP         NULL,
+    bin_transfer_completed_by     INTEGER           NULL REFERENCES employee(employee_id),
+    bin_transfer_cancelled_at     TIMESTAMP         NULL,
+    bin_transfer_cancelled_by     INTEGER           NULL REFERENCES employee(employee_id),
+    bin_transfer_cancel_reason    TEXT          NOT NULL DEFAULT '',
+
+    bin_transfer_custom_fields    JSONB         NOT NULL DEFAULT '{}',
+    bin_transfer_created_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    bin_transfer_created_by       INTEGER           NULL REFERENCES employee(employee_id),
+    bin_transfer_updated_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    bin_transfer_updated_by       INTEGER           NULL REFERENCES employee(employee_id),
+    bin_transfer_deleted_at       TIMESTAMP         NULL,
+    bin_transfer_deleted_by       INTEGER           NULL REFERENCES employee(employee_id),
+    bin_transfer_record_version   INTEGER       NOT NULL DEFAULT 1,
+
+    CONSTRAINT uq_bin_transfer_uuid   UNIQUE (bin_transfer_uuid),
+    CONSTRAINT uq_bin_transfer_number UNIQUE (bin_transfer_number),
+    CONSTRAINT chk_bin_transfer_approval_status CHECK
+        (bin_transfer_approval_status IN ('none','pending','approved','rejected')),
+    CONSTRAINT chk_bin_transfer_soft_delete CHECK (
+        (bin_transfer_deleted_at IS NULL AND bin_transfer_deleted_by IS NULL) OR
+        (bin_transfer_deleted_at IS NOT NULL AND bin_transfer_deleted_by IS NOT NULL))
+);
+
+-- One row per slab to move. from_bin_id is what the slab's bin was when the
+-- line was written (a snapshot, NULL for a slab that had no bin); to_bin_id is
+-- the destination that was approved. Rows are soft-deleted when a draft is
+-- edited, so a slab can legitimately have a deleted line on the same document.
+CREATE TABLE IF NOT EXISTS bin_transfer_line (
+    bin_transfer_line_id   SERIAL      PRIMARY KEY,
+    bin_transfer_id        INTEGER     NOT NULL REFERENCES bin_transfer(bin_transfer_id),
+    line_number            INTEGER     NOT NULL,
+    inventory_slab_id      INTEGER     NOT NULL REFERENCES inventory_slab(inventory_slab_id),
+    from_bin_id            INTEGER         NULL REFERENCES inventory_bin(inventory_bin_id),
+    to_bin_id              INTEGER     NOT NULL REFERENCES inventory_bin(inventory_bin_id),
+    line_notes             TEXT        NOT NULL DEFAULT '',
+    line_moved_at          TIMESTAMP       NULL,
+    line_created_at        TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    line_created_by        INTEGER         NULL REFERENCES employee(employee_id),
+    line_deleted_at        TIMESTAMP       NULL,
+    CONSTRAINT chk_bin_transfer_line_number CHECK (line_number > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bin_transfer_line_slab_live
+    ON bin_transfer_line (bin_transfer_id, inventory_slab_id) WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_line_header
+    ON bin_transfer_line (bin_transfer_id) WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_line_slab
+    ON bin_transfer_line (inventory_slab_id) WHERE line_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_line_to_bin
+    ON bin_transfer_line (to_bin_id) WHERE line_deleted_at IS NULL;
+
+-- Shape fixed by approvalchain.writeGenericHistory.
+CREATE TABLE IF NOT EXISTS bin_transfer_history (
+    bin_transfer_history_id SERIAL      PRIMARY KEY,
+    bin_transfer_id         INTEGER     NOT NULL REFERENCES bin_transfer(bin_transfer_id) ON DELETE CASCADE,
+    from_status_id          INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id            INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    action                  VARCHAR(32) NOT NULL DEFAULT 'transition',  -- create|update|transition|approve|approve_override|reject|complete
+    actor_employee_id       INTEGER         NULL REFERENCES employee(employee_id),
+    at                      TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Approver config and per-round sign-offs: the uniform shape approvalchain's
+-- engine serves every module from (see approvalchain/registry.go).
+CREATE TABLE IF NOT EXISTS bin_transfer_approver (
+    bin_transfer_approver_id SERIAL      PRIMARY KEY,
+    record_type_id           INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = BTRF
+    record_status_id         INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- the gate: PAPV
+    approver_employee_id     INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at               TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by               INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_bin_transfer_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS bin_transfer_approval (
+    bin_transfer_approval_id SERIAL      PRIMARY KEY,
+    bin_transfer_id          INTEGER     NOT NULL REFERENCES bin_transfer(bin_transfer_id) ON DELETE CASCADE,
+    record_status_id         INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id     INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at              TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_bin_transfer_approval UNIQUE (bin_transfer_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_approver_lookup
+    ON bin_transfer_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_approval_transfer
+    ON bin_transfer_approval (bin_transfer_id);
+
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_status    ON bin_transfer (bin_transfer_status)   WHERE bin_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_warehouse ON bin_transfer (warehouse_id)          WHERE bin_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_owner     ON bin_transfer (bin_transfer_owner_id) WHERE bin_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_date_id   ON bin_transfer (bin_transfer_date, bin_transfer_id)       WHERE bin_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_created_id ON bin_transfer (bin_transfer_created_at, bin_transfer_id) WHERE bin_transfer_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_custom_gin ON bin_transfer USING GIN (bin_transfer_custom_fields);
+CREATE INDEX IF NOT EXISTS idx_bin_transfer_history_transfer ON bin_transfer_history (bin_transfer_id);
+
+-- Tie each bin_move on a unit back to the document that caused it, and index the
+-- departure side: idx_inv_unit_history_bin only covers to_bin_id, so "what left
+-- this bin" (the per-bin movement history) would otherwise scan.
+ALTER TABLE inventory_unit_history ADD COLUMN IF NOT EXISTS
+    bin_transfer_id INTEGER NULL REFERENCES bin_transfer(bin_transfer_id);
+CREATE INDEX IF NOT EXISTS idx_inv_unit_history_from_bin
+    ON inventory_unit_history (from_bin_id, history_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inv_unit_history_transfer
+    ON inventory_unit_history (bin_transfer_id) WHERE bin_transfer_id IS NOT NULL;
+
+-- RBAC backfill. Moving a bin used to need inventory_unit:update, so every role
+-- holding it keeps that ability through bin_transfer; viewing transfers follows
+-- inventory_unit:read, and signing one off follows inventory_transfer:approve (the
+-- existing "controller" grant for stock documents). Without this every custom role
+-- would 403 on the new screens. super_admin holds a wildcard and needs nothing.
+--
+-- Guarded to run once: the NOT EXISTS is evaluated before the insert, so after the
+-- first boot a role an admin later strips of bin_transfer:* is not given it back.
+INSERT INTO role_permissions (role_id, resource, action, scope)
+SELECT rp.role_id, 'bin_transfer', m.new_action, rp.scope
+FROM role_permissions rp
+JOIN (VALUES
+    ('inventory_unit',     'read',    'read'),
+    ('inventory_unit',     'update',  'create'),
+    ('inventory_unit',     'update',  'update'),
+    ('inventory_unit',     'update',  'delete'),
+    ('inventory_unit',     'update',  'transition'),
+    ('inventory_transfer', 'approve', 'approve')
+) AS m(src_resource, src_action, new_action)
+  ON m.src_resource = rp.resource AND m.src_action = rp.action
+WHERE NOT EXISTS (SELECT 1 FROM role_permissions x WHERE x.resource = 'bin_transfer')
+ON CONFLICT (role_id, resource, action) DO NOTHING;

@@ -24,6 +24,7 @@ func TestForWorkflowKey(t *testing.T) {
 		{"credit_memo", true, "CRDT", []string{"DRFT"}, []string{"APPV"}},
 		{"refund", true, "RFND", []string{"PEND"}, []string{"APPV"}},
 		{"vendor_credit", true, "VCRD", []string{"DRFT"}, []string{"APPV"}},
+		{"bin_transfer", true, "BTRF", []string{"PAPV"}, []string{"APPV"}},
 		{"lead", false, "", nil, nil},
 		{"prospect", false, "", nil, nil},
 		{"customer", false, "", nil, nil},
@@ -107,7 +108,7 @@ func TestRegistry_ApprovalNotificationScope(t *testing.T) {
 		"invoice": true, "payment": true, "credit_memo": true, "refund": true,
 		"purchase_order": true, "requisition": true, "vendor_bill": true,
 		"vendor_payment": true, "expense": true, "installation": true,
-		"vendor_credit": true,
+		"vendor_credit": true, "bin_transfer": true,
 	}
 	for key, cfg := range registry {
 		t.Run(key, func(t *testing.T) {
@@ -199,7 +200,7 @@ func TestRegistry_RejectModes(t *testing.T) {
 	want := map[string]RejectMode{
 		"estimate": RejectToStatus, "quote": RejectToStatus, "sales_order": RejectToStatus,
 		"invoice": RejectToStatus, "purchase_order": RejectToStatus, "requisition": RejectToStatus,
-		"vendor_bill": RejectToStatus, "vendor_payment": RejectToStatus,
+		"vendor_bill": RejectToStatus, "vendor_payment": RejectToStatus, "bin_transfer": RejectToStatus,
 		"credit_memo": RejectInPlace, "vendor_credit": RejectInPlace,
 		"payment": RejectInPlace, "refund": RejectInPlace,
 		"expense": RejectUnsupported, "installation": RejectUnsupported,

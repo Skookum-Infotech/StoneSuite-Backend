@@ -12,6 +12,7 @@ func TestResourceRoute(t *testing.T) {
 		{name: "sales domain resource", resource: "invoice", recordID: "rec-1", want: "/sales/invoice/rec-1"},
 		{name: "purchases domain resource", resource: "vendor_bill", recordID: "rec-2", want: "/purchases/vendor_bill/rec-2"},
 		{name: "installation module differs from domain", resource: "installation", recordID: "rec-3", want: "/sales/installation/rec-3"},
+		{name: "inventory domain resource", resource: "bin_transfer", recordID: "rec-6", want: "/inventory/bin_transfer/rec-6"},
 		{name: "unregistered resource falls back to empty", resource: "quote", recordID: "rec-4", want: ""},
 		{name: "unknown resource falls back to empty", resource: "not-a-resource", recordID: "rec-5", want: ""},
 	}

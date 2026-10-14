@@ -131,8 +131,12 @@ type UnitHistoryEntry struct {
 	ToBin    string `json:"toBin,omitempty"`
 	Reason   string `json:"reason,omitempty"`
 	Note     string `json:"note,omitempty"`
-	At       string `json:"at"`
-	ByName   string `json:"byName"`
+	// TransferID and TransferNumber name the bin transfer that made a bin_move,
+	// when one did, so the History tab can link back to it.
+	TransferID     string `json:"transferId,omitempty"`
+	TransferNumber string `json:"transferNumber,omitempty"`
+	At             string `json:"at"`
+	ByName         string `json:"byName"`
 }
 
 // UnitHistory returns the operational trail for one unit, newest first.
@@ -145,6 +149,7 @@ func UnitHistory(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]UnitHi
 		SELECT h.history_action, h.history_field, h.history_old_value, h.history_new_value,
 		       COALESCE(fb.bin_path,''), COALESCE(tb.bin_path,''),
 		       COALESCE(rs.inventory_reason_name,''), h.history_note,
+		       COALESCE(bt.bin_transfer_uuid::text,''), COALESCE(bt.bin_transfer_number,''),
 		       to_char(h.history_at, 'YYYY-MM-DD"T"HH24:MI:SS'),
 		       COALESCE(NULLIF(TRIM(COALESCE(e.employee_first_name,'') || ' ' ||
 		                            COALESCE(e.employee_last_name,'')), ''), 'System')
@@ -152,6 +157,7 @@ func UnitHistory(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]UnitHi
 		LEFT JOIN inventory_bin fb ON fb.inventory_bin_id = h.from_bin_id
 		LEFT JOIN inventory_bin tb ON tb.inventory_bin_id = h.to_bin_id
 		LEFT JOIN lkp_inventory_reason rs ON rs.inventory_reason_id = h.inventory_reason_id
+		LEFT JOIN bin_transfer bt ON bt.bin_transfer_id = h.bin_transfer_id
 		LEFT JOIN employee e ON e.employee_id = h.history_by
 		WHERE h.inventory_slab_id = $1
 		ORDER BY h.history_at DESC, h.inventory_unit_history_id DESC
@@ -165,7 +171,8 @@ func UnitHistory(ctx context.Context, pool *pgxpool.Pool, uuid string) ([]UnitHi
 	for rows.Next() {
 		var e UnitHistoryEntry
 		if err := rows.Scan(&e.Action, &e.Field, &e.OldValue, &e.NewValue,
-			&e.FromBin, &e.ToBin, &e.Reason, &e.Note, &e.At, &e.ByName); err != nil {
+			&e.FromBin, &e.ToBin, &e.Reason, &e.Note,
+			&e.TransferID, &e.TransferNumber, &e.At, &e.ByName); err != nil {
 			return nil, fmt.Errorf("scan unit history: %w", err)
 		}
 		out = append(out, e)

@@ -94,6 +94,37 @@ rack, or slot something actually sits in, one level more specific than the
 location itself. Manage them from Inventory → Bin Management, so your
 units and items can be tracked down to exactly where they're stored.
 
+Click a bin's name to open its page. It shows what is in the bin right now
+(Contents), and a Movement history of every slab that has been moved in,
+moved out, cut, or scrapped from it — including who did it, when, and which
+Bin Transfer it belonged to.
+
+## Moving Slabs Between Bins
+
+A Bin Transfer is how slabs are moved from one bin to another within a
+location. Create one from Inventory → Bin Transfer → New Bin Transfer: choose
+the location, add the slabs, and pick the bin each one is going to. You can
+also start one from a slab's own page with Transfer to Bin.
+
+A transfer goes through these steps:
+
+- Draft — you are still putting it together, and it can be edited or deleted.
+- Pending Approval — it was submitted and is waiting for the approvers
+  configured under Configuration → Workflows → Bin Transfer. Each of them must
+  sign off. An approver can instead Reject it with a reason, which sends it
+  back to Draft.
+- Approved — everyone has signed off. Nothing has moved yet.
+- Completed — someone pressed Complete and the slabs now sit in their new
+  bins. Completing moves them all together, or none at all, and says which
+  slab got in the way.
+
+If no approvers are configured for Bin Transfer, there is nothing to wait for:
+a draft can be completed straight away. A transfer can be cancelled at any step
+before it is completed. A slab can only be on one open transfer at a time.
+
+Each completed move is recorded on the slab's own History tab and on the
+Movement history of both bins, with the transfer's number.
+
 ## Locations
 
 A Location is a place where you hold inventory — a yard, shop, or facility.

@@ -137,6 +137,64 @@ If a sales order with the same customer and PO number already exists, you are
 warned and can open the existing order or choose Create anyway. You are asked
 only once per document.
 
+### Orders placed from the customer portal
+
+When a customer submits a countertop order from the customer portal, a Draft
+Sales Order is created for that customer, owned by the customer's owner (or
+their sales rep). Open it from Sales Orders and finish it:
+
+- Each area the customer listed is a Kit/Package heading — Kitchen, Island,
+  Bath 2 and so on — and each thing they filled in under it is a line: the item
+  is what they entered (the color, the edge, the sink model) and the line's
+  description says which field it came from (Color, Edge, Sink Model).
+  Waterfall, pop-up outlet and half wall appear as their own lines when used,
+  and the faucet spread reads like "8" left, center".
+- Every line has a quantity of 1 and the item's own price, which is zero for
+  items the customer's entries created. Set the real item, size, quantity and
+  price on each line, and check the stock.
+- The install address and city/ZIP are the ship-to address, the install date is
+  the scheduled installation date, and the builder, community, plan, contact
+  details, measure date and special instructions are in the memo. Pick the
+  state, because the form doesn't give one.
+
+The order is a Draft, so the customer does not see it until you approve it.
+
+While the Sales Order is still a Draft the customer can change their order from
+the portal, and the same Sales Order is updated, so check it again after they
+do. What you have already done is kept:
+
+- A line whose entry the customer did not change stays exactly as you left it,
+  with your price, size and wording.
+- If the customer changes an entry (a different color, say) the line's item is
+  swapped for the new one in the same place, keeping your quantity, size and
+  discount; its price becomes the new item's.
+- A field or area they remove loses its lines, and one they add gets a new line
+  of 1 under the area's kit heading.
+- Lines you added yourself, or lines whose item you replaced with another, are
+  not touched.
+- The ship-to address, install date and memo follow the customer's changes only
+  where you have not changed them. If you have added to the memo, your text is
+  kept and the new job details are added below it under "Updated from the
+  customer portal".
+
+To see the form the customer filled in, open the Sales Order and choose
+Customer Order Form in Quick Actions. It opens a large read-only window showing
+the project details and every area exactly as the customer sees them in their
+portal, including the area notes, which are not put on the Sales Order. The
+action only appears on orders that were placed from the portal.
+
+A super admin also gets an Edit button in that window, with the same fields the
+customer uses. Nobody else can change the form from the Sales Order, whatever
+their other permissions. While the Sales Order is a Draft the change is carried
+onto its lines the same way as a customer's change (see above) and a heading
+naming who made it is added to the memo if you have written in it. Once the
+order is out of Draft only the customer's form record changes and the Sales
+Order's lines are left as they are, so edit them directly. The customer sees
+the corrected form in their portal either way.
+
+Once you move the order out of Draft the customer can no longer change it from
+the portal. If they rename a Bath or Custom area, that counts as removing the
+old area and adding a new one, so redo any work on the old area's lines.
 ## Invoices
 
 An Invoice is created from Sales → Invoices → New Invoice, or by converting a

@@ -47,6 +47,18 @@ against stock exactly like any other, and later editing or deleting the kit
 never changes a document it was used on. If the name you type is not a kit,
 the picker offers Add as a new kit.
 
+### Kits and items added by customer portal orders
+
+When a customer places an order from the customer portal, every area they list
+is matched to a Kit/Package of the same name — and created if you do not have
+one yet — and everything they enter is matched to an item of the same name, or
+added as a new item. Items added this way have a SKU that starts with PORTAL-,
+a unit of Each, a price of zero, and no stock checking, and they are filed into
+the area's kit. Find them in Inventory → Items by searching PORTAL-, then set
+the real SKU, unit, prices and stock tracking, or merge them into the item you
+already sell. Existing kits and items are reused as they are, and an item that
+already exists keeps its own price.
+
 ## Units and Slabs
 
 A Unit is an individual physical slab or piece tracked on its own. Every unit

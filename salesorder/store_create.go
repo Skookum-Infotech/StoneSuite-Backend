@@ -18,177 +18,31 @@ import (
 // Create inserts a new sales order (header + lines) inside one transaction:
 // snapshots billing/shipping from the customer (unless overridden), resolves
 // and prices every line, computes header totals, assigns the order number,
-// and starts the order at DRFT (spec §10, AD-4, AD-7).
+// and starts the order at DRFT (spec §10, AD-4, AD-7). The work is CreateInTx;
+// this wraps it with the transaction and the notification and read-back that
+// only a request-driven create wants.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateOrderInput, actorEmployeeID int) (*Order, error) {
-	if strings.TrimSpace(in.CustomerUUID) == "" {
-		return nil, ClientError{Msg: "A customer is required."}
-	}
-	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
-		return nil, ClientError{Msg: "Sales tax percent must be between 0 and 100."}
-	}
-	// The installation date is checked up front (no DB needed). Blank is allowed
-	// here — the HTTP layer is what makes it mandatory — and then no schedule is
-	// planned until a later update supplies one.
-	today := scheduleClock()
-	installDate := strings.TrimSpace(in.InstallDate)
-	var plannedInstall time.Time
-	if installDate != "" {
-		d, err := validateInstallDate(installDate, today)
-		if err != nil {
-			return nil, err
-		}
-		plannedInstall = d
-	}
-	// CustomFields is stored as-is, unvalidated: there is no admin-configurable
-	// field-definition set for the relational sales_order module yet. It must
-	// NOT be validated against the workflow keyed "sales_order" — that is an
-	// unrelated legacy v1 JSONB placeholder workflow (schema.sql migration
-	// 000010) whose field defs (customer_name required, etc.) predate this
-	// module and collide only by sharing the same key string.
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin create sales order: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	msg, err := workflow.CustomerNotUsableByUUID(ctx, tx, in.CustomerUUID)
+	created, err := CreateInTx(ctx, tx, in, actorEmployeeID, CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
-	if msg != "" {
-		return nil, ClientError{Msg: msg}
-	}
-
-	custInternalID, custName, defBilling, defShipping, err := customerSnapshot(ctx, tx, in.CustomerUUID)
-	if err != nil {
-		return nil, err
-	}
-	dupUUID, _, err := guardDuplicatePO(ctx, tx, custInternalID, in.PONumber, in.AllowDuplicate)
-	if err != nil {
-		return nil, err
-	}
-	billing := overrideAddress(defBilling, in.Billing)
-	var shipping AddressInput
-	if in.ShipSameAsBilling {
-		shipping = billing
-	} else {
-		shipping = overrideAddress(defShipping, in.Shipping)
-	}
-
-	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
-	if err != nil {
-		return nil, err
-	}
-	lineMoney := make([]LineMoney, len(lines))
-	for i, l := range lines {
-		lineMoney[i] = l.money
-	}
-	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
-
-	recordTypeID, err := recordTypeIDByCode(ctx, tx, sordRecordTypeCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve SORD record type: %w", err)
-	}
-	draftStatusID, err := statusIDByCode(ctx, tx, recordTypeID, draftStatusCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve DRFT status: %w", err)
-	}
-
-	ownerEmployeeID := actorEmployeeID
-	if in.OwnerEmployeeID != nil && *in.OwnerEmployeeID > 0 {
-		ownerEmployeeID = *in.OwnerEmployeeID
-	}
-	custom := in.CustomFields
-	if custom == nil {
-		custom = map[string]any{}
-	}
-
-	dueDate, err := resolvePaymentDueDate(ctx, tx, in.OrderDate, in.PaymentDueDate, in.PaymentTermsID)
-	if err != nil {
-		return nil, err
-	}
-
-	cv := []colVal{
-		{"record_type", recordTypeID, ""},
-		{"sales_order_status", draftStatusID, ""},
-		{"sales_order_customer_id", custInternalID, ""},
-		{"sales_order_po_number", in.PONumber, ""},
-		{"sales_order_reference_number", in.ReferenceNumber, ""},
-		{"sales_order_date", orNow(in.OrderDate), "::date"},
-		{"sales_order_expected_delivery", nullableDate(in.ExpectedDelivery), "::date"},
-		{"sales_order_payment_due_date", dueDate, "::date"},
-		{"sales_order_scheduled_install_date", nullableDate(installDate), "::date"},
-		{"sales_order_sales_tax_percent", in.SalesTaxPercent, ""},
-		{"sales_order_memo", in.Memo, ""},
-		{"sales_order_notes", in.Notes, ""},
-		{"sales_order_internal_notes", in.InternalNotes, ""},
-		{"sales_order_terms_conditions", in.TermsConditions, ""},
-		{"sales_order_sales_rep_id", in.SalesRepEmployeeID, ""},
-		{"sales_order_owner_id", nullableInt(ownerEmployeeID), ""},
-		{"sales_order_payment_terms", in.PaymentTermsID, ""},
-		{"sales_order_price_level", in.PriceLevelID, ""},
-		{"sales_order_currency", in.CurrencyID, ""},
-		{"sales_order_subtotal", header.Subtotal, ""},
-		{"sales_order_discount_total", header.DiscountTotal, ""},
-		{"sales_order_tax_total", header.TaxTotal, ""},
-		{"sales_order_shipping_charge", in.ShippingCharge, ""},
-		{"sales_order_adjustment", in.Adjustment, ""},
-		{"sales_order_grand_total", header.GrandTotal, ""},
-		{"sales_order_ship_same_as_bill", in.ShipSameAsBilling, ""},
-		{"sales_order_custom_fields", custom, ""},
-		{"sales_order_created_by", nullableInt(actorEmployeeID), ""},
-	}
-	cv = append(cv, addrColVals("sales_order_bill", billing)...)
-	cv = append(cv, addrColVals("sales_order_ship", shipping)...)
-
-	insertSQL, insertArgs := buildInsert("sales_order", cv, "sales_order_id, sales_order_uuid")
-	var internalID int
-	var newUUID string
-	err = tx.QueryRow(ctx, insertSQL, insertArgs...).Scan(&internalID, &newUUID)
-	if err != nil {
-		if isForeignKeyViolation(err) {
-			return nil, ClientError{Msg: "One of the referenced ids (payment terms, price level, currency, state, or country) does not exist."}
-		}
-		if isCheckViolation(err) {
-			return nil, ClientError{Msg: "One or more sales order values are out of range."}
-		}
-		return nil, fmt.Errorf("insert sales order: %w", err)
-	}
-
-	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
-		return nil, err
-	}
-
-	lineIDs, err := insertLines(ctx, tx, internalID, lines, actorEmployeeID)
-	if err != nil {
-		return nil, err
-	}
-	// The stock check: an order cannot be saved for more than is free, and what it
-	// needs is held back from every other order from this moment.
-	if err := reserveStock(ctx, tx, internalID, lines, lineIDs, actorEmployeeID); err != nil {
-		return nil, err
-	}
-	if installDate != "" {
-		if err := syncSchedule(ctx, tx, internalID, planOrderDate(in.OrderDate, today), plannedInstall, today, true, actorEmployeeID); err != nil {
-			return nil, err
-		}
-	}
-
-	writeHistory(ctx, tx, internalID, "create", nil, &draftStatusID, actorEmployeeID)
-
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create sales order: %w", err)
 	}
-	_ = custName // used only to build the snapshot above
-	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
-	order, err := Get(ctx, pool, newUUID)
+	notifyCreated(ctx, pool, created.UUID, created.InternalID, actorEmployeeID)
+	order, err := Get(ctx, pool, created.UUID)
 	if err != nil {
 		return nil, err
 	}
-	if dupUUID != "" {
+	if created.DuplicateOfUUID != "" {
 		order.DuplicateOverride = true
-		order.DuplicateOfUUID = dupUUID
+		order.DuplicateOfUUID = created.DuplicateOfUUID
 	}
 	return order, nil
 }

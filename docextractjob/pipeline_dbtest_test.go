@@ -88,6 +88,16 @@ func TestPipeline_FailureModes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, outcomeSkipped, r.process(ctx, e.ID).kind)
 	})
+	t.Run("claim before /start marks the row queued is retried, not skipped", func(t *testing.T) {
+		r, s := runnerFor(t, &fakeObjects{data: map[string][]byte{}})
+		e := newExtraction(t, s, ownerA)
+		out := r.process(ctx, e.ID)
+		assert.Equal(t, outcomeRetry, out.kind)
+		assert.ErrorIs(t, out.err, errNotYetQueued)
+		got, err := s.Get(ctx, e.ID, ownerA)
+		require.NoError(t, err)
+		assert.Equal(t, StatusAwaitingUpload, got.Status, "the row is left for /start to mark queued")
+	})
 	t.Run("missing extraction row is skipped", func(t *testing.T) {
 		r, _ := runnerFor(t, &fakeObjects{data: map[string][]byte{}})
 		assert.Equal(t, outcomeSkipped, r.process(ctx, "55555555-5555-4555-8555-555555555555").kind)

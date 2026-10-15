@@ -27,6 +27,8 @@ const (
 	// mid-run (not one still within its own deadline) gets its job requeued.
 	staleAfter   = 3 * jobTimeout
 	reapInterval = 1 * time.Minute
+	// bookkeepingTimeout bounds the queue/row writes that record a job's outcome.
+	bookkeepingTimeout = 5 * time.Second
 )
 
 // controlPlane is the slice of tenancy.ControlPlane the worker uses.
@@ -166,6 +168,12 @@ func (w *Worker) processNext(ctx context.Context) {
 	out, store := w.runJob(runCtx, *job.TenantID, payload.ExtractionID)
 	metrics.ObserveDocExtractJob(out.kind, out.method)
 
+	// Record the outcome even when Stop cancelled ctx mid-job (a Fly autostop):
+	// on the cancelled ctx these writes fail, the job stays 'running' and only
+	// the reaper frees it, staleAfter later.
+	ctx, cancelBk := bookkeepingContext(ctx)
+	defer cancelBk()
+
 	switch out.kind {
 	case outcomeSuccess, outcomeSkipped:
 		if err := w.queue.MarkSucceeded(ctx, job.ID); err != nil {
@@ -183,6 +191,13 @@ func (w *Worker) processNext(ctx context.Context) {
 			slog.ErrorContext(ctx, "docextract: mark job failed", "jobId", job.ID, "error", err)
 		}
 	}
+}
+
+// bookkeepingContext detaches from parent's cancellation (keeping its values)
+// and bounds the result by bookkeepingTimeout, so shutdown cannot drop a
+// job's outcome nor stall on it.
+func bookkeepingContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), bookkeepingTimeout)
 }
 
 // runJob resolves the tenant pool and runs the pipeline. It returns the Store

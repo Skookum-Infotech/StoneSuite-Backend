@@ -56,14 +56,18 @@ func TestApprovalGateLocked(t *testing.T) {
 
 func TestBuildApproval(t *testing.T) {
 	tests := []struct {
-		name           string
-		approvers      []string
+		name      string
+		approvers []string
+		// configured is the active-row count incl. deactivated users; 0 means
+		// "same as len(approvers)" (nobody deactivated).
+		configured     int
 		approved       []string
 		caller         string
 		wantStatus     string
 		wantRequired   int
 		wantApproved   int
 		wantCanApprove bool
+		wantOrphaned   bool
 	}{
 		{
 			name:       "no approvers -> none, cannot approve",
@@ -121,10 +125,47 @@ func TestBuildApproval(t *testing.T) {
 			wantApproved:   2,
 			wantCanApprove: false,
 		},
+		{
+			name:           "deactivated approver drops out of required count",
+			approvers:      []string{"u1"},
+			configured:     2,
+			approved:       nil,
+			caller:         "u1",
+			wantStatus:     "pending",
+			wantRequired:   1,
+			wantCanApprove: true,
+		},
+		{
+			name:           "sign-off by a since-deactivated approver does not count",
+			approvers:      []string{"u1"},
+			configured:     2,
+			approved:       []string{"u2"},
+			caller:         "u1",
+			wantStatus:     "pending",
+			wantRequired:   1,
+			wantApproved:   0,
+			wantCanApprove: true,
+		},
+		{
+			name:           "every approver deactivated -> orphaned, stays gated, nobody can approve",
+			approvers:      nil,
+			configured:     2,
+			approved:       nil,
+			caller:         "u1",
+			wantStatus:     "pending",
+			wantRequired:   1,
+			wantCanApprove: false,
+			wantOrphaned:   true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildApproval(tc.approvers, tc.approved, tc.caller)
+			configured := tc.configured
+			if configured == 0 {
+				configured = len(tc.approvers)
+			}
+			got := buildApproval(tc.approvers, configured, tc.approved, tc.caller)
+			assert.Equal(t, tc.wantOrphaned, got.Orphaned)
 			assert.Equal(t, tc.wantStatus, got.Status)
 			assert.Equal(t, tc.wantRequired, got.Required)
 			assert.Equal(t, tc.wantApproved, got.Approved)
@@ -132,6 +173,24 @@ func TestBuildApproval(t *testing.T) {
 			// Arrays must never be nil so JSON serializes [] not null.
 			assert.NotNil(t, got.ApproverUserIDs)
 			assert.NotNil(t, got.ApprovedUserIDs)
+		})
+	}
+}
+
+func TestRequiredApprovals(t *testing.T) {
+	tests := []struct {
+		name             string
+		configured, live int
+		want             int
+	}{
+		{"no approvers configured is ungated", 0, 0, 0},
+		{"all live", 3, 3, 3},
+		{"some deactivated", 3, 1, 1},
+		{"all deactivated fails closed", 2, 0, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, requiredApprovals(tc.configured, tc.live))
 		})
 	}
 }

@@ -18,6 +18,9 @@ import (
 type sendError struct {
 	Status int
 	Msg    string
+	// DoNotContact marks a refusal because the customer is flagged Do Not
+	// Contact (see checkDoNotContact).
+	DoNotContact bool
 }
 
 // Error implements error.
@@ -45,12 +48,12 @@ func prepareSend(tenantID, recordID string, doc docpdf.PrintableDoc, meta DocMet
 		to = []string{meta.DefaultRecipientEmail}
 	}
 	if len(to) == 0 {
-		return nil, &sendError{http.StatusBadRequest, "At least one recipient is required."}
+		return nil, &sendError{Status: http.StatusBadRequest, Msg: "At least one recipient is required."}
 	}
 	cc := normalizeRecipients(req.CC)
 	for _, addr := range append(append([]string{}, to...), cc...) {
 		if !looksLikeEmail(addr) {
-			return nil, &sendError{http.StatusBadRequest, "Invalid recipient email: " + addr}
+			return nil, &sendError{Status: http.StatusBadRequest, Msg: "Invalid recipient email: " + addr}
 		}
 	}
 	subject := req.Subject
@@ -58,7 +61,7 @@ func prepareSend(tenantID, recordID string, doc docpdf.PrintableDoc, meta DocMet
 		subject = meta.DefaultSubject
 	}
 	if hasHeaderInjection(subject) {
-		return nil, &sendError{http.StatusBadRequest, "Invalid subject."}
+		return nil, &sendError{Status: http.StatusBadRequest, Msg: "Invalid subject."}
 	}
 	return &preparedSend{
 		tenantID: tenantID, recordID: recordID, doc: doc, meta: meta,
@@ -82,7 +85,7 @@ func prepareSend(tenantID, recordID string, doc docpdf.PrintableDoc, meta DocMet
 func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityID, ownerUserID string, p *preparedSend) (string, services.EmailOutcome, *sendError) {
 	pdf, err := h.renderPDF(p.doc)
 	if err != nil {
-		return "", services.EmailOutcome{}, &sendError{http.StatusInternalServerError, "Failed to render PDF."}
+		return "", services.EmailOutcome{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to render PDF."}
 	}
 	fileName := workflow.SanitizeFileName(p.meta.Number + ".pdf")
 	p.meta.DownloadURL = DocLinkURL(p.tenantID, p.recordID)
@@ -101,7 +104,7 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 	if err != nil {
 		slog.WarnContext(ctx, "document send: notify failed",
 			"workflow", p.meta.WorkflowKey, "record", p.recordID, "error", err)
-		return "", services.EmailOutcome{}, &sendError{http.StatusBadGateway, "Failed to send email."}
+		return "", services.EmailOutcome{}, &sendError{Status: http.StatusBadGateway, Msg: "Failed to send email."}
 	}
 
 	sendID, err := workflow.InsertDocumentSend(ctx, pool, workflow.DocumentSend{
@@ -111,7 +114,7 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 		NotifyNotificationIDs: notifyResult.NotificationIDs,
 	})
 	if err != nil {
-		return "", services.EmailOutcome{}, &sendError{http.StatusInternalServerError, "Failed to record send."}
+		return "", services.EmailOutcome{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to record send."}
 	}
 	_ = workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to})
@@ -129,12 +132,12 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 func (h *DocumentOps) loadRecordDoc(ctx context.Context, pool *pgxpool.Pool, tenant *tenancy.Tenant, recordID, workflowKey string) (docpdf.PrintableDoc, DocMeta, *sendError) {
 	loader, ok := h.loaders[workflowKey]
 	if !ok {
-		return docpdf.PrintableDoc{}, DocMeta{}, &sendError{http.StatusNotFound, "This record type has no printable document."}
+		return docpdf.PrintableDoc{}, DocMeta{}, &sendError{Status: http.StatusNotFound, Msg: "This record type has no printable document."}
 	}
 	doc, meta, err := loader(ctx, pool, recordID, h.sellerFromTenant(ctx, pool, tenant))
 	if err != nil {
 		slog.WarnContext(ctx, "document send: load failed", "workflow", workflowKey, "record", recordID, "error", err)
-		return docpdf.PrintableDoc{}, DocMeta{}, &sendError{http.StatusInternalServerError, "Failed to load document."}
+		return docpdf.PrintableDoc{}, DocMeta{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to load document."}
 	}
 	return doc, meta, nil
 }
@@ -147,8 +150,10 @@ func (h *DocumentOps) preflightRecordSend(ctx context.Context, pool *pgxpool.Poo
 	if serr != nil {
 		return serr
 	}
-	_, serr = prepareSend(tenant.ID, recordID, doc, meta, req)
-	return serr
+	if _, serr = prepareSend(tenant.ID, recordID, doc, meta, req); serr != nil {
+		return serr
+	}
+	return h.checkDoNotContact(ctx, pool, meta, recordID, "")
 }
 
 // sendRecord loads, validates and emails recordID's document, bypassing the
@@ -162,6 +167,9 @@ func (h *DocumentOps) sendRecord(ctx context.Context, pool *pgxpool.Pool, tenant
 	}
 	p, serr := prepareSend(tenant.ID, recordID, doc, meta, req)
 	if serr != nil {
+		return "", services.EmailOutcome{}, serr
+	}
+	if serr := h.checkDoNotContact(ctx, pool, meta, recordID, identityID); serr != nil {
 		return "", services.EmailOutcome{}, serr
 	}
 	return h.deliver(ctx, pool, identityID, ownerUserID, p)

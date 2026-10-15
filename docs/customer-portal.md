@@ -41,6 +41,30 @@ Refunds, plus their own Account Settings and the Support page to file or
 follow up on a ticket. They don't see the rest of StoneSuite — the CRM,
 purchasing, inventory, accounting, or configuration areas are all staff-only.
 
+## Placing an order from the portal
+
+A customer can place a countertop order themselves from Sales → Created Orders.
+They fill in the project details — builder, community, plan, contact details,
+the install address, and the measure and install dates — and then add an area
+for each part of the house the order covers: Kitchen, Island, Pantry, Hutch,
+Utility, Primary / Master Bath, Powder 1 and 2, and as many Baths or custom
+areas as they need. Each area takes the stone color, finish, edge, backsplash
+height, sink and cooktop models, waterfall and pop-up outlet counts, half wall,
+faucet spread and notes that apply to it.
+
+When the order is submitted it appears in the customer's Created Orders list,
+where they can open it to see every detail and area exactly as they filed it,
+and a Draft Sales Order is created for you to finish — see "Orders placed from
+the customer portal" under Sales Orders. A customer whose status is not Active
+cannot place an order; they are asked to contact you instead.
+
+A customer can change an order for as long as its Sales Order is still a
+Draft: the order shows an Edit order button, and saving it updates the same
+Sales Order. Once you move the Sales Order on from Draft (submit it for
+approval, for example) the button goes away and the order shows that it is being
+processed — the customer is asked to contact you for further changes. A customer
+whose status is not Active cannot change an order either.
+
 ## Multiple workspaces
 
 If the same person has portal access to more than one of your customers (or

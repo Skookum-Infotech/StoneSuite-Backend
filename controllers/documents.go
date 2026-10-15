@@ -12,6 +12,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/companyprofile"
+	"stonesuite-backend/crmstore"
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/globalsearch"
 	"stonesuite-backend/services"
@@ -34,6 +35,9 @@ type DocMeta struct {
 	// CurrencyID is the document's lkp_currency id; the PDF prints that
 	// currency's symbol instead of the default "$". nil keeps the default.
 	CurrencyID *int
+	// CustomerID is the document's customer UUID, checked against the
+	// customer's Do Not Contact flag before sending. "" for vendor-side docs.
+	CustomerID string
 }
 
 // recordLink builds a notification's deep-link path for resource+recordID
@@ -66,6 +70,8 @@ type DocumentOps struct {
 	sendDisabled map[string]bool
 	// renderPDF is injectable for tests; defaults to docpdf.Render.
 	renderPDF func(docpdf.PrintableDoc) ([]byte, error)
+	// doNotContact is injectable for tests; defaults to crmstore.CustomerDoNotContact.
+	doNotContact doNotContactLookup
 	// r2 is nil when R2 is not configured; the tenant-logo lookup is then
 	// skipped (not fatal) and the tenant's plate is left out of the masthead.
 	r2 *storage.Client
@@ -84,7 +90,10 @@ func NewDocumentOps(loaders map[string]DocumentLoader, sendDisabled map[string]b
 	for key, load := range loaders {
 		wrapped[key] = withCurrencySymbol(load)
 	}
-	return &DocumentOps{loaders: wrapped, sendDisabled: sendDisabled, renderPDF: docpdf.Render, r2: r2}
+	return &DocumentOps{
+		loaders: wrapped, sendDisabled: sendDisabled, renderPDF: docpdf.Render,
+		doNotContact: crmstore.CustomerDoNotContact, r2: r2,
+	}
 }
 
 // WithDefaultLogo sets the logo PDFs show for a tenant that has not uploaded
@@ -240,6 +249,11 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 	p, serr := prepareSend(tenant.ID, recordID, doc, meta, req)
 	if serr != nil {
 		fail(w, serr.Status, serr.Msg)
+		return
+	}
+	// Before deliver: a refused send renders, emails, records and pings nothing.
+	if serr := h.checkDoNotContact(r.Context(), pool, meta, recordID, identityID); serr != nil {
+		writeSendError(w, serr)
 		return
 	}
 	sendID, outcome, serr := h.deliver(r.Context(), pool, identityID, ownerUserID, p)

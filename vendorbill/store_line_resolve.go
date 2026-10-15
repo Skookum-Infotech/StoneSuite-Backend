@@ -90,8 +90,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			if rl.taxRateID == nil {
 				rl.taxRateID = item.taxRateID
 			}
-			if in.Description != "" {
-				rl.desc = in.Description
+			// Keep a caller-supplied description over the catalog default.
+			if d := strings.TrimSpace(in.Description); d != "" {
+				rl.desc = d
 			}
 		} else if strings.TrimSpace(in.Description) == "" {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: either an inventoryItemUuid or a description is required.", in.LineNumber)}

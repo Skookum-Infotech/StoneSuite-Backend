@@ -724,6 +724,32 @@
         ]
       }
     },
+    "/api/internal/automation/tick": {
+      "post": {
+        "operationId": "post_internal_automation_tick",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "automationOps.Tick",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/metrics": {
       "get": {
         "operationId": "get_metrics",
@@ -2034,6 +2060,146 @@
           }
         ],
         "summary": "portalAuthOps.SwitchWorkspace",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/portal/created-orders": {
+      "get": {
+        "operationId": "get_portal_created_orders",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "portalCreatedOrderOps.List",
+        "tags": [
+          "portal"
+        ]
+      },
+      "post": {
+        "operationId": "post_portal_created_orders",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "portalCreatedOrderOps.Create",
+        "tags": [
+          "portal"
+        ]
+      }
+    },
+    "/api/portal/created-orders/{id}": {
+      "get": {
+        "operationId": "get_portal_created_orders_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "portalCreatedOrderOps.Get",
+        "tags": [
+          "portal"
+        ]
+      },
+      "put": {
+        "operationId": "put_portal_created_orders_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "portalCreatedOrderOps.Update",
         "tags": [
           "portal"
         ]
@@ -19162,6 +19328,86 @@
           }
         ],
         "summary": "so.Convert",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/customer-order-form": {
+      "get": {
+        "operationId": "get_tenant_sales_orders_uuid_customer_order_form",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "so.CustomerOrderForm",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "put": {
+        "operationId": "put_tenant_sales_orders_uuid_customer_order_form",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "so.UpdateCustomerOrderForm",
         "tags": [
           "tenant"
         ]

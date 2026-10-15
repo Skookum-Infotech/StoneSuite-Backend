@@ -18,33 +18,48 @@ import (
 // totals) inside one transaction. Rejected once the order has reached a
 // terminal status (FILL/CANC) — a filled or cancelled order is immutable.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrderInput, actorEmployeeID int) (*Order, error) {
-	// See Create: CustomFields is intentionally not validated against the
-	// unrelated legacy "sales_order" v1 workflow.
-	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
-		return nil, ClientError{Msg: "Sales tax percent must be between 0 and 100."}
-	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update sales order: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := UpdateInTx(ctx, tx, uuid, in, actorEmployeeID, UpdateOptions{}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update sales order: %w", err)
+	}
+	return Get(ctx, pool, uuid)
+}
+
+// UpdateInTx is Update's body inside the caller's transaction: it replaces the
+// order's header fields and lines, re-reserves stock, re-plans the schedule when
+// the install date changed and writes the history row. Committing and reading
+// the order back are the caller's; any error means the caller must roll back.
+func UpdateInTx(ctx context.Context, tx pgx.Tx, uuid string, in UpdateOrderInput, actorEmployeeID int, opts UpdateOptions) error {
+	// See Create: CustomFields is intentionally not validated against the
+	// unrelated legacy "sales_order" v1 workflow.
+	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
+		return ClientError{Msg: "Sales tax percent must be between 0 and 100."}
+	}
+
 	var internalID, custInternalID int
 	var statusCode, storedInstall string
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT so.sales_order_id, so.sales_order_customer_id, rs.record_status_code,
 		       COALESCE(to_char(so.sales_order_scheduled_install_date,'YYYY-MM-DD'),'')
 		FROM sales_order so JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, uuid,
 	).Scan(&internalID, &custInternalID, &statusCode, &storedInstall)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load sales order for update: %w", err)
+		return fmt.Errorf("load sales order for update: %w", err)
 	}
 	if statusCode == "FILL" || statusCode == "CANC" {
-		return nil, ClientError{Msg: "A filled or cancelled order cannot be edited."}
+		return ClientError{Msg: "A filled or cancelled order cannot be edited."}
 	}
 	// A blank date leaves the stored one alone; the date already on the order is
 	// accepted even once it has slipped into the past; only a different date is
@@ -52,24 +67,27 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	today := scheduleClock()
 	installDate, installSet, installChanged, err := resolveUpdateInstallDate(in.InstallDate, storedInstall, today)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	_, custName, defBilling, defShipping, err := customerSnapshotByInternalID(ctx, tx, custInternalID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	billing := overrideAddress(defBilling, in.Billing)
 	var shipping AddressInput
-	if in.ShipSameAsBilling {
+	switch {
+	case in.ShipSameAsBilling:
 		shipping = billing
-	} else {
+	case opts.ShippingAsGiven:
+		shipping = in.Shipping
+	default:
 		shipping = overrideAddress(defShipping, in.Shipping)
 	}
 
 	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	lineMoney := make([]LineMoney, len(lines))
 	for i, l := range lines {
@@ -79,7 +97,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 
 	dueDate, err := resolvePaymentDueDate(ctx, tx, in.OrderDate, in.PaymentDueDate, in.PaymentTermsID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// sales_order_custom_fields is NOT NULL DEFAULT '{}'; a nil map encodes as
@@ -127,43 +145,40 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateOrder
 	_, err = tx.Exec(ctx, updateSQL, updateArgs...)
 	if err != nil {
 		if isForeignKeyViolation(err) {
-			return nil, ClientError{Msg: "One of the referenced ids (payment terms, price level, currency, state, or country) does not exist."}
+			return ClientError{Msg: "One of the referenced ids (payment terms, price level, currency, state, or country) does not exist."}
 		}
 		if isCheckViolation(err) {
-			return nil, ClientError{Msg: "One or more sales order values are out of range."}
+			return ClientError{Msg: "One or more sales order values are out of range."}
 		}
-		return nil, fmt.Errorf("update sales order: %w", err)
+		return fmt.Errorf("update sales order: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE sales_order_item SET item_deleted_at = NOW() WHERE sales_order_id = $1 AND item_deleted_at IS NULL`,
 		internalID); err != nil {
-		return nil, fmt.Errorf("clear previous sales order items: %w", err)
+		return fmt.Errorf("clear previous sales order items: %w", err)
 	}
 	lineIDs, err := insertLines(ctx, tx, internalID, lines, actorEmployeeID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Re-check and re-reserve for the edited lines. The order's earlier hold is
 	// released first, so it does not compete with itself.
 	if err := reserveStock(ctx, tx, internalID, lines, lineIDs, actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 	// Re-plan only when the date changed (or the order has no schedule yet), so
 	// a planner's edits to individual rows survive an unrelated save.
 	if installSet {
 		if err := syncSchedule(ctx, tx, internalID, planOrderDate(in.OrderDate, today), installDate, today, installChanged, actorEmployeeID); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
 	writeHistory(ctx, tx, internalID, "update", nil, nil, actorEmployeeID)
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit update sales order: %w", err)
-	}
 	_ = custName
-	return Get(ctx, pool, uuid)
+	return nil
 }
 
 // customerSnapshotByInternalID is customerSnapshot keyed by the internal id

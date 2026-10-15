@@ -80,6 +80,10 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			id := item.internalID
 			rl.inventoryItemID = &id
 			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
+			// Keep a caller-supplied description over the catalog default.
+			if d := strings.TrimSpace(in.Description); d != "" {
+				rl.desc = d
+			}
 			rl.unitID, rl.unitCode = item.unitID, item.unitCode
 			if dimIn.Unit == "" {
 				dimIn.Unit = item.dimensionUnit

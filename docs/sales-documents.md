@@ -143,7 +143,9 @@ An Invoice is created from Sales → Invoices → New Invoice, or by converting 
 sales order. Its statuses are Draft, Pending Approval, Approved, Sent,
 Partially Paid, Overdue, Paid, or Void. Payments and credit memos are applied
 against an invoice to move it toward Paid; an invoice that's past its due
-date without being fully paid shows as Overdue.
+date without being fully paid shows as Overdue. An invoice with payments or
+credit memos applied to it can't be voided — unapply them first. Once an
+invoice is Void it stays Void.
 
 ## Payments
 

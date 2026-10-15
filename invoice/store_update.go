@@ -214,20 +214,12 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	if err != nil {
 		return err
 	}
-	var liveApplications int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM payment_application WHERE invoice_id = $1 AND application_deleted_at IS NULL`,
-		internalID).Scan(&liveApplications); err != nil {
-		return fmt.Errorf("count live payment applications: %w", err)
+	liveApplications, liveCredits, err := liveSettlementCounts(ctx, pool, internalID)
+	if err != nil {
+		return err
 	}
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete an invoice with live payment applications; unapply them first."}
-	}
-	var liveCredits int
-	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM credit_memo_application WHERE invoice_id = $1 AND application_deleted_at IS NULL`,
-		internalID).Scan(&liveCredits); err != nil {
-		return fmt.Errorf("count live credit applications: %w", err)
 	}
 	if liveCredits > 0 {
 		return ClientError{Msg: "Cannot delete an invoice with live credit memo applications; unapply them first."}

@@ -37,6 +37,20 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		return nil, fmt.Errorf("resolve invoice for transition: %w", err)
 	}
 
+	// A voided invoice must carry no live settlement; otherwise a later
+	// unapply/uncredit would leave cash or credit pointing at a dead document.
+	// The row lock above serializes this against payment/creditmemo Apply,
+	// which always take the invoice lock last.
+	if toStatusCode == statusVoid {
+		payments, credits, err := liveSettlementCounts(ctx, tx, internalID)
+		if err != nil {
+			return nil, err
+		}
+		if payments > 0 || credits > 0 {
+			return nil, ErrVoidWithSettlement
+		}
+	}
+
 	// The static map has the first word on legality, not the last: with
 	// nobody configured to approve, a move may pass straight through the
 	// approval checkpoint (Draft -> Sent) -- exactly the moves the status

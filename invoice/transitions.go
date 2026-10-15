@@ -8,6 +8,10 @@ import (
 // ErrInvalidTransition is returned when a status change is not permitted.
 var ErrInvalidTransition = errors.New("invalid invoice status transition")
 
+// ErrVoidWithSettlement is returned when voiding an invoice that still has live
+// payment or credit memo applications against it (maps to HTTP 409).
+var ErrVoidWithSettlement = errors.New("cannot void an invoice with applied payments or credit memos; unapply them first")
+
 // allowedTransitions maps a status code to the set of codes reachable from it
 // (spec §7). Terminal states (PAID, VOID) map to an empty set.
 var allowedTransitions = map[string]map[string]bool{

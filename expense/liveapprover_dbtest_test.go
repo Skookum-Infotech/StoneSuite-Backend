@@ -1,4 +1,6 @@
-package quote
+//go:build dbtest
+
+package expense
 
 import (
 	"context"

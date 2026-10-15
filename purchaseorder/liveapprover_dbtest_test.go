@@ -1,4 +1,6 @@
-package expense
+//go:build dbtest
+
+package purchaseorder
 
 import (
 	"context"

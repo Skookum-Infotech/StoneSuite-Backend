@@ -1,4 +1,6 @@
-package salesorder
+//go:build dbtest
+
+package quote
 
 import (
 	"context"

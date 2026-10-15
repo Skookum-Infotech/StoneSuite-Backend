@@ -24,6 +24,7 @@ import (
 	"github.com/Skookum-Infotech/go-rag/provider/tei"
 
 	"stonesuite-backend/aisettings"
+	"stonesuite-backend/automation"
 	"stonesuite-backend/config"
 	"stonesuite-backend/controllers"
 	"stonesuite-backend/database"
@@ -343,6 +344,21 @@ func main() {
 
 	// Multi-tenant routes (the control plane is always configured at this point).
 	if tenantOps != nil {
+		// Internal: date-triggered automation (scheduled vendor payments, ...).
+		// Called by a Cloudflare Cron Trigger every 15 min, which also wakes the
+		// scale-to-zero machine. HMAC-signed (AUTOMATION_TICK_SECRET; route 404s
+		// while unset), no JWT/TenantResolver — it fans out across tenants itself.
+		// Its own per-IP limiter so it never shares a bucket with login traffic.
+		// Validate() already rejected an invalid zone; "" leaves nil (UTC).
+		var automationTZ *time.Location
+		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
+			automationTZ, _ = time.LoadLocation(tz)
+		}
+		automationRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.1, 5)
+		automationOps := controllers.NewAutomationOps(
+			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs()...),
+			config.AppConfig.AutomationTickSecret)
+		mux.Handle("POST /api/internal/automation/tick", automationRateLimiter.PerIPFunc(automationOps.Tick))
 		// Public: tenant-scoped login + password recovery. All credential-checking
 		// endpoints sit behind the per-IP rate limiter to blunt brute-force and
 		// credential-stuffing attacks (no tenant id exists yet to key on).
@@ -1642,7 +1658,7 @@ func main() {
 		// NOTE: this is an allowlist. A route registered on the mux under a
 		// prefix that is missing here is unreachable — it 404s before the mux
 		// ever sees it. Add new top-level prefixes here as well as on the mux.
-		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, services.EmailIconPathPrefix) && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") {
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, services.EmailIconPathPrefix) && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") && !strings.HasPrefix(path, "/api/internal/") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

@@ -122,6 +122,13 @@ type Config struct {
 	AxiomToken   string
 	AxiomDataset string
 
+	// Date-triggered automation (POST /api/internal/automation/tick, driven by
+	// a Cloudflare Cron Trigger). AutomationTickSecret is the HMAC key the
+	// caller signs with; empty disables the route (404). The default timezone
+	// applies to tenants whose company profile has none set.
+	AutomationTickSecret      string
+	AutomationDefaultTimezone string
+
 	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
 	// the same Ollama box — no third-party LLM account, API key, or quota.
 	// All optional; the assistant no-ops when unconfigured.
@@ -256,6 +263,9 @@ func Load() {
 		MetricsToken: getEnv("METRICS_TOKEN", ""),
 		AxiomToken:   getEnv("AXIOM_TOKEN", ""),
 		AxiomDataset: getEnv("AXIOM_DATASET", ""),
+		// Date-triggered automation
+		AutomationTickSecret:      getEnv("AUTOMATION_TICK_SECRET", ""),
+		AutomationDefaultTimezone: getEnv("AUTOMATION_DEFAULT_TIMEZONE", "America/Chicago"),
 		// AI / RAG assistant (ADR-001)
 		OllamaBaseURL:               getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		AIChatModel:                 getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
@@ -319,6 +329,9 @@ func (c Config) EmailMatchesAdminDomain(email string) bool {
 	return strings.HasSuffix(email, "@"+domain)
 }
 
+// minAutomationTickSecretLen is the shortest AUTOMATION_TICK_SECRET accepted.
+const minAutomationTickSecretLen = 32
+
 // Validate checks security-critical configuration and returns an error describing
 // every problem found. Call it immediately after Load and fail fast on error.
 func (c Config) Validate() error {
@@ -341,6 +354,16 @@ func (c Config) Validate() error {
 			problems = append(problems, "SECRET_ENCRYPTION_KEY is not valid base64")
 		} else if n := len(key); n != 16 && n != 24 && n != 32 {
 			problems = append(problems, fmt.Sprintf("SECRET_ENCRYPTION_KEY decodes to %d bytes, expected 16/24/32 (use: openssl rand -base64 32)", n))
+		}
+	}
+
+	// Automation tick secret: optional, but a short one is guessable/brute-forceable.
+	if s := c.AutomationTickSecret; s != "" && len(s) < minAutomationTickSecretLen {
+		problems = append(problems, fmt.Sprintf("AUTOMATION_TICK_SECRET must be at least %d characters (use: openssl rand -hex 32)", minAutomationTickSecretLen))
+	}
+	if tz := c.AutomationDefaultTimezone; tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			problems = append(problems, fmt.Sprintf("AUTOMATION_DEFAULT_TIMEZONE %q is not a valid IANA timezone", tz))
 		}
 	}
 

@@ -182,6 +182,10 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		// Second customer surface (PR #140) — see docs/architecture-overview.md.
 		"POST /api/customer/auth/login":         true,
 		"POST /api/customer/auth/accept-invite": true,
+
+		// Machine-only: Cloudflare Cron Trigger. No JWT, but HMAC-signed with
+		// AUTOMATION_TICK_SECRET + 5-min replay window; 404s while unset.
+		"POST /api/internal/automation/tick": true,
 	}
 
 	routes, _ := analyze(t)

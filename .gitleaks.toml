@@ -10,13 +10,14 @@ useDefault = true
 # entries apply to every commit gitleaks scans (not just the current tree),
 # so this also clears the historical findings in these files' past revisions.
 #
-# The automation tick tests sign requests with a fixed fake HMAC secret
-# ("0123456789abcdef..."), which trips generic-api-key the same way.
+# The internal-signature and automation cron-tick tests sign and verify
+# requests with throwaway HMAC keys held in test constants (`secret`,
+# `tickTestSecret`); the same rule flags them, but they are not credentials.
 [allowlist]
-description = "Test fixtures with fake values (CoA masking bank numbers, automation tick HMAC secrets), not credentials"
+description = "Test fixtures with fake values, not credentials (Chart of Accounts masking; internal signature / cron tick)"
 paths = [
   '''chartofaccounts/masking_test\.go''',
   '''docs/superpowers/plans/2026-07-25-chart-of-accounts\.md''',
-  '''controllers/automation_test\.go''',
   '''middleware/internal_sig_test\.go''',
+  '''controllers/automation_test\.go''',
 ]

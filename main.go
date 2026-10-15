@@ -277,7 +277,7 @@ func main() {
 			// on a ticker so record writes become fresh vectors within seconds
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
-			workflow.SetAuditObserver(ragAuditObserver)
+			workflow.RegisterAuditObserver(ragAuditObserver)
 			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")

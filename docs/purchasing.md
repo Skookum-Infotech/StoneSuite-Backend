@@ -141,7 +141,9 @@ Purchases → Vendor Payments → New Vendor Payment. When creating one, you can
 optionally apply it to the vendor's open bills so those bills move toward
 Paid. Its statuses are Draft, Pending Approval, Approved, Scheduled, Sent, or
 Void — Scheduled covers a payment that's been approved but is set to go out
-on a future date.
+on a future date. On its scheduled date (in your company's time zone, set on
+the company profile) a Scheduled payment moves to Sent automatically, usually
+within 15 minutes of midnight; you can still mark it Sent by hand earlier.
 
 ## Vendor Credits
 

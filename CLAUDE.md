@@ -91,7 +91,7 @@ brew install flyctl
 fly auth login
 ```
 
-**Secrets** (`fly secrets set ...`): `CONTROL_PLANE_DB_URL`, `PROVISION_ADMIN_DB_URL`, `JWT_SECRET`, `SECRET_ENCRYPTION_KEY`, `NOTIFY_URL` (`https://stonesuite-notify.fly.dev` for **every** env — the one shared notify service), `NOTIFY_API_KEY` (the `X-Internal-Secret` shared secret `stonesuite-notify` checks; must match that app's `INTERNAL_SERVICE_SECRET`); optional `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`CLOUDFLARE_API_TOKEN`, `SENTRY_DSN`, `METRICS_TOKEN`, `AXIOM_TOKEN`/`AXIOM_DATASET`. (`SMTP_*`/`SENDER_*`/`RESEND_API_KEY` are dead config — every email now goes through `stonesuite-notify`, no direct SMTP/Resend path remains in this repo.) If `NOTIFY_URL`/`NOTIFY_API_KEY` are unset or wrong, `services.SendNotification` fails and document-send returns 502; if they're right but `stonesuite-notify`'s own downstream (Resend) is failing, sends return 200 and the email silently never arrives — check `fly logs -a stonesuite-notify` and the Resend dashboard.
+**Secrets** (`fly secrets set ...`): `CONTROL_PLANE_DB_URL`, `PROVISION_ADMIN_DB_URL`, `JWT_SECRET`, `SECRET_ENCRYPTION_KEY`, `NOTIFY_URL` (`https://stonesuite-notify.fly.dev` for **every** env — the one shared notify service), `NOTIFY_API_KEY` (the `X-Internal-Secret` shared secret `stonesuite-notify` checks; must match that app's `INTERNAL_SERVICE_SECRET`); optional `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`CLOUDFLARE_API_TOKEN`, `SENTRY_DSN`, `METRICS_TOKEN`, `AXIOM_TOKEN`/`AXIOM_DATASET`, `AUTOMATION_TICK_SECRET` (≥32 chars; must equal the `automation-cron` Worker's secret — unset disables date-triggered automation, so scheduled vendor payments never dispatch), `AUTOMATION_DEFAULT_TIMEZONE` (default `America/Chicago`, for tenants with no company-profile timezone). (`SMTP_*`/`SENDER_*`/`RESEND_API_KEY` are dead config — every email now goes through `stonesuite-notify`, no direct SMTP/Resend path remains in this repo.) If `NOTIFY_URL`/`NOTIFY_API_KEY` are unset or wrong, `services.SendNotification` fails and document-send returns 502; if they're right but `stonesuite-notify`'s own downstream (Resend) is failing, sends return 200 and the email silently never arrives — check `fly logs -a stonesuite-notify` and the Resend dashboard.
 
 **GitHub Actions secret required:** `FLY_API_TOKEN` (repo secret, `environment: Prod`) — needed for `deploy-backend.yml` to run `flyctl deploy`.
 
@@ -227,7 +227,7 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 7. **All queries accept `context.Context` as first parameter.**
 
 ### API & HTTP
-1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required).
+1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers).
 2. **All responses are JSON.** Status codes: 200, 400, 401, 403, 404, 409, 500.
 3. **Error responses always include `success: false, message: "..."`.**
 4. **Handlers must validate input.**

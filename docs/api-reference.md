@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-588 endpoints across 7 surfaces, read from `main.go`.
+589 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -12,7 +12,7 @@
 |---|---:|
 | staff token + tenant | 502 |
 | portal token + tenant | 28 |
-| none (rate-limited) | 20 |
+| none (rate-limited) | 21 |
 | none | 18 |
 | staff token | 15 |
 | portal token | 3 |
@@ -42,6 +42,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `POST` | `/api/customer/auth/accept-invite` | rate-limited per IP |
 | `POST` | `/api/customer/auth/login` | rate-limited per IP |
 | `GET` | `/api/healthz` | no rate limit |
+| `POST` | `/api/internal/automation/tick` | rate-limited per IP |
 | `GET` | `/api/metrics` | no rate limit |
 | `ANY` | `/api/onboarding/apply` | no rate limit |
 | `ANY` | `/api/onboarding/apply/` | no rate limit |
@@ -63,9 +64,11 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `GET` | `/api/portal/auth/reset-password/{token}` | rate-limited per IP |
 | `GET` | `/api/readyz` | no rate limit |
 
-## `system` — 4 endpoints
+## `system` — 5 endpoints
 
 Liveness, readiness and metrics. No credential.
+
+### (root)
 
 | Method | Path | Requires | Handler |
 |---|---|---|---|
@@ -73,6 +76,12 @@ Liveness, readiness and metrics. No credential.
 | `GET` | `/api/healthz` | none | `health.Healthz` |
 | `GET` | `/api/metrics` | none | `` |
 | `GET` | `/api/readyz` | none | `health.Readyz` |
+
+### automation
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `POST` | `/api/internal/automation/tick` | none (rate-limited) | `automationOps.Tick` |
 
 ## `auth` — 16 endpoints
 

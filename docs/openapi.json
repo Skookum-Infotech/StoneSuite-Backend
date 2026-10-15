@@ -724,6 +724,32 @@
         ]
       }
     },
+    "/api/internal/automation/tick": {
+      "post": {
+        "operationId": "post_internal_automation_tick",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "automationOps.Tick",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/metrics": {
       "get": {
         "operationId": "get_metrics",

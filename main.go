@@ -882,7 +882,7 @@ func main() {
 				}
 				email, name := invoice.Recipient(*inv)
 				return invoice.ToPrintable(*inv, seller),
-					controllers.DocMeta{WorkflowKey: "invoice", Number: inv.Number, CurrencyID: inv.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Invoice " + inv.Number}, nil
+					controllers.DocMeta{WorkflowKey: "invoice", Number: inv.Number, CustomerID: inv.Customer.ID, CurrencyID: inv.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Invoice " + inv.Number}, nil
 			},
 			"quote": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				q, err := quote.Get(ctx, pool, uuid)
@@ -891,7 +891,7 @@ func main() {
 				}
 				email, name := quote.Recipient(*q)
 				return quote.ToPrintable(*q, seller),
-					controllers.DocMeta{WorkflowKey: "quote", Number: q.Number, CurrencyID: q.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Quote " + q.Number}, nil
+					controllers.DocMeta{WorkflowKey: "quote", Number: q.Number, CustomerID: q.Customer.ID, CurrencyID: q.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Quote " + q.Number}, nil
 			},
 			"estimate": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				es, err := estimate.Get(ctx, pool, uuid)
@@ -900,7 +900,7 @@ func main() {
 				}
 				email, name := estimate.Recipient(*es)
 				return estimate.ToPrintable(*es, seller),
-					controllers.DocMeta{WorkflowKey: "estimate", Number: es.Number, CurrencyID: es.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Estimate " + es.Number}, nil
+					controllers.DocMeta{WorkflowKey: "estimate", Number: es.Number, CustomerID: es.Customer.ID, CurrencyID: es.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Estimate " + es.Number}, nil
 			},
 			"sales_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				so, err := salesorder.Get(ctx, pool, uuid)
@@ -909,7 +909,7 @@ func main() {
 				}
 				email, name := salesorder.Recipient(*so)
 				return salesorder.ToPrintable(*so, seller),
-					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, CurrencyID: so.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
+					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, CustomerID: so.Customer.ID, CurrencyID: so.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
 			},
 			// Purchase-side "Send to Vendor" loaders below -- same shape as the
 			// sales-side loaders above, except Recipient needs ctx/pool: none of

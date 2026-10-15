@@ -4,14 +4,14 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-588 endpoints across 7 surfaces, read from `main.go`.
+594 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 502 |
-| portal token + tenant | 28 |
+| staff token + tenant | 504 |
+| portal token + tenant | 32 |
 | none (rate-limited) | 20 |
 | none | 18 |
 | staff token | 15 |
@@ -171,7 +171,7 @@ Public tenant onboarding and workspace-user invitations.
 | `POST` | `/api/onboarding/user-invite/accept` | none | `userOps.AcceptUserInvite` |
 | `GET` | `/api/onboarding/user-invite/{token}` | none | `userOps.GetUserInvite` |
 
-## `portal` — 39 endpoints
+## `portal` — 43 endpoints
 
 Customer portal — scoped read access, invitations, workspace switching.
 
@@ -189,6 +189,15 @@ Customer portal — scoped read access, invitations, workspace switching.
 | `POST` | `/api/portal/auth/reset-password` | none (rate-limited) | `portalAuthOps.ResetPassword` |
 | `GET` | `/api/portal/auth/reset-password/{token}` | none (rate-limited) | `portalAuthOps.ValidateResetToken` |
 | `POST` | `/api/portal/auth/switch-workspace` | portal token | `portalAuthOps.SwitchWorkspace` |
+
+### created-orders
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/portal/created-orders` | portal token + tenant | `portalCreatedOrderOps.List` |
+| `POST` | `/api/portal/created-orders` | portal token + tenant | `portalCreatedOrderOps.Create` |
+| `GET` | `/api/portal/created-orders/{id}` | portal token + tenant | `portalCreatedOrderOps.Get` |
+| `PUT` | `/api/portal/created-orders/{id}` | portal token + tenant | `portalCreatedOrderOps.Update` |
 
 ### fabrication-jobs
 
@@ -327,7 +336,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 501 endpoints
+## `tenant` — 503 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -914,6 +923,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/sales-orders/{uuid}/approve` | staff token + tenant | `so.Approve` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/audit` | staff token + tenant | `so.Audit` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/convert` | staff token + tenant | `so.Convert` |
+| `GET` | `/api/tenant/sales-orders/{uuid}/customer-order-form` | staff token + tenant | `so.CustomerOrderForm` |
+| `PUT` | `/api/tenant/sales-orders/{uuid}/customer-order-form` | staff token + tenant | `so.UpdateCustomerOrderForm` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/fabricate` | staff token + tenant | `fj.Fabricate` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/inventory` | staff token + tenant | `so.Inventory` |
 | `ANY` | `/api/tenant/sales-orders/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |

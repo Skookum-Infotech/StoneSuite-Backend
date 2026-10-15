@@ -28,6 +28,7 @@ var chainAuth = []struct {
 	{"portalPublic", AuthPublicLimited},
 	{"portalCrossTenant", AuthPortal},
 	{"portalChain", AuthPortalTenant},
+	{"portalOrderChain", AuthPortalTenant},
 	{"customerChain", AuthCustomer},
 	{"customerAuthRateLimiter", AuthPublicLimited},
 	{"tenantChain", AuthStaffTenant},

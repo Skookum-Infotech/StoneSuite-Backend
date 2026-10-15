@@ -9654,3 +9654,84 @@ JOIN (VALUES
   ON m.src_resource = rp.resource AND m.src_action = rp.action
 WHERE NOT EXISTS (SELECT 1 FROM role_permissions x WHERE x.resource = 'bin_transfer')
 ON CONFLICT (role_id, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- CUSTOMER ORDER FORMS (customer portal "Created Orders")
+-- =====================================================================
+-- A countertop order form a customer files from the portal: the job's header
+-- (who, where, when) plus one block per area of the house. Submitting one also
+-- creates a Draft Sales Order for the same customer (sales_order_id), which is
+-- what staff work from; this table keeps exactly what the customer entered, so
+-- the order list can show it back and nothing the customer typed is lost when
+-- the Sales Order is edited.
+--
+-- portal_user_id is the login that submitted it. The list is by customer, so
+-- every portal login of one customer sees the same orders.
+CREATE TABLE IF NOT EXISTS customer_order_form (
+    customer_order_form_id        SERIAL        PRIMARY KEY,
+    customer_order_form_uuid      UUID          NOT NULL DEFAULT gen_random_uuid(),
+    customer_id                   INTEGER       NOT NULL REFERENCES customer(customer_id),
+    portal_user_id                UUID          NOT NULL REFERENCES customer_portal_user(id),
+    sales_order_id                INTEGER           NULL REFERENCES sales_order(sales_order_id),
+    order_form_status             VARCHAR(16)   NOT NULL DEFAULT 'submitted',
+
+    order_form_builder            VARCHAR(120)  NOT NULL,
+    order_form_community          VARCHAR(120)  NOT NULL,
+    order_form_plan               VARCHAR(120)  NOT NULL DEFAULT '',
+    order_form_phone              VARCHAR(20)   NOT NULL,
+    order_form_email              VARCHAR(100)  NOT NULL,
+    order_form_install_address    VARCHAR(100)  NOT NULL,
+    order_form_city               VARCHAR(100)  NOT NULL,
+    order_form_zip                VARCHAR(10)   NOT NULL,
+    order_form_measure_date       DATE          NOT NULL,
+    order_form_install_date       DATE          NOT NULL,
+    order_form_special_instructions TEXT        NOT NULL DEFAULT '',
+
+    order_form_created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT uq_customer_order_form_uuid UNIQUE (customer_order_form_uuid),
+    CONSTRAINT chk_order_form_status CHECK (order_form_status IN ('submitted')),
+    CONSTRAINT chk_order_form_dates  CHECK (order_form_install_date >= order_form_measure_date)
+);
+CREATE INDEX IF NOT EXISTS idx_order_form_customer
+    ON customer_order_form (customer_id, order_form_created_at DESC, customer_order_form_id);
+CREATE INDEX IF NOT EXISTS idx_order_form_sales_order
+    ON customer_order_form (sales_order_id) WHERE sales_order_id IS NOT NULL;
+
+-- One row per area, in the order the customer listed them. The kind and the
+-- faucet-spread positions are validated in Go (orderform/areas.go) rather than
+-- by CHECK constraints, so adding an area kind never needs a schema change.
+CREATE TABLE IF NOT EXISTS customer_order_form_area (
+    customer_order_form_area_id   SERIAL        PRIMARY KEY,
+    customer_order_form_id        INTEGER       NOT NULL REFERENCES customer_order_form(customer_order_form_id) ON DELETE CASCADE,
+    area_position                 INTEGER       NOT NULL,
+    area_kind                     VARCHAR(16)   NOT NULL,
+    area_name                     VARCHAR(100)  NOT NULL,
+    area_color                    VARCHAR(120)  NOT NULL DEFAULT '',
+    area_finish                   VARCHAR(120)  NOT NULL DEFAULT '',
+    area_edge                     VARCHAR(120)  NOT NULL DEFAULT '',
+    area_backsplash_height_in     DECIMAL(5,2)      NULL,   -- inches; NULL = no backsplash
+    area_sink_model               VARCHAR(120)  NOT NULL DEFAULT '',
+    area_cooktop_model            VARCHAR(120)  NOT NULL DEFAULT '',
+    area_waterfall_qty            SMALLINT      NOT NULL DEFAULT 0,
+    area_pop_up_outlet_qty        SMALLINT      NOT NULL DEFAULT 0,
+    area_half_wall                BOOLEAN       NOT NULL DEFAULT FALSE,
+    area_location                 VARCHAR(120)  NOT NULL DEFAULT '',
+    area_faucet_spread            TEXT[]        NOT NULL DEFAULT '{}',
+    area_notes                    TEXT          NOT NULL DEFAULT '',
+
+    CONSTRAINT chk_order_form_area_position CHECK (area_position > 0),
+    CONSTRAINT chk_order_form_area_qty CHECK (area_waterfall_qty >= 0 AND area_pop_up_outlet_qty >= 0),
+    CONSTRAINT chk_order_form_area_backsplash CHECK (area_backsplash_height_in IS NULL OR area_backsplash_height_in >= 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_order_form_area_position
+    ON customer_order_form_area (customer_order_form_id, area_position);
+-- Area names become Kit/Package names on the Sales Order, so one form cannot
+-- carry two that read the same.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_order_form_area_name
+    ON customer_order_form_area (customer_order_form_id, LOWER(area_name));
+
+-- When the customer last changed the order. They can while its Draft Sales Order
+-- is still a draft; NULL for an order that was never edited.
+ALTER TABLE customer_order_form
+    ADD COLUMN IF NOT EXISTS order_form_updated_at TIMESTAMP NULL;

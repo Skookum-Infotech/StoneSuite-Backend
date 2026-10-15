@@ -187,6 +187,79 @@ than have it silently disappear.
 A document that is out of scope, in a hidden state, or belongs to another customer returns
 **404**, never 403. There is no way to distinguish those cases, by design.
 
+## Created orders
+
+The countertop order form a customer files from the portal.
+
+```
+GET  /api/portal/created-orders          GET  /api/portal/created-orders/{id}
+POST /api/portal/created-orders          PUT  /api/portal/created-orders/{id}
+```
+
+**List** (`GET`) takes `?cursor=` and `?limit=` (default 25, max 100) and returns the
+signed-in customer's own orders, newest first, with every area:
+
+```json
+{ "success": true, "orders": [ { "id": "…", "status": "submitted", "createdAt": "…", "editable": true,
+    "builder": "…", "community": "…", "plan": "", "phone": "…", "email": "…",
+    "installAddress": "…", "city": "…", "zip": "…",
+    "measureDate": "2026-10-10", "installDate": "2026-10-20", "specialInstructions": "",
+    "areas": [ { "kind": "kitchen", "name": "Kitchen", "color": "…", "finish": "", "edge": "",
+      "backsplashHeight": "4", "sinkModel": "", "cooktopModel": "", "waterfallQty": 0,
+      "popUpOutlet": 0, "halfWall": false, "location": "", "faucetSpread": ["L8", "C"], "notes": "" } ] } ],
+  "nextCursor": "eyJ...", "hasMore": true }
+```
+
+Pagination is keyset: pass `nextCursor` back, never construct one. Every login of one
+customer sees the same orders; there is no way to reach another customer's.
+
+`editable` is true while the order's Sales Order is still a **Draft** — staff have not moved
+it on — and is what the portal uses to offer "Edit". `updatedAt` is present once the customer
+has changed the order.
+
+**Detail** (`GET .../{id}`) returns `{ "success": true, "order": {...} }` — the same object a list row is. An id that
+is not the signed-in customer's, or is malformed, returns **404**, never 403.
+
+**Create** (`POST`) takes the same shape without `id`, `status` and `createdAt` and returns
+**201** `{ "success": true, "order": { ... } }`. `kind` is one of `kitchen`, `island`,
+`pantry`, `hutch`, `utility`, `master_bath`, `powder_1`, `powder_2`, `bath`, `custom`;
+single-use kinds may appear once and area names must be unique. A field an area's kind does
+not show is ignored. `faucetSpread` positions are `L12 L8 L4 L2 C R2 R4 R8 R12`, and must
+be on that kind's row (wide: 12, 8, 4; narrow: 8, 4, 2).
+
+Placing an order, in one transaction: stores the form; finds or creates a Kit/Package per
+area and an inventory item per filled field (SKU `PORTAL-…`, $0, not stock-checked) and files
+the items into the kit; and creates a **Draft Sales Order** for the customer with one line per
+filled field under the area's kit heading, the install address as ship-to, the install date
+as the scheduled installation date, and the job details in the memo. Stock is not reserved
+for that draft. The customer is the session's; nothing about the customer, owner or sales
+order is read from the body.
+
+**Change** (`PUT .../{id}`) takes the same body as create and returns **200**
+`{ "success": true, "order": { ... } }` with `editable: true`. It is allowed only while the
+order's Sales Order is a Draft; the order is replaced as a whole (send every field and area),
+and the same Sales Order follows, in one transaction. What staff did to the draft is kept:
+
+- a field whose entry is unchanged keeps its line exactly as staff left it (price, size, wording);
+- a field whose entry changed swaps the line's item in place, keeping its position, quantity,
+  size and discount — the price becomes the new item's;
+- a removed field or area drops its lines; an added one gets a new quantity-1 line under that
+  area's kit, in the form's order;
+- lines staff added themselves, or re-pointed to another item, are never touched;
+- the ship-to, install date and memo follow the form only where staff have not changed what the
+  portal wrote. A memo staff added to is kept, with the new job details appended as an
+  "Updated from the customer portal" block.
+
+An Install Date equal to the one already stored is accepted even once it has passed; a different
+one must not be in the past. Renaming a Bath or Custom area counts as removing it and adding a
+new one (the area name is the kit). The same per-login rate limit as create applies.
+
+| Status | Meaning |
+|---|---|
+| 400 | Validation failure — `message` is written for the customer |
+| 404 | Change only: not this customer's order, or a malformed id |
+| 409 | Create: the account is not Active. Change: the account is not Active, the Sales Order has moved on from Draft (or was deleted), or the change needs stock that is not free |
+
 ## Messages
 
 ```

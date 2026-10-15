@@ -1,0 +1,14 @@
+# Cloudflare Worker that drives stonesuite-backend's date-triggered automation.
+# Deploy manually:   cd automation-cron && wrangler deploy
+# Secret (must equal the backend's Fly secret of the same name):
+#   wrangler secret put AUTOMATION_TICK_SECRET
+# Test locally:      wrangler dev --test-scheduled  then  curl "http://localhost:8787/__scheduled?cron=*/15+*+*+*+*"
+name = "stonesuite-automation-cron"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+TICK_URL = "https://stonesuite-backend.fly.dev/api/internal/automation/tick"
+
+[triggers]
+crons = ["*/15 * * * *"]

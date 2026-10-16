@@ -27,6 +27,8 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
 ├── cmd/rag-ingest-help/     # CLI: ingest embedded help docs into the RAG index
 ├── jobqueue/                # Async job queue
+├── automation/              # Date-triggered automation: tick Runner, Jobs, tenant clock, send window
+├── automation-cron/         # Cloudflare Worker that signs the 15-min automation tick
 ├── provisioning/            # Provisioner: queue, worker, async job runner
 ├── services/                # Email service, provisioning helpers
 ├── storage/                 # R2 per-tenant bucket client
@@ -193,6 +195,23 @@ type and carry `Domain`/`Module` route segments the frontend feeds to
    `Search(...)` with `query.Request{Search: term}`. Don't hand-roll search SQL in
    `globalsearch/`; the exceptions (`userstore.Search`, `crmstore.SearchActivity`)
    still use `query.StripLikeMeta` + `$n` params, never interpolation.
+
+### Automation Engine (`automation/` + `POST /api/internal/automation/tick`)
+The `automation-cron` Worker signs a tick every 15 min; `automation.Runner` runs every
+`DefaultJobs()` entry per servable tenant **inside the request** (scale-to-zero can stop the
+machine after the response).
+1. **"Today" is tenant-local, computed in Go** (`automation.TenantToday` /
+   `TenantLocation`, from `company_profile.timezone`, fallback
+   `AUTOMATION_DEFAULT_TIMEZONE`) and passed as a `$n` param. Automation SQL never uses
+   `CURRENT_DATE`. External sends respect `InSendWindow` (08:00–18:00 local).
+2. **Writes made by automation run under `automation.WithSystemActor(ctx)`**, so audit
+   observers ignore them (loop guard). Employee-keyed columns use
+   `automation.SystemEmployeeID` (seeded employee 1). There is no automation `users` row;
+   don't add one.
+3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** (the
+   delivery's occurrence key), so a retry after a timeout can't double-send.
+4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
+   panic-isolated, and none may block the write.
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

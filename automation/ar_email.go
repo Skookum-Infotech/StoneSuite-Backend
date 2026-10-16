@@ -123,9 +123,10 @@ func (r arRenderer) Render(ctx context.Context, env JobEnv, g Group) (services.N
 	}
 	email := renderARDigest(profile.CompanyName, live, env.Today)
 	first := live[0].UUID
-	for _, inv := range live {
-		if inv.Anchor.Before(live[0].Anchor) {
-			first = inv.UUID
+	earliest := live[0].Anchor
+	for _, inv := range live[1:] {
+		if inv.Anchor.Before(earliest) {
+			first, earliest = inv.UUID, inv.Anchor
 		}
 	}
 	return services.NotificationRequest{

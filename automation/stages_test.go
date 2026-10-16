@@ -70,11 +70,18 @@ func TestPlanStages(t *testing.T) {
 				{0, d("2026-11-17"), StageActionPlan},
 				{1, d("2026-11-10"), StageActionSuperseded},
 			}},
-		{"enabled on the stage date is not pre_enable", cadence, due, d("2026-11-10"), d("2026-11-10"),
+		{"enabled on the stage date is pre_enable", cadence, due, d("2026-11-10"), d("2026-11-10"),
 			[]StagePlan{
 				{0, d("2026-11-07"), StageActionPreEnable},
-				{1, d("2026-11-10"), StageActionPlan},
+				{1, d("2026-11-10"), StageActionPreEnable},
 			}},
+		{"later today, stages on or before enable date stay pre_enable", cadence, due, d("2026-11-11"), d("2026-11-10"),
+			[]StagePlan{
+				{0, d("2026-11-07"), StageActionPreEnable},
+				{1, d("2026-11-10"), StageActionPreEnable},
+			}},
+		{"stage dated day after enable plans", cadence, d("2026-11-14"), d("2026-11-11"), d("2026-11-10"),
+			[]StagePlan{{0, d("2026-11-11"), StageActionPlan}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

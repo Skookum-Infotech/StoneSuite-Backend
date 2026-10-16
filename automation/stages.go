@@ -38,8 +38,8 @@ func calendarDays(a, b time.Time) int {
 }
 
 // PlanStages classifies each cadence stage already due as of today (tenant-local
-// calendar dates). Future stages are omitted. Stages dated before enabledOn are
-// pre_enable; of the rest, the latest is plan when at most two days old else
+// calendar dates). Future stages are omitted. Stages dated on or before enabledOn are
+// pre_enable (first sendable day is the day after enabling); of the rest, the latest is plan when at most two days old else
 // stale, and earlier ones are superseded. Results are ordered by stage index.
 func PlanStages(anchor time.Time, offsets []int, today, enabledOn time.Time) []StagePlan {
 	var out []StagePlan
@@ -50,7 +50,7 @@ func PlanStages(anchor time.Time, offsets []int, today, enabledOn time.Time) []S
 			continue
 		}
 		sp := StagePlan{Stage: i, Date: date, Action: StageActionSuperseded}
-		if calendarDays(enabledOn, date) < 0 {
+		if calendarDays(enabledOn, date) <= 0 {
 			sp.Action = StageActionPreEnable
 		} else if latest < 0 || calendarDays(out[latest].Date, date) >= 0 {
 			latest = len(out)

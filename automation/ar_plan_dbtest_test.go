@@ -101,12 +101,60 @@ func TestARPlanBacklogPreEnable(t *testing.T) {
 		cust := f.customer(arCust{accountsEmail: fmt.Sprintf("c%d@x.com", i)})
 		f.invoice(arInv{cust: cust, status: "ODUE", due: dayOffset(-15 - i%40), balance: "10", sent: true})
 	}
-	p, s, err := (&ARDunning{}).planTx(f.ctx, f.tx, planEnv(), rule)
+	// Due dates 0, -7, -14, +3 relative to the enable day: every stage dated on or
+	// before the enable day is pre_enable, so nothing is sent on enable day.
+	for i, off := range []int{0, -7, -14, 3} {
+		cust := f.customer(arCust{accountsEmail: fmt.Sprintf("edge%d@x.com", i)})
+		f.invoice(arInv{cust: cust, status: "SENT", due: dayOffset(off), balance: "10", sent: true})
+	}
+	// Due +4: its -3 stage is dated the day after enabling.
+	later := f.customer(arCust{accountsEmail: "later@x.com"})
+	f.invoice(arInv{cust: later, status: "SENT", due: dayOffset(4), balance: "10", sent: true})
+
+	j := &ARDunning{}
+	p, s, err := j.planTx(f.ctx, f.tx, planEnv(), rule)
 	require.NoError(t, err)
 	assert.Zero(t, p)
 	assert.Positive(t, s)
 	assert.Zero(t, f.count(`rule_id = $1::uuid AND status = 'planned'`, rule.ID))
 	assert.Equal(t, s, f.count(`rule_id = $1::uuid AND status = 'skipped' AND reason = 'pre_enable'`, rule.ID))
+
+	nextDay := JobEnv{Now: arToday.AddDate(0, 0, 1).Add(10 * time.Hour), Today: arToday.AddDate(0, 0, 1), Loc: time.UTC}
+	p, _, err = j.planTx(f.ctx, f.tx, nextDay, rule)
+	require.NoError(t, err)
+	assert.Equal(t, 1, p, "the day after enabling plans the first later stage")
+	assert.Equal(t, 1, f.count(`rule_id = $1::uuid AND status = 'planned' AND recipient_email = 'later@x.com'`, rule.ID))
+}
+
+// TestARPlanDigestKeyUsesSendDay: rows planned at 19:00 on day D and 00:15 on D+1
+// both run at 08:00 D+1, so they must share one digest.
+func TestARPlanDigestKeyUsesSendDay(t *testing.T) {
+	f := newARFixture(t)
+	rule := f.enableRule(arToday.AddDate(0, 0, -30))
+	cust := f.customer(arCust{accountsEmail: "ap@acme.com"})
+	f.invoice(arInv{cust: cust, status: "SENT", due: dayOffset(0), balance: "10", sent: true})
+	f.invoice(arInv{cust: cust, status: "SENT", due: dayOffset(4), balance: "10", sent: true})
+	j := &ARDunning{}
+
+	evening := JobEnv{Now: arToday.Add(19 * time.Hour), Today: arToday, Loc: time.UTC}
+	p, _, err := j.planTx(f.ctx, f.tx, evening, rule)
+	require.NoError(t, err)
+	require.Equal(t, 1, p)
+	night := JobEnv{Now: arToday.AddDate(0, 0, 1).Add(15 * time.Minute), Today: arToday.AddDate(0, 0, 1), Loc: time.UTC}
+	p, _, err = j.planTx(f.ctx, f.tx, night, rule)
+	require.NoError(t, err)
+	require.Equal(t, 1, p)
+
+	var rows, keys, runs int
+	require.NoError(t, f.tx.QueryRow(f.ctx, `SELECT count(*), count(DISTINCT digest_key), count(DISTINCT run_at)
+		FROM automation_deliveries WHERE rule_id = $1::uuid AND status = 'planned'`, rule.ID).Scan(&rows, &keys, &runs))
+	assert.Equal(t, 2, rows)
+	assert.Equal(t, 1, runs)
+	assert.Equal(t, 1, keys, "same send morning shares one digest key")
+	var key string
+	require.NoError(t, f.tx.QueryRow(f.ctx, `SELECT DISTINCT digest_key FROM automation_deliveries
+		WHERE rule_id = $1::uuid AND status = 'planned'`, rule.ID).Scan(&key))
+	assert.Equal(t, DigestKey(rule.ID, "ap@acme.com", arToday.AddDate(0, 0, 1)), key)
 }
 
 func TestARPlanSharedDigestAndNoEmail(t *testing.T) {

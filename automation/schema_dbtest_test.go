@@ -29,13 +29,24 @@ func TestAutomationSchema(t *testing.T) {
 	ctx := context.Background()
 	pool := newTenantTestPool(t)
 
+	// Leftovers from an aborted run would break re-runs.
+	_, err := pool.Exec(ctx, `DELETE FROM automation_deliveries WHERE rule_id IN (SELECT id FROM automation_rules WHERE rule_key = 'test.schema')`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `DELETE FROM automation_rules WHERE rule_key = 'test.schema'`)
+	require.NoError(t, err)
+
 	var ruleID string
 	require.NoError(t, pool.QueryRow(ctx, `
 		INSERT INTO automation_rules (rule_key, name, audience)
 		VALUES ('test.schema', 'Schema test', 'internal')
 		ON CONFLICT (rule_key) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id`).Scan(&ruleID))
-	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM automation_rules WHERE id = $1`, ruleID) })
+	t.Cleanup(func() {
+		_, delErr := pool.Exec(ctx, `DELETE FROM automation_deliveries WHERE rule_id = $1`, ruleID)
+		require.NoError(t, delErr)
+		_, delErr = pool.Exec(ctx, `DELETE FROM automation_rules WHERE id = $1`, ruleID)
+		require.NoError(t, delErr)
+	})
 
 	insert := `
 		INSERT INTO automation_deliveries

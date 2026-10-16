@@ -104,6 +104,7 @@ func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule rule
 		enabledOn = localDate(rule.EnabledOn, env.Loc)
 	}
 	runAt := NextSendWindow(env.Now, env.Loc)
+	sendDay := localDate(runAt, env.Loc) // rows sent the same morning share one digest
 
 	batch := &pgx.Batch{}
 	var isPlanned []bool
@@ -121,7 +122,7 @@ func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule rule
 					reason = reasonNoEmail
 				} else {
 					status, reason, rowRunAt = statusPlanned, "", runAt
-					d := DigestKey(rule.ID, c.Email, env.Today)
+					d := DigestKey(rule.ID, c.Email, sendDay)
 					digest = &d
 				}
 			}

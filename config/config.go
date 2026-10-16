@@ -128,6 +128,14 @@ type Config struct {
 	// applies to tenants whose company profile has none set.
 	AutomationTickSecret      string
 	AutomationDefaultTimezone string
+	// AutomationKVNamespaceID / AutomationKVAPIToken let the platform-admin
+	// switch (PUT /api/platform/automation) mirror its state into the Cloudflare
+	// KV namespace the automation-cron Worker reads, so a disabled platform
+	// never wakes the scale-to-zero backend. The token should be scoped to
+	// "Workers KV Storage: Edit" on that one namespace's account and is used with
+	// CLOUDFLARE_ACCOUNT_ID. All three unset = DB switch only (e.g. local dev).
+	AutomationKVNamespaceID string
+	AutomationKVAPIToken    string
 
 	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
 	// the same Ollama box — no third-party LLM account, API key, or quota.
@@ -266,6 +274,8 @@ func Load() {
 		// Date-triggered automation
 		AutomationTickSecret:      getEnv("AUTOMATION_TICK_SECRET", ""),
 		AutomationDefaultTimezone: getEnv("AUTOMATION_DEFAULT_TIMEZONE", "America/Chicago"),
+		AutomationKVNamespaceID:   getEnv("AUTOMATION_KV_NAMESPACE_ID", ""),
+		AutomationKVAPIToken:      getEnv("AUTOMATION_KV_API_TOKEN", ""),
 		// AI / RAG assistant (ADR-001)
 		OllamaBaseURL:               getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		AIChatModel:                 getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
@@ -360,6 +370,12 @@ func (c Config) Validate() error {
 	// Automation tick secret: optional, but a short one is guessable/brute-forceable.
 	if s := c.AutomationTickSecret; s != "" && len(s) < minAutomationTickSecretLen {
 		problems = append(problems, fmt.Sprintf("AUTOMATION_TICK_SECRET must be at least %d characters (use: openssl rand -hex 32)", minAutomationTickSecretLen))
+	}
+	// The KV mirror needs all three values; a partial setup would silently leave
+	// the Worker's view of the switch stale, so reject it at boot.
+	if kvSet := c.AutomationKVNamespaceID != "" || c.AutomationKVAPIToken != ""; kvSet &&
+		(c.AutomationKVNamespaceID == "" || c.AutomationKVAPIToken == "" || c.CloudflareAccountID == "") {
+		problems = append(problems, "AUTOMATION_KV_NAMESPACE_ID, AUTOMATION_KV_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must all be set together")
 	}
 	if tz := c.AutomationDefaultTimezone; tz != "" {
 		if _, err := time.LoadLocation(tz); err != nil {

@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-595 endpoints across 7 surfaces, read from `main.go`.
+597 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -14,7 +14,7 @@
 | portal token + tenant | 32 |
 | none (rate-limited) | 21 |
 | none | 18 |
-| staff token | 15 |
+| staff token | 17 |
 | portal token | 3 |
 | customer token | 2 |
 
@@ -295,7 +295,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 16 endpoints
+## `platform` — 18 endpoints
 
 Platform-admin operations across tenants.
 
@@ -312,6 +312,13 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/ai/reindex-help` | staff token | `aiOps.ReindexHelp` |
 | `GET` | `/api/platform/ai/settings` | staff token | `aiOps.GetPlatformSettings` |
 | `PUT` | `/api/platform/ai/settings` | staff token | `aiOps.UpdatePlatformSettings` |
+
+### automation
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/platform/automation` | staff token | `automationPlatformOps.Get` |
+| `PUT` | `/api/platform/automation` | staff token | `automationPlatformOps.Update` |
 
 ### feedback
 

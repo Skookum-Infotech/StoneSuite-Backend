@@ -582,3 +582,20 @@ INSERT INTO platform_ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 -- parsed, or an invite whose email send failed outright; a resend resets it.
 ALTER TABLE tenant_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE portal_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
+
+-- ── platform_automation_settings ────────────────────────────────────────
+-- Single-row, per-environment master switch for date-triggered automation
+-- (the 15-min Cloudflare cron tick, which also dispatches scheduled vendor
+-- payments). Defaults FALSE: the scale-to-zero machine and Neon wake for every
+-- tick, so automation costs nothing until a platform admin turns it on via
+-- PUT /api/platform/automation. The Worker reads a Cloudflare KV mirror of
+-- this value so a disabled platform never wakes the backend at all; this row
+-- is the source of truth and the tick re-checks it as a backstop. updated_by
+-- is the acting identity's email (TEXT, not a FK), same as platform_ai_settings.
+CREATE TABLE IF NOT EXISTS platform_automation_settings (
+    id          SMALLINT     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled     BOOLEAN      NOT NULL DEFAULT FALSE,
+    updated_by  TEXT,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+INSERT INTO platform_automation_settings (id) VALUES (1) ON CONFLICT DO NOTHING;

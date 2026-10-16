@@ -79,6 +79,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, who Submitter, raw Input, n
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit order form: %w", err)
 	}
+	salesorder.NotifyOrderFormSubmitted(ctx, pool, created.UUID, created.InternalID)
 
 	res := &Result{
 		Form:           Form{ID: form.uuid, Status: StatusSubmitted, CreatedAt: form.createdAt, Editable: true, Input: in},

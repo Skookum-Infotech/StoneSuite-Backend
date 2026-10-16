@@ -363,6 +363,7 @@ func ConvertFromSalesOrder(ctx context.Context, pool *pgxpool.Pool, salesOrderUU
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit convert sales order: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, newID, actorEmployeeID)
 	got, err := Get(ctx, pool, newUUID)
 	if err != nil {
 		return nil, false, err

@@ -18,6 +18,16 @@ var ValidTypes = map[string]bool{
 	"task":    true,
 }
 
+// ActivityTypeTask is the activity type whose creator gets a confirmation email.
+const ActivityTypeTask = "task"
+
+// createdEventType and createdResource label the "task logged" email and its
+// in-app bell entry.
+const (
+	createdEventType = "crm_activity.created"
+	createdResource  = "crm_activity"
+)
+
 // activityFields is the payload shared by create and update.
 type activityFields struct {
 	ActivityType string `json:"activityType"`

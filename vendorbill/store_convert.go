@@ -264,5 +264,6 @@ func ConvertFromPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poUUID st
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit convert purchase order: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	return Get(ctx, pool, newUUID)
 }

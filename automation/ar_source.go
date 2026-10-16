@@ -56,6 +56,8 @@ type ARInvoice struct {
 	OwnerEmployeeID *int
 	Anchor          time.Time
 	Balance         string
+	// Link is the signed PDF link, set by the digest renderer; never scanned.
+	Link string
 }
 
 // arSelect is the shared projection: invoice + customer facts, with the

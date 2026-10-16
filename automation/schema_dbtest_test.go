@@ -4,6 +4,7 @@ package automation
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -60,4 +61,59 @@ func TestAutomationSchema(t *testing.T) {
 	var cap int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT daily_external_cap FROM automation_settings`).Scan(&cap))
 	assert.Equal(t, 200, cap)
+}
+
+func TestARDunningSchema(t *testing.T) {
+	ctx := context.Background()
+	pool := newTenantTestPool(t)
+
+	var (
+		count   int
+		enabled bool
+		name    string
+		aud     string
+		system  bool
+		raw     []byte
+	)
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM automation_rules WHERE rule_key = $1`, RuleKeyARDunning).Scan(&count))
+	assert.Equal(t, 1, count, "ar_dunning must be seeded exactly once")
+
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT name, audience, is_system, enabled, rule FROM automation_rules WHERE rule_key = $1`,
+		RuleKeyARDunning).Scan(&name, &aud, &system, &enabled, &raw))
+	assert.Equal(t, "Invoice payment reminders", name)
+	assert.Equal(t, "external", aud)
+	assert.True(t, system)
+	assert.False(t, enabled, "seeded rule must be disabled")
+
+	var cfg ARRuleConfig
+	require.NoError(t, json.Unmarshal(raw, &cfg))
+	offsets := make([]int, 0, len(cfg.Cadence))
+	for _, c := range cfg.Cadence {
+		offsets = append(offsets, c.OffsetDays)
+	}
+	assert.Equal(t, []int{-3, 0, 7, 14}, offsets)
+
+	var stateRows int
+	var enabledAtNull bool
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(bool_and(s.enabled_at IS NULL), TRUE)
+		FROM automation_state s JOIN automation_rules r ON r.id = s.rule_id
+		WHERE r.rule_key = $1`, RuleKeyARDunning).Scan(&stateRows, &enabledAtNull))
+	assert.Equal(t, 1, stateRows)
+	assert.True(t, enabledAtNull)
+
+	var colType string
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT data_type FROM information_schema.columns
+		WHERE table_name = 'automation_deliveries' AND column_name = 'sent_at'`).Scan(&colType))
+	assert.Equal(t, "timestamp with time zone", colType)
+
+	var indexDef string
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes
+		WHERE indexname = 'idx_automation_deliveries_contact_sent'`).Scan(&indexDef))
+	assert.Contains(t, indexDef, "recipient_email, sent_at")
+	assert.Contains(t, indexDef, "'sent'")
 }

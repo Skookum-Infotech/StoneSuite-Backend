@@ -314,6 +314,7 @@ func ConvertFromRequisition(ctx context.Context, pool *pgxpool.Pool, requisition
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit convert requisition: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	got, err := Get(ctx, pool, newUUID)
 	if err != nil {
 		return nil, false, err

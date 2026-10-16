@@ -18,6 +18,8 @@ const (
 	salesOrderOwnerColumn   = "sales_order_owner_id"
 	salesOrderResource      = "sales_order"
 	salesOrderDisplayName   = "Sales Order"
+
+	salesOrderOrderFormEventType = "sales_order.order_form_submitted"
 )
 
 // notifyTransition best-effort-notifies approvers/owner around a manual
@@ -51,6 +53,17 @@ func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, interna
 		Table: salesOrderTable, IDColumn: salesOrderIDColumn, NumberColumn: salesOrderNumberColumn,
 		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
 		Resource: salesOrderResource, DisplayName: salesOrderDisplayName, RecordUUID: uuid,
+	})
+}
+
+// NotifyOrderFormSubmitted best-effort-emails an order's owner that a customer's
+// portal order-form submission created it. There is no staff actor on this
+// path, so the owner is the only recipient; an ownerless order is skipped.
+func NotifyOrderFormSubmitted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID int) {
+	approvalchain.NotifyOwnerCreated(ctx, pool, salesOrderTable, salesOrderIDColumn, salesOrderOwnerColumn, internalID, approvalchain.ActorCreated{
+		EventType: salesOrderOrderFormEventType, Resource: salesOrderResource, RecordUUID: uuid,
+		Title: "New order form submitted",
+		Body:  "A customer submitted an order form that created a new sales order.",
 	})
 }
 

@@ -137,6 +137,29 @@ func TestNotifyCustomerApproved_DB(t *testing.T) {
 		assert.Equal(t, customerEmail, notifyRequests[0].Recipients[0].Email)
 	})
 
+	t.Run("customer flagged do not contact gets nothing despite an active portal login", func(t *testing.T) {
+		custUUID := seedNotifyCustomer(t, pool)
+		_, err := pool.Exec(ctx, `UPDATE customer SET customer_do_not_contact = TRUE WHERE customer_uuid = $1`, custUUID)
+		require.NoError(t, err)
+		dncEmail := "dnc-" + suffix + "@example.com"
+		_, err = cp.CreateIdentity(ctx, tenant.ID, dncEmail, "hash", "DNC Customer", true)
+		require.NoError(t, err)
+		identity, err := cp.IdentityByEmail(ctx, dncEmail)
+		require.NoError(t, err)
+		invite, err := cp.CreatePortalInvite(ctx, tenant.ID, identity.ID, dncEmail,
+			"DNC Customer", custUUID, "tok-d-"+suffix, "", time.Now().Add(48*time.Hour))
+		require.NoError(t, err)
+		_, err = cp.CreatePortalLink(ctx, identity.ID, tenant.ID)
+		require.NoError(t, err)
+		require.NoError(t, cp.MarkPortalInviteAccepted(ctx, invite.ID))
+
+		callNotify(t, custUUID, "record-d-"+suffix)
+
+		notifyMu.Lock()
+		defer notifyMu.Unlock()
+		assert.Empty(t, notifyRequests, "do not contact means no approval email")
+	})
+
 	t.Run("customer with no portal invite gets nothing, no error", func(t *testing.T) {
 		custUUID := seedNotifyCustomer(t, pool)
 

@@ -35,12 +35,16 @@ type NotificationRequest struct {
 	TenantID    string            `json:"tenantId"`
 	Recipients  []RecipientTarget `json:"recipients"`
 	ActorUserID string            `json:"actorUserId,omitempty"`
-	EventType   string            `json:"eventType"`
-	Resource    string            `json:"resource"`
-	ResourceID  string            `json:"resourceId"`
-	Title       string            `json:"title"`
-	Body        string            `json:"body,omitempty"`
-	Link        string            `json:"link,omitempty"`
+	// IdempotencyKey makes a retried create safe: notify returns the original
+	// notifications instead of sending again. Set it whenever a caller may
+	// retry after a timeout (the automation engine always does).
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	EventType      string `json:"eventType"`
+	Resource       string `json:"resource"`
+	ResourceID     string `json:"resourceId"`
+	Title          string `json:"title"`
+	Body           string `json:"body,omitempty"`
+	Link           string `json:"link,omitempty"`
 	// StatusLink is the staff-side page a delivery-problem alert about this
 	// notification's email should open (where the email's status is shown).
 	// Distinct from Link, which for a customer email is the customer's URL.

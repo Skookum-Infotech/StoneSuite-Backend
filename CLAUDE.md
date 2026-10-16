@@ -230,6 +230,15 @@ machine after the response).
    timeout can't double-send.
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
+5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
+   day for overdue/due-soon invoices. The rule is seeded **disabled**; tenants toggle it via
+   `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
+   (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
+   only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
+   flip and state write share one transaction. Each tick runs plan first (idempotent occurrence
+   rows, window `due_date` in [today-60, today+3], stages never before their date), then `drain`
+   (leases, guards, retry states). Deferred: delivery log and owner in-app notes (P1b), stop-reminders
+   link, cadence edit API (P2).
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

@@ -584,6 +584,10 @@ func main() {
 			mux.Handle("/api/tenant/"+slug+"/{uuid}/portal-messages", tenantChain(portalMessageOps.MessagesFor(mod)))
 		}
 
+		automationRuleOps := controllers.NewAutomationRuleOps()
+		mux.Handle("GET /api/tenant/automation/rules", tenantChain(automationRuleOps.List))
+		mux.Handle("PUT /api/tenant/automation/rules/{key}", tenantChain(automationRuleOps.SetEnabled))
+
 		// Staff side of the portal: who may sign in as this customer.
 		mux.Handle("GET /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.ListPortalUsers))
 		mux.Handle("POST /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.CreatePortalUser))

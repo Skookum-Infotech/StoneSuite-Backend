@@ -58,6 +58,11 @@ type NotificationRequest struct {
 	// the result as notify's emailBodyHtml; nil falls back to a default built
 	// from Title/Body/Link, so every email uses the same template.
 	Email *Email `json:"-"`
+	// IdempotencyKey makes a retried create safe: notify returns the original
+	// notifications instead of sending again. Set it whenever a caller may
+	// retry after a timeout (the automation engine always does). Notify
+	// rejects keys over 128 bytes or containing control characters.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 // notifyPayload is the wire body of a create call: the request plus the

@@ -2,6 +2,13 @@
 # Deploy manually:   cd automation-cron && wrangler deploy
 # Secret (must equal the backend's Fly secret of the same name):
 #   wrangler secret put AUTOMATION_TICK_SECRET
+# One-time, before the first deploy: create the KV namespace the platform switch
+# is mirrored into, and paste its id below. The same id goes to the backend as
+# the Fly secret AUTOMATION_KV_NAMESPACE_ID (with a narrowly scoped
+# AUTOMATION_KV_API_TOKEN):
+#   wrangler kv namespace create AUTOMATION_KV
+# The platform starts OFF (the key is absent); a platform admin turns it on with
+# PUT /api/platform/automation.
 # Test locally:      wrangler dev --test-scheduled  then  curl "http://localhost:8787/__scheduled?cron=*/15+*+*+*+*"
 name = "stonesuite-automation-cron"
 main = "worker.js"
@@ -9,6 +16,10 @@ compatibility_date = "2026-09-01"
 
 [vars]
 TICK_URL = "https://stonesuite-backend.fly.dev/api/internal/automation/tick"
+
+[[kv_namespaces]]
+binding = "AUTOMATION_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID" # deploy fails until replaced, on purpose
 
 [triggers]
 crons = ["*/15 * * * *"]

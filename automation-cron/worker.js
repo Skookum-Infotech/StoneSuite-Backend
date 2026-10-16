@@ -9,8 +9,35 @@
 // X-Automation-Signature. Must match middleware/internal_sig.go (SignInternal)
 // in the backend. Each tick gets a fresh timestamp, hence a fresh signature —
 // the backend rejects a signature it has already accepted.
+//
+// Platform on/off: before calling, the Worker reads KV key AUTOMATION_KV
+// "automation_enabled" ("1" = on). Anything else (off, missing, unreadable)
+// means do not call, so a disabled platform never wakes the scale-to-zero
+// backend or Neon. The platform admin endpoint PUT /api/platform/automation
+// writes that key (backend automation/kv.go); the backend re-checks its own
+// database flag on every tick as a backstop.
 
 const encoder = new TextEncoder();
+
+// Must match automation.KVEnabledKey / KVOn in the backend (automation/kv.go).
+const KV_ENABLED_KEY = "automation_enabled";
+const KV_ON = "1";
+
+async function platformEnabled(env) {
+  if (!env.AUTOMATION_KV) {
+    // Misconfiguration, not "off": fail loudly so the cron shows as failed.
+    throw new Error("AUTOMATION_KV binding is not configured");
+  }
+  return (await env.AUTOMATION_KV.get(KV_ENABLED_KEY)) === KV_ON;
+}
+
+async function run(env) {
+  if (!(await platformEnabled(env))) {
+    console.log("automation disabled at platform level; backend not called");
+    return;
+  }
+  await tick(env);
+}
 
 async function sign(secret, method, path, ts, body) {
   const key = await crypto.subtle.importKey(
@@ -51,6 +78,6 @@ async function tick(env) {
 
 export default {
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(tick(env));
+    ctx.waitUntil(run(env));
   },
 };

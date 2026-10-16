@@ -361,8 +361,9 @@ func main() {
 		automationSwitch := automation.NewPlatformStore(cp.Pool())
 		automationKV := automation.NewKVMirror(config.AppConfig.CloudflareAccountID,
 			config.AppConfig.AutomationKVAPIToken, config.AppConfig.AutomationKVNamespaceID)
+		automationDeps := automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL}
 		automationOps := controllers.NewAutomationOps(
-			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs()...),
+			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs(automationDeps)...),
 			automationSwitch, automationKV,
 			config.AppConfig.AutomationTickSecret)
 		automationPlatformOps := controllers.NewAutomationPlatformOps(cp, automationSwitch, automationKV,

@@ -35,16 +35,12 @@ type NotificationRequest struct {
 	TenantID    string            `json:"tenantId"`
 	Recipients  []RecipientTarget `json:"recipients"`
 	ActorUserID string            `json:"actorUserId,omitempty"`
-	// IdempotencyKey makes a retried create safe: notify returns the original
-	// notifications instead of sending again. Set it whenever a caller may
-	// retry after a timeout (the automation engine always does).
-	IdempotencyKey string `json:"idempotencyKey,omitempty"`
-	EventType      string `json:"eventType"`
-	Resource       string `json:"resource"`
-	ResourceID     string `json:"resourceId"`
-	Title          string `json:"title"`
-	Body           string `json:"body,omitempty"`
-	Link           string `json:"link,omitempty"`
+	EventType   string            `json:"eventType"`
+	Resource    string            `json:"resource"`
+	ResourceID  string            `json:"resourceId"`
+	Title       string            `json:"title"`
+	Body        string            `json:"body,omitempty"`
+	Link        string            `json:"link,omitempty"`
 	// StatusLink is the staff-side page a delivery-problem alert about this
 	// notification's email should open (where the email's status is shown).
 	// Distinct from Link, which for a customer email is the customer's URL.
@@ -62,6 +58,11 @@ type NotificationRequest struct {
 	// the result as notify's emailBodyHtml; nil falls back to a default built
 	// from Title/Body/Link, so every email uses the same template.
 	Email *Email `json:"-"`
+	// IdempotencyKey makes a retried create safe: notify returns the original
+	// notifications instead of sending again. Set it whenever a caller may
+	// retry after a timeout (the automation engine always does). Notify
+	// rejects keys over 128 bytes or containing control characters.
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
 // notifyPayload is the wire body of a create call: the request plus the

@@ -15,13 +15,15 @@ type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// sweepSuperseded skips unsent rows of the rule when a later stage for the same
+// sweepSuperseded skips unsent rows of the rule (including claimed rows whose
+// lease has expired) when a later stage for the same
 // record and anchor is already planned, in flight, failed, sent or unknown.
 func sweepSuperseded(ctx context.Context, q execer, ruleID string, now time.Time) error {
 	if _, err := q.Exec(ctx, `
 UPDATE automation_deliveries d
-SET status = 'skipped', reason = $3, updated_at = $2::timestamptz
-WHERE d.rule_id = $1::uuid AND d.status IN ('planned', 'failed')
+SET status = 'skipped', reason = $3, lease_until = NULL, updated_at = $2::timestamptz
+WHERE d.rule_id = $1::uuid
+  AND (d.status IN ('planned', 'failed') OR (d.status = 'claimed' AND d.lease_until < $2::timestamptz))
   AND EXISTS (
     SELECT 1 FROM automation_deliveries h
     WHERE h.rule_id = d.rule_id AND h.resource = d.resource AND h.record_id = d.record_id
@@ -45,20 +47,31 @@ WHERE rule_id = $1::uuid AND status IN ('planned', 'failed') AND run_at < $3::ti
 	return nil
 }
 
-// claimDue leases up to claimBatchSize due (or lease-expired) rows to this drain.
+// claimDue leases due (or lease-expired) rows to this drain, a whole digest at
+// a time: digests are taken in order of earliest run_at while their combined
+// row count stays within claimBatchSize (the first digest is always taken whole,
+// however large), so one digest is never split across two emails. Rows without
+// a digest_key are each their own unit.
 func claimDue(ctx context.Context, q execer, ruleID string, now time.Time) ([]Delivery, error) {
 	rows, err := q.Query(ctx, `
-UPDATE automation_deliveries
-SET status = 'claimed', lease_until = $3::timestamptz, updated_at = $2::timestamptz
-WHERE id IN (
-    SELECT id FROM automation_deliveries
+WITH due AS (
+    SELECT id, COALESCE(digest_key, 'single:' || id::text) AS unit, run_at
+    FROM automation_deliveries
     WHERE rule_id = $1::uuid
       AND ((status IN ('planned', 'failed') AND run_at <= $2::timestamptz)
         OR (status = 'claimed' AND lease_until < $2::timestamptz))
       AND attempts < $4
-    ORDER BY run_at
-    LIMIT $5
-    FOR UPDATE SKIP LOCKED)
+    FOR UPDATE SKIP LOCKED
+), units AS (
+    SELECT unit, MIN(run_at) AS first_run, count(*) AS n FROM due GROUP BY unit
+), ranked AS (
+    SELECT unit, n, SUM(n) OVER (ORDER BY first_run, unit) AS running FROM units
+), chosen AS (
+    SELECT unit FROM ranked WHERE running <= $5 OR running = n
+)
+UPDATE automation_deliveries
+SET status = 'claimed', lease_until = $3::timestamptz, updated_at = $2::timestamptz
+WHERE id IN (SELECT d.id FROM due d JOIN chosen c ON c.unit = d.unit)
 RETURNING id::text, rule_id::text, resource, record_id, occurrence_key,
           COALESCE(digest_key, ''), recipient_email, anchor_date, attempts`,
 		ruleID, now, now.Add(claimLease), maxAttempts, claimBatchSize)
@@ -149,13 +162,27 @@ WHERE id = $1::uuid AND status = 'claimed'`,
 // releaseAfter puts a group's still-claimed rows back to planned (attempts
 // unchanged, lease cleared) and returns cause wrapped with stage context.
 func releaseAfter(ctx context.Context, q execer, items []Delivery, now time.Time, cause error, stage string) error {
-	_, err := q.Exec(ctx, `
-UPDATE automation_deliveries
-SET status = 'planned', lease_until = NULL, updated_at = $2::timestamptz
-WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), now)
+	dctx, cancel := detach(ctx)
+	defer cancel()
+	err := releaseRows(dctx, q, items, now)
 	out := fmt.Errorf("drain %s: %w", stage, cause)
 	if err != nil {
-		out = errors.Join(out, fmt.Errorf("drain release: %w", err))
+		out = errors.Join(out, err)
 	}
 	return out
+}
+
+// releaseRows puts still-claimed rows back to planned (attempts unchanged,
+// lease cleared) without an error cause; used when the drain runs out of time.
+func releaseRows(ctx context.Context, q execer, items []Delivery, now time.Time) error {
+	if len(items) == 0 {
+		return nil
+	}
+	if _, err := q.Exec(ctx, `
+UPDATE automation_deliveries
+SET status = 'planned', lease_until = NULL, updated_at = $2::timestamptz
+WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), now); err != nil {
+		return fmt.Errorf("drain release: %w", err)
+	}
+	return nil
 }

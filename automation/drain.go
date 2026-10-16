@@ -24,7 +24,32 @@ const (
 	claimBatchSize = 50
 	// claimLease is how long a claim is held before another drain may reclaim it.
 	claimLease = 2 * time.Minute
+	// notifySendTimeout is the longest services.SendNotificationWithResult may take.
+	notifySendTimeout = 30 * time.Second
+	// postWriteTimeout bounds each state write made after a send (or on an
+	// abort). Those writes run on a context detached from the tick's deadline,
+	// so a deadline that fires mid-send can't strand a row in 'claimed'.
+	postWriteTimeout = 5 * time.Second
+	// minGroupBudget is the time that must remain on the tick context before a
+	// new group is started: one send plus its state write.
+	minGroupBudget = notifySendTimeout + postWriteTimeout
 )
+
+// detach returns a context that survives cancellation/deadline of ctx (keeping
+// its values, e.g. the system actor) but is bounded by postWriteTimeout.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), postWriteTimeout)
+}
+
+// outOfTime reports that ctx is done or too close to its deadline to safely
+// start another send-and-record cycle.
+func outOfTime(ctx context.Context, now func() time.Time) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	dl, ok := ctx.Deadline()
+	return ok && dl.Sub(now()) < minGroupBudget
+}
 
 // Delivery is one claimed automation_deliveries row.
 type Delivery struct {
@@ -68,7 +93,19 @@ func drain(ctx context.Context, pool *pgxpool.Pool, env JobEnv, send Sender, r R
 		return res, err
 	}
 	var errs error
-	for _, g := range groupDeliveries(claimed) {
+	groups := groupDeliveries(claimed)
+	for i, g := range groups {
+		if outOfTime(ctx, time.Now) {
+			slog.Warn("automation drain: out of time, releasing unsent groups", "automation_event", "drain_out_of_time", "groups", len(groups)-i)
+			var rest []Delivery
+			for _, ug := range groups[i:] {
+				rest = append(rest, ug.Items...)
+			}
+			dctx, cancel := detach(ctx)
+			errs = errors.Join(errs, releaseRows(dctx, pool, rest, env.Now))
+			cancel()
+			break
+		}
 		if gerr := drainGroup(ctx, pool, env, send, r, g, &res); gerr != nil {
 			errs = errors.Join(errs, gerr)
 		}
@@ -125,9 +162,13 @@ func drainGroup(ctx context.Context, pool *pgxpool.Pool, env JobEnv, send Sender
 	}
 	defer conn.Release()
 
-	reason, err := guardExternal(ctx, conn, g.RecipientEmail, env.Now)
+	settings, err := loadSettings(ctx, conn)
+	var reason string
+	if err == nil {
+		reason, err = guardExternal(ctx, conn, settings, g.RecipientEmail, env.Now)
+	}
 	if err == nil && reason == "" {
-		reason, err = guardDailyCap(ctx, conn, localDayStart(env.Today, env.Loc))
+		reason, err = guardDailyCap(ctx, conn, settings, localDayStart(env.Today, env.Loc))
 	}
 	if err != nil {
 		return releaseAfter(ctx, conn, g.Items, env.Now, err, "guard")
@@ -151,22 +192,33 @@ func drainGroup(ctx context.Context, pool *pgxpool.Pool, env JobEnv, send Sender
 	req.IdempotencyKey = NotifyKey(occurrenceKeys(kept))
 	out, sendErr := send.Send(ctx, req)
 	ids := deliveryIDs(kept)
+	// Post-send writes must land even if the tick context expired during Send.
+	wctx, cancel := detach(ctx)
+	defer cancel()
 	switch {
 	case sendErr == nil:
 		res.Sent++
-		if _, err := markSent(ctx, conn, ids, out.NotificationIDs, env.Now); err != nil {
-			return err
-		}
+		n, err := markSent(wctx, conn, ids, out.NotificationIDs, env.Now)
+		warnShortWrite("sent", g.DigestKey, n, len(ids))
+		return err
 	case isTimeoutErr(sendErr):
 		slog.Warn("automation drain: send outcome unknown", "digest", g.DigestKey, "err", sendErr)
-		if _, err := markUnknown(ctx, conn, ids, sendErr.Error(), env.Now); err != nil {
-			return err
-		}
+		n, err := markUnknown(wctx, conn, ids, sendErr.Error(), env.Now)
+		warnShortWrite("unknown", g.DigestKey, n, len(ids))
+		return err
 	default:
 		slog.Warn("automation drain: send failed", "digest", g.DigestKey, "err", sendErr)
-		return markSendFailed(ctx, conn, kept, sendErr.Error(), env.Now, res)
+		return markSendFailed(wctx, conn, kept, sendErr.Error(), env.Now, res)
 	}
-	return nil
+}
+
+// warnShortWrite logs when a status write touched fewer rows than the group had
+// (some row left 'claimed' by another actor, e.g. a lease reclaimed mid-send).
+func warnShortWrite(outcome, digest string, got, want int) {
+	if got < want {
+		slog.Warn("automation drain: short state write", "automation_event", "drain_short_write",
+			"outcome", outcome, "digest", digest, "updated", got, "expected", want)
+	}
 }
 
 // settleDropped skips every group item the renderer did not keep, using the

@@ -110,11 +110,7 @@ FROM automation_settings WHERE id`).Scan(&s.KillSwitch, &s.DailyCap, &s.WeeklyCa
 // suppression list, per-contact weekly cap. It returns the skip reason, or ""
 // when the email may be sent. The weekly cap counts DISTINCT digest_key among
 // sent rows in the 7 days before now, so one digest email counts once.
-func guardExternal(ctx context.Context, q Querier, email string, now time.Time) (string, error) {
-	s, err := loadSettings(ctx, q)
-	if err != nil {
-		return "", err
-	}
+func guardExternal(ctx context.Context, q Querier, s automationSettings, email string, now time.Time) (string, error) {
 	if s.KillSwitch {
 		return reasonKillSwitch, nil
 	}
@@ -129,7 +125,7 @@ func guardExternal(ctx context.Context, q Querier, email string, now time.Time) 
 	var weekly int
 	if err := q.QueryRow(ctx, `
 SELECT count(DISTINCT digest_key) FROM automation_deliveries
-WHERE status = 'sent' AND lower(recipient_email) = $1 AND sent_at >= $2`,
+WHERE status = 'sent' AND lower(recipient_email) = $1 AND sent_at >= $2 -- lower() so mixed-case history counts; not index-assisted`,
 		addr, now.Add(-weeklyCapWindow)).Scan(&weekly); err != nil {
 		return "", fmt.Errorf("count weekly sends: %w", err)
 	}
@@ -141,11 +137,7 @@ WHERE status = 'sent' AND lower(recipient_email) = $1 AND sent_at >= $2`,
 
 // guardDailyCap applies the tenant-wide daily external cap: distinct digests
 // sent since dayStart (tenant-local midnight). It returns reasonCap or "".
-func guardDailyCap(ctx context.Context, q Querier, dayStart time.Time) (string, error) {
-	s, err := loadSettings(ctx, q)
-	if err != nil {
-		return "", err
-	}
+func guardDailyCap(ctx context.Context, q Querier, s automationSettings, dayStart time.Time) (string, error) {
 	var today int
 	if err := q.QueryRow(ctx, `
 SELECT count(DISTINCT digest_key) FROM automation_deliveries

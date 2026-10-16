@@ -492,6 +492,7 @@ func main() {
 		// not the only one.
 		portalDocOps := controllers.NewPortalDocumentOps()
 		portalMessageOps := controllers.NewPortalMessageOps()
+		portalCreatedOrderOps := controllers.NewPortalCreatedOrderOps()
 
 		// Unauthenticated portal endpoints: per-IP limited on the same budget
 		// as staff credential endpoints (0.2 req/s, burst 10).
@@ -509,6 +510,14 @@ func main() {
 		portalChain := func(h http.HandlerFunc) http.Handler {
 			return middleware.RequireAuth(middleware.RequirePortal(
 				tenantRateLimiter.PerTenant(resolver.Middleware(h))))
+		}
+		// Placing a portal order drafts a Sales Order and can create dozens of
+		// catalogue items and kits, so one login gets a tighter budget than the
+		// workspace-wide one: a burst of 5 orders, then one every 15 seconds.
+		portalOrderUserRateLimiter := middleware.NewRateLimiter(shutdownCtx, 1.0/15.0, 5)
+		portalOrderChain := func(h http.HandlerFunc) http.Handler {
+			return middleware.RequireAuth(middleware.RequirePortal(
+				portalOrderUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h)))))
 		}
 
 		mux.Handle("POST /api/portal/auth/login", portalPublic(portalAuthOps.Login))
@@ -540,6 +549,13 @@ func main() {
 		mux.Handle("GET /api/portal/refunds", portalChain(portalDocOps.ListRefunds))
 		mux.Handle("POST /api/portal/refunds/search", portalChain(portalDocOps.SearchRefunds))
 		mux.Handle("GET /api/portal/refunds/{uuid}", portalChain(portalDocOps.GetRefund))
+
+		// The countertop order form a customer files from the portal, and the list
+		// of what they have filed. Placing one also drafts a Sales Order for staff.
+		mux.Handle("GET /api/portal/created-orders", portalChain(portalCreatedOrderOps.List))
+		mux.Handle("GET /api/portal/created-orders/{id}", portalChain(portalCreatedOrderOps.Get))
+		mux.Handle("POST /api/portal/created-orders", portalOrderChain(portalCreatedOrderOps.Create))
+		mux.Handle("PUT /api/portal/created-orders/{id}", portalOrderChain(portalCreatedOrderOps.Update))
 
 		// Message threads are registered per module rather than with a
 		// {module} wildcard. A wildcard segment here is five segments deep and
@@ -882,7 +898,7 @@ func main() {
 				}
 				email, name := invoice.Recipient(*inv)
 				return invoice.ToPrintable(*inv, seller),
-					controllers.DocMeta{WorkflowKey: "invoice", Number: inv.Number, CurrencyID: inv.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Invoice " + inv.Number}, nil
+					controllers.DocMeta{WorkflowKey: "invoice", Number: inv.Number, CustomerID: inv.Customer.ID, CurrencyID: inv.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Invoice " + inv.Number}, nil
 			},
 			"quote": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				q, err := quote.Get(ctx, pool, uuid)
@@ -891,7 +907,7 @@ func main() {
 				}
 				email, name := quote.Recipient(*q)
 				return quote.ToPrintable(*q, seller),
-					controllers.DocMeta{WorkflowKey: "quote", Number: q.Number, CurrencyID: q.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Quote " + q.Number}, nil
+					controllers.DocMeta{WorkflowKey: "quote", Number: q.Number, CustomerID: q.Customer.ID, CurrencyID: q.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Quote " + q.Number}, nil
 			},
 			"estimate": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				es, err := estimate.Get(ctx, pool, uuid)
@@ -900,7 +916,7 @@ func main() {
 				}
 				email, name := estimate.Recipient(*es)
 				return estimate.ToPrintable(*es, seller),
-					controllers.DocMeta{WorkflowKey: "estimate", Number: es.Number, CurrencyID: es.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Estimate " + es.Number}, nil
+					controllers.DocMeta{WorkflowKey: "estimate", Number: es.Number, CustomerID: es.Customer.ID, CurrencyID: es.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Estimate " + es.Number}, nil
 			},
 			"sales_order": func(ctx context.Context, pool *pgxpool.Pool, uuid string, seller docpdf.Seller) (docpdf.PrintableDoc, controllers.DocMeta, error) {
 				so, err := salesorder.Get(ctx, pool, uuid)
@@ -909,7 +925,7 @@ func main() {
 				}
 				email, name := salesorder.Recipient(*so)
 				return salesorder.ToPrintable(*so, seller),
-					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, CurrencyID: so.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
+					controllers.DocMeta{WorkflowKey: "sales_order", Number: so.Number, CustomerID: so.Customer.ID, CurrencyID: so.CurrencyID, DefaultRecipientEmail: email, DefaultRecipientName: name, DefaultSubject: "Your Sales Order " + so.Number}, nil
 			},
 			// Purchase-side "Send to Vendor" loaders below -- same shape as the
 			// sales-side loaders above, except Recipient needs ctx/pool: none of
@@ -1240,6 +1256,8 @@ func main() {
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/convert", tenantChain(so.Convert))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/inventory", tenantChain(so.Inventory))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/audit", tenantChain(so.Audit))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/customer-order-form", tenantChain(so.CustomerOrderForm))
+		mux.Handle("PUT /api/tenant/sales-orders/{uuid}/customer-order-form", tenantChain(so.UpdateCustomerOrderForm))
 		mux.Handle("GET /api/tenant/sales-orders/schedule", tenantChain(so.ScheduleFeed))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/schedule", tenantChain(so.Schedule))
 		mux.Handle("PATCH /api/tenant/sales-orders/{uuid}/schedule/{code}", tenantChain(so.UpdateScheduleActivity))

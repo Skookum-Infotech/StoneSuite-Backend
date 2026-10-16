@@ -312,6 +312,10 @@ type ApprovalInfo struct {
 	// Gated (a record sent back to Draft is no longer gated, yet the page still
 	// shows why).
 	Rejection *RejectionInfo `json:"rejection,omitempty"`
+	// Orphaned is true when the status has configured approvers but every one
+	// of them has been deactivated or deleted: the gate stays closed and only
+	// a super admin override can clear it.
+	Orphaned bool `json:"orphaned"`
 }
 
 // GetInfo resolves ApprovalInfo for a record. Returns Gated: false without
@@ -351,10 +355,11 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		return ApprovalInfo{Gated: false, Rejection: rejection}, nil
 	}
 
-	required, err := activeApproverCount(ctx, pool, cfg.ApproverTable, recordTypeID, curStatusID)
+	configured, live, err := approverCounts(ctx, pool, cfg.ApproverTable, recordTypeID, curStatusID)
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
+	required := RequiredApprovals(configured, live)
 	if required == 0 || approvalStatus == StatusApproved {
 		return ApprovalInfo{Gated: false, Rejection: rejection}, nil
 	}
@@ -363,11 +368,9 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		SELECT e.employee_id, COALESCE(NULLIF(u.full_name,''), u.email),
 			EXISTS(SELECT 1 FROM %s ap
 				WHERE ap.%s = $3 AND ap.record_status_id = $2 AND ap.approver_employee_id = e.employee_id)
-		FROM %s ea
-		JOIN employee e ON e.employee_id = ea.approver_employee_id
-		JOIN users u ON u.id = e.employee_user_id
+		FROM %s ea %s
 		WHERE ea.record_type_id = $1 AND ea.record_status_id = $2 AND ea.is_active
-		ORDER BY 2`, cfg.ApprovalTable, rec.IDColumn, cfg.ApproverTable),
+		ORDER BY 2`, cfg.ApprovalTable, rec.IDColumn, cfg.ApproverTable, LiveApproverJoin),
 		recordTypeID, curStatusID, internalID)
 	if err != nil {
 		return ApprovalInfo{}, fmt.Errorf("load %s approvers: %w", rec.Table, err)
@@ -407,6 +410,7 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		Approvers:             approvers,
 		RequiredApprovals:     required,
 		ApprovedCount:         approvedCount,
+		Orphaned:              IsOrphaned(configured, live),
 		CanApprove:            open && (isApprover || callerIsSuperAdmin),
 		IsOverride:            open && !isApprover && callerIsSuperAdmin,
 		CallerAlreadyApproved: callerAlreadyApproved,
@@ -415,8 +419,11 @@ func GetInfo(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 	}, nil
 }
 
-// ActiveApproverCount returns how many active approvers are configured on
-// approverTable for a record type at a status. Zero means that status isn't
+// ActiveApproverCount returns how many sign-offs a status requires: the
+// number of live approvers (active config row, user not deactivated,
+// employee not deleted) configured on approverTable for a record type at a
+// status, or 1 when every configured approver has gone (an orphaned gate
+// fails closed -- see RequiredApprovals). Zero means that status isn't
 // gated at all, regardless of what a stored approval-status column says --
 // every module's own Transition should call this (not read its approval-
 // status column alone) to decide whether CheckTransitionGate applies.
@@ -425,27 +432,26 @@ func ActiveApproverCount(ctx context.Context, q workflow.Querier, approverTable 
 }
 
 func activeApproverCount(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID int) (int, error) {
-	var n int
-	if err := q.QueryRow(ctx, fmt.Sprintf(
-		`SELECT COUNT(*) FROM %s WHERE record_type_id = $1 AND record_status_id = $2 AND is_active`, approverTable),
-		recordTypeID, statusID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count active approvers in %s: %w", approverTable, err)
+	configured, live, err := approverCounts(ctx, q, approverTable, recordTypeID, statusID)
+	if err != nil {
+		return 0, err
 	}
-	return n, nil
+	return RequiredApprovals(configured, live), nil
 }
 
 // signOffCount counts sign-offs at a status, but only from approvers who are
-// still active configured approvers for the record type -- a vote cast by an
-// approver since removed from the config must not count toward the quorum.
+// still active configured approvers for the record type and still live users
+// -- a vote cast by an approver since removed from the config, deactivated or
+// deleted must not count toward the quorum.
 func signOffCount(ctx context.Context, q workflow.Querier, approvalTable, approverTable, idColumn string, recordTypeID, internalID, statusID int) (int, error) {
 	var n int
 	if err := q.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(*) FROM %s ap
 		WHERE ap.%s = $1 AND ap.record_status_id = $2
-		  AND EXISTS(SELECT 1 FROM %s ea
+		  AND EXISTS(SELECT 1 FROM %s ea %s
 			WHERE ea.record_type_id = $3 AND ea.record_status_id = ap.record_status_id
 			  AND ea.approver_employee_id = ap.approver_employee_id AND ea.is_active)`,
-		approvalTable, idColumn, approverTable),
+		approvalTable, idColumn, approverTable, LiveApproverJoin),
 		internalID, statusID, recordTypeID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count sign-offs in %s: %w", approvalTable, err)
 	}
@@ -464,7 +470,9 @@ func IsConfiguredApprover(ctx context.Context, q workflow.Querier, approverTable
 func isConfiguredApprover(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID, employeeID int) (bool, error) {
 	var exists bool
 	if err := q.QueryRow(ctx, fmt.Sprintf(
-		`SELECT EXISTS(SELECT 1 FROM %s WHERE record_type_id = $1 AND record_status_id = $2 AND approver_employee_id = $3 AND is_active)`, approverTable),
+		`SELECT EXISTS(SELECT 1 FROM %s ea %s
+			WHERE ea.record_type_id = $1 AND ea.record_status_id = $2 AND ea.approver_employee_id = $3 AND ea.is_active)`,
+		approverTable, LiveApproverJoin),
 		recordTypeID, statusID, employeeID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check approver in %s: %w", approverTable, err)
 	}

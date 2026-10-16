@@ -43,6 +43,9 @@ func TestDeriveStatus(t *testing.T) {
 		{"overdue fully paid resolves to PAID", "ODUE", 100, 100, "PAID"},
 		{"overdue stays overdue while unpaid", "ODUE", 0, 100, "ODUE"},
 		{"rounding epsilon treated as fully paid", "SENT", 99.996, 100, "PAID"},
+		{"void stays void when partially settled", "VOID", 40, 100, "VOID"},
+		{"void stays void when fully settled", "VOID", 100, 100, "VOID"},
+		{"void stays void when unsettled", "VOID", 0, 100, "VOID"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

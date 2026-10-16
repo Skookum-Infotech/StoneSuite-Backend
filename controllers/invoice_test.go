@@ -46,6 +46,7 @@ func TestInvoiceFail_MapsStoreErrorsToHTTPStatus(t *testing.T) {
 	}{
 		{"not found", invoice.ErrNotFound, http.StatusNotFound},
 		{"invalid transition", invoice.ErrInvalidTransition, http.StatusConflict},
+		{"void with live settlement", invoice.ErrVoidWithSettlement, http.StatusConflict},
 		{"client error", invoice.ClientError{Msg: "bad input"}, http.StatusBadRequest},
 		{"payment client error", payment.ClientError{Msg: "bad input"}, http.StatusBadRequest},
 		{"invalid filter", &query.InvalidFilterError{Field: "x", Msg: "unknown field"}, http.StatusBadRequest},

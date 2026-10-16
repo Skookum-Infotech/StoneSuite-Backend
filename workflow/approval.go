@@ -27,6 +27,31 @@ type Approval struct {
 	ApproverUserIDs []string `json:"approverUserIds"`
 	ApprovedUserIDs []string `json:"approvedUserIds"`
 	CanApprove      bool     `json:"canApprove"`
+	// Orphaned: the state has configured approvers but every one of them has
+	// been deactivated, so the gate stays closed until an admin reconfigures
+	// the state's approvers.
+	Orphaned bool `json:"orphaned"`
+}
+
+// liveStateApproverJoin keeps only approver rows (aliased "sa") whose user
+// can still act -- userstore.DeactivateUser sets users.status = 'disabled'
+// and nothing else, so the row's own is_active alone isn't enough.
+const liveStateApproverJoin = `
+		JOIN users lu ON lu.id = sa.approver_user_id AND lu.status = 'active'`
+
+// requiredApprovals turns a state's configured and live approver counts into
+// the sign-offs it requires: the live count, or 1 when every configured
+// approver has been deactivated (an orphaned gate fails closed rather than
+// silently becoming ungated). Mirrors approvalchain.RequiredApprovals, which
+// workflow can't import. Pure.
+func requiredApprovals(configured, live int) int {
+	if live > 0 {
+		return live
+	}
+	if configured > 0 {
+		return 1
+	}
+	return 0
 }
 
 // approvalStatusOf derives the approval status from the required/approved
@@ -53,29 +78,44 @@ func approvalGateLocked(required, approved int) bool {
 
 // ----- store queries ---------------------------------------------------------
 
-// StateApproverUserIDs returns the tenant user ids of every active approver
-// configured for stateID, in configuration order.
+// StateApproverUserIDs returns the tenant user ids of every live active
+// approver configured for stateID (deactivated users excluded), in
+// configuration order.
 func StateApproverUserIDs(ctx context.Context, q Querier, stateID string) ([]string, error) {
+	live, _, err := stateApprovers(ctx, q, stateID)
+	return live, err
+}
+
+// stateApprovers returns stateID's live approver user ids (configuration
+// order) and how many active approver rows are configured in total,
+// deactivated users included.
+func stateApprovers(ctx context.Context, q Querier, stateID string) (live []string, configured int, err error) {
+	live = []string{}
 	if stateID == "" {
-		return []string{}, nil
+		return live, 0, nil
 	}
 	rows, err := q.Query(ctx, `
-		SELECT approver_user_id::text FROM workflow_state_approver
-		WHERE state_id = $1 AND is_active
-		ORDER BY created_at, id`, stateID)
+		SELECT sa.approver_user_id::text, lu.id IS NOT NULL
+		FROM workflow_state_approver sa
+		LEFT JOIN users lu ON lu.id = sa.approver_user_id AND lu.status = 'active'
+		WHERE sa.state_id = $1 AND sa.is_active
+		ORDER BY sa.created_at, sa.id`, stateID)
 	if err != nil {
-		return nil, fmt.Errorf("list state approvers: %w", err)
+		return nil, 0, fmt.Errorf("list state approvers: %w", err)
 	}
 	defer rows.Close()
-	out := []string{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan state approver: %w", err)
+		var isLive bool
+		if err := rows.Scan(&id, &isLive); err != nil {
+			return nil, 0, fmt.Errorf("scan state approver: %w", err)
 		}
-		out = append(out, id)
+		configured++
+		if isLive {
+			live = append(live, id)
+		}
 	}
-	return out, rows.Err()
+	return live, configured, rows.Err()
 }
 
 // approvedUserIDs returns the tenant user ids that have signed off on record
@@ -104,21 +144,26 @@ func approvedUserIDs(ctx context.Context, q Querier, recordID, stateID string) (
 }
 
 // approvalCounts returns (required, approved) for record recordID at stateID:
-// how many active approvers the state requires, and how many have signed off.
+// how many sign-offs the state requires (see requiredApprovals), and how many
+// live active approvers have signed off.
 // Cheap COUNT-only queries used by the transition gate.
 func approvalCounts(ctx context.Context, q Querier, recordID, stateID string) (required, approved int, err error) {
 	if stateID == "" {
 		return 0, 0, nil
 	}
+	var configured, live int
 	if err = q.QueryRow(ctx,
-		`SELECT COUNT(*) FROM workflow_state_approver WHERE state_id = $1 AND is_active`,
-		stateID).Scan(&required); err != nil {
+		`SELECT COUNT(*), COUNT(lu.id) FROM workflow_state_approver sa
+		 LEFT JOIN users lu ON lu.id = sa.approver_user_id AND lu.status = 'active'
+		 WHERE sa.state_id = $1 AND sa.is_active`,
+		stateID).Scan(&configured, &live); err != nil {
 		return 0, 0, fmt.Errorf("count state approvers: %w", err)
 	}
+	required = requiredApprovals(configured, live)
 	if err = q.QueryRow(ctx,
 		`SELECT COUNT(*) FROM workflow_record_approval ra
 		 WHERE ra.record_id = $1 AND ra.state_id = $2
-		   AND EXISTS(SELECT 1 FROM workflow_state_approver sa
+		   AND EXISTS(SELECT 1 FROM workflow_state_approver sa`+liveStateApproverJoin+`
 			WHERE sa.state_id = ra.state_id AND sa.approver_user_id = ra.approver_user_id AND sa.is_active)`,
 		recordID, stateID).Scan(&approved); err != nil {
 		return 0, 0, fmt.Errorf("count record approvals: %w", err)
@@ -132,7 +177,7 @@ func approvalCounts(ctx context.Context, q Querier, recordID, stateID string) (r
 // its current state, from the caller's perspective. callerUserID may be empty
 // (e.g. unresolved identity), in which case CanApprove is always false.
 func ApprovalOverlay(ctx context.Context, q Querier, rec *Record, callerUserID string) (*Approval, error) {
-	approvers, err := StateApproverUserIDs(ctx, q, rec.CurrentStateID)
+	approvers, configured, err := stateApprovers(ctx, q, rec.CurrentStateID)
 	if err != nil {
 		return nil, err
 	}
@@ -140,13 +185,21 @@ func ApprovalOverlay(ctx context.Context, q Querier, rec *Record, callerUserID s
 	if err != nil {
 		return nil, err
 	}
-	return buildApproval(approvers, approved, callerUserID), nil
+	return buildApproval(approvers, configured, approved, callerUserID), nil
 }
 
-// buildApproval assembles an Approval from the state's approver set, the
-// record's sign-offs, and the caller. Pure so overlay assembly is unit-testable.
-func buildApproval(approvers, approved []string, callerUserID string) *Approval {
-	required, approvedN := len(approvers), len(approved)
+// buildApproval assembles an Approval from the state's live approver set, its
+// configured approver count (deactivated users included), the record's
+// sign-offs, and the caller. Only sign-offs from live approvers count, matching
+// approvalCounts. Pure so overlay assembly is unit-testable.
+func buildApproval(approvers []string, configured int, approved []string, callerUserID string) *Approval {
+	required := requiredApprovals(configured, len(approvers))
+	approvedN := 0
+	for _, id := range approved {
+		if contains(approvers, id) {
+			approvedN++
+		}
+	}
 	status := approvalStatusOf(required, approvedN)
 	canApprove := status == "pending" &&
 		callerUserID != "" &&
@@ -167,6 +220,7 @@ func buildApproval(approvers, approved []string, callerUserID string) *Approval 
 		ApproverUserIDs: approvers,
 		ApprovedUserIDs: approved,
 		CanApprove:      canApprove,
+		Orphaned:        configured > 0 && len(approvers) == 0,
 	}
 }
 
@@ -188,24 +242,31 @@ func AttachApprovalOverlays(ctx context.Context, q Querier, recs []Record, calle
 		}
 	}
 
-	// approvers[stateID] = ordered active approver user ids for that state.
+	// approvers[stateID] = ordered live active approver user ids for that
+	// state; configured[stateID] counts active rows, deactivated users included.
 	approvers := map[string][]string{}
+	configured := map[string]int{}
 	if len(stateIDs) > 0 {
 		rows, err := q.Query(ctx, `
-			SELECT state_id::text, approver_user_id::text
-			FROM workflow_state_approver
-			WHERE state_id = ANY($1) AND is_active
-			ORDER BY created_at, id`, stateIDs)
+			SELECT sa.state_id::text, sa.approver_user_id::text, lu.id IS NOT NULL
+			FROM workflow_state_approver sa
+			LEFT JOIN users lu ON lu.id = sa.approver_user_id AND lu.status = 'active'
+			WHERE sa.state_id = ANY($1) AND sa.is_active
+			ORDER BY sa.created_at, sa.id`, stateIDs)
 		if err != nil {
 			return fmt.Errorf("batch load state approvers: %w", err)
 		}
 		for rows.Next() {
 			var sid, uid string
-			if err := rows.Scan(&sid, &uid); err != nil {
+			var isLive bool
+			if err := rows.Scan(&sid, &uid, &isLive); err != nil {
 				rows.Close()
 				return fmt.Errorf("scan batch approver: %w", err)
 			}
-			approvers[sid] = append(approvers[sid], uid)
+			configured[sid]++
+			if isLive {
+				approvers[sid] = append(approvers[sid], uid)
+			}
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -238,7 +299,7 @@ func AttachApprovalOverlays(ctx context.Context, q Querier, recs []Record, calle
 
 	for i := range recs {
 		st := recs[i].CurrentStateID
-		recs[i].Approval = buildApproval(approvers[st], approved[recs[i].ID+"\x00"+st], callerUserID)
+		recs[i].Approval = buildApproval(approvers[st], configured[st], approved[recs[i].ID+"\x00"+st], callerUserID)
 	}
 	return nil
 }
@@ -317,6 +378,7 @@ func PendingApprovals(ctx context.Context, q Querier, callerUserID string) ([]Re
 		FROM workflow_records wr
 		WHERE EXISTS (
 			SELECT 1 FROM workflow_state_approver a
+			JOIN users lu ON lu.id = a.approver_user_id AND lu.status = 'active'
 			WHERE a.state_id = wr.current_state_id
 			  AND a.approver_user_id = $1 AND a.is_active
 		)

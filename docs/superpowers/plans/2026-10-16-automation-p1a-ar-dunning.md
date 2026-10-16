@@ -23,7 +23,7 @@ In: Job env extension, AR rule seed, stage planning, AR eligibility, planner, ge
 - Writes run under `automation.WithSystemActor(ctx)`.
 - Schema changes are append-only and idempotent (`ADD COLUMN IF NOT EXISTS`, `ON CONFLICT DO NOTHING`); never edit an existing `CREATE TABLE`.
 - Lease 2 minutes; batch cap 50 deliveries per tenant per tick; retry backoff 5m, 30m, then 2h for every later attempt; `dead` after 5 attempts.
-- Skip reasons (enum strings, `automation_deliveries.reason`, max 32 chars): `paid`, `voided`, `do_not_contact`, `no_email`, `suppressed`, `superseded`, `stale`, `anchor_changed`, `credit_covers`, `cap`, `pre_enable`, `kill_switch`, `not_sent`, `ar_hold`.
+- Skip reasons (enum strings, `automation_deliveries.reason`, max 32 chars): `paid`, `voided`, `do_not_contact`, `no_email`, `suppressed`, `superseded`, `stale`, `anchor_changed`, `credit_covers`, `cap`, `pre_enable`, `kill_switch`, `not_sent`, `ar_hold`, `not_rendered` (defensive: the renderer neither kept nor dropped the item).
 - Default cadence offsets (days from `invoice_due_date`): `-3, 0, 7, 14`. A stage more than 48h late is `stale`; if several stages are due, only the latest sends and earlier ones are `superseded`.
 - Files stay under 300 lines; tests are table-driven testify; DB tests carry `//go:build dbtest`.
 

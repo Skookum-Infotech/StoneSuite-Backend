@@ -29,6 +29,7 @@
    - Employee 1 is not renamed.
 3. **Notify idempotency travels in the JSON body (`idempotencyKey`), not a header.** The backend splits one request per recipient (`services/notify.go` `personalize`), so notify derives a per-recipient key and enforces it with a unique partial index. No 7-day expiry; a key is unique for good.
 4. **Reuse #361's `Runner`/`Job` instead of a new `Engine`/`Phase`, and its existing config instead of `AUTOMATION_ENABLED`/budget/concurrency settings.** An unset `AUTOMATION_TICK_SECRET` already disables the engine (404). The `Job.Run(ctx, pool, today)` signature is extended in **P1**, when sends first need `now`, the tenant location and a notifier. P0 changes nothing there.
+5. **(Found at final review.) `automation_outbox` ships without `to_status`, and audit observers run after commit on `pool`, not inside the write's tx.** P1 adds `to_status` with `ALTER TABLE automation_outbox ADD COLUMN IF NOT EXISTS`, extends `AuditEvent` to carry it, and reconciles events lost between commit and outbox insert. The notify key is `sha256hex(occurrence/digest key)` (see CLAUDE.md "Automation Engine" rule 3), not the raw key.
 
 ## Global Constraints
 - Every tenant DDL is appended to `database/migrations/tenant/schema.sql` and must be idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Never edit an existing `CREATE TABLE` body. No `DROP`, rename, or bare `ADD CONSTRAINT` (CHECKs inside a brand-new `CREATE TABLE` body are fine).

@@ -9684,7 +9684,7 @@ CREATE TABLE IF NOT EXISTS automation_state (
 
 CREATE TABLE IF NOT EXISTS automation_deliveries (
     id                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    rule_id                 UUID         NOT NULL REFERENCES automation_rules(id) ON DELETE CASCADE,
+    rule_id                 UUID         NOT NULL REFERENCES automation_rules(id) ON DELETE RESTRICT,
     resource                VARCHAR(64)  NOT NULL,
     record_id               VARCHAR(64)  NOT NULL,
     anchor_date             DATE         NOT NULL,
@@ -9710,6 +9710,7 @@ CREATE TABLE IF NOT EXISTS automation_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_automation_deliveries_due    ON automation_deliveries (status, run_at);
 CREATE INDEX IF NOT EXISTS idx_automation_deliveries_record ON automation_deliveries (resource, record_id);
+CREATE INDEX IF NOT EXISTS idx_automation_deliveries_rule   ON automation_deliveries (rule_id);
 CREATE INDEX IF NOT EXISTS idx_automation_deliveries_digest
     ON automation_deliveries (digest_key) WHERE digest_key IS NOT NULL;
 

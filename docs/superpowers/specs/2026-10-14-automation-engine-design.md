@@ -50,9 +50,9 @@ Cloudflare Cron */15 ──HMAC+ts──> POST /api/internal/automation/tick
                  ON CONFLICT (occurrence_key) DO NOTHING
       drain():   claim due deliveries (FOR UPDATE SKIP LOCKED, lease 2m)
                  → re-check eligibility (live) → guards → group into digests
-                 → send via notify (Idempotency-Key = delivery id) → mark sent
+                 → send via notify (idempotencyKey = sha256hex(occurrence/digest key)) → mark sent
    runs INSIDE the request with a ~50s time budget; leftovers carry to next tick
-record write ─> LogAuditFull ─> observers[] ─> automation_outbox (same tenant tx)
+record write ─> LogAuditFull ─> observers[] ─> automation_outbox (after commit; P1 reconciles missed events)
                                                drained by the same tick (+ in-proc nudge)
 ```
 **Why the work happens inside the tick request:** Fly's proxy stops idle machines based on traffic. A background goroutine left running after the HTTP response can be killed mid-send. An in-flight request keeps the machine alive, and leases plus idempotency make an interruption safe whatever happens.

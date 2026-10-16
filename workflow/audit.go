@@ -13,7 +13,7 @@ type AuditEvent struct {
 	Action      string
 	Resource    string
 	ResourceID  string
-	ActorUserID string // empty for system writes (e.g. the automation engine)
+	ActorUserID string // may be empty (several human write paths pass ""); the automation loop guard must use automation.IsSystemActor(ctx), never an empty actor
 }
 
 // AuditObserver is told about every audit row LogAuditFull writes, after the

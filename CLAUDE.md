@@ -205,11 +205,15 @@ machine after the response).
    `AUTOMATION_DEFAULT_TIMEZONE`) and passed as a `$n` param. Automation SQL never uses
    `CURRENT_DATE`. External sends respect `InSendWindow` (08:00–18:00 local).
 2. **Writes made by automation run under `automation.WithSystemActor(ctx)`**, so audit
-   observers ignore them (loop guard). Employee-keyed columns use
+   observers ignore them (loop guard: check `automation.IsSystemActor(ctx)` — an empty
+   `AuditEvent.ActorUserID` does **not** mean automation; several human write paths pass
+   `""`). Employee-keyed columns use
    `automation.SystemEmployeeID` (seeded employee 1). There is no automation `users` row;
    don't add one.
-3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** (the
-   delivery's occurrence key), so a retry after a timeout can't double-send.
+3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** set to
+   `sha256hex(occurrence key or digest key)` (always 64 bytes; notify caps keys at 128 and
+   already scopes them per recipient, so never put the recipient in it), so a retry after a
+   timeout can't double-send.
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
 

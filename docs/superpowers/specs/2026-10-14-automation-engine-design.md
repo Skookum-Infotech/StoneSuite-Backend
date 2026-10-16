@@ -1,7 +1,7 @@
 # StoneSuite Automation Engine — Design Spec
 
 **Date:** 2026-10-14 · **Status:** Draft — awaiting review
-**Repos touched:** `StoneSuite-Backend` (primary), `stonesuite-notify` (Idempotency-Key), Cloudflare Worker (tick cron), `StoneSuite-WebUI` (P1 delivery log/settings, P2 rule builder)
+**Repos touched:** `StoneSuite-Backend` (primary), `stonesuite-notify` (idempotency key), Cloudflare Worker (tick cron), `StoneSuite-WebUI` (P1 delivery log/settings, P2 rule builder)
 **Related:** `docs/superpowers/specs/2026-10-01-resend-delivery-status-design.md` (bounce/complaint status source)
 
 ## Context
@@ -74,7 +74,7 @@ record write ─> LogAuditFull ─> observers[] ─> automation_outbox (after co
    - `async_jobs` gets `run_at` and exponential backoff.
    - `AuditObserver` becomes a list of observers and also carries the actor ID, so writes made by the system actor can be ignored for loop protection.
    - New `tenancy.ForEachServable`.
-2. **stonesuite-notify (separate repo, small change):** accept an `Idempotency-Key` header and dedupe on (tenant, key) for 7 days. Without this, a timeout followed by a retry sends a duplicate, because notify has no dedupe today.
+2. **stonesuite-notify (separate repo, small change):** accept an `idempotencyKey` JSON body field (the backend sends `sha256hex(occurrence/digest key)`; notify appends the recipient) and dedupe on (tenant, key) permanently via a unique partial index. Without this, a timeout followed by a retry sends a duplicate, because notify has no dedupe today.
 3. **`automation/` package:**
    - `rule.go`: typed structs.
      - Triggers: `date_offset{dateField, stages[]{offsetDays}, repeatEveryDays, maxRepeats}` and `event{resource, toStatus}`.
@@ -186,7 +186,7 @@ record write ─> LogAuditFull ─> observers[] ─> automation_outbox (after co
 1. **P0 Foundations:**
    - `run_at` and backoff, observer list with actor, `ForEachServable`, tick endpoint with HMAC, the Cloudflare Worker.
    - Automation tables, RBAC resource, system actor seeding, `clock.go`.
-   - Notify `Idempotency-Key` (notify repo).
+   - Notify `idempotencyKey` body field (notify repo).
 2. **P1 Built-ins (notify-only):**
    - AR cadence −3/0/+7/+14 with digests.
    - Quote and estimate expiry (−3d to the owner).
@@ -216,7 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_async_jobs_claim ON async_jobs (job_type, status,
 | `automation_rules` | `id UUID PK`, `key TEXT UNIQUE` (built-ins: `ar.invoice_due`, …), `name`, `enabled BOOL`, `system BOOL`, `audience TEXT CHECK (internal\|external)`, `rule JSONB`, `version INT`, `created_by`, `updated_by`, timestamps |
 | `automation_state` | `rule_id PK FK`, `enabled_at TIMESTAMPTZ`, `last_planned_at TIMESTAMPTZ` |
 | `automation_deliveries` | `id UUID PK`, `rule_id`, `resource`, `record_id`, `anchor_date DATE`, `stage INT`, `occurrence_key TEXT UNIQUE`, `recipient_kind`, `recipient_email`, `recipient_user_id`, `digest_key TEXT`, `run_at TIMESTAMPTZ`, `status TEXT`, `reason TEXT`, `attempts INT`, `lease_until TIMESTAMPTZ`, `notify_notification_ids TEXT[]`, `error TEXT`, timestamps. Indexes: `(status, run_at)`, `(resource, record_id)`, `(digest_key)` |
-| `automation_outbox` | `id BIGSERIAL`, `resource`, `record_id`, `action`, `actor_user_id`, `to_status`, `depth INT`, `created_at`, `processed_at` |
+| `automation_outbox` | `id BIGSERIAL`, `resource`, `record_id`, `action`, `actor_user_id`, `to_status` (P1 — not in P0 DDL), `depth INT`, `created_at`, `processed_at` |
 | `automation_suppressions` | `email CITEXT PK` (or a lower-cased TEXT), `reason`, `source CHECK (manual\|bounce\|complaint\|unsubscribe)`, `created_at` |
 | `automation_settings` (one row) | `kill_switch BOOL`, `daily_external_cap INT DEFAULT 200`, `per_contact_weekly_cap INT DEFAULT 3` |
 
@@ -234,7 +234,7 @@ CREATE INDEX IF NOT EXISTS idx_async_jobs_claim ON async_jobs (job_type, status,
 - `automation/clock.go`: `TenantClock{Loc}`, with `Today() civil-date`, `InQuietHours(t)` and `NextSendWindow(t)`. Table tests cover 2026-03-08 and 2026-11-01 in America/Chicago, New_York, Los_Angeles, Denver and Phoenix (no DST).
 - `authz` catalog: resource `automation` with actions read/create/update/delete. super_admin gets it automatically.
 - `cloudflare/automation-tick/` (Worker + `wrangler.toml`): cron `*/15 * * * *`. It signs and POSTs to the tick URL, which is set per environment through Worker secrets.
-- **stonesuite-notify:** an `Idempotency-Key` request header. `UNIQUE (tenant_id, idempotency_key)` on notifications, kept 7 days. A duplicate returns the original notification ids with 200. `services.NotificationRequest` gains an `IdempotencyKey string` field.
+- **stonesuite-notify:** an `idempotencyKey` JSON body field (≤128 bytes, no control chars), stored per recipient. Unique partial index `(tenant_id, idempotency_key)` on notifications, no expiry. A duplicate returns the original notification ids and enqueues nothing. `services.NotificationRequest` gains an `IdempotencyKey string` field.
 
 ## P1 detail (built-in rules, notify-only)
 

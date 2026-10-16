@@ -160,7 +160,7 @@ type AuditEvent struct {
 	Action      string
 	Resource    string
 	ResourceID  string
-	ActorUserID string // empty for system writes (e.g. the automation engine)
+	ActorUserID string // may be empty (several human write paths pass ""); the automation loop guard must use automation.IsSystemActor(ctx), never an empty actor
 }
 
 // AuditObserver is told about every audit row LogAuditFull writes, after the
@@ -590,7 +590,7 @@ CREATE TABLE IF NOT EXISTS automation_state (
 
 CREATE TABLE IF NOT EXISTS automation_deliveries (
     id                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    rule_id                 UUID         NOT NULL REFERENCES automation_rules(id) ON DELETE CASCADE,
+    rule_id                 UUID         NOT NULL REFERENCES automation_rules(id) ON DELETE RESTRICT, -- + idx_automation_deliveries_rule (final review)
     resource                VARCHAR(64)  NOT NULL,
     record_id               VARCHAR(64)  NOT NULL,
     anchor_date             DATE         NOT NULL,
@@ -983,8 +983,8 @@ machine after the response).
    observers ignore them (loop guard). Employee-keyed columns use
    `automation.SystemEmployeeID` (seeded employee 1). There is no automation `users` row;
    don't add one.
-3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** (the
-   delivery's occurrence key), so a retry after a timeout can't double-send.
+3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** set to
+   `sha256hex(occurrence key or digest key)` (final review; never the recipient), so a retry after a timeout can't double-send.
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
 ```

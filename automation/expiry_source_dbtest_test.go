@@ -172,6 +172,7 @@ func TestExpiryEligible(t *testing.T) {
 	f.convert(conv)
 	disabledEmp, _ := f.employeeWithUser("off@x.test", "disabled")
 	orphan := f.employeeNoUser("orphan-x@x.test")
+	delCust := f.customer(arCust{deleted: true})
 
 	tests := []struct {
 		name    string
@@ -181,6 +182,7 @@ func TestExpiryEligible(t *testing.T) {
 	}{
 		{"eligible", good, *valid, ""},
 		{"voided (soft-deleted)", with(func(d *expDoc) { d.deleted = true }), *valid, reasonVoided},
+		{"customer soft-deleted", with(func(d *expDoc) { d.cust = delCust }), *valid, reasonVoided},
 		{"unknown document", "00000000-0000-0000-0000-000000000000", *valid, reasonVoided},
 		{"converted", conv, *valid, reasonConverted},
 		{"not sent", with(func(d *expDoc) { d.status = "DRFT" }), *valid, reasonNotSent},

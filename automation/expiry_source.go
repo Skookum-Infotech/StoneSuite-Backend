@@ -31,6 +31,8 @@ type ExpiryDoc struct {
 	OwnerUserID     string
 	OwnerIdentityID string
 	ValidUntil      time.Time
+	// Link is the public link to the record, set by the renderer; empty omits it.
+	Link string
 }
 
 // expirySpec names the document table and record type an expiry rule scans.
@@ -65,7 +67,7 @@ func (s expirySpec) selectSQL() string {
 SELECT d.{t}_uuid::text, COALESCE(d.{t}_number, ''), c.customer_name,
        COALESCE(u.email, ''), COALESCE(u.id::text, ''), COALESCE(u.identity_id::text, ''),
        d.{t}_valid_until, rs.record_status_code, (d.{t}_deleted_at IS NOT NULL),
-       COALESCE(u.status, ''), ` + s.notConverted() + `
+       COALESCE(u.status, ''), ` + s.notConverted() + `, (c.customer_deleted_at IS NOT NULL)` + `
 FROM {t} d
 JOIN customer c ON c.customer_id = d.{t}_customer_id
 JOIN lkp_record_status rs ON rs.record_status_id = d.{t}_status
@@ -98,9 +100,9 @@ ORDER BY d.{t}_valid_until, d.{t}_id`)
 		var d ExpiryDoc
 		var validUntil *time.Time
 		var status, userStatus string
-		var deleted, open bool
+		var deleted, open, custDeleted bool
 		if err := rows.Scan(&d.UUID, &d.Number, &d.CustomerName, &d.OwnerEmail, &d.OwnerUserID,
-			&d.OwnerIdentityID, &validUntil, &status, &deleted, &userStatus, &open); err != nil {
+			&d.OwnerIdentityID, &validUntil, &status, &deleted, &userStatus, &open, &custDeleted); err != nil {
 			return nil, fmt.Errorf("scan %s expiry candidate: %w", spec.Resource, err)
 		}
 		if validUntil != nil {
@@ -118,11 +120,11 @@ ORDER BY d.{t}_valid_until, d.{t}_id`)
 // eligible; precedence: voided, converted, not_sent, anchor_changed, no_email.
 func expiryEligible(ctx context.Context, q Querier, spec expirySpec, uuid string, plannedValidUntil time.Time) (ok bool, reason string, live ExpiryDoc, err error) {
 	var status, userStatus string
-	var deleted, open bool
+	var deleted, open, custDeleted bool
 	var validUntil *time.Time
 	row := q.QueryRow(ctx, spec.selectSQL()+` WHERE d.`+spec.Table+`_uuid = $2::uuid`, spec.TypeCode, uuid)
 	scanErr := row.Scan(&live.UUID, &live.Number, &live.CustomerName, &live.OwnerEmail, &live.OwnerUserID,
-		&live.OwnerIdentityID, &validUntil, &status, &deleted, &userStatus, &open)
+		&live.OwnerIdentityID, &validUntil, &status, &deleted, &userStatus, &open, &custDeleted)
 	if errors.Is(scanErr, pgx.ErrNoRows) {
 		return false, reasonVoided, ExpiryDoc{}, nil
 	}
@@ -132,7 +134,7 @@ func expiryEligible(ctx context.Context, q Querier, spec expirySpec, uuid string
 	if validUntil != nil {
 		live.ValidUntil = *validUntil
 	}
-	reason = expiryReason(deleted, open, status, validUntil, plannedValidUntil, live.OwnerEmail, userStatus)
+	reason = expiryReason(deleted || custDeleted, open, status, validUntil, plannedValidUntil, live.OwnerEmail, userStatus)
 	return reason == "", reason, live, nil
 }
 

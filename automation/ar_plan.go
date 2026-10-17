@@ -29,6 +29,19 @@ type ruleRow struct {
 // loadRule reads the rule and its state. enabled is false (and err nil) when the
 // rule row is missing or disabled.
 func loadRule(ctx context.Context, q Querier, key string) (rule ruleRow, enabled bool, err error) {
+	rule, found, enabled, err := loadRuleAnyState(ctx, q, key)
+	if found && !enabled {
+		return ruleRow{}, false, nil // a disabled rule's config is never decoded for the job
+	}
+	if err != nil || !found {
+		return ruleRow{}, false, err
+	}
+	return rule, true, nil
+}
+
+// loadRuleAnyState reads the rule and its state regardless of the enabled flag.
+// found is false when the rule row is missing.
+func loadRuleAnyState(ctx context.Context, q Querier, key string) (rule ruleRow, found, enabled bool, err error) {
 	var raw []byte
 	var en bool
 	var enabledAt *time.Time
@@ -38,21 +51,18 @@ FROM automation_rules r
 LEFT JOIN automation_state s ON s.rule_id = r.id
 WHERE r.rule_key = $1`, key).Scan(&rule.ID, &raw, &en, &enabledAt)
 	if errors.Is(scanErr, pgx.ErrNoRows) {
-		return ruleRow{}, false, nil
+		return ruleRow{}, false, false, nil
 	}
 	if scanErr != nil {
-		return ruleRow{}, false, fmt.Errorf("load rule %s: %w", key, scanErr)
-	}
-	if !en {
-		return ruleRow{}, false, nil
+		return ruleRow{}, false, false, fmt.Errorf("load rule %s: %w", key, scanErr)
 	}
 	if err := json.Unmarshal(raw, &rule.Config); err != nil {
-		return ruleRow{}, false, fmt.Errorf("decode rule %s: %w", key, err)
+		return ruleRow{}, true, en, fmt.Errorf("decode rule %s: %w", key, err)
 	}
 	if enabledAt != nil {
 		rule.EnabledOn = *enabledAt
 	}
-	return rule, true, nil
+	return rule, true, en, nil
 }
 
 // localDate returns t's calendar date in loc as a midnight value in loc.
@@ -89,12 +99,32 @@ INSERT INTO automation_deliveries
 VALUES ($1::uuid, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (occurrence_key) DO NOTHING`
 
-// planTx is plan's body, run against an open transaction.
-func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule ruleRow) (planned, skipped int, err error) {
-	cands, err := listARCandidates(ctx, tx, env.Today)
+// PlanRow is one delivery row the AR planner would write (or did write). Digest
+// is empty for rows that carry no digest key.
+type PlanRow struct {
+	InvoiceUUID string    `json:"invoiceUuid"`
+	Number      string    `json:"number"`
+	Email       string    `json:"email"`
+	Stage       int       `json:"stage"`
+	Anchor      time.Time `json:"anchor"`
+	RunAt       time.Time `json:"runAt"`
+	Status      string    `json:"status"`
+	Reason      string    `json:"reason"`
+	Digest      string    `json:"-"`
+}
+
+// buildARPlanRows lists the candidates and returns every delivery row the planner
+// would write for env. It reads only.
+func buildARPlanRows(ctx context.Context, q Querier, env JobEnv, rule ruleRow) ([]PlanRow, error) {
+	cands, err := listARCandidates(ctx, q, env.Today)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
+	return planRowsFor(cands, env, rule), nil
+}
+
+// planRowsFor is the candidate/stage loop: a pure function of its inputs.
+func planRowsFor(cands []ARInvoice, env JobEnv, rule ruleRow) []PlanRow {
 	offsets := make([]int, len(rule.Config.Cadence))
 	for i, st := range rule.Config.Cadence {
 		offsets[i] = st.OffsetDays
@@ -106,34 +136,53 @@ func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule rule
 	runAt := NextSendWindow(env.Now, env.Loc)
 	sendDay := localDate(runAt, env.Loc) // rows sent the same morning share one digest
 
+	var rows []PlanRow
+	for _, c := range cands {
+		for _, sp := range PlanStages(c.Anchor, offsets, env.Today, enabledOn) {
+			row := PlanRow{InvoiceUUID: c.UUID, Number: c.Number, Email: c.Email, Stage: sp.Stage,
+				Anchor: c.Anchor, RunAt: env.Now, Status: statusSkipped, Reason: string(sp.Action)}
+			if sp.Action == StageActionPlan {
+				if c.Email == "" {
+					row.Reason = reasonNoEmail
+				} else {
+					row.Status, row.Reason, row.RunAt = statusPlanned, "", runAt
+					row.Digest = DigestKey(rule.ID, c.Email, sendDay)
+				}
+			}
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// planTx is plan's body, run against an open transaction.
+func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule ruleRow) (planned, skipped int, err error) {
+	cands, err := listARCandidates(ctx, tx, env.Today)
+	if err != nil {
+		return 0, 0, err
+	}
+	rows := planRowsFor(cands, env, rule)
+
 	batch := &pgx.Batch{}
 	var isPlanned []bool
-	var uuids []string
-	var anchors []time.Time
+	for _, row := range rows {
+		key := OccurrenceKey(rule.ID, resourceInvoice, row.InvoiceUUID, row.Anchor, row.Stage)
+		var digest, reasonArg *string
+		if row.Digest != "" {
+			digest = &row.Digest
+		}
+		if row.Reason != "" {
+			reasonArg = &row.Reason
+		}
+		batch.Queue(insertDeliverySQL, rule.ID, resourceInvoice, row.InvoiceUUID, row.Anchor, row.Stage, key,
+			recipientExternal, row.Email, digest, row.RunAt, row.Status, reasonArg)
+		isPlanned = append(isPlanned, row.Status == statusPlanned)
+	}
+	uuids := make([]string, 0, len(cands))
+	anchors := make([]time.Time, 0, len(cands))
 	for _, c := range cands {
 		uuids = append(uuids, c.UUID)
 		anchors = append(anchors, c.Anchor)
-		for _, sp := range PlanStages(c.Anchor, offsets, env.Today, enabledOn) {
-			key := OccurrenceKey(rule.ID, resourceInvoice, c.UUID, c.Anchor, sp.Stage)
-			status, reason, rowRunAt := statusSkipped, string(sp.Action), env.Now
-			var digest *string
-			if sp.Action == StageActionPlan {
-				if c.Email == "" {
-					reason = reasonNoEmail
-				} else {
-					status, reason, rowRunAt = statusPlanned, "", runAt
-					d := DigestKey(rule.ID, c.Email, sendDay)
-					digest = &d
-				}
-			}
-			var reasonArg *string
-			if reason != "" {
-				reasonArg = &reason
-			}
-			batch.Queue(insertDeliverySQL, rule.ID, resourceInvoice, c.UUID, c.Anchor, sp.Stage, key,
-				recipientExternal, c.Email, digest, rowRunAt, status, reasonArg)
-			isPlanned = append(isPlanned, status == statusPlanned)
-		}
 	}
 
 	if batch.Len() > 0 {

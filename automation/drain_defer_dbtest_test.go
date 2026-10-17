@@ -20,8 +20,8 @@ func TestDrainDefersWhenDailyCapReached(t *testing.T) {
 	env := drainEnv()
 	_, err := f.pool.Exec(f.ctx, `UPDATE automation_settings SET daily_external_cap = 1`)
 	require.NoError(t, err)
-	a := f.insert(dRow{email: "a-" + f.email})
-	b := f.insert(dRow{email: "b-" + f.email})
+	a := f.insert(dRow{email: "a-" + f.email, attempt: 2})
+	b := f.insert(dRow{email: "b-" + f.email, attempt: 2})
 	s := &fakeSender{}
 	res, err := f.drain(env, s, fakeRenderer{})
 	require.NoError(t, err)
@@ -35,6 +35,7 @@ func TestDrainDefersWhenDailyCapReached(t *testing.T) {
 	assert.Equal(t, "planned", st.Status)
 	assert.Equal(t, nextDayWindow(env), st.RunAt.UTC())
 	assert.Nil(t, st.Lease)
+	assert.Equal(t, 2, st.Attempts)
 
 	next := env
 	next.Today = env.Today.AddDate(0, 0, 1)
@@ -47,7 +48,7 @@ func TestDrainDefersWhenDailyCapReached(t *testing.T) {
 func TestDrainDefersUnderKillSwitch(t *testing.T) {
 	f := newDrainFx(t)
 	env := drainEnv()
-	id := f.insert(dRow{})
+	id := f.insert(dRow{attempt: 2})
 	_, err := f.pool.Exec(f.ctx, `UPDATE automation_settings SET kill_switch = TRUE`)
 	require.NoError(t, err)
 	s := &fakeSender{}
@@ -57,7 +58,9 @@ func TestDrainDefersUnderKillSwitch(t *testing.T) {
 	assert.Equal(t, 0, res.Skipped)
 	st := f.state(id)
 	assert.Equal(t, "planned", st.Status)
-	assert.False(t, st.RunAt.Before(NextSendWindow(env.Now, env.Loc).Add(time.Hour)))
+	assert.Equal(t, NextSendWindow(env.Now, env.Loc).Add(time.Hour), st.RunAt.UTC())
+	assert.Nil(t, st.Lease)
+	assert.Equal(t, 2, st.Attempts)
 
 	_, err = f.pool.Exec(f.ctx, `UPDATE automation_settings SET kill_switch = FALSE`)
 	require.NoError(t, err)
@@ -81,4 +84,24 @@ func TestDrainStaleAfterLongDeferral(t *testing.T) {
 	st := f.state(id)
 	assert.Equal(t, "skipped", st.Status)
 	assert.Equal(t, "stale", st.Reason)
+}
+
+func TestDrainDefersWholeDigestTogether(t *testing.T) {
+	f := newDrainFx(t)
+	env := drainEnv()
+	_, err := f.pool.Exec(f.ctx, `UPDATE automation_settings SET daily_external_cap = 1`)
+	require.NoError(t, err)
+	todaySent := arToday.Add(time.Hour)
+	f.insert(dRow{status: "sent", sentAt: &todaySent, digest: "today", email: "other-" + f.email})
+	a := f.insert(dRow{})
+	b := f.insert(dRow{})
+	s := &fakeSender{}
+	_, err = f.drain(env, s, fakeRenderer{})
+	require.NoError(t, err)
+	assert.Empty(t, s.reqs)
+	sa, sb := f.state(a), f.state(b)
+	assert.Equal(t, "planned", sa.Status)
+	assert.Equal(t, "planned", sb.Status)
+	assert.Equal(t, sa.RunAt, sb.RunAt)
+	assert.Equal(t, nextDayWindow(env), sa.RunAt.UTC())
 }

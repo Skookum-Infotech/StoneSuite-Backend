@@ -27,20 +27,6 @@ func TestDrainSuppressed(t *testing.T) {
 	assert.Equal(t, "suppressed", st.Reason)
 }
 
-func TestDrainKillSwitch(t *testing.T) {
-	f := newDrainFx(t)
-	id := f.insert(dRow{})
-	_, err := f.pool.Exec(f.ctx, `UPDATE automation_settings SET kill_switch = TRUE`)
-	require.NoError(t, err)
-	s := &fakeSender{}
-	_, err = f.drain(drainEnv(), s, fakeRenderer{})
-	require.NoError(t, err)
-	assert.Empty(t, s.reqs)
-	st := f.state(id)
-	assert.Equal(t, "planned", st.Status)
-	assert.True(t, st.RunAt.After(drainEnv().Now))
-}
-
 func TestDrainWeeklyCapBoundary(t *testing.T) {
 	env := drainEnv()
 	tests := []struct {
@@ -59,7 +45,7 @@ func TestDrainWeeklyCapBoundary(t *testing.T) {
 				sent := env.Now.Add(-age)
 				f.insert(dRow{status: "sent", sentAt: &sent, digest: fmt.Sprintf("old-%d", i)})
 			}
-			id := f.insert(dRow{})
+			id := f.insert(dRow{attempt: 2})
 			s := &fakeSender{}
 			_, err := f.drain(env, s, fakeRenderer{})
 			require.NoError(t, err)
@@ -71,6 +57,8 @@ func TestDrainWeeklyCapBoundary(t *testing.T) {
 			assert.Empty(t, s.reqs)
 			assert.Equal(t, "planned", st.Status)
 			assert.Equal(t, nextDayWindow(env), st.RunAt.UTC())
+			assert.Nil(t, st.Lease)
+			assert.Equal(t, 2, st.Attempts)
 		})
 	}
 }

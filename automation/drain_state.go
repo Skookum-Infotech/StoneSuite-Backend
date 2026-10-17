@@ -190,15 +190,17 @@ WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), now); er
 
 // deferRows puts still-claimed rows back to planned with run_at pushed to runAt
 // (attempts unchanged, lease cleared), so a guard hit retries later, not never.
-func deferRows(ctx context.Context, q execer, items []Delivery, runAt, now time.Time) error {
+// It returns the number of rows updated.
+func deferRows(ctx context.Context, q execer, items []Delivery, runAt, now time.Time) (int, error) {
 	if len(items) == 0 {
-		return nil
+		return 0, nil
 	}
-	if _, err := q.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 UPDATE automation_deliveries
 SET status = 'planned', run_at = $2::timestamptz, lease_until = NULL, updated_at = $3::timestamptz
-WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), runAt, now); err != nil {
-		return fmt.Errorf("drain defer: %w", err)
+WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), runAt, now)
+	if err != nil {
+		return 0, fmt.Errorf("drain defer: %w", err)
 	}
-	return nil
+	return int(tag.RowsAffected()), nil
 }

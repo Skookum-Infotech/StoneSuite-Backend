@@ -105,3 +105,49 @@ func TestDrainDefersWholeDigestTogether(t *testing.T) {
 	assert.Equal(t, sa.RunAt, sb.RunAt)
 	assert.Equal(t, nextDayWindow(env), sa.RunAt.UTC())
 }
+
+func TestDrainDeferredRowsMergeIntoNextDayDigest(t *testing.T) {
+	f := newDrainFx(t)
+	env := drainEnv()
+	_, err := f.pool.Exec(f.ctx, `UPDATE automation_settings SET daily_external_cap = 1`)
+	require.NoError(t, err)
+	todaySent := arToday.Add(time.Hour)
+	f.insert(dRow{status: "sent", sentAt: &todaySent, digest: "today", email: "other-" + f.email})
+	old := f.insert(dRow{}) // day-1 digest, hits the cap and is deferred
+	_, err = f.drain(env, &fakeSender{}, fakeRenderer{})
+	require.NoError(t, err)
+
+	next := env
+	next.Today = env.Today.AddDate(0, 0, 1)
+	next.Now = env.Now.AddDate(0, 0, 1)
+	fresh := f.insert(dRow{digest: DigestKey(f.ruleID, f.email, next.Today), runAt: nextDayWindow(env)})
+	s := &fakeSender{}
+	res, err := f.drain(next, s, fakeRenderer{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Sent, "deferred and fresh rows are one email")
+	assert.Len(t, s.reqs, 1)
+	assert.Equal(t, "sent", f.state(old).Status)
+	assert.Equal(t, "sent", f.state(fresh).Status)
+}
+
+func TestDrainClaimOrdersOverflowBeforeFreshRows(t *testing.T) {
+	f := newDrainFx(t)
+	env := drainEnv()
+	runAt := env.Now.Add(-time.Minute)
+	var overflow, fresh []string
+	// 30 overflow rows (older) for z@, 30 fresh rows for a@ (sorts first by email).
+	for i := 0; i < 30; i++ {
+		overflow = append(overflow, f.insert(dRow{email: "z." + f.email, runAt: runAt, createdAt: runAt.Add(-24 * time.Hour)}))
+		fresh = append(fresh, f.insert(dRow{email: "a." + f.email, runAt: runAt, createdAt: runAt}))
+	}
+	s := &fakeSender{}
+	_, err := f.drain(env, s, fakeRenderer{})
+	require.NoError(t, err)
+	require.Len(t, s.reqs, 1, "batch cap fits one digest")
+	for _, id := range overflow {
+		assert.Equal(t, "sent", f.state(id).Status)
+	}
+	for _, id := range fresh {
+		assert.Equal(t, "planned", f.state(id).Status)
+	}
+}

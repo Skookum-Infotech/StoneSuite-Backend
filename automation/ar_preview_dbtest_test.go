@@ -4,6 +4,7 @@ package automation
 
 import (
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,7 +47,7 @@ func TestPreviewARMatchesPlan(t *testing.T) {
 	for _, r := range p.Recipients {
 		emails = append(emails, r.Email)
 		for _, it := range r.Items {
-			got = append(got, it.InvoiceUUID+"/"+string(rune('0'+it.Stage)))
+			got = append(got, it.InvoiceUUID+"/"+strconv.Itoa(it.Stage))
 		}
 	}
 	assert.True(t, sort.StringsAreSorted(emails))
@@ -67,6 +68,40 @@ func TestPreviewARMatchesPlan(t *testing.T) {
 	sort.Strings(want)
 	assert.Equal(t, want, got)
 	assert.NotEmpty(t, want)
+
+	// After a real plan every row exists: nothing new would be planned.
+	after, err := previewAR(f.ctx, f.tx, planEnv(), RuleKeyARDunning)
+	require.NoError(t, err)
+	assert.Zero(t, after.Counts[statusPlanned])
+	assert.Equal(t, len(want), after.Counts[reasonExisting])
+	assert.Empty(t, after.Recipients)
+}
+
+func TestPreviewARDisabledRuleIgnoresStaleEnabledAt(t *testing.T) {
+	f := newARFixture(t)
+	f.enableRule(arToday.AddDate(0, 0, -10)) // enabled long ago, then disabled
+	_, err := f.tx.Exec(f.ctx, `UPDATE automation_rules SET enabled = FALSE WHERE rule_key = $1`, RuleKeyARDunning)
+	require.NoError(t, err)
+	cust := f.customer(arCust{accountsEmail: "m@acme.com"})
+	f.invoice(arInv{cust: cust, status: "SENT", due: dayOffset(0), balance: "10", sent: true})
+	p, err := previewAR(f.ctx, f.tx, planEnv(), RuleKeyARDunning)
+	require.NoError(t, err)
+	assert.Positive(t, p.Counts["pre_enable"])
+	assert.Zero(t, p.Counts[statusPlanned])
+}
+
+func TestPreviewARGroupsRecipientsCaseInsensitively(t *testing.T) {
+	f := newARFixture(t)
+	f.enableRule(arToday.AddDate(0, 0, -30))
+	c1 := f.customer(arCust{accountsEmail: "Pay@Acme.com"})
+	c2 := f.customer(arCust{accountsEmail: "pay@acme.com"})
+	f.invoice(arInv{cust: c1, status: "SENT", due: dayOffset(0), balance: "10", sent: true})
+	f.invoice(arInv{cust: c2, status: "SENT", due: dayOffset(0), balance: "10", sent: true})
+	p, err := previewAR(f.ctx, f.tx, planEnv(), RuleKeyARDunning)
+	require.NoError(t, err)
+	require.Len(t, p.Recipients, 1)
+	assert.Equal(t, "pay@acme.com", p.Recipients[0].Email)
+	assert.Len(t, p.Recipients[0].Items, 2)
 }
 
 func TestPreviewARNoEmailAndPreEnableCounts(t *testing.T) {

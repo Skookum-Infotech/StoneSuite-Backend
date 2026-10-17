@@ -226,7 +226,7 @@ func deferGroup(ctx context.Context, q execer, env JobEnv, g Group, reason strin
 	}
 	slog.Info("automation drain: group deferred", "automation_event", "drain_deferred",
 		"reason", reason, "group_size", len(g.Items), "run_at", runAt)
-	n, err := deferRows(ctx, q, g.Items, runAt, env.Now)
+	n, err := deferRows(ctx, q, g.Items, runAt, env.Now, env.Loc)
 	warnShortWrite("deferred", g.DigestKey, n, len(g.Items))
 	return err
 }

@@ -46,6 +46,13 @@ UPDATE automation_deliveries
 SET status = 'skipped', reason = $2, lease_until = NULL, updated_at = NOW()
 WHERE rule_id = $1 AND status IN ('planned', 'failed')`
 
+// skipPreEnableSQL skips a re-enabled rule's leftovers: every unsent row (including an expired claim) predates the new enabled_at.
+const skipPreEnableSQL = `
+UPDATE automation_deliveries
+SET status = 'skipped', reason = $2, lease_until = NULL, updated_at = NOW()
+WHERE rule_id = $1
+  AND (status IN ('planned', 'failed') OR (status = 'claimed' AND lease_until < NOW()))`
+
 func scanAutomationRule(row pgx.Row) (AutomationRule, error) {
 	var (
 		rule AutomationRule
@@ -117,6 +124,9 @@ func (s pgAutomationRuleStore) SetEnabled(ctx context.Context, key string, enabl
 			`INSERT INTO automation_state (rule_id, enabled_at) VALUES ($1, NOW())
 			 ON CONFLICT (rule_id) DO UPDATE SET enabled_at = EXCLUDED.enabled_at`, id); err != nil {
 			return AutomationRule{}, fmt.Errorf("stamp automation enabled_at: %w", err)
+		}
+		if _, err := tx.Exec(ctx, skipPreEnableSQL, id, automation.ReasonPreEnable); err != nil {
+			return AutomationRule{}, fmt.Errorf("skip pre-enable deliveries: %w", err)
 		}
 	}
 	if prev && !enabled {

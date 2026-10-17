@@ -14,6 +14,9 @@ import (
 // ReasonRuleDisabled is the skip reason written when a rule is disabled with unsent deliveries.
 const ReasonRuleDisabled = "rule_disabled"
 
+// ReasonPreEnable is the skip reason written to a rule's leftover unsent rows when it is re-enabled.
+const ReasonPreEnable = "pre_enable"
+
 // Delivery skip reasons written by the drain guards and the pre-claim sweeps.
 const (
 	reasonKillSwitch = "kill_switch"

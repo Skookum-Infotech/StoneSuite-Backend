@@ -114,6 +114,8 @@ type dRow struct {
 	lease   *time.Time
 	sentAt  *time.Time
 	email   string
+	// kind is the recipient_kind; defaults to external.
+	kind string
 	// createdAt defaults to the earlier of runAt and a minute before Now.
 	createdAt time.Time
 }
@@ -138,6 +140,9 @@ func (f *drainFx) insert(r dRow) string {
 	if r.email == "" {
 		r.email = f.email
 	}
+	if r.kind == "" {
+		r.kind = recipientExternal
+	}
 	if r.digest == "" {
 		r.digest = DigestKey(f.ruleID, r.email, arToday)
 	}
@@ -146,9 +151,9 @@ func (f *drainFx) insert(r dRow) string {
 	require.NoError(f.t, f.pool.QueryRow(f.ctx, `
 INSERT INTO automation_deliveries (rule_id, resource, record_id, anchor_date, stage, occurrence_key, recipient_kind,
   recipient_email, digest_key, run_at, status, attempts, lease_until, sent_at, created_at)
-VALUES ($1::uuid, 'invoice', $2, $3::date, $4, $5, 'external', $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id::text`,
+VALUES ($1::uuid, 'invoice', $2, $3::date, $4, $5, $14, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id::text`,
 		f.ruleID, r.record, anchor, r.stage, OccurrenceKey(f.ruleID, "invoice", r.record, anchor, r.stage),
-		r.email, r.digest, r.runAt, r.status, r.attempt, r.lease, r.sentAt, r.createdAt).Scan(&id))
+		r.email, r.digest, r.runAt, r.status, r.attempt, r.lease, r.sentAt, r.createdAt, r.kind).Scan(&id))
 	return id
 }
 

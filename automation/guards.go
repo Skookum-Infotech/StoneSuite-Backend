@@ -27,6 +27,9 @@ const (
 	reasonNotRender  = "not_rendered"
 )
 
+// recipientInternal marks a delivery addressed to tenant staff (recipientExternal is in ar_plan.go).
+const recipientInternal = "internal"
+
 const (
 	// defaultDailyExternalCap and defaultWeeklyContactCap apply only when the
 	// automation_settings singleton row is missing (the schema seeds it).
@@ -150,6 +153,16 @@ WHERE status IN ('sent', 'unknown') AND lower(recipient_email) = $1 AND COALESCE
 		return reasonCap, nil
 	}
 	return "", nil
+}
+
+// guardInternal applies the only guard internal recipients get: the tenant kill
+// switch (a deferral). Suppression, the weekly contact cap and the daily
+// external cap do not apply to staff.
+func guardInternal(s automationSettings) string {
+	if s.KillSwitch {
+		return reasonKillSwitch
+	}
+	return ""
 }
 
 // guardDailyCap applies the tenant-wide daily external cap: distinct digests

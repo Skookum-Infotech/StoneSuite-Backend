@@ -74,7 +74,7 @@ UPDATE automation_deliveries
 SET status = 'claimed', lease_until = $3::timestamptz, updated_at = $2::timestamptz
 WHERE id IN (SELECT d.id FROM due d JOIN chosen c ON c.unit = d.unit)
 RETURNING id::text, rule_id::text, resource, record_id, occurrence_key,
-          COALESCE(digest_key, ''), recipient_email, anchor_date, attempts`,
+          COALESCE(digest_key, ''), recipient_email, recipient_kind, anchor_date, attempts`,
 		ruleID, now, now.Add(claimLease), maxAttempts, claimBatchSize)
 	if err != nil {
 		return nil, fmt.Errorf("drain claim: %w", err)
@@ -84,7 +84,7 @@ RETURNING id::text, rule_id::text, resource, record_id, occurrence_key,
 	for rows.Next() {
 		var d Delivery
 		if err := rows.Scan(&d.ID, &d.RuleID, &d.Resource, &d.RecordID, &d.OccurrenceKey,
-			&d.DigestKey, &d.RecipientEmail, &d.Anchor, &d.Attempts); err != nil {
+			&d.DigestKey, &d.RecipientEmail, &d.RecipientKind, &d.Anchor, &d.Attempts); err != nil {
 			return nil, fmt.Errorf("drain claim scan: %w", err)
 		}
 		out = append(out, d)

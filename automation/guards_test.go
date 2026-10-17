@@ -101,3 +101,20 @@ func TestIsDeferral(t *testing.T) {
 		})
 	}
 }
+
+func TestGuardInternal(t *testing.T) {
+	tests := []struct {
+		name string
+		s    automationSettings
+		want string
+	}{
+		{"kill switch on", automationSettings{KillSwitch: true}, reasonKillSwitch},
+		{"kill switch off", automationSettings{}, ""},
+		{"caps exhausted ignored", automationSettings{DailyCap: 0, WeeklyCap: 0}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, guardInternal(tc.s))
+		})
+	}
+}

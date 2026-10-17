@@ -11,6 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ReasonRuleDisabled is the skip reason written when a rule is disabled with unsent deliveries.
+const ReasonRuleDisabled = "rule_disabled"
+
 // Delivery skip reasons written by the drain guards and the pre-claim sweeps.
 const (
 	reasonKillSwitch = "kill_switch"

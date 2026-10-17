@@ -114,6 +114,8 @@ type dRow struct {
 	lease   *time.Time
 	sentAt  *time.Time
 	email   string
+	// createdAt defaults to the earlier of runAt and a minute before Now.
+	createdAt time.Time
 }
 
 func (f *drainFx) insert(r dRow) string {
@@ -127,6 +129,12 @@ func (f *drainFx) insert(r dRow) string {
 	if r.runAt.IsZero() {
 		r.runAt = drainEnv().Now.Add(-time.Minute)
 	}
+	if r.createdAt.IsZero() {
+		r.createdAt = drainEnv().Now.Add(-time.Minute)
+		if r.runAt.Before(r.createdAt) {
+			r.createdAt = r.runAt
+		}
+	}
 	if r.email == "" {
 		r.email = f.email
 	}
@@ -137,10 +145,10 @@ func (f *drainFx) insert(r dRow) string {
 	var id string
 	require.NoError(f.t, f.pool.QueryRow(f.ctx, `
 INSERT INTO automation_deliveries (rule_id, resource, record_id, anchor_date, stage, occurrence_key, recipient_kind,
-  recipient_email, digest_key, run_at, status, attempts, lease_until, sent_at)
-VALUES ($1::uuid, 'invoice', $2, $3::date, $4, $5, 'external', $6, $7, $8, $9, $10, $11, $12) RETURNING id::text`,
+  recipient_email, digest_key, run_at, status, attempts, lease_until, sent_at, created_at)
+VALUES ($1::uuid, 'invoice', $2, $3::date, $4, $5, 'external', $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id::text`,
 		f.ruleID, r.record, anchor, r.stage, OccurrenceKey(f.ruleID, "invoice", r.record, anchor, r.stage),
-		r.email, r.digest, r.runAt, r.status, r.attempt, r.lease, r.sentAt).Scan(&id))
+		r.email, r.digest, r.runAt, r.status, r.attempt, r.lease, r.sentAt, r.createdAt).Scan(&id))
 	return id
 }
 

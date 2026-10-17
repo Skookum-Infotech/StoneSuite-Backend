@@ -83,3 +83,21 @@ func TestGuardLocalDayStart(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 10, 16, 5, 0, 0, 0, time.UTC), localDayStart(today, chi).UTC())
 	assert.Equal(t, today, localDayStart(today, time.UTC).UTC())
 }
+
+func TestIsDeferral(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   bool
+	}{
+		{reasonCap, true},
+		{reasonKillSwitch, true},
+		{reasonSuppressed, false},
+		{reasonStale, false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.reason, func(t *testing.T) {
+			assert.Equal(t, tc.want, isDeferral(tc.reason))
+		})
+	}
+}

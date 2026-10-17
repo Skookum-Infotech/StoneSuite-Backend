@@ -37,8 +37,8 @@ func TestDrainKillSwitch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, s.reqs)
 	st := f.state(id)
-	assert.Equal(t, "skipped", st.Status)
-	assert.Equal(t, "kill_switch", st.Reason)
+	assert.Equal(t, "planned", st.Status)
+	assert.True(t, st.RunAt.After(drainEnv().Now))
 }
 
 func TestDrainWeeklyCapBoundary(t *testing.T) {
@@ -69,8 +69,8 @@ func TestDrainWeeklyCapBoundary(t *testing.T) {
 				return
 			}
 			assert.Empty(t, s.reqs)
-			assert.Equal(t, "skipped", st.Status)
-			assert.Equal(t, "cap", st.Reason)
+			assert.Equal(t, "planned", st.Status)
+			assert.Equal(t, nextDayWindow(env), st.RunAt.UTC())
 		})
 	}
 }
@@ -107,8 +107,8 @@ func TestDrainDailyCap(t *testing.T) {
 	_, err = f.drain(env, s, fakeRenderer{})
 	require.NoError(t, err)
 	st := f.state(id2)
-	assert.Equal(t, "skipped", st.Status)
-	assert.Equal(t, "cap", st.Reason)
+	assert.Equal(t, "planned", st.Status)
+	assert.Equal(t, nextDayWindow(env), st.RunAt.UTC())
 }
 
 func TestDrainOutsideWindowClaimsNothing(t *testing.T) {
@@ -148,6 +148,6 @@ func TestDrainMixedCaseRecipient(t *testing.T) {
 		_, err := f.drain(env, s, fakeRenderer{})
 		require.NoError(t, err)
 		assert.Empty(t, s.reqs)
-		assert.Equal(t, "cap", f.state(id).Reason)
+		assert.Equal(t, "planned", f.state(id).Status)
 	})
 }

@@ -33,9 +33,18 @@ const (
 	staleAfter = 48 * time.Hour
 	// maxAttempts is the send-attempt ceiling; reaching it makes a row dead.
 	maxAttempts = 5
+	// killSwitchRecheck is how long past the next send window a kill-switched
+	// group waits before it is re-checked.
+	killSwitchRecheck = time.Hour
 	// maxLastError bounds the stored last_error text.
 	maxLastError = 500
 )
+
+// isDeferral reports whether a guard reason postpones a delivery (cap, kill
+// switch) rather than dropping it.
+func isDeferral(reason string) bool {
+	return reason == reasonCap || reason == reasonKillSwitch
+}
 
 // retryBackoff is the wait after the 1st and 2nd failed attempts; every later
 // attempt waits retryBackoffLong.

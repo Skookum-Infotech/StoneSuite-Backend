@@ -35,12 +35,13 @@ WHERE d.rule_id = $1::uuid
 	return nil
 }
 
-// sweepStale skips unsent rows that have waited longer than staleAfter.
+// sweepStale skips unsent rows created more than staleAfter ago. It keys off
+// created_at, not run_at, because deferral pushes run_at forward.
 func sweepStale(ctx context.Context, q execer, ruleID string, now time.Time) error {
 	if _, err := q.Exec(ctx, `
 UPDATE automation_deliveries
 SET status = 'skipped', reason = $4, updated_at = $2::timestamptz
-WHERE rule_id = $1::uuid AND status IN ('planned', 'failed') AND run_at < $3::timestamptz`,
+WHERE rule_id = $1::uuid AND status IN ('planned', 'failed') AND created_at < $3::timestamptz`,
 		ruleID, now, now.Add(-staleAfter), reasonStale); err != nil {
 		return fmt.Errorf("drain stale sweep: %w", err)
 	}
@@ -183,6 +184,21 @@ UPDATE automation_deliveries
 SET status = 'planned', lease_until = NULL, updated_at = $2::timestamptz
 WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), now); err != nil {
 		return fmt.Errorf("drain release: %w", err)
+	}
+	return nil
+}
+
+// deferRows puts still-claimed rows back to planned with run_at pushed to runAt
+// (attempts unchanged, lease cleared), so a guard hit retries later, not never.
+func deferRows(ctx context.Context, q execer, items []Delivery, runAt, now time.Time) error {
+	if len(items) == 0 {
+		return nil
+	}
+	if _, err := q.Exec(ctx, `
+UPDATE automation_deliveries
+SET status = 'planned', run_at = $2::timestamptz, lease_until = NULL, updated_at = $3::timestamptz
+WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), runAt, now); err != nil {
+		return fmt.Errorf("drain defer: %w", err)
 	}
 	return nil
 }

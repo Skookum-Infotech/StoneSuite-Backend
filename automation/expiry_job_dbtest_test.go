@@ -23,6 +23,9 @@ type expiryJobFx struct {
 	pool    *pgxpool.Pool
 	send    *fakeSender
 	quotes  []string
+	ests    []string
+	soIDs   []int
+	ruleBak map[string]string
 	custs   []int
 	emps    []int
 	users   []string
@@ -63,9 +66,33 @@ func (f *expiryJobFx) quote(cust, owner int, valid int) string {
 	return id
 }
 
+func (f *expiryJobFx) estimate(cust, owner int, valid int) string {
+	id := f.expiryDoc(estimateSpec, expDoc{cust: cust, owner: &owner, status: "SENT", valid: dayOffset(valid)})
+	f.ests = append(f.ests, id)
+	return id
+}
+
+// convertCommitted records a quote -> sales order conversion on the pool (the fixture tx is already committed).
+func (f *expiryJobFx) convertCommitted(quoteUUID string) {
+	var soID int
+	require.NoError(f.t, f.pool.QueryRow(f.ctx, `
+		INSERT INTO sales_order (record_type, sales_order_status, sales_order_customer_id)
+		SELECT (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'SORD'),
+		       (SELECT s.record_status_id FROM lkp_record_status s
+		        JOIN lkp_record_type t ON t.record_type_id = s.record_status_record_type
+		        WHERE t.record_type_code = 'SORD' AND s.record_status_code = 'DRFT'),
+		       quote_customer_id FROM quote WHERE quote_uuid = $1::uuid
+		RETURNING sales_order_id`, quoteUUID).Scan(&soID))
+	f.soIDs = append(f.soIDs, soID)
+	_, err := f.pool.Exec(f.ctx, `INSERT INTO quote_conversion (quote_id, sales_order_id)
+		SELECT quote_id, $2 FROM quote WHERE quote_uuid = $1::uuid`, quoteUUID, soID)
+	require.NoError(f.t, err)
+}
+
 func (f *expiryJobFx) commit(enable bool) {
 	if enable {
 		f.enableExpiryRule(quoteSpec, arToday.AddDate(0, 0, -30))
+		f.enableExpiryRule(estimateSpec, arToday.AddDate(0, 0, -30))
 	}
 	require.NoError(f.t, f.tx.Commit(f.ctx))
 }
@@ -79,7 +106,12 @@ func (f *expiryJobFx) cleanup() {
 		_, _ = f.pool.Exec(ctx, `UPDATE automation_state SET enabled_at = NULL, last_planned_at = NULL WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, k)
 	}
 	_, _ = f.pool.Exec(ctx, `DELETE FROM quote_conversion WHERE quote_id IN (SELECT quote_id FROM quote WHERE quote_uuid = ANY($1::uuid[]))`, f.quotes)
+	_, _ = f.pool.Exec(ctx, `DELETE FROM sales_order WHERE sales_order_id = ANY($1::int[])`, f.soIDs)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM quote WHERE quote_uuid = ANY($1::uuid[])`, f.quotes)
+	_, _ = f.pool.Exec(ctx, `DELETE FROM estimate WHERE estimate_uuid = ANY($1::uuid[])`, f.ests)
+	for k, v := range f.ruleBak {
+		_, _ = f.pool.Exec(ctx, `UPDATE automation_rules SET rule = $2::jsonb WHERE rule_key = $1`, k, v)
+	}
 	_, _ = f.pool.Exec(ctx, `DELETE FROM customer WHERE customer_id = ANY($1::int[])`, f.custs)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM employee WHERE employee_id = ANY($1::int[])`, f.emps)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1::uuid[])`, f.users)
@@ -116,6 +148,8 @@ func TestExpiryJobSendsOnce(t *testing.T) {
 	owner := f.owner("owner-job1@x.test")
 	q := f.quote(f.cust(), owner, 3)
 	f.commit(true)
+	var ownerIdentity string
+	require.NoError(t, f.pool.QueryRow(f.ctx, `SELECT identity_id::text FROM users WHERE id = ANY($1::uuid[])`, f.users).Scan(&ownerIdentity))
 
 	res := f.run()
 	assert.Equal(t, 1, res.Sent)
@@ -128,7 +162,17 @@ func TestExpiryJobSendsOnce(t *testing.T) {
 	assert.Equal(t, []string{"email", "in_app"}, req.Channels)
 	require.Len(t, req.Recipients, 1)
 	assert.Equal(t, "owner-job1@x.test", req.Recipients[0].Email)
-	assert.NotEmpty(t, req.Recipients[0].UserID)
+	assert.Equal(t, ownerIdentity, req.Recipients[0].UserID)
+	require.NotNil(t, req.Email)
+	var links []string
+	for _, p := range req.Email.Paragraphs {
+		for _, sp := range p {
+			if sp.Href != "" {
+				links = append(links, sp.Href)
+			}
+		}
+	}
+	assert.Equal(t, []string{"https://app.test/" + expiryJobTenantID + "/" + q}, links)
 
 	f.run()
 	assert.Len(t, f.send.reqs, 1, "second tick must not resend")
@@ -154,7 +198,7 @@ func TestExpiryJobOwnerDisabledBeforeSend(t *testing.T) {
 	assert.Equal(t, 1, f.deliveries(`d.status = 'skipped' AND d.reason = 'no_email'`))
 }
 
-func TestExpiryJobConvertedBeforeSend(t *testing.T) {
+func TestExpiryJobDeletedBeforeSend(t *testing.T) {
 	f := newExpiryJobFx(t)
 	owner := f.owner("owner-job3@x.test")
 	q := f.quote(f.cust(), owner, 3)
@@ -211,4 +255,71 @@ func TestExpiryJobDisabledRuleWritesNothing(t *testing.T) {
 	f.run()
 	assert.Empty(t, f.send.reqs)
 	assert.Zero(t, f.deliveries(`TRUE`))
+}
+
+func TestExpiryJobConvertedBeforeSend(t *testing.T) {
+	f := newExpiryJobFx(t)
+	owner := f.owner("owner-job7@x.test")
+	q := f.quote(f.cust(), owner, 3)
+	f.commit(true)
+
+	rule, _, err := loadRule(f.ctx, f.pool, RuleKeyQuoteExpiry)
+	require.NoError(t, err)
+	planned, _, err := planExpiry(f.ctx, f.pool, f.env, quoteSpec, rule)
+	require.NoError(t, err)
+	require.Equal(t, 1, planned)
+	f.convertCommitted(q)
+
+	f.run()
+	assert.Empty(t, f.send.reqs)
+	assert.Equal(t, 1, f.deliveries(`d.status = 'skipped' AND d.reason = 'converted'`))
+}
+
+func TestExpiryJobOwnerChangedBeforeSend(t *testing.T) {
+	f := newExpiryJobFx(t)
+	ownerA := f.owner("owner-job8a@x.test")
+	ownerB := f.owner("owner-job8b@x.test")
+	c := f.cust()
+	keep := f.quote(c, ownerA, 3)
+	moved := f.quote(c, ownerA, 3)
+	f.commit(true)
+
+	rule, _, err := loadRule(f.ctx, f.pool, RuleKeyQuoteExpiry)
+	require.NoError(t, err)
+	planned, _, err := planExpiry(f.ctx, f.pool, f.env, quoteSpec, rule)
+	require.NoError(t, err)
+	require.Equal(t, 2, planned)
+	_, err = f.pool.Exec(f.ctx, `UPDATE quote SET quote_owner_id = $2 WHERE quote_uuid = $1::uuid`, moved, ownerB)
+	require.NoError(t, err)
+
+	f.run()
+	require.Len(t, f.send.reqs, 1)
+	req := f.send.reqs[0]
+	assert.Equal(t, "owner-job8a@x.test", req.Recipients[0].Email)
+	assert.Equal(t, keep, req.ResourceID)
+	require.NotNil(t, req.Email)
+	assert.Len(t, req.Email.Details, 1)
+	assert.Equal(t, 1, f.deliveries(`d.status = 'skipped' AND d.reason = 'owner_changed'`))
+}
+
+func TestExpiryJobFirstSpecFailureDoesNotStopSecond(t *testing.T) {
+	f := newExpiryJobFx(t)
+	owner := f.owner("owner-job9@x.test")
+	c := f.cust()
+	f.quote(c, owner, 3)
+	est := f.estimate(c, owner, 3)
+	f.commit(true)
+
+	var orig string
+	require.NoError(t, f.pool.QueryRow(f.ctx, `SELECT rule::text FROM automation_rules WHERE rule_key = $1`, RuleKeyQuoteExpiry).Scan(&orig))
+	f.ruleBak = map[string]string{RuleKeyQuoteExpiry: orig}
+	_, err := f.pool.Exec(f.ctx, `UPDATE automation_rules SET rule = '"broken"'::jsonb WHERE rule_key = $1`, RuleKeyQuoteExpiry)
+	require.NoError(t, err)
+
+	res, err := f.job().Run(f.ctx, f.pool, f.env)
+	require.Error(t, err)
+	assert.Equal(t, 1, res.Sent)
+	require.Len(t, f.send.reqs, 1)
+	assert.Equal(t, "estimate", f.send.reqs[0].Resource)
+	assert.Equal(t, est, f.send.reqs[0].ResourceID)
 }

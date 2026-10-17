@@ -17,7 +17,25 @@ const (
 	expiryEventType   = "automation.expiry_reminder"
 	expiryEmailReason = "you own a sent %s that is about to expire"
 	expiryChannelApp  = "in_app"
+	// reasonOwnerChanged drops a delivery whose document now belongs to someone other than the planned recipient.
+	reasonOwnerChanged = "owner_changed"
 )
+
+// capitalize upper-cases the first byte of s; empty stays empty.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// expiryBody is the in-app text for n documents of the given noun.
+func expiryBody(noun string, n int) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s is about to expire.", noun)
+	}
+	return fmt.Sprintf("%d %ss are about to expire.", n, noun)
+}
 
 // expiryTiming words a document's valid-until date relative to today.
 func expiryTiming(days int) string {
@@ -39,7 +57,7 @@ func expiryTitle(noun string) string {
 	if noun == "" {
 		return "Expiry reminder"
 	}
-	return strings.ToUpper(noun[:1]) + noun[1:] + " expiry reminder"
+	return capitalize(noun) + " expiry reminder"
 }
 
 // renderExpiryDigest builds the plain owner-facing reminder listing items by
@@ -61,7 +79,7 @@ func renderExpiryDigest(company, noun string, items []ExpiryDoc, today time.Time
 	}
 	paras := []services.Paragraph{lead}
 	details := make([]services.Detail, 0, len(sorted))
-	label := strings.ToUpper(noun[:1]) + noun[1:]
+	label := capitalize(noun)
 	for _, it := range sorted {
 		details = append(details, services.Detail{
 			Label: label + " " + it.Number,
@@ -106,6 +124,10 @@ func (r expiryRenderer) Render(ctx context.Context, env JobEnv, g Group) (servic
 			dropped[it.OccurrenceKey] = reason
 			continue
 		}
+		if !strings.EqualFold(doc.OwnerEmail, g.RecipientEmail) {
+			dropped[it.OccurrenceKey] = reasonOwnerChanged
+			continue
+		}
 		if r.deps.LinkURL != nil {
 			doc.Link = r.deps.LinkURL(env.Tenant.ID, doc.UUID)
 		}
@@ -133,7 +155,7 @@ func (r expiryRenderer) Render(ctx context.Context, env JobEnv, g Group) (servic
 		Resource:   r.spec.Resource,
 		ResourceID: earliest.UUID,
 		Title:      expiryTitle(r.spec.Resource),
-		Body:       fmt.Sprintf("%d %s(s) are about to expire.", len(live), r.spec.Resource),
+		Body:       expiryBody(r.spec.Resource, len(live)),
 		Email:      &email,
 		Channels:   []string{arChannelMail, expiryChannelApp},
 	}, kept, dropped, nil

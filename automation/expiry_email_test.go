@@ -80,3 +80,23 @@ func TestDefaultJobsIncludesExpiryReminders(t *testing.T) {
 	}
 	assert.Contains(t, names, "expiry_reminders")
 }
+
+func TestRenderExpiryDigestEmptyNoun(t *testing.T) {
+	d := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	assert.NotPanics(t, func() { renderExpiryDigest("", "", []ExpiryDoc{{Number: "1", ValidUntil: d}}, d) })
+}
+
+func TestExpiryBody(t *testing.T) {
+	tests := []struct {
+		noun string
+		n    int
+		want string
+	}{
+		{"quote", 1, "1 quote is about to expire."},
+		{"quote", 3, "3 quotes are about to expire."},
+		{"estimate", 2, "2 estimates are about to expire."},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, expiryBody(tc.noun, tc.n))
+	}
+}

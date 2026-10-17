@@ -128,3 +128,34 @@ func TestARDunningSchema(t *testing.T) {
 	assert.Contains(t, indexDef, "recipient_email, sent_at")
 	assert.Contains(t, indexDef, "'sent'")
 }
+
+func TestExpiryRulesSchema(t *testing.T) {
+	ctx := context.Background()
+	pool := newTenantTestPool(t)
+	for key, name := range map[string]string{
+		RuleKeyQuoteExpiry:    "Quote expiry reminders",
+		RuleKeyEstimateExpiry: "Estimate expiry reminders",
+	} {
+		var (
+			gotName, aud string
+			system, on   bool
+			raw          []byte
+			states       int
+		)
+		require.NoError(t, pool.QueryRow(ctx,
+			`SELECT name, audience, is_system, enabled, rule FROM automation_rules WHERE rule_key = $1`, key).
+			Scan(&gotName, &aud, &system, &on, &raw), key)
+		assert.Equal(t, name, gotName)
+		assert.Equal(t, "internal", aud)
+		assert.True(t, system)
+		assert.False(t, on, "seeded rule must be disabled")
+		var cfg ARRuleConfig
+		require.NoError(t, json.Unmarshal(raw, &cfg))
+		require.Len(t, cfg.Cadence, 1)
+		assert.Equal(t, -3, cfg.Cadence[0].OffsetDays)
+		require.NoError(t, pool.QueryRow(ctx, `
+			SELECT count(*) FROM automation_state s JOIN automation_rules r ON r.id = s.rule_id
+			WHERE r.rule_key = $1`, key).Scan(&states))
+		assert.Equal(t, 1, states)
+	}
+}

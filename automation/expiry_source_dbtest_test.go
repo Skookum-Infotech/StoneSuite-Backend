@@ -70,6 +70,12 @@ func TestExpiryListQuoteCandidates(t *testing.T) {
 	deleted := with(func(d *expDoc) { d.deleted = true })
 	noUser := with(func(d *expDoc) { d.owner = &orphan })
 	noOwner := with(func(d *expDoc) { d.owner = nil })
+	offEmp, _ := f.employeeWithUser("off-q@x.test", "disabled")
+	offUser := with(func(d *expDoc) { d.owner = &offEmp })
+	delEmp, _ := f.employeeWithUser("del-q@x.test", "active")
+	_, err0 := f.tx.Exec(f.ctx, `UPDATE employee SET employee_deleted_at = now(), employee_deleted_by = 1 WHERE employee_id = $1`, delEmp)
+	require.NoError(t, err0)
+	deletedEmp := with(func(d *expDoc) { d.owner = &delEmp })
 	converted := with(func(d *expDoc) {})
 	f.convert(converted)
 
@@ -79,7 +85,7 @@ func TestExpiryListQuoteCandidates(t *testing.T) {
 	for _, d := range got {
 		by[d.UUID] = d
 	}
-	for name, id := range map[string]string{"good": good, "boundaryOld": boundaryOld, "noUser": noUser, "noOwner": noOwner} {
+	for name, id := range map[string]string{"good": good, "boundaryOld": boundaryOld, "noUser": noUser, "noOwner": noOwner, "offUser": offUser, "deletedEmp": deletedEmp} {
 		assert.Contains(t, by, id, name)
 	}
 	for name, id := range map[string]string{"tooOld": tooOld, "tooNew": tooNew, "draft": draft,
@@ -92,6 +98,9 @@ func TestExpiryListQuoteCandidates(t *testing.T) {
 	assert.Equal(t, "Acme", by[good].CustomerName)
 	assert.True(t, by[good].ValidUntil.Equal(*dayOffset(3)))
 	assert.Empty(t, by[noUser].OwnerEmail)
+	assert.Empty(t, by[offUser].OwnerEmail, "a non-active owner user is not a recipient")
+	assert.Empty(t, by[offUser].OwnerUserID)
+	assert.Empty(t, by[deletedEmp].OwnerEmail, "a deleted owner employee is not a recipient")
 	assert.Empty(t, by[noOwner].OwnerUserID)
 }
 

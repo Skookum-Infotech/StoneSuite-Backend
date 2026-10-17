@@ -22,7 +22,7 @@ const (
 )
 
 // ExpiryDoc is one sent quote or estimate approaching its valid-until date.
-// The Owner* fields are empty when the owning employee does not resolve to a user.
+// The Owner* fields are empty unless the owning employee resolves to an active user.
 type ExpiryDoc struct {
 	UUID            string
 	Number          string
@@ -71,7 +71,7 @@ JOIN customer c ON c.customer_id = d.{t}_customer_id
 JOIN lkp_record_status rs ON rs.record_status_id = d.{t}_status
 JOIN lkp_record_type rt ON rt.record_type_id = rs.record_status_record_type AND rt.record_type_code = $1
 LEFT JOIN employee e ON e.employee_id = d.{t}_owner_id AND e.employee_deleted_at IS NULL
-LEFT JOIN users u ON u.id = e.employee_user_id
+LEFT JOIN users u ON u.id = e.employee_user_id AND u.status = '` + userStatusActive + `'
 `)
 }
 

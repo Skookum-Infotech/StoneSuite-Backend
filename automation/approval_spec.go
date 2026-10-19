@@ -49,15 +49,16 @@ func approvalSpecs() []approvalSpec {
 // ident validates every registry identifier a job interpolates into SQL.
 func (s approvalSpec) ident() error {
 	r := s.Cfg.Record
-	for name, v := range map[string]string{
-		"approver table": s.Cfg.ApproverTable, "approval table": s.Cfg.ApprovalTable,
-		"table": r.Table, "history table": r.HistoryTable, "id column": r.IDColumn,
-		"uuid column": r.UUIDColumn, "status column": r.StatusColumn,
-		"approval status column": r.ApprovalStatusColumn, "deleted column": r.DeletedAtColumn,
-		"created column": r.CreatedAtColumn, "owner column": r.OwnerColumn, "number column": r.NumberColumn,
+	// A slice (not a map) so the first offending field, and so the error, is deterministic.
+	for _, f := range []struct{ name, v string }{
+		{"approver table", s.Cfg.ApproverTable}, {"approval table", s.Cfg.ApprovalTable},
+		{"table", r.Table}, {"history table", r.HistoryTable}, {"id column", r.IDColumn},
+		{"uuid column", r.UUIDColumn}, {"status column", r.StatusColumn},
+		{"approval status column", r.ApprovalStatusColumn}, {"deleted column", r.DeletedAtColumn},
+		{"created column", r.CreatedAtColumn}, {"owner column", r.OwnerColumn}, {"number column", r.NumberColumn},
 	} {
-		if !identPattern.MatchString(v) {
-			return fmt.Errorf("approval spec %s: invalid %s %q", s.Workflow, name, v)
+		if !identPattern.MatchString(f.v) {
+			return fmt.Errorf("approval spec %s: invalid %s %q", s.Workflow, f.name, f.v)
 		}
 	}
 	return nil

@@ -56,7 +56,36 @@ func TestApprovalSpecs(t *testing.T) {
 func TestApprovalSpecIdent(t *testing.T) {
 	specs := approvalSpecs()
 	require.NotEmpty(t, specs)
-	bad := specs[0]
-	bad.Cfg.ApproverTable = "x; DROP TABLE y"
-	assert.Error(t, bad.ident())
+	tests := []struct {
+		name    string
+		mutate  func(*approvalSpec)
+		wantMsg string
+	}{
+		{"valid", func(*approvalSpec) {}, ""},
+		{"approver table", func(s *approvalSpec) { s.Cfg.ApproverTable = "x; DROP TABLE y" }, "approver table"},
+		{"approval table", func(s *approvalSpec) { s.Cfg.ApprovalTable = "" }, "approval table"},
+		{"table", func(s *approvalSpec) { s.Cfg.Record.Table = "A" }, "invalid table"},
+		{"history table", func(s *approvalSpec) { s.Cfg.Record.HistoryTable = "h h" }, "history table"},
+		{"id column", func(s *approvalSpec) { s.Cfg.Record.IDColumn = "1id" }, "id column"},
+		{"uuid column", func(s *approvalSpec) { s.Cfg.Record.UUIDColumn = "u;" }, "uuid column"},
+		{"status column", func(s *approvalSpec) { s.Cfg.Record.StatusColumn = "s)" }, "status column"},
+		{"approval status column", func(s *approvalSpec) { s.Cfg.Record.ApprovalStatusColumn = "" }, "approval status column"},
+		{"deleted column", func(s *approvalSpec) { s.Cfg.Record.DeletedAtColumn = "d d" }, "deleted column"},
+		{"created column", func(s *approvalSpec) { s.Cfg.Record.CreatedAtColumn = "" }, "created column"},
+		{"owner column", func(s *approvalSpec) { s.Cfg.Record.OwnerColumn = "" }, "owner column"},
+		{"number column", func(s *approvalSpec) { s.Cfg.Record.NumberColumn = "n'" }, "number column"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := specs[0]
+			tt.mutate(&s)
+			err := s.ident()
+			if tt.wantMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
+	}
 }

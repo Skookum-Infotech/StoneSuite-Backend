@@ -235,8 +235,10 @@ Any of these document types can have approvers configured for its workflow
 in a pending-approval status until every configured approver signs off before
 it can move forward — for example, only an Approved (or Sent) quote offers
 the Convert to Sales Order button, so approval is a checkpoint before a
-document can move to the next stage. See `administration.md` for how
-approval chains are set up.
+document can move to the next stage. Deactivated people don't count as
+approvers; if none of a status's approvers are still active, the record waits
+for a super admin to approve it. See `administration.md` for how approval
+chains are set up.
 
 ## Sending a document by email
 

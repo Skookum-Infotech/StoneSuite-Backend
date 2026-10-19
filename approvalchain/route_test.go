@@ -25,3 +25,19 @@ func TestResourceRoute(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordRoute(t *testing.T) {
+	tests := []struct {
+		name, resource, recordID, want string
+	}{
+		{"known resource", "invoice", "abc", "/sales/invoice/abc"},
+		{"unknown resource", "nope", "abc", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RecordRoute(tt.resource, tt.recordID); got != tt.want {
+				t.Errorf("RecordRoute = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

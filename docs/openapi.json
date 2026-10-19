@@ -4021,6 +4021,37 @@
         ]
       }
     },
+    "/api/tenant/automation/deliveries": {
+      "get": {
+        "operationId": "get_tenant_automation_deliveries",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "automationDeliveryOps.List",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/automation/rules": {
       "get": {
         "operationId": "get_tenant_automation_rules",
@@ -4088,6 +4119,47 @@
           }
         ],
         "summary": "automationRuleOps.SetEnabled",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/automation/rules/{key}/preview": {
+      "post": {
+        "operationId": "post_tenant_automation_rules_key_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.NewAutomationPreviewOps",
         "tags": [
           "tenant"
         ]

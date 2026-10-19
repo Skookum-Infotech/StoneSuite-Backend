@@ -173,6 +173,9 @@ func drainGroup(ctx context.Context, pool *pgxpool.Pool, env JobEnv, send Sender
 	if err != nil {
 		return releaseAfter(ctx, conn, g.Items, env.Now, err, "guard")
 	}
+	if reason != "" && isDeferral(reason) {
+		return deferGroup(ctx, conn, env, g, reason)
+	}
 	if reason != "" {
 		n, serr := markSkipped(ctx, conn, deliveryIDs(g.Items), reason, env.Now)
 		res.Skipped += n
@@ -210,6 +213,22 @@ func drainGroup(ctx context.Context, pool *pgxpool.Pool, env JobEnv, send Sender
 		slog.Warn("automation drain: send failed", "digest", g.DigestKey, "err", sendErr)
 		return markSendFailed(wctx, conn, kept, sendErr.Error(), env.Now, res)
 	}
+}
+
+// deferGroup pushes a capped or kill-switched group to its next eligible send
+// time instead of dropping it: next local day's window for caps, one hour past
+// the next send window for the kill switch (a recheck time, not guaranteed to
+// be inside the window; the drain's own window gate covers that).
+func deferGroup(ctx context.Context, q execer, env JobEnv, g Group, reason string) error {
+	runAt := NextSendWindow(localDayStart(env.Today, env.Loc).AddDate(0, 0, 1), env.Loc)
+	if reason == reasonKillSwitch {
+		runAt = NextSendWindow(env.Now, env.Loc).Add(killSwitchRecheck)
+	}
+	slog.Info("automation drain: group deferred", "automation_event", "drain_deferred",
+		"reason", reason, "group_size", len(g.Items), "run_at", runAt)
+	n, err := deferRows(ctx, q, g.Items, runAt, env.Now, env.Loc)
+	warnShortWrite("deferred", g.DigestKey, n, len(g.Items))
+	return err
 }
 
 // warnShortWrite logs when a status write touched fewer rows than the group had

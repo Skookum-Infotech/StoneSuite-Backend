@@ -237,8 +237,12 @@ machine after the response).
    only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
    flip and state write share one transaction. Each tick runs plan first (idempotent occurrence
    rows, window `due_date` in [today-60, today+3], stages never before their date), then `drain`
-   (leases, guards, retry states). Deferred: delivery log and owner in-app notes (P1b), stop-reminders
-   link, cadence edit API (P2).
+   (leases, guards, retry states). Caps and the tenant kill switch **defer** a digest (`planned`,
+   `run_at` pushed) rather than skip it; rows go `stale` 48h after `created_at`. `unknown` sends
+   count toward the weekly/daily caps. Disabling a rule skips its unsent rows (`rule_disabled`).
+   Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
+   pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
+   Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

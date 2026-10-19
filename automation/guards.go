@@ -11,6 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ReasonRuleDisabled is the skip reason written when a rule is disabled with unsent deliveries.
+const ReasonRuleDisabled = "rule_disabled"
+
+// ReasonPreEnable is the skip reason written to a rule's leftover unsent rows when it is re-enabled.
+const ReasonPreEnable = "pre_enable"
+
 // Delivery skip reasons written by the drain guards and the pre-claim sweeps.
 const (
 	reasonKillSwitch = "kill_switch"
@@ -33,9 +39,18 @@ const (
 	staleAfter = 48 * time.Hour
 	// maxAttempts is the send-attempt ceiling; reaching it makes a row dead.
 	maxAttempts = 5
+	// killSwitchRecheck is how long past the next send window a kill-switched
+	// group waits before it is re-checked.
+	killSwitchRecheck = time.Hour
 	// maxLastError bounds the stored last_error text.
 	maxLastError = 500
 )
+
+// isDeferral reports whether a guard reason postpones a delivery (cap, kill
+// switch) rather than dropping it.
+func isDeferral(reason string) bool {
+	return reason == reasonCap || reason == reasonKillSwitch
+}
 
 // retryBackoff is the wait after the 1st and 2nd failed attempts; every later
 // attempt waits retryBackoffLong.
@@ -109,7 +124,9 @@ FROM automation_settings WHERE id`).Scan(&s.KillSwitch, &s.DailyCap, &s.WeeklyCa
 // guardExternal applies the per-recipient guards in order: tenant kill switch,
 // suppression list, per-contact weekly cap. It returns the skip reason, or ""
 // when the email may be sent. The weekly cap counts DISTINCT digest_key among
-// sent rows in the 7 days before now, so one digest email counts once.
+// sent and unknown-outcome rows (an unknown send may have been delivered) in the
+// 7 days before now, so one digest email counts once. Unknown rows have no
+// sent_at, so their updated_at stands in.
 func guardExternal(ctx context.Context, q Querier, s automationSettings, email string, now time.Time) (string, error) {
 	if s.KillSwitch {
 		return reasonKillSwitch, nil
@@ -125,7 +142,7 @@ func guardExternal(ctx context.Context, q Querier, s automationSettings, email s
 	var weekly int
 	if err := q.QueryRow(ctx, `
 SELECT count(DISTINCT digest_key) FROM automation_deliveries
-WHERE status = 'sent' AND lower(recipient_email) = $1 AND sent_at >= $2 -- lower() so mixed-case history counts; not index-assisted`,
+WHERE status IN ('sent', 'unknown') AND lower(recipient_email) = $1 AND COALESCE(sent_at, updated_at) >= $2 -- lower() so mixed-case history counts; not index-assisted`,
 		addr, now.Add(-weeklyCapWindow)).Scan(&weekly); err != nil {
 		return "", fmt.Errorf("count weekly sends: %w", err)
 	}
@@ -136,12 +153,12 @@ WHERE status = 'sent' AND lower(recipient_email) = $1 AND sent_at >= $2 -- lower
 }
 
 // guardDailyCap applies the tenant-wide daily external cap: distinct digests
-// sent since dayStart (tenant-local midnight). It returns reasonCap or "".
+// sent or of unknown outcome since dayStart (tenant-local midnight). It returns reasonCap or "".
 func guardDailyCap(ctx context.Context, q Querier, s automationSettings, dayStart time.Time) (string, error) {
 	var today int
 	if err := q.QueryRow(ctx, `
 SELECT count(DISTINCT digest_key) FROM automation_deliveries
-WHERE status = 'sent' AND recipient_kind = 'external' AND sent_at >= $1`, dayStart).Scan(&today); err != nil {
+WHERE status IN ('sent', 'unknown') AND recipient_kind = 'external' AND COALESCE(sent_at, updated_at) >= $1`, dayStart).Scan(&today); err != nil {
 		return "", fmt.Errorf("count daily sends: %w", err)
 	}
 	if capReached(today, s.DailyCap) {

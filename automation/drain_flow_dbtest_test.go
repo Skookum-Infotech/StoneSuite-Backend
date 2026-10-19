@@ -63,8 +63,8 @@ func TestDrainSupersedesEarlierStage(t *testing.T) {
 func TestDrainStaleRowsSkipped(t *testing.T) {
 	f := newDrainFx(t)
 	env := drainEnv()
-	old := f.insert(dRow{runAt: env.Now.Add(-49 * time.Hour)})
-	fresh := f.insert(dRow{runAt: env.Now.Add(-47 * time.Hour)})
+	old := f.insert(dRow{runAt: env.Now.Add(-49 * time.Hour), createdAt: env.Now.Add(-49 * time.Hour)})
+	fresh := f.insert(dRow{runAt: env.Now.Add(-47 * time.Hour), createdAt: env.Now.Add(-47 * time.Hour)})
 	s := &fakeSender{}
 	_, err := f.drain(env, s, fakeRenderer{})
 	require.NoError(t, err)

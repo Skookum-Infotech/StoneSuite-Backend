@@ -35,12 +35,13 @@ WHERE d.rule_id = $1::uuid
 	return nil
 }
 
-// sweepStale skips unsent rows that have waited longer than staleAfter.
+// sweepStale skips unsent rows created more than staleAfter ago. It keys off
+// created_at, not run_at, because deferral pushes run_at forward.
 func sweepStale(ctx context.Context, q execer, ruleID string, now time.Time) error {
 	if _, err := q.Exec(ctx, `
 UPDATE automation_deliveries
 SET status = 'skipped', reason = $4, updated_at = $2::timestamptz
-WHERE rule_id = $1::uuid AND status IN ('planned', 'failed') AND run_at < $3::timestamptz`,
+WHERE rule_id = $1::uuid AND status IN ('planned', 'failed') AND created_at < $3::timestamptz`,
 		ruleID, now, now.Add(-staleAfter), reasonStale); err != nil {
 		return fmt.Errorf("drain stale sweep: %w", err)
 	}
@@ -48,14 +49,14 @@ WHERE rule_id = $1::uuid AND status IN ('planned', 'failed') AND run_at < $3::ti
 }
 
 // claimDue leases due (or lease-expired) rows to this drain, a whole digest at
-// a time: digests are taken in order of earliest run_at while their combined
+// a time: digests are taken in order of earliest run_at (then oldest created_at, so overflow beats fresh rows) while their combined
 // row count stays within claimBatchSize (the first digest is always taken whole,
 // however large), so one digest is never split across two emails. Rows without
 // a digest_key are each their own unit.
 func claimDue(ctx context.Context, q execer, ruleID string, now time.Time) ([]Delivery, error) {
 	rows, err := q.Query(ctx, `
 WITH due AS (
-    SELECT id, COALESCE(digest_key, 'single:' || id::text) AS unit, run_at
+    SELECT id, COALESCE(digest_key, 'single:' || id::text) AS unit, run_at, created_at
     FROM automation_deliveries
     WHERE rule_id = $1::uuid
       AND ((status IN ('planned', 'failed') AND run_at <= $2::timestamptz)
@@ -63,9 +64,9 @@ WITH due AS (
       AND attempts < $4
     FOR UPDATE SKIP LOCKED
 ), units AS (
-    SELECT unit, MIN(run_at) AS first_run, count(*) AS n FROM due GROUP BY unit
+    SELECT unit, MIN(run_at) AS first_run, MIN(created_at) AS first_created, count(*) AS n FROM due GROUP BY unit
 ), ranked AS (
-    SELECT unit, n, SUM(n) OVER (ORDER BY first_run, unit) AS running FROM units
+    SELECT unit, n, SUM(n) OVER (ORDER BY first_run, first_created, unit) AS running FROM units
 ), chosen AS (
     SELECT unit FROM ranked WHERE running <= $5 OR running = n
 )
@@ -185,4 +186,26 @@ WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), now); er
 		return fmt.Errorf("drain release: %w", err)
 	}
 	return nil
+}
+
+// deferRows puts still-claimed rows back to planned with run_at pushed to runAt
+// (attempts unchanged, lease cleared), so a guard hit retries later, not never.
+// Rows that carry a digest_key are re-keyed to the digest of runAt's local day
+// (rows of a group share one recipient), so they merge with that day's fresh
+// rows into one email instead of going out beside them. It returns the number
+// of rows updated.
+func deferRows(ctx context.Context, q execer, items []Delivery, runAt, now time.Time, loc *time.Location) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+	newDigest := DigestKey(items[0].RuleID, items[0].RecipientEmail, localDate(runAt, loc))
+	tag, err := q.Exec(ctx, `
+UPDATE automation_deliveries
+SET status = 'planned', run_at = $2::timestamptz, lease_until = NULL, updated_at = $3::timestamptz,
+    digest_key = CASE WHEN digest_key IS NULL THEN NULL ELSE $4 END
+WHERE id = ANY($1::uuid[]) AND status = 'claimed'`, deliveryIDs(items), runAt, now, newDigest)
+	if err != nil {
+		return 0, fmt.Errorf("drain defer: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }

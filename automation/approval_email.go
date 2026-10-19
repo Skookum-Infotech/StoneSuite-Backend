@@ -149,6 +149,13 @@ func (r approvalRenderer) Render(ctx context.Context, env JobEnv, g Group) (serv
 		return services.NotificationRequest{}, nil, nil, err
 	}
 	dropped := map[string]string{}
+	if userID == "" {
+		for _, it := range g.Items {
+			dropped[it.OccurrenceKey] = reasonRecipientChanged
+		}
+		return services.NotificationRequest{}, nil, dropped, nil
+	}
+	seen := map[string]bool{}
 	var kept []Delivery
 	var lines []approvalLine
 	var recipient approvalRecipient
@@ -159,17 +166,19 @@ func (r approvalRenderer) Render(ctx context.Context, env JobEnv, g Group) (serv
 		if err != nil {
 			return services.NotificationRequest{}, nil, nil, err
 		}
-		if userID == "" && reason == "" {
-			reason = reasonRecipientChanged
+		if reason == "" && seen[it.RecordID] {
+			// A record that moved gates the same day has one live row per gate; keep the first.
+			reason = reasonSuperseded
 		}
 		if reason != "" {
 			dropped[it.OccurrenceKey] = reason
 			continue
 		}
+		seen[it.RecordID] = true
 		line := approvalLine{
 			DisplayName: spec.DisplayName, Number: rec.Number, Fallback: rcpt.Fallback,
 			Route:       approvalchain.RecordRoute(spec.Workflow, rec.UUID),
-			DaysWaiting: -arDaysFromToday(rec.Entered, env.Today),
+			DaysWaiting: max(0, -arDaysFromToday(rec.Entered, env.Today)),
 		}
 		if len(lines) == 0 || line.DaysWaiting > lines[0].DaysWaiting {
 			oldest, oldestWorkflow, recipient = rec, spec.Workflow, rcpt

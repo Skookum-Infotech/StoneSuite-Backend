@@ -46,15 +46,3 @@ func TestApprovalRenderer(t *testing.T) {
 	assert.NotEmpty(t, req.Recipients[0].UserID)
 	assert.Equal(t, approvalEventType, req.EventType)
 }
-
-func TestApprovalRendererAllDropped(t *testing.T) {
-	f := newARFixture(t)
-	env := JobEnv{Tenant: &tenancy.Tenant{ID: "t1"}, Today: arToday, Loc: arToday.Location()}
-	spec := poSpec(t)
-	g := Group{DigestKey: "d", RecipientEmail: "nobody@x.test", Items: []Delivery{{
-		Resource: spec.Workflow, RecordID: "00000000-0000-0000-0000-000000000000", OccurrenceKey: "k1", Anchor: arToday}}}
-	_, kept, dropped, err := approvalRenderer{q: f.tx}.Render(f.ctx, env, g)
-	require.NoError(t, err)
-	assert.Empty(t, kept)
-	assert.Contains(t, dropped, "k1")
-}

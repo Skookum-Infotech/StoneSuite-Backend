@@ -25,7 +25,11 @@ type approvalRecipient struct {
 // configured at the gate with no sign-off row for this record at the gate status.
 // When the gate is orphaned (no live approver at all) it escalates to the record
 // owner (live user only) plus every active super admin, deduped by user.
-// One or two queries per record is acceptable: stuck records are few.
+// It also escalates when live approvers exist but have all signed already (the
+// others are deactivated), since nobody left can act.
+// One or two queries per record is acceptable: stuck records are few. The
+// candidate query has no date prefilter and scans every record at the gate
+// (a correlated MAX over history per row), which is fine at current volumes.
 func approvalRecipients(ctx context.Context, q Querier, spec approvalSpec, rec ApprovalRecord) ([]approvalRecipient, error) {
 	if err := spec.ident(); err != nil {
 		return nil, err
@@ -48,14 +52,12 @@ ORDER BY u.email`)
 	}
 	defer rows.Close()
 	var out []approvalRecipient
-	live := 0
 	for rows.Next() {
 		var r approvalRecipient
 		var signed bool
 		if err := rows.Scan(&r.UserID, &r.IdentityID, &r.Email, &r.Name, &signed); err != nil {
 			return nil, fmt.Errorf("scan %s approval recipient: %w", spec.Workflow, err)
 		}
-		live++
 		if !signed {
 			out = append(out, r)
 		}
@@ -63,7 +65,7 @@ ORDER BY u.email`)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate %s approval recipients: %w", spec.Workflow, err)
 	}
-	if live > 0 {
+	if len(out) > 0 {
 		return out, nil
 	}
 	return orphanRecipients(ctx, q, rec)

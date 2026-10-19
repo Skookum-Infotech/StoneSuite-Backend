@@ -21,9 +21,6 @@ const (
 	// maxStageAgeDays is the oldest a stage can still be sent.
 	approvalMinAgeDays = 2
 	approvalMaxAgeDays = 8
-	// approvalSlackDays widens the SQL prefilter so the exact tenant-local date
-	// test in Go never loses a record to a UTC-vs-local day boundary.
-	approvalSlackDays = 1
 )
 
 // ApprovalRecord is one record waiting at an approval gate.
@@ -39,7 +36,8 @@ type ApprovalRecord struct {
 
 // approvalSelectSQL builds the shared projection for one spec. Registry names are
 // interpolated only after spec.ident(); every value is a $n parameter ($1 type code,
-// $2 gate status code). Columns: uuid, number, owner email, owner employee id,
+// $2 gate status code). The entry time ignores self-transition history rows
+// (from = to, e.g. a partial sign-off or an edit), which don't restart the clock. Columns: uuid, number, owner email, owner employee id,
 // internal id, entry timestamp (UTC wall clock), deleted, approval status,
 // status code, has configured approvers.
 func (s approvalSpec) approvalSelectSQL() string {
@@ -51,7 +49,8 @@ func (s approvalSpec) approvalSelectSQL() string {
 		"{apr}", s.Cfg.ApproverTable, "{active}", userStatusActive,
 	).Replace(`
 SELECT d.{uuid}::text, COALESCE(d.{num}, ''), COALESCE(u.email, ''), COALESCE(d.{own}, 0), d.{id},
-       COALESCE((SELECT MAX(h.at) FROM {h} h WHERE h.{id} = d.{id} AND h.to_status_id = d.{st}), d.{cr}),
+       COALESCE((SELECT MAX(h.at) FROM {h} h WHERE h.{id} = d.{id} AND h.to_status_id = d.{st}
+         AND h.from_status_id IS DISTINCT FROM h.to_status_id), d.{cr}),
        (d.{del} IS NOT NULL), d.{ap}, rs.record_status_code,
        EXISTS (SELECT 1 FROM {apr} ea WHERE ea.record_type_id = rt.record_type_id
                  AND ea.record_status_id = rs.record_status_id AND ea.is_active)

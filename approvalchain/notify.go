@@ -73,7 +73,14 @@ func NotifyApprovalRequested(ctx context.Context, pool *pgxpool.Pool, ec EventCo
 		return
 	}
 	if len(contacts) == 0 {
-		return
+		contacts, err = orphanedGateContacts(ctx, pool, ec)
+		if err != nil {
+			slog.ErrorContext(ctx, "approvalchain: resolve super admins for orphaned gate failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
+			return
+		}
+		if len(contacts) == 0 {
+			return
+		}
 	}
 	facts, err := fetchFacts(ctx, pool, ec)
 	if err != nil {
@@ -171,6 +178,88 @@ func NotifyCreated(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 		actor.UserID, ec, noteCreated, []contact{actor})
 }
 
+// ActorCreated describes a record that has no approval workflow (a CRM task,
+// an inventory item) whose creator gets a plain confirmation email. Unlike
+// EventContext it carries no table/number facts: the title and body are
+// supplied by the caller.
+type ActorCreated struct {
+	EventType       string // e.g. "crm_activity.created"
+	Resource        string // RBAC resource the bell filter uses, e.g. "crm_activity"
+	RecordUUID      string
+	ActorEmployeeID int
+	Title, Body     string
+}
+
+// NotifyActorCreated best-effort-emails the employee who created a record
+// that has no approval chain. Same failure contract as NotifyCreated: every
+// failure is logged and swallowed, so the create that already committed is
+// never undone by a notify outage.
+func NotifyActorCreated(ctx context.Context, pool *pgxpool.Pool, ev ActorCreated) {
+	tenant, err := tenancy.TenantFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "approvalchain: no tenant in context, skipping created notification", "eventType", ev.EventType, "recordId", ev.RecordUUID)
+		return
+	}
+	actor, ok, err := actorContact(ctx, pool, ev.ActorEmployeeID)
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: resolve actor for created notification failed", "eventType", ev.EventType, "recordId", ev.RecordUUID, "error", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	sendActorCreated(ctx, tenant.ID, actor, actor.UserID, ev)
+}
+
+// NotifyOwnerCreated best-effort-emails the owner of a record (the employee in
+// ownerColumn) that the record was created without them as the actor -- e.g. a
+// customer's portal order-form submission. A record with no owner is logged
+// and skipped rather than guessing a recipient. Same failure contract as
+// NotifyActorCreated.
+func NotifyOwnerCreated(ctx context.Context, pool *pgxpool.Pool, table, idColumn, ownerColumn string, internalID int, ev ActorCreated) {
+	tenant, err := tenancy.TenantFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "approvalchain: no tenant in context, skipping owner created notification", "eventType", ev.EventType, "recordId", ev.RecordUUID)
+		return
+	}
+	owner, ok, err := ownerContact(ctx, pool, table, idColumn, ownerColumn, internalID)
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: resolve owner for created notification failed", "eventType", ev.EventType, "recordId", ev.RecordUUID, "error", err)
+		return
+	}
+	if !ok {
+		slog.WarnContext(ctx, "approvalchain: record has no owner, created notification skipped", "eventType", ev.EventType, "recordId", ev.RecordUUID)
+		return
+	}
+	sendActorCreated(ctx, tenant.ID, owner, "", ev)
+}
+
+// sendActorCreated sends one created-event email to recipient. actorUserID is
+// who performed the create ("" when no staff member did, e.g. a portal submit).
+func sendActorCreated(ctx context.Context, tenantID string, recipient contact, actorUserID string, ev ActorCreated) {
+	err := services.SendNotification(ctx, buildActorCreatedRequest(tenantID, recipient, actorUserID, ev))
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: send created notification failed", "eventType", ev.EventType, "recordId", ev.RecordUUID, "error", err)
+	}
+}
+
+// buildActorCreatedRequest is the Notify request for a created-event email:
+// one email-channel recipient, the record as the resource, and no approval
+// facts. Pure, so the wire shape is testable without Notify.
+func buildActorCreatedRequest(tenantID string, recipient contact, actorUserID string, ev ActorCreated) services.NotificationRequest {
+	return services.NotificationRequest{
+		TenantID:    tenantID,
+		Recipients:  contactsToRecipients([]contact{recipient}),
+		ActorUserID: actorUserID,
+		EventType:   ev.EventType,
+		Resource:    ev.Resource,
+		ResourceID:  ev.RecordUUID,
+		Title:       ev.Title,
+		Body:        ev.Body,
+		Channels:    []string{"email"},
+	}
+}
+
 func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, eventType string, note approvalNote) {
 	if ec.DisplayName == "" {
 		return
@@ -198,17 +287,16 @@ func notifyOwner(ctx context.Context, pool *pgxpool.Pool, ec EventContext, event
 }
 
 // activeApproverContacts resolves every active approver configured on
-// approverTable at (recordTypeID, statusID) into notifiable contacts.
+// approverTable at (recordTypeID, statusID) into notifiable contacts,
+// skipping deactivated users and deleted employees (LiveApproverJoin).
 // Mirrors GetInfo's own approver join, but selects u.identity_id (the id
 // stonesuite-notify scopes by, see the contact type) plus u.email.
 func activeApproverContacts(ctx context.Context, q workflow.Querier, approverTable string, recordTypeID, statusID int) ([]contact, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`
 		SELECT u.identity_id, u.email, u.full_name
-		FROM %s ea
-		JOIN employee e ON e.employee_id = ea.approver_employee_id
-		JOIN users u ON u.id = e.employee_user_id
+		FROM %s ea %s
 		WHERE ea.record_type_id = $1 AND ea.record_status_id = $2 AND ea.is_active`,
-		approverTable), recordTypeID, statusID)
+		approverTable, LiveApproverJoin), recordTypeID, statusID)
 	if err != nil {
 		return nil, fmt.Errorf("load active approvers from %s: %w", approverTable, err)
 	}
@@ -216,22 +304,54 @@ func activeApproverContacts(ctx context.Context, q workflow.Querier, approverTab
 	return scanContacts(rows)
 }
 
-// remainingApproverContacts resolves active approvers at (recordTypeID,
+// remainingApproverContacts resolves live active approvers at (recordTypeID,
 // statusID) who have not yet signed off on internalID's current round.
 func remainingApproverContacts(ctx context.Context, q workflow.Querier, approverTable, approvalTable, idColumn string, recordTypeID, statusID, internalID int) ([]contact, error) {
 	rows, err := q.Query(ctx, fmt.Sprintf(`
 		SELECT u.identity_id, u.email, u.full_name
-		FROM %s ea
-		JOIN employee e ON e.employee_id = ea.approver_employee_id
-		JOIN users u ON u.id = e.employee_user_id
+		FROM %s ea %s
 		WHERE ea.record_type_id = $1 AND ea.record_status_id = $2 AND ea.is_active
 			AND NOT EXISTS (
 				SELECT 1 FROM %s ap
 				WHERE ap.%s = $3 AND ap.record_status_id = $2 AND ap.approver_employee_id = ea.approver_employee_id
-			)`, approverTable, approvalTable, idColumn),
+			)`, approverTable, LiveApproverJoin, approvalTable, idColumn),
 		recordTypeID, statusID, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load remaining approvers from %s: %w", approverTable, err)
+	}
+	defer rows.Close()
+	return scanContacts(rows)
+}
+
+// orphanedGateContacts resolves who to notify when a gated status has no live
+// approver left to ask: if the gate is orphaned (configured approvers exist
+// but all were deactivated or deleted), every active super admin -- the only
+// role that can still clear it via override. Returns nil otherwise.
+func orphanedGateContacts(ctx context.Context, q workflow.Querier, ec EventContext) ([]contact, error) {
+	configured, live, err := approverCounts(ctx, q, ec.ApproverTable, ec.RecordTypeID, ec.StatusID)
+	if err != nil {
+		return nil, err
+	}
+	if !IsOrphaned(configured, live) {
+		return nil, nil
+	}
+	slog.WarnContext(ctx, "approvalchain: gate has no active approvers, notifying super admins",
+		"resource", ec.Resource, "recordId", ec.RecordUUID, "recordTypeId", ec.RecordTypeID, "statusId", ec.StatusID)
+	return superAdminContacts(ctx, q)
+}
+
+// superAdminContacts resolves every active super admin into notifiable
+// contacts (same role filter as userstore.CountActiveSuperAdmins, but
+// strictly status = 'active').
+func superAdminContacts(ctx context.Context, q workflow.Querier) ([]contact, error) {
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT u.identity_id, u.email, u.full_name
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles r ON r.id = ur.role_id
+		WHERE r.key = 'super_admin' AND u.status = 'active'`)
+	if err != nil {
+		return nil, fmt.Errorf("load super admins: %w", err)
 	}
 	defer rows.Close()
 	return scanContacts(rows)
@@ -288,6 +408,7 @@ func actorContact(ctx context.Context, q workflow.Querier, actorEmployeeID int) 
 		JOIN users u ON u.id = e.employee_user_id
 		WHERE e.employee_id = $1`, actorEmployeeID).Scan(&c.UserID, &c.Email, &c.Name)
 	if errors.Is(err, pgx.ErrNoRows) {
+		slog.WarnContext(ctx, "approvalchain: actor has no linked user, created notification skipped", "employeeId", actorEmployeeID)
 		return contact{}, false, nil
 	}
 	if err != nil {

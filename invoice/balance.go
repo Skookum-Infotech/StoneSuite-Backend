@@ -92,13 +92,44 @@ func LockForUpdateByID(ctx context.Context, tx pgx.Tx, internalID int) (Locked, 
 	return l, nil
 }
 
+// statusVoid is the terminal void status code. Re-derivation never leaves it.
+const statusVoid = "VOID"
+
+// rowQuerier is satisfied by both *pgxpool.Pool and pgx.Tx.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// liveSettlementCounts returns the live payment and credit-memo application
+// counts against an invoice -- the settlement that blocks deleting or voiding it.
+func liveSettlementCounts(ctx context.Context, q rowQuerier, internalID int) (payments, credits int, err error) {
+	if err := q.QueryRow(ctx,
+		`SELECT COUNT(*) FROM payment_application WHERE invoice_id = $1 AND application_deleted_at IS NULL`,
+		internalID).Scan(&payments); err != nil {
+		return 0, 0, fmt.Errorf("count live payment applications: %w", err)
+	}
+	if err := q.QueryRow(ctx,
+		`SELECT COUNT(*) FROM credit_memo_application WHERE invoice_id = $1 AND application_deleted_at IS NULL`,
+		internalID).Scan(&credits); err != nil {
+		return 0, 0, fmt.Errorf("count live credit applications: %w", err)
+	}
+	return payments, credits, nil
+}
+
 // DeriveStatus re-derives an invoice's status purely from what has been settled
 // against it, where settled = amount_paid + credit_total.
 //
 // This intentionally does NOT go through CanTransition: that map is for
 // user-directed transitions and has no path back out of PAID, or from PART to
 // SENT -- moves an Unapply legitimately needs.
+//
+// VOID is terminal: re-derivation never takes an invoice out of it, even when
+// an unapply/uncredit later changes the settled amount (the rollup columns
+// still update; only the status is frozen).
 func DeriveStatus(currentCode string, settled, grandTotal float64) string {
+	if currentCode == statusVoid {
+		return statusVoid
+	}
 	balanceDue := grandTotal - settled
 	switch {
 	case balanceDue <= 0.005:

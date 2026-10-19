@@ -48,14 +48,9 @@ var ErrApprovalNotRequired = errors.New("this quote's current status does not re
 // activeApproverCount returns how many active approvers are configured for
 // the QUOT record type at a status. Zero means no approval gate there (AD-8).
 func activeApproverCount(ctx context.Context, q workflow.Querier, recordTypeID, statusID int) (int, error) {
-	var n int
-	if err := q.QueryRow(ctx, `
-		SELECT COUNT(*) FROM quote_approver
-		WHERE record_type_id = $1 AND record_status_id = $2 AND is_active`,
-		recordTypeID, statusID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count quote approvers: %w", err)
-	}
-	return n, nil
+	// Shared with approvalchain so deactivated users / deleted employees are
+	// excluded and an orphaned gate fails closed (RequiredApprovals).
+	return approvalchain.ActiveApproverCount(ctx, q, "quote_approver", recordTypeID, statusID)
 }
 
 // signOffCount returns how many distinct approvers have signed off on an
@@ -66,7 +61,7 @@ func signOffCount(ctx context.Context, q workflow.Querier, recordTypeID, quoteIn
 	if err := q.QueryRow(ctx, `
 		SELECT COUNT(*) FROM quote_approval ap
 		WHERE ap.quote_id = $1 AND ap.record_status_id = $2
-		  AND EXISTS(SELECT 1 FROM quote_approver ea
+		  AND EXISTS(SELECT 1 FROM quote_approver ea `+approvalchain.LiveApproverJoin+`
 			WHERE ea.record_type_id = $3 AND ea.record_status_id = ap.record_status_id
 			  AND ea.approver_employee_id = ap.approver_employee_id AND ea.is_active)`,
 		quoteInternalID, statusID, recordTypeID).Scan(&n); err != nil {
@@ -78,14 +73,7 @@ func signOffCount(ctx context.Context, q workflow.Querier, recordTypeID, quoteIn
 // isConfiguredApprover reports whether an employee is an active configured
 // approver for the QUOT record type at a status.
 func isConfiguredApprover(ctx context.Context, q workflow.Querier, recordTypeID, statusID, employeeID int) (bool, error) {
-	var exists bool
-	if err := q.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM quote_approver
-			WHERE record_type_id = $1 AND record_status_id = $2 AND approver_employee_id = $3 AND is_active)`,
-		recordTypeID, statusID, employeeID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("check quote approver: %w", err)
-	}
-	return exists, nil
+	return approvalchain.IsConfiguredApprover(ctx, q, "quote_approver", recordTypeID, statusID, employeeID)
 }
 
 // Approve records one approver's sign-off on a quote at its current status
@@ -263,6 +251,9 @@ type ApprovalInfo struct {
 	// the status the rejection sent it back to (Draft). Gated is false there, yet
 	// the page still shows why.
 	Rejection *approvalchain.RejectionInfo `json:"rejection,omitempty"`
+	// Orphaned: every configured approver was deactivated or deleted; only a
+	// super admin override can clear the gate (see approvalchain.ApprovalInfo).
+	Orphaned bool `json:"orphaned"`
 }
 
 // GetApprovalInfo resolves ApprovalInfo for a quote. Returns Gated: false
@@ -292,10 +283,11 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 		return ApprovalInfo{}, err
 	}
 
-	required, err := activeApproverCount(ctx, pool, recordTypeID, curStatusID)
+	configured, live, err := approvalchain.ApproverCounts(ctx, pool, "quote_approver", recordTypeID, curStatusID)
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
+	required := approvalchain.RequiredApprovals(configured, live)
 	if required == 0 || approvalStatus == approvalApproved {
 		return ApprovalInfo{Gated: false, Rejection: rejection}, nil
 	}
@@ -304,10 +296,8 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 		SELECT e.employee_id, COALESCE(NULLIF(u.full_name,''), u.email),
 			EXISTS(SELECT 1 FROM quote_approval qap
 				WHERE qap.quote_id = $3 AND qap.record_status_id = $2 AND qap.approver_employee_id = e.employee_id)
-		FROM quote_approver qa
-		JOIN employee e ON e.employee_id = qa.approver_employee_id
-		JOIN users u ON u.id = e.employee_user_id
-		WHERE qa.record_type_id = $1 AND qa.record_status_id = $2 AND qa.is_active
+		FROM quote_approver ea `+approvalchain.LiveApproverJoin+`
+		WHERE ea.record_type_id = $1 AND ea.record_status_id = $2 AND ea.is_active
 		ORDER BY 2`, recordTypeID, curStatusID, internalID)
 	if err != nil {
 		return ApprovalInfo{}, fmt.Errorf("load quote approvers: %w", err)
@@ -344,6 +334,7 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 		Approvers:             approvers,
 		RequiredApprovals:     required,
 		ApprovedCount:         approvedCount,
+		Orphaned:              approvalchain.IsOrphaned(configured, live),
 		CanApprove:            isApprover || callerIsSuperAdmin,
 		IsOverride:            !isApprover && callerIsSuperAdmin,
 		CallerAlreadyApproved: callerAlreadyApproved,

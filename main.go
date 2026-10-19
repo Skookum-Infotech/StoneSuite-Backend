@@ -277,7 +277,7 @@ func main() {
 			// on a ticker so record writes become fresh vectors within seconds
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
-			workflow.SetAuditObserver(ragAuditObserver)
+			workflow.RegisterAuditObserver(ragAuditObserver)
 			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
@@ -355,9 +355,19 @@ func main() {
 			automationTZ, _ = time.LoadLocation(tz)
 		}
 		automationRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.1, 5)
+		// Platform-wide on/off (default off): the tick re-checks it here as a
+		// backstop; the Worker normally never calls while it is off (KV mirror).
+		automationSwitch := automation.NewPlatformStore(cp.Pool())
+		automationKV := automation.NewKVMirror(config.AppConfig.CloudflareAccountID,
+			config.AppConfig.AutomationKVAPIToken, config.AppConfig.AutomationKVNamespaceID)
 		automationOps := controllers.NewAutomationOps(
 			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs()...),
+			automationSwitch, automationKV,
 			config.AppConfig.AutomationTickSecret)
+		automationPlatformOps := controllers.NewAutomationPlatformOps(cp, automationSwitch, automationKV,
+			config.AppConfig.IsProduction())
+		mux.Handle("GET /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Get)))
+		mux.Handle("PUT /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Update)))
 		mux.Handle("POST /api/internal/automation/tick", automationRateLimiter.PerIPFunc(automationOps.Tick))
 		// Public: tenant-scoped login + password recovery. All credential-checking
 		// endpoints sit behind the per-IP rate limiter to blunt brute-force and

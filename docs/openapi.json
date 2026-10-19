@@ -1255,6 +1255,66 @@
         ]
       }
     },
+    "/api/platform/automation": {
+      "get": {
+        "operationId": "get_platform_automation",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "automationPlatformOps.Get",
+        "tags": [
+          "platform"
+        ]
+      },
+      "put": {
+        "operationId": "put_platform_automation",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "automationPlatformOps.Update",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/platform/feedback": {
       "get": {
         "operationId": "get_platform_feedback",

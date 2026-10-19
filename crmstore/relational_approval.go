@@ -29,6 +29,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/workflow"
 )
 
@@ -117,6 +118,9 @@ type ApprovalInfo struct {
 	RejectedByName  string     `json:"rejectedByName,omitempty"`
 	RejectedAt      *time.Time `json:"rejectedAt,omitempty"`
 	RejectionReason string     `json:"rejectionReason,omitempty"`
+	// Orphaned: every configured approver was deactivated or deleted; only a
+	// super admin override can clear the gate (see approvalchain.ApprovalInfo).
+	Orphaned bool `json:"orphaned"`
 }
 
 // GetApprovalInfo resolves ApprovalInfo for a record from callerIdentityID's
@@ -131,14 +135,16 @@ func (s *relationalStore) GetApprovalInfo(ctx context.Context, pool *pgxpool.Poo
 	status, _ := rec.CoreFields["approval_status"].(string)
 	info := ApprovalInfo{Status: status}
 
-	required, err := s.activeApproverCount(ctx, pool, id)
+	configured, live, err := s.approverCounts(ctx, pool, id)
 	if err != nil {
 		return ApprovalInfo{}, err
 	}
+	required := approvalchain.RequiredApprovals(configured, live)
 	if required == 0 {
 		return info, nil
 	}
 	info.RequiredApprovals = required
+	info.Orphaned = approvalchain.IsOrphaned(configured, live)
 	info.Gated = status == StatusPending || status == StatusRejected
 
 	if status == StatusRejected {
@@ -162,8 +168,8 @@ func (s *relationalStore) GetApprovalInfo(ctx context.Context, pool *pgxpool.Poo
 		       )
 		FROM crm_workflow_approver a
 		JOIN customer c ON c.record_type = a.record_type_id
-		JOIN employee e ON e.employee_id = a.approver_employee_id
-		JOIN users u ON u.id = e.employee_user_id
+		JOIN employee e ON e.employee_id = a.approver_employee_id AND e.employee_deleted_at IS NULL
+		JOIN users u ON u.id = e.employee_user_id AND u.status = 'active'
 		WHERE c.customer_uuid = $1 AND a.is_active AND a.crm_status_id IS NULL
 		ORDER BY 2`, id)
 	if err != nil {
@@ -376,6 +382,8 @@ func (s *relationalStore) PendingApprovals(ctx context.Context, pool *pgxpool.Po
 		  AND c.customer_approval_status = 'pending'
 		  AND EXISTS (
 			SELECT 1 FROM crm_workflow_approver a
+			JOIN employee le ON le.employee_id = a.approver_employee_id AND le.employee_deleted_at IS NULL
+			JOIN users lu ON lu.id = le.employee_user_id AND lu.status = 'active'
 			WHERE a.record_type_id = c.record_type AND a.approver_employee_id = $1
 			  AND a.is_active AND a.crm_status_id IS NULL
 		  )
@@ -424,16 +432,16 @@ func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool
 // record row exists yet to key off (CreateRecord, ConvertRecord's new
 // record). activeApproverCount below is the record-in-hand equivalent.
 func (s *relationalStore) requiredApproversForType(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) (int, error) {
-	var n int
+	var configured, live int
 	err := pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT a.approver_employee_id) FROM crm_workflow_approver a
-		JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id
+		SELECT `+crmApproverCountCols+` FROM crm_workflow_approver a
+		JOIN lkp_record_type rt ON rt.record_type_id = a.record_type_id`+crmLiveApproverLeftJoin+`
 		WHERE rt.record_type_code = $1 AND a.is_active AND a.crm_status_id IS NULL`,
-		recordTypeCode).Scan(&n)
+		recordTypeCode).Scan(&configured, &live)
 	if err != nil {
 		return 0, fmt.Errorf("count required approvers: %w", err)
 	}
-	return n, nil
+	return approvalchain.RequiredApprovals(configured, live), nil
 }
 
 // isConfiguredApprover reports whether empID is configured (and active) as a
@@ -444,6 +452,8 @@ func (s *relationalStore) isConfiguredApprover(ctx context.Context, pool *pgxpoo
 		SELECT EXISTS (
 			SELECT 1 FROM crm_workflow_approver a
 			JOIN customer r ON r.customer_uuid = $1
+			JOIN employee le ON le.employee_id = a.approver_employee_id AND le.employee_deleted_at IS NULL
+			JOIN users lu ON lu.id = le.employee_user_id AND lu.status = 'active'
 			WHERE a.record_type_id = r.record_type
 			  AND a.approver_employee_id = $2 AND a.is_active AND a.crm_status_id IS NULL
 		)`, id, empID).Scan(&allowed)
@@ -458,16 +468,37 @@ func (s *relationalStore) isConfiguredApprover(ctx context.Context, pool *pgxpoo
 // approvals required to finalize it, and the live "is this gated at all"
 // signal every gate check uses instead of the stored approval-status column.
 func (s *relationalStore) activeApproverCount(ctx context.Context, pool *pgxpool.Pool, id string) (int, error) {
-	var count int
-	err := pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT a.approver_employee_id) FROM crm_workflow_approver a
-		JOIN customer r ON r.customer_uuid = $1
-		WHERE a.record_type_id = r.record_type AND a.is_active AND a.crm_status_id IS NULL
-	`, id).Scan(&count)
+	configured, live, err := s.approverCounts(ctx, pool, id)
 	if err != nil {
-		return 0, fmt.Errorf("count active approvers: %w", err)
+		return 0, err
 	}
-	return count, nil
+	return approvalchain.RequiredApprovals(configured, live), nil
+}
+
+// crmApproverCountCols / crmLiveApproverLeftJoin count configured (wildcard)
+// approvers and, of those, the live ones -- user not deactivated, employee
+// not deleted. Same rule as approvalchain.LiveApproverJoin, for the CRM
+// approver table's "a" alias.
+const (
+	crmApproverCountCols = `COUNT(DISTINCT a.approver_employee_id),
+		COUNT(DISTINCT a.approver_employee_id) FILTER (WHERE lu.id IS NOT NULL)`
+	crmLiveApproverLeftJoin = `
+		LEFT JOIN employee le ON le.employee_id = a.approver_employee_id AND le.employee_deleted_at IS NULL
+		LEFT JOIN users lu ON lu.id = le.employee_user_id AND lu.status = 'active'`
+)
+
+// approverCounts returns record id's configured and live approver counts;
+// see approvalchain.RequiredApprovals for how they become a requirement.
+func (s *relationalStore) approverCounts(ctx context.Context, pool *pgxpool.Pool, id string) (configured, live int, err error) {
+	err = pool.QueryRow(ctx, `
+		SELECT `+crmApproverCountCols+` FROM crm_workflow_approver a
+		JOIN customer r ON r.customer_uuid = $1`+crmLiveApproverLeftJoin+`
+		WHERE a.record_type_id = r.record_type AND a.is_active AND a.crm_status_id IS NULL
+	`, id).Scan(&configured, &live)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count active approvers: %w", err)
+	}
+	return configured, live, nil
 }
 
 // approvalCount reports how many distinct approvers have already signed off
@@ -480,6 +511,8 @@ func (s *relationalStore) approvalCount(ctx context.Context, pool *pgxpool.Pool,
 		WHERE c.customer_uuid = $1
 		  AND EXISTS (
 			SELECT 1 FROM crm_workflow_approver a
+			JOIN employee le ON le.employee_id = a.approver_employee_id AND le.employee_deleted_at IS NULL
+			JOIN users lu ON lu.id = le.employee_user_id AND lu.status = 'active'
 			WHERE a.record_type_id = c.record_type
 			  AND a.approver_employee_id = ca.approver_employee_id
 			  AND a.is_active AND a.crm_status_id IS NULL

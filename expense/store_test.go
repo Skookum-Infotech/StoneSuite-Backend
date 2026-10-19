@@ -245,6 +245,7 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'SUBM'`, recordTypeID).Scan(&submStatusID); err != nil {
 		t.Fatalf("resolve SUBM status: %v", err)
 	}
+	ensureLiveApprover(t, pool, 1)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO expense_approver (record_type_id, record_status_id, approver_employee_id)
 		VALUES ($1, $2, 1) ON CONFLICT DO NOTHING`, recordTypeID, submStatusID); err != nil {
@@ -353,6 +354,7 @@ func TestReject_RequiresConfiguredApproverWhenConfigured(t *testing.T) {
 		t.Fatalf("resolve SUBM status: %v", err)
 	}
 	// Configure employee 1 as the only approver -- any other employee id must be rejected.
+	ensureLiveApprover(t, pool, 1)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO expense_approver (record_type_id, record_status_id, approver_employee_id)
 		VALUES ($1, $2, 1) ON CONFLICT DO NOTHING`, recordTypeID, submStatusID); err != nil {

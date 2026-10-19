@@ -33,6 +33,10 @@ const (
 	ResourceCompanyProfile Resource = "company_profile" // tenant's own company name/address (Configuration -> Company Info)
 	ResourceAudit          Resource = "audit"           // audit log
 
+	// ResourceAutomation governs automation rules (reminders, escalations),
+	// their delivery log and the tenant kill switch.
+	ResourceAutomation Resource = "automation"
+
 	// ResourceDashboardWidget covers which dashboard widgets each role's
 	// members may see (role_dashboard_widgets) -- separate from ResourceRole
 	// so a tenant can delegate dashboard curation without handing out full
@@ -435,6 +439,11 @@ var catalog = []Permission{
 
 	{ResourceDashboardWidget, ActionRead},
 	{ResourceDashboardWidget, ActionConfigure},
+
+	{ResourceAutomation, ActionRead},
+	{ResourceAutomation, ActionCreate},
+	{ResourceAutomation, ActionUpdate},
+	{ResourceAutomation, ActionDelete},
 
 	{ResourceAudit, ActionRead},
 

@@ -1,9 +1,12 @@
 package controllers
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 
 	"stonesuite-backend/config"
@@ -45,4 +48,28 @@ func TestBuildCustomerApprovedNotification(t *testing.T) {
 	assert.Contains(t, mustEmailHTML(t, req), ">Sep 16, 2026<")
 	assert.Contains(t, mustEmailHTML(t, req), "View invoice", "button label")
 	assert.Contains(t, mustEmailHTML(t, req), `href="https://app.example.com/sales/invoice/rec-1"`)
+}
+
+// TestCustomerOptedOut guards that the approval email honors the customer's
+// Do Not Contact flag and fails closed when the flag can't be read.
+func TestCustomerOptedOut(t *testing.T) {
+	cases := []struct {
+		name      string
+		dnc       bool
+		lookupErr error
+		want      bool
+	}{
+		{"customer may be contacted", false, nil, false},
+		{"customer flagged do not contact", true, nil, true},
+		{"lookup failure skips the email", false, errors.New("db down"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lookup := func(_ context.Context, _ *pgxpool.Pool, id string) (bool, error) {
+				assert.Equal(t, "cust-1", id)
+				return tc.dnc, tc.lookupErr
+			}
+			assert.Equal(t, tc.want, customerOptedOut(context.Background(), lookup, nil, "cust-1", "invoice", "rec-1"))
+		})
+	}
 }

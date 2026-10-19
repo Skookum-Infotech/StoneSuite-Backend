@@ -70,6 +70,9 @@ type jobRunner struct {
 	tenantID string
 }
 
+// errNotYetQueued means the job was claimed before POST /start marked its row queued.
+var errNotYetQueued = errors.New("extraction not yet marked queued")
+
 // classifyExtractError maps a docextract failure to an outcome: an input
 // error can never succeed on retry, anything else (cancellation, ...) can.
 func classifyExtractError(err error) outcome {
@@ -107,6 +110,12 @@ func (j *jobRunner) process(ctx context.Context, extractionID string) (out outco
 	}
 	if err != nil {
 		return retry(err)
+	}
+	// POST /start enqueues before it marks the row queued, so a fast claim can
+	// land in between. Skipping here would succeed the job and strand the row
+	// in queued; retrying re-claims it once the row has caught up.
+	if ex.Status == StatusAwaitingUpload && ex.ExpiresAt.After(time.Now()) {
+		return retry(errNotYetQueued)
 	}
 	if (ex.Status != StatusQueued && ex.Status != StatusRunning) || !ex.ExpiresAt.After(time.Now()) {
 		return outcome{kind: outcomeSkipped, method: methodNone}

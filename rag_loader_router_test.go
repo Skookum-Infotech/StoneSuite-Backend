@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"stonesuite-backend/workflow"
 )
 
 // execRecorder is a workflow.Querier that records Exec args; the observer only
@@ -35,7 +37,7 @@ func TestRagAuditObserver(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := &execRecorder{}
-			ragAuditObserver(context.Background(), rec, tt.action, tt.resource, tt.id)
+			ragAuditObserver(context.Background(), rec, workflow.AuditEvent{Action: tt.action, Resource: tt.resource, ResourceID: tt.id})
 			if tt.wantOp == "" {
 				assert.Empty(t, rec.calls)
 				return

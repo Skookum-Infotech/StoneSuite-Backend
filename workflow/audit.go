@@ -4,26 +4,68 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync/atomic"
 )
 
+// AuditEvent describes one audit row LogAuditFull wrote.
+type AuditEvent struct {
+	Action      string
+	Resource    string
+	ResourceID  string
+	ActorUserID string // may be empty (several human write paths pass ""); the automation loop guard must use automation.IsSystemActor(ctx), never an empty actor
+}
+
 // AuditObserver is told about every audit row LogAuditFull writes, after the
 // insert succeeded. It is how one write hook re-indexes every module for the
-// AI assistant without each module's controller knowing about RAG. It must be
-// best-effort and never panic: the primary operation has already committed.
-type AuditObserver func(ctx context.Context, q Querier, action, resource, resourceID string)
+// AI assistant (and feeds the automation outbox) without each module's
+// controller knowing about either. It must be best-effort: the primary
+// operation has already committed. A panic is recovered and logged.
+type AuditObserver func(ctx context.Context, q Querier, ev AuditEvent)
 
-var auditObserver atomic.Pointer[AuditObserver]
+// auditObservers is copy-on-write so LogAuditFull never takes a lock.
+var auditObservers atomic.Pointer[[]AuditObserver]
 
-// SetAuditObserver installs the observer once at boot, before the server takes
-// traffic (nil clears it). It is process-wide because audit writes carry no
-// dependency-injection seam.
-func SetAuditObserver(o AuditObserver) {
+// RegisterAuditObserver adds an observer at boot, before the server takes
+// traffic. It is process-wide because audit writes carry no
+// dependency-injection seam. A nil observer is ignored.
+func RegisterAuditObserver(o AuditObserver) {
 	if o == nil {
-		auditObserver.Store(nil)
 		return
 	}
-	auditObserver.Store(&o)
+	for {
+		old := auditObservers.Load()
+		var next []AuditObserver
+		if old != nil {
+			next = append(next, *old...)
+		}
+		next = append(next, o)
+		if auditObservers.CompareAndSwap(old, &next) {
+			return
+		}
+	}
+}
+
+// resetAuditObservers clears the registry; tests only.
+func resetAuditObservers() { auditObservers.Store(nil) }
+
+// notifyAuditObservers runs every observer, isolating panics so one
+// misbehaving observer cannot starve the others or fail the write.
+func notifyAuditObservers(ctx context.Context, q Querier, ev AuditEvent) {
+	obs := auditObservers.Load()
+	if obs == nil {
+		return
+	}
+	for _, o := range *obs {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("audit observer panicked", "panic", r, "resource", ev.Resource, "action", ev.Action)
+				}
+			}()
+			o(ctx, q, ev)
+		}()
+	}
 }
 
 // LogAuditFull writes one enriched row to the unified audit_logs table (the
@@ -68,8 +110,8 @@ func LogAuditFull(
 	if err != nil {
 		return fmt.Errorf("log audit (full): %w", err)
 	}
-	if o := auditObserver.Load(); o != nil {
-		(*o)(ctx, q, action, resource, resourceID)
-	}
+	notifyAuditObservers(ctx, q, AuditEvent{
+		Action: action, Resource: resource, ResourceID: resourceID, ActorUserID: actorUserID,
+	})
 	return nil
 }

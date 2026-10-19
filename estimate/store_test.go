@@ -176,6 +176,7 @@ func TestTransition_DraftToPendingApproval(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'PAPV'`, recordTypeID).Scan(&papvStatusID); err != nil {
 		t.Fatalf("resolve PAPV status: %v", err)
 	}
+	ensureLiveApprover(t, pool, 1)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO estimate_approver (record_type_id, record_status_id, approver_employee_id)
 		VALUES ($1, $2, 1) ON CONFLICT DO NOTHING`, recordTypeID, papvStatusID); err != nil {
@@ -304,6 +305,7 @@ func TestTransition_DraftStraightToSent_WhenNoApprovers(t *testing.T) {
 	}
 	// Once an approver is configured again, the collapse is gone: Draft
 	// offers the checkpoint itself and a direct move to Sent is illegal.
+	ensureLiveApprover(t, pool, 1)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO estimate_approver (record_type_id, record_status_id, approver_employee_id)
 		VALUES ($1, $2, 1) ON CONFLICT DO NOTHING`, recordTypeID, papvStatusID); err != nil {
@@ -352,6 +354,7 @@ func TestApprove_SignOffFlipsApprovalStatus(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT record_status_id FROM lkp_record_status WHERE record_status_record_type = $1 AND record_status_code = 'PAPV'`, recordTypeID).Scan(&papvStatusID); err != nil {
 		t.Fatalf("resolve PAPV status: %v", err)
 	}
+	ensureLiveApprover(t, pool, 1)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO estimate_approver (record_type_id, record_status_id, approver_employee_id)
 		VALUES ($1, $2, 1) ON CONFLICT DO NOTHING`, recordTypeID, papvStatusID); err != nil {

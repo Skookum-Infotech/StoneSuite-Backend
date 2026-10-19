@@ -7,8 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"stonesuite-backend/services"
 )
 
 func TestRenderARDigest(t *testing.T) {
@@ -74,7 +72,6 @@ func TestRenderARDigestWording(t *testing.T) {
 	}
 	assert.NotContains(t, strings.ToLower(all.String()), "offer")
 	assert.Contains(t, all.String(), "from us")
-	var _ services.Email = e
 }
 
 func TestDefaultJobsIncludesARDunning(t *testing.T) {

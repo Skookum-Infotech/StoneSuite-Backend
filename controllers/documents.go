@@ -81,6 +81,9 @@ type DocumentOps struct {
 	// linkTenants / linkPool back DownloadByLink (see WithPublicDownload).
 	linkTenants docLinkTenants
 	linkPool    func(context.Context, *tenancy.Tenant) (*pgxpool.Pool, error)
+	// threads routes a customer's reply to a record's Communication tab; nil
+	// leaves sends unchanged (see WithRecordEmail).
+	threads recordThreads
 }
 
 // NewDocumentOps constructs the handler group. sendDisabled and r2 may both

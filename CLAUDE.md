@@ -176,6 +176,13 @@ separate deployed service, `stonesuite-notify` (its own repo, shares this app's
    ids on the domain row (`SendNotificationWithResult` + a `notify_notification_ids TEXT[]`
    column) so a "did it actually arrive?" reconciliation is possible — `controllers/user.go`
    `InviteUser` and `controllers/documents.go` `Send` are the reference.
+6. **This backend never talks to Resend — inbound included.** A customer's reply to a record
+   email (Communication tab) is received by Resend, whose `email.received` event goes to
+   `stonesuite-notify`'s `POST /api/webhooks/resend`; notify fetches the mail and forwards it to
+   `POST /api/internal/email/inbound` (HMAC-signed with `NOTIFY_API_KEY`, verified by
+   `middleware.VerifyInternalSignature` + `ReplayGuard`). Don't add `RESEND_API_KEY`, a Resend
+   SDK/HTTP client or a Svix verifier here. `REPLY_EMAIL_DOMAIN` must equal notify's value —
+   notify uses it to decide which received mail to forward.
 
 ### Global Search (`globalsearch/` + `GET /api/tenant/search`)
 Cross-module search fans a term out to every registered provider in parallel, each

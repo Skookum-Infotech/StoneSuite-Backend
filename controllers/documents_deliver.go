@@ -98,9 +98,11 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 	// instead of a direct, unretried call. The returned notification ids are
 	// stored on the send row so the async delivery outcome can be looked back
 	// up from notify later.
-	notifyResult, err := services.SendNotificationWithResult(ctx,
-		customerSendRequest(p.tenantID, identityID, p.meta, p.recordID, p.subject, p.doc, p.message, p.to, p.cc, fileName, pdf),
-	)
+	sendReq := customerSendRequest(p.tenantID, identityID, p.meta, p.recordID, p.subject, p.doc, p.message, p.to, p.cc, fileName, pdf)
+	// A Sales Order's customer email carries the order's own Reply-To, so the
+	// customer's reply comes back to its Communication tab.
+	sender := h.routeReplies(ctx, pool, &sendReq, p, identityID)
+	notifyResult, err := services.SendNotificationWithResult(ctx, sendReq)
 	if err != nil {
 		slog.WarnContext(ctx, "document send: notify failed",
 			"workflow", p.meta.WorkflowKey, "record", p.recordID, "error", err)
@@ -116,6 +118,7 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 	if err != nil {
 		return "", services.EmailOutcome{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to record send."}
 	}
+	h.recordSent(ctx, pool, p, sendID, sender, sendReq.Email)
 	_ = workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
 		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to})
 

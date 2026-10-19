@@ -9828,3 +9828,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_order_form_area_name
 -- is still a draft; NULL for an order that was never edited.
 ALTER TABLE customer_order_form
     ADD COLUMN IF NOT EXISTS order_form_updated_at TIMESTAMP NULL;
+
+-- ── record_email_message ────────────────────────────────────────────────
+-- The email conversation of one record (today: a Sales Order), shown on its
+-- Communication tab. One row per message: direction 'out' is mail StoneSuite
+-- sent (the Send-to-customer email, or a reply typed into the tab); 'in' is a
+-- customer's reply that arrived on the record's inbound address (see the
+-- control-plane record_email_address). Keyed by record_id with no FK, like
+-- document_sends, so one table serves every document type.
+--
+-- body_text is plain text only: inbound mail has its quoted history stripped and
+-- no HTML is kept, so the tab never renders sender-controlled markup.
+-- provider_email_id is Resend's id of an inbound mail and message_id its RFC
+-- Message-ID; both are unique when set, so a webhook retry cannot add a
+-- message twice.
+CREATE TABLE IF NOT EXISTS record_email_message (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    record_id         UUID        NOT NULL,
+    workflow_key      TEXT        NOT NULL,
+    direction         TEXT        NOT NULL CHECK (direction IN ('in', 'out')),
+    from_name         TEXT        NOT NULL DEFAULT '',
+    from_email        TEXT        NOT NULL DEFAULT '',
+    to_emails         TEXT        NOT NULL DEFAULT '',
+    cc_emails         TEXT        NOT NULL DEFAULT '',
+    subject           TEXT        NOT NULL DEFAULT '',
+    body_text         TEXT        NOT NULL DEFAULT '',
+    message_id        TEXT        NOT NULL DEFAULT '',
+    in_reply_to       TEXT        NOT NULL DEFAULT '',
+    references_header TEXT        NOT NULL DEFAULT '',
+    provider_email_id TEXT        NOT NULL DEFAULT '',
+    attachment_count  INT         NOT NULL DEFAULT 0,
+    sent_by_user_id   UUID        REFERENCES users(id) ON DELETE SET NULL,
+    document_send_id  UUID,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_record_email_message_record
+    ON record_email_message (record_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_provider
+    ON record_email_message (provider_email_id) WHERE provider_email_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_msgid
+    ON record_email_message (record_id, message_id) WHERE message_id <> '';

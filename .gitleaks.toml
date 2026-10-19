@@ -12,12 +12,14 @@ useDefault = true
 #
 # The internal-signature and automation cron-tick tests sign and verify
 # requests with throwaway HMAC keys held in test constants (`secret`,
-# `tickTestSecret`); the same rule flags them, but they are not credentials.
+# `tickTestSecret`, `testInboundSecret`); the same rule flags them, but they are
+# not credentials.
 [allowlist]
-description = "Test fixtures with fake values, not credentials (Chart of Accounts masking; internal signature / cron tick)"
+description = "Test fixtures with fake values, not credentials (Chart of Accounts masking; internal signature / cron tick / inbound email)"
 paths = [
   '''chartofaccounts/masking_test\.go''',
   '''docs/superpowers/plans/2026-07-25-chart-of-accounts\.md''',
   '''middleware/internal_sig_test\.go''',
   '''controllers/automation_test\.go''',
+  '''controllers/record_email_test\.go''',
 ]

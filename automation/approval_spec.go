@@ -22,8 +22,8 @@ type approvalSpec struct {
 }
 
 // approvalSpecs derives one spec per notify-wired module and gate that can be
-// rejected back to an earlier status, ordered by workflow key then gate order.
-// In-place gates are excluded: "pending since" is meaningless for them.
+// rejected (every gate except RejectInPlace ones, so RejectUnsupported gates are
+// included), ordered by workflow key then gate order. In-place gates are excluded: "pending since" is meaningless for them.
 func approvalSpecs() []approvalSpec {
 	keys := approvalchain.Keys()
 	sort.Strings(keys)

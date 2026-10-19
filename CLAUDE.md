@@ -248,14 +248,15 @@ machine after the response).
    drain's internal-recipient path, which honors only the tenant kill switch and ignores the
    external caps and suppression. Eligible documents are `SENT`, not converted, with an active
    user as owner.
-7. **Stuck approvals (`approval_stuck`, `automation/approval_*.go`)** is seeded **disabled**
+7. **Stuck approvals (`approval_stuck`, job `approval_reminders`, `automation/approval_*.go`)** is seeded **disabled**
    with a `+2/+4/+6`-day cadence after the record entered its approval gate (max 3 reminders).
    Covers only notify-wired `approvalchain` registry modules (`DisplayName != ""`) and only
    gates whose `Reject != RejectInPlace`. Each unsigned live approver gets an **internal**
    digest, one per approver per day across all modules; when no unsigned live approver remains
    it falls back to the record owner plus active super admins. The clock restarts when the
    record re-enters the gate (new history row, new anchor). The internal path honours only the
-   kill switch, and the email links in-app (login required), not a public link.
+   kill switch (plus the 08:00–18:00 send window), and the email links in-app (login required),
+   not a public link. The preview endpoint does not support this rule.
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

@@ -18,10 +18,10 @@ const (
 	// approvalEmailReason completes "You're receiving this because ..." for a configured approver.
 	approvalEmailReason = "you are an approver who has not yet signed off on this."
 	// approvalEmailReasonFallback is the variant for owner/super-admin escalations.
-	approvalEmailReasonFallback = "you own this record or are a super admin, and no active approver is configured for it."
+	approvalEmailReasonFallback = "you own this record or are a super admin, and no remaining approver can act on it."
 	approvalActionLabel         = "Open in StoneSuite"
 	approvalTitle               = "Approval reminder"
-	approvalFallbackNote        = "No active approver is configured for at least one of these records, so it has been escalated to its owner and the workspace super admins."
+	approvalFallbackNote        = "No remaining approver can act on at least one of these records, so it has been escalated to its owner and the workspace super admins."
 	// userByEmailSQL resolves the active user a digest group is addressed to.
 	userByEmailSQL = `SELECT id::text FROM users WHERE LOWER(email) = LOWER($1) AND status = $2 ORDER BY id LIMIT 1`
 )

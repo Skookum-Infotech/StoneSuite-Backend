@@ -169,6 +169,11 @@ type PurchaseOrder struct {
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 	Items          []Line    `json:"items,omitempty"`
+	// ReceivedPercent is how far through receiving the order is (0-100, see
+	// ReceivedPercent in receipt_progress.go). Only the list endpoint fills it,
+	// since list rows carry no lines; absent on Get, where the lines are the
+	// source of truth.
+	ReceivedPercent *int `json:"receivedPercent,omitempty"`
 }
 
 // Page is one page of a keyset-paginated purchase order search. List rows

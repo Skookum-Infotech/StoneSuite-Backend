@@ -166,6 +166,10 @@ func (h *PurchaseOrderOps) search(w http.ResponseWriter, r *http.Request, pool *
 		poFail(w, err, "Failed to search purchase orders.")
 		return
 	}
+	if err := purchaseorder.FillReceivedPercent(r.Context(), pool, page.Records); err != nil {
+		poFail(w, err, "Failed to search purchase orders.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
 		"scope":      scope,

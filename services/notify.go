@@ -53,6 +53,18 @@ type NotificationRequest struct {
 	StatusResource string             `json:"statusResource,omitempty"`
 	Channels       []string           `json:"channels,omitempty"`
 	Attachments    []NotifyAttachment `json:"attachments,omitempty"`
+	// Per-message email header overrides, forwarded to notify as-is. A record's
+	// own inbound address as EmailReplyTo makes the customer's reply come back
+	// to that record; EmailFromName shows the rep as the sender; EmailInReplyTo
+	// and EmailReferences keep a reply in its Gmail/Outlook thread.
+	EmailReplyTo    string `json:"emailReplyTo,omitempty"`
+	EmailFromName   string `json:"emailFromName,omitempty"`
+	EmailInReplyTo  string `json:"emailInReplyTo,omitempty"`
+	EmailReferences string `json:"emailReferences,omitempty"`
+	// PlainEmailHTML, when set, is sent verbatim as the email body instead of
+	// the shared branded template — for mail that should read like a person
+	// wrote it (see PlainTextEmailHTML). Overrides Email.
+	PlainEmailHTML string `json:"-"`
 	// Email is the dynamic content of the email delivery. SendNotification
 	// renders it through the one shared template (see RenderEmail) and sends
 	// the result as notify's emailBodyHtml; nil falls back to a default built

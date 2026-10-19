@@ -750,6 +750,32 @@
         ]
       }
     },
+    "/api/internal/email/inbound": {
+      "post": {
+        "operationId": "post_internal_email_inbound",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "recordEmailOps.Inbound",
+        "tags": [
+          "system"
+        ]
+      }
+    },
     "/api/metrics": {
       "get": {
         "operationId": "get_metrics",
@@ -17852,6 +17878,86 @@
           }
         ],
         "summary": "docOps.Sends",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/records/{id}/emails": {
+      "get": {
+        "operationId": "get_tenant_records_id_emails",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "recordEmailOps.List",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_records_id_emails",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "recordEmailOps.Reply",
         "tags": [
           "tenant"
         ]

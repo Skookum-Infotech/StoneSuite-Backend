@@ -210,3 +210,60 @@ func TestSendNotificationWithResult_GreetsEachRecipientByNameAndAggregatesIDs(t 
 	assert.Contains(t, bodies[1]["emailBodyHtml"], ">Hello Bob,<")
 	assert.NotContains(t, bodies[0]["recipients"].([]any)[0], "name", "names never go on the wire")
 }
+
+func TestSendNotification_ForwardsReplyRoutingAndPlainBody(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	err := SendNotification(context.Background(), NotificationRequest{
+		TenantID:        "tenant-1",
+		Recipients:      []RecipientTarget{{Email: "customer@example.com"}},
+		EventType:       "record.email_reply",
+		Resource:        "sales_order",
+		ResourceID:      "so-1",
+		Title:           "Re: Your Sales Order SO-1",
+		Channels:        []string{"email"},
+		PlainEmailHTML:  PlainTextEmailHTML("Friday works.\n\nThanks"),
+		EmailReplyTo:    "r-abcdefghijklmnopqrst@reply.example.com",
+		EmailFromName:   "Harish (Acme Stone)",
+		EmailInReplyTo:  "<cust-1@mail.gmail.com>",
+		EmailReferences: "<cust-1@mail.gmail.com>",
+		// A branded Email is ignored when a plain body is supplied.
+		Email: &Email{Heading: "Branded"},
+	})
+	require.NoError(t, err)
+
+	// Names notify's createNotificationRequest reads.
+	assert.Equal(t, "r-abcdefghijklmnopqrst@reply.example.com", got["emailReplyTo"])
+	assert.Equal(t, "Harish (Acme Stone)", got["emailFromName"])
+	assert.Equal(t, "<cust-1@mail.gmail.com>", got["emailInReplyTo"])
+	assert.Equal(t, "<cust-1@mail.gmail.com>", got["emailReferences"])
+	// The plain body is the one email body sent, with no template chrome.
+	assert.Equal(t, "<div><p>Friday works.</p><p>Thanks</p></div>", got["emailBodyHtml"])
+	// Neither the plain-body field nor the structured Email is sent as such.
+	assert.NotContains(t, got, "PlainEmailHTML")
+	assert.NotContains(t, got, "plainEmailHtml")
+}
+
+func TestSendNotification_OmitsReplyRoutingWhenUnset(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+	config.AppConfig = config.Config{NotifyURL: server.URL, NotifyAPIKey: "nk_dev_test_secret"}
+
+	require.NoError(t, SendNotification(context.Background(), NotificationRequest{
+		TenantID: "tenant-1", Recipients: []RecipientTarget{{UserID: "u1"}},
+		EventType: "document.sent", Resource: "invoice", ResourceID: "inv-1", Title: "sent",
+	}))
+	for _, key := range []string{"emailReplyTo", "emailFromName", "emailInReplyTo", "emailReferences"} {
+		assert.NotContains(t, got, key, "existing callers' payloads must not change")
+	}
+}

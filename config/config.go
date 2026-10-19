@@ -59,6 +59,15 @@ type Config struct {
 	// Notify Service
 	NotifyURL    string
 	NotifyAPIKey string
+	// Record email threads (the Communication tab). ReplyEmailDomain is the
+	// inbound domain Resend receives mail on; every email about a record gets a
+	// Reply-To of r-<token>@<domain> so the customer's reply comes back to that
+	// record. Empty disables the feature (mail goes out unchanged, replies are
+	// not captured). Resend itself is never contacted from here: stonesuite-notify
+	// receives the email.received webhook, fetches the mail and forwards it to
+	// POST /api/internal/email/inbound, signed with NotifyAPIKey. notify needs the
+	// same REPLY_EMAIL_DOMAIN to know which mail to forward.
+	ReplyEmailDomain string
 	// Platform owner seeding: when set and no owner exists on startup, the backend
 	// auto-creates the owner tenant and prints a one-time setup token to stdout.
 	// Read the token from `fly logs`, then POST to /api/platform/activate.
@@ -245,6 +254,8 @@ func Load() {
 		// Notify Service
 		NotifyURL:    getEnv("NOTIFY_URL", "http://localhost:8081"),
 		NotifyAPIKey: getEnv("NOTIFY_API_KEY", ""),
+		// Record email threads
+		ReplyEmailDomain: strings.ToLower(strings.TrimSpace(getEnv("REPLY_EMAIL_DOMAIN", ""))),
 		// Platform owner seeding
 		PlatformAdminEmail:       getEnv("PLATFORM_ADMIN_EMAIL", ""),
 		PlatformAdminSlug:        getEnv("PLATFORM_ADMIN_SLUG", ""),

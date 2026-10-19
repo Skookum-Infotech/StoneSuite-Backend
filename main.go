@@ -42,6 +42,7 @@ import (
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/quote"
+	"stonesuite-backend/recordemail"
 	"stonesuite-backend/salesorder"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/services"
@@ -997,6 +998,29 @@ func main() {
 		mux.Handle("POST /api/tenant/records/{id}/document/send", tenantChain(docOps.Send))
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
 
+		// Communication tab: a record's email conversation. Mail sent about a
+		// Sales Order carries its own Reply-To (r-<token>@REPLY_EMAIL_DOMAIN), so the
+		// customer's reply from Gmail/Outlook is received by Resend, fetched by
+		// stonesuite-notify and forwarded to the internal route below, which files it
+		// under the order. This backend never contacts Resend. Switched off (mail
+		// goes out unchanged) while REPLY_EMAIL_DOMAIN is empty.
+		var replyAddrs *recordemail.AddressStore
+		if cp != nil {
+			replyAddrs = recordemail.NewAddressStore(cp.Pool())
+		}
+		recordEmailOps := controllers.NewRecordEmailOps(replyAddrs, config.AppConfig.ReplyEmailDomain)
+		docOps.WithRecordEmail(recordEmailOps)
+		mux.Handle("GET /api/tenant/records/{id}/emails", tenantChain(recordEmailOps.List))
+		mux.Handle("POST /api/tenant/records/{id}/emails", tenantChain(recordEmailOps.Reply))
+		if cp != nil && tenantRouter != nil {
+			recordEmailOps.WithInbound(config.AppConfig.NotifyAPIKey, cp, tenantRouter.PoolFor)
+			// Machine-only: authenticated by notify's HMAC signature (NOTIFY_API_KEY),
+			// not a login. Its own per-IP limiter so it never shares a bucket with
+			// login traffic.
+			inboundEmailRateLimiter := middleware.NewRateLimiter(shutdownCtx, 1, 10)
+			mux.Handle("POST /api/internal/email/inbound", inboundEmailRateLimiter.PerIPFunc(recordEmailOps.Inbound))
+		}
+
 		// Global search: fans a term out to every module the caller can read
 		// (customer/lead/prospect + every business module's own search) and
 		// returns results grouped by entity type. See globalsearch/ for the
@@ -1676,7 +1700,7 @@ func main() {
 		// NOTE: this is an allowlist. A route registered on the mux under a
 		// prefix that is missing here is unreachable — it 404s before the mux
 		// ever sees it. Add new top-level prefixes here as well as on the mux.
-		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, services.EmailIconPathPrefix) && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") && !strings.HasPrefix(path, "/api/internal/") {
+		if path != "/api" && path != "/api/healthz" && path != "/api/readyz" && path != "/api/metrics" && path != services.EmailLogoPath && !strings.HasPrefix(path, services.EmailIconPathPrefix) && !strings.HasPrefix(path, controllers.DocLinkPathPrefix) && !strings.HasPrefix(path, "/api/auth/") && !strings.HasPrefix(path, "/api/onboarding") && !strings.HasPrefix(path, "/api/tenant") && !strings.HasPrefix(path, "/api/platform") && !strings.HasPrefix(path, "/api/portal") && !strings.HasPrefix(path, "/api/customer") && !strings.HasPrefix(path, "/api/internal/") && !strings.HasPrefix(path, "/api/webhooks/") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(models.APIResponse{

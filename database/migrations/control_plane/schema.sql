@@ -582,3 +582,21 @@ INSERT INTO platform_ai_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 -- parsed, or an invite whose email send failed outright; a resend resets it.
 ALTER TABLE tenant_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE portal_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
+
+-- ── record_email_address ────────────────────────────────────────────────
+-- The inbound reply address of one tenant record (today: a Sales Order). Mail
+-- StoneSuite sends about the record carries this address as Reply-To, so when
+-- the customer hits Reply in Gmail/Outlook the message lands on our inbound
+-- domain as r-<token>@<REPLY_EMAIL_DOMAIN>. An inbound mail carries no tenant
+-- context, which is why this lives in the control plane: the token is the only
+-- thing that says which tenant database and record the reply belongs to.
+-- token is random (not derived from the ids) so an address cannot be guessed
+-- from a record id; one row per record, created on first use.
+CREATE TABLE IF NOT EXISTS record_email_address (
+    token         TEXT        PRIMARY KEY,
+    tenant_id     UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    record_id     UUID        NOT NULL,
+    workflow_key  TEXT        NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_record_email_address_record UNIQUE (tenant_id, record_id)
+);

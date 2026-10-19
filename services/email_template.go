@@ -192,6 +192,9 @@ func wantsEmail(channels []string) bool {
 // its Email content, or defaultEmail when none is set. It returns "" for a
 // request that is not delivered over email.
 func (r NotificationRequest) EmailHTML() (string, error) {
+	if r.PlainEmailHTML != "" {
+		return r.PlainEmailHTML, nil
+	}
 	if r.Email != nil {
 		return RenderEmail(*r.Email)
 	}

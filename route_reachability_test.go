@@ -186,6 +186,13 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		// Machine-only: Cloudflare Cron Trigger. No JWT, but HMAC-signed with
 		// AUTOMATION_TICK_SECRET + 5-min replay window; 404s while unset.
 		"POST /api/internal/automation/tick": true,
+
+		// Machine-only: stonesuite-notify forwarding a customer's reply to an
+		// order email (it receives Resend's email.received webhook and fetches the
+		// mail; this backend never contacts Resend). No JWT; HMAC-signed with
+		// NOTIFY_API_KEY, checked before anything is read or stored, with a 5-min
+		// replay window. 503 while REPLY_EMAIL_DOMAIN / NOTIFY_API_KEY are unset.
+		"POST /api/internal/email/inbound": true,
 	}
 
 	routes, _ := analyze(t)

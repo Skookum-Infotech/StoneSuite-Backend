@@ -42,6 +42,26 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "automation kv: all unset is allowed",
+			cfg:     Config{Environment: "development", JWTSecret: "x"},
+			wantErr: false,
+		},
+		{
+			name:    "automation kv: fully set is allowed",
+			cfg:     Config{Environment: "development", JWTSecret: "x", CloudflareAccountID: "a", AutomationKVNamespaceID: "n", AutomationKVAPIToken: "t"},
+			wantErr: false,
+		},
+		{
+			name:    "automation kv: namespace without token is rejected",
+			cfg:     Config{Environment: "development", JWTSecret: "x", CloudflareAccountID: "a", AutomationKVNamespaceID: "n"},
+			wantErr: true,
+		},
+		{
+			name:    "automation kv: token without account id is rejected",
+			cfg:     Config{Environment: "development", JWTSecret: "x", AutomationKVNamespaceID: "n", AutomationKVAPIToken: "t"},
+			wantErr: true,
+		},
+		{
 			name:    "wrong-length encryption key is rejected",
 			cfg:     Config{Environment: "development", JWTSecret: "x", SecretEncryptionKey: "YWJj"}, // "abc" -> 3 bytes
 			wantErr: true,

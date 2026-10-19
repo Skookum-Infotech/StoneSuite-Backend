@@ -9655,6 +9655,99 @@ JOIN (VALUES
 WHERE NOT EXISTS (SELECT 1 FROM role_permissions x WHERE x.resource = 'bin_transfer')
 ON CONFLICT (role_id, resource, action) DO NOTHING;
 
+-- ── Automation engine (docs/superpowers/specs/2026-10-14-automation-engine-design.md) ──
+-- Rules, the per-occurrence delivery ledger (occurrence_key is the idempotency
+-- primitive), an event outbox fed by the audit observer, an email suppression
+-- list and tenant-level guard settings. All new tables: CHECKs live inside the
+-- CREATE TABLE bodies, so no ADD CONSTRAINT guard is needed.
+CREATE TABLE IF NOT EXISTS automation_rules (
+    id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    rule_key    VARCHAR(100) NOT NULL UNIQUE,
+    name        VARCHAR(200) NOT NULL,
+    enabled     BOOLEAN      NOT NULL DEFAULT FALSE,
+    is_system   BOOLEAN      NOT NULL DEFAULT FALSE,
+    audience    VARCHAR(16)  NOT NULL,
+    rule        JSONB        NOT NULL DEFAULT '{}',
+    version     INT          NOT NULL DEFAULT 1,
+    created_by  UUID,
+    updated_by  UUID,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_rules_audience_chk CHECK (audience IN ('internal', 'external'))
+);
+
+CREATE TABLE IF NOT EXISTS automation_state (
+    rule_id         UUID        PRIMARY KEY REFERENCES automation_rules(id) ON DELETE CASCADE,
+    enabled_at      TIMESTAMPTZ,
+    last_planned_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS automation_deliveries (
+    id                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    rule_id                 UUID         NOT NULL REFERENCES automation_rules(id) ON DELETE RESTRICT,
+    resource                VARCHAR(64)  NOT NULL,
+    record_id               VARCHAR(64)  NOT NULL,
+    anchor_date             DATE         NOT NULL,
+    stage                   INT          NOT NULL,
+    occurrence_key          VARCHAR(255) NOT NULL UNIQUE,
+    recipient_kind          VARCHAR(16)  NOT NULL,
+    recipient_email         VARCHAR(320) NOT NULL DEFAULT '',
+    recipient_user_id       UUID,
+    digest_key              VARCHAR(255),
+    run_at                  TIMESTAMPTZ  NOT NULL,
+    status                  VARCHAR(16)  NOT NULL DEFAULT 'planned',
+    reason                  VARCHAR(32),
+    attempts                INT          NOT NULL DEFAULT 0,
+    lease_until             TIMESTAMPTZ,
+    notify_notification_ids TEXT[]       NOT NULL DEFAULT '{}',
+    last_error              TEXT,
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_deliveries_status_chk
+        CHECK (status IN ('planned', 'claimed', 'sent', 'skipped', 'failed', 'dead', 'unknown')),
+    CONSTRAINT automation_deliveries_recipient_kind_chk
+        CHECK (recipient_kind IN ('internal', 'external'))
+);
+CREATE INDEX IF NOT EXISTS idx_automation_deliveries_due    ON automation_deliveries (status, run_at);
+CREATE INDEX IF NOT EXISTS idx_automation_deliveries_record ON automation_deliveries (resource, record_id);
+CREATE INDEX IF NOT EXISTS idx_automation_deliveries_rule   ON automation_deliveries (rule_id);
+CREATE INDEX IF NOT EXISTS idx_automation_deliveries_digest
+    ON automation_deliveries (digest_key) WHERE digest_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS automation_outbox (
+    id            BIGSERIAL   PRIMARY KEY,
+    resource      VARCHAR(64) NOT NULL,
+    record_id     VARCHAR(64) NOT NULL,
+    action        VARCHAR(32) NOT NULL,
+    actor_user_id UUID,
+    depth         INT         NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_automation_outbox_pending
+    ON automation_outbox (id) WHERE processed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS automation_suppressions (
+    email      VARCHAR(320) PRIMARY KEY,
+    reason     VARCHAR(200) NOT NULL DEFAULT '',
+    source     VARCHAR(16)  NOT NULL,
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_suppressions_lower_chk  CHECK (email = LOWER(email)),
+    CONSTRAINT automation_suppressions_source_chk
+        CHECK (source IN ('manual', 'bounce', 'complaint', 'unsubscribe'))
+);
+
+-- Singleton (id is always TRUE): per-tenant kill switch and send caps.
+CREATE TABLE IF NOT EXISTS automation_settings (
+    id                     BOOLEAN     PRIMARY KEY DEFAULT TRUE,
+    kill_switch            BOOLEAN     NOT NULL DEFAULT FALSE,
+    daily_external_cap     INT         NOT NULL DEFAULT 200,
+    per_contact_weekly_cap INT         NOT NULL DEFAULT 3,
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_settings_singleton_chk CHECK (id)
+);
+INSERT INTO automation_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
+
 -- =====================================================================
 -- CUSTOMER ORDER FORMS (customer portal "Created Orders")
 -- =====================================================================

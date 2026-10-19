@@ -27,6 +27,8 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
 ├── cmd/rag-ingest-help/     # CLI: ingest embedded help docs into the RAG index
 ├── jobqueue/                # Async job queue
+├── automation/              # Date-triggered automation: tick Runner, Jobs, tenant clock, send window
+├── automation-cron/         # Cloudflare Worker that signs the 15-min automation tick
 ├── provisioning/            # Provisioner: queue, worker, async job runner
 ├── services/                # Email service, provisioning helpers
 ├── storage/                 # R2 per-tenant bucket client
@@ -91,7 +93,7 @@ brew install flyctl
 fly auth login
 ```
 
-**Secrets** (`fly secrets set ...`): `CONTROL_PLANE_DB_URL`, `PROVISION_ADMIN_DB_URL`, `JWT_SECRET`, `SECRET_ENCRYPTION_KEY`, `NOTIFY_URL` (`https://stonesuite-notify.fly.dev` for **every** env — the one shared notify service), `NOTIFY_API_KEY` (the `X-Internal-Secret` shared secret `stonesuite-notify` checks; must match that app's `INTERNAL_SERVICE_SECRET`); optional `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`CLOUDFLARE_API_TOKEN`, `SENTRY_DSN`, `METRICS_TOKEN`, `AXIOM_TOKEN`/`AXIOM_DATASET`, `AUTOMATION_TICK_SECRET` (≥32 chars; must equal the `automation-cron` Worker's secret — unset disables date-triggered automation, so scheduled vendor payments never dispatch), `AUTOMATION_DEFAULT_TIMEZONE` (default `America/Chicago`, for tenants with no company-profile timezone). (`SMTP_*`/`SENDER_*`/`RESEND_API_KEY` are dead config — every email now goes through `stonesuite-notify`, no direct SMTP/Resend path remains in this repo.) If `NOTIFY_URL`/`NOTIFY_API_KEY` are unset or wrong, `services.SendNotification` fails and document-send returns 502; if they're right but `stonesuite-notify`'s own downstream (Resend) is failing, sends return 200 and the email silently never arrives — check `fly logs -a stonesuite-notify` and the Resend dashboard.
+**Secrets** (`fly secrets set ...`): `CONTROL_PLANE_DB_URL`, `PROVISION_ADMIN_DB_URL`, `JWT_SECRET`, `SECRET_ENCRYPTION_KEY`, `NOTIFY_URL` (`https://stonesuite-notify.fly.dev` for **every** env — the one shared notify service), `NOTIFY_API_KEY` (the `X-Internal-Secret` shared secret `stonesuite-notify` checks; must match that app's `INTERNAL_SERVICE_SECRET`); optional `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`CLOUDFLARE_API_TOKEN`, `SENTRY_DSN`, `METRICS_TOKEN`, `AXIOM_TOKEN`/`AXIOM_DATASET`, `AUTOMATION_TICK_SECRET` (≥32 chars; must equal the `automation-cron` Worker's secret — unset disables date-triggered automation, so scheduled vendor payments never dispatch), `AUTOMATION_DEFAULT_TIMEZONE` (default `America/Chicago`, for tenants with no company-profile timezone), `AUTOMATION_KV_NAMESPACE_ID` + `AUTOMATION_KV_API_TOKEN` (with `CLOUDFLARE_ACCOUNT_ID`; all three or none — lets the platform switch mirror into the Worker's KV namespace; the token needs only Workers KV Storage: Edit, not the broad R2 token). (`SMTP_*`/`SENDER_*`/`RESEND_API_KEY` are dead config — every email now goes through `stonesuite-notify`, no direct SMTP/Resend path remains in this repo.) If `NOTIFY_URL`/`NOTIFY_API_KEY` are unset or wrong, `services.SendNotification` fails and document-send returns 502; if they're right but `stonesuite-notify`'s own downstream (Resend) is failing, sends return 200 and the email silently never arrives — check `fly logs -a stonesuite-notify` and the Resend dashboard.
 
 **GitHub Actions secret required:** `FLY_API_TOKEN` (repo secret, `environment: Prod`) — needed for `deploy-backend.yml` to run `flyctl deploy`.
 
@@ -201,6 +203,34 @@ type and carry `Domain`/`Module` route segments the frontend feeds to
    `globalsearch/`; the exceptions (`userstore.Search`, `crmstore.SearchActivity`)
    still use `query.StripLikeMeta` + `$n` params, never interpolation.
 
+### Automation Engine (`automation/` + `POST /api/internal/automation/tick`)
+The `automation-cron` Worker signs a tick every 15 min; `automation.Runner` runs every
+`DefaultJobs()` entry per servable tenant **inside the request** (scale-to-zero can stop the
+machine after the response).
+0. **Platform on/off, default OFF** (`platform_automation_settings`, control plane;
+   `GET/PUT /api/platform/automation`, platform-admin only). Every tick wakes the Fly
+   machine and Neon, so the Worker reads a Cloudflare KV mirror (`automation_enabled`) and
+   does not call the backend unless it is `"1"`; the tick re-checks the DB flag as a
+   backstop and fails closed. The DB row is the source of truth, KV is a mirror: PUT writes
+   DB first, then KV (502 + retry if KV fails). It also gates scheduled vendor-payment
+   dispatch. Any new job inherits this; don't add a second scheduler path around it.
+1. **"Today" is tenant-local, computed in Go** (`automation.TenantToday` /
+   `TenantLocation`, from `company_profile.timezone`, fallback
+   `AUTOMATION_DEFAULT_TIMEZONE`) and passed as a `$n` param. Automation SQL never uses
+   `CURRENT_DATE`. External sends respect `InSendWindow` (08:00–18:00 local).
+2. **Writes made by automation run under `automation.WithSystemActor(ctx)`**, so audit
+   observers ignore them (loop guard: check `automation.IsSystemActor(ctx)` — an empty
+   `AuditEvent.ActorUserID` does **not** mean automation; several human write paths pass
+   `""`). Employee-keyed columns use
+   `automation.SystemEmployeeID` (seeded employee 1). There is no automation `users` row;
+   don't add one.
+3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** set to
+   `sha256hex(occurrence key or digest key)` (always 64 bytes; notify caps keys at 128 and
+   already scopes them per recipient, so never put the recipient in it), so a retry after a
+   timeout can't double-send.
+4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
+   panic-isolated, and none may block the write.
+
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.
 1. **Filter ⨯ scope is ANDed, never OR.** The RBAC scope clause and the user filter compose with `AND` — a filter can only narrow the caller's permitted set, never widen it. Keep `workflow/filter_test.go` green.
@@ -234,7 +264,7 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 7. **All queries accept `context.Context` as first parameter.**
 
 ### API & HTTP
-1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers).
+1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
 2. **All responses are JSON.** Status codes: 200, 400, 401, 403, 404, 409, 500.
 3. **Error responses always include `success: false, message: "..."`.**
 4. **Handlers must validate input.**

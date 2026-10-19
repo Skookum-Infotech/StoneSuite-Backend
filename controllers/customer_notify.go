@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/crmstore"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
 )
@@ -17,7 +20,8 @@ import (
 // their portal login if they have an active one, that it's been approved.
 // No-ops silently (logs and returns) if the customer has no accepted portal
 // invite, or their portal access has since been revoked -- this is not an
-// error, just nothing to do. Never blocks or fails the caller's HTTP
+// error, just nothing to do. A customer flagged Do Not Contact is never
+// emailed. Never blocks or fails the caller's HTTP
 // response: sending this notification is not part of the approve handler's
 // contract, matching every Notify* failure semantics elsewhere in this
 // codebase (see approvalchain/notify.go).
@@ -32,6 +36,14 @@ func notifyCustomerApproved(ctx context.Context, cp *tenancy.ControlPlane, actor
 	tenant, err := tenancy.TenantFromContext(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "customer notify: no tenant in context, skipping", "resource", resource, "recordId", recordUUID)
+		return
+	}
+	pool, err := tenancy.PoolFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "customer notify: no tenant pool in context, skipping", "resource", resource, "recordId", recordUUID)
+		return
+	}
+	if customerOptedOut(ctx, crmstore.CustomerDoNotContact, pool, customerUUID, resource, recordUUID) {
 		return
 	}
 	invite, err := cp.PortalInviteForCustomer(ctx, tenant.ID, customerUUID)
@@ -61,6 +73,24 @@ func notifyCustomerApproved(ctx context.Context, cp *tenancy.ControlPlane, actor
 	if err != nil {
 		slog.ErrorContext(ctx, "customer notify: send notification failed", "resource", resource, "recordId", recordUUID, "error", err)
 	}
+}
+
+// customerOptedOut reports whether the customer approval email must be skipped
+// because the customer is flagged Do Not Contact. A failed lookup also skips
+// it (fails closed): emailing a customer who opted out is worse than one
+// missed courtesy email.
+func customerOptedOut(ctx context.Context, lookup doNotContactLookup, pool *pgxpool.Pool, customerUUID, resource, recordUUID string) bool {
+	dnc, err := lookup(ctx, pool, customerUUID)
+	if err != nil {
+		slog.ErrorContext(ctx, "customer notify: do-not-contact lookup failed, skipping",
+			"resource", resource, "recordId", recordUUID, "customer", customerUUID, "error", err)
+		return true
+	}
+	if dnc {
+		slog.WarnContext(ctx, "customer notify skipped: customer do not contact",
+			"event", "customer_approved_do_not_contact", "resource", resource, "recordId", recordUUID, "customer", customerUUID)
+	}
+	return dnc
 }
 
 // customerApproval is the approved record a customer is told about.

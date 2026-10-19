@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/approvalchain"
 )
 
 // ErrNotFound is returned when an activity (or its parent CRM record) uuid
@@ -141,7 +143,20 @@ func Create(ctx context.Context, pool *pgxpool.Pool, recordUUID string, in Creat
 	if err != nil {
 		return nil, fmt.Errorf("insert activity: %w", err)
 	}
-	return Get(ctx, pool, newUUID)
+	act, err := Get(ctx, pool, newUUID)
+	if err != nil {
+		return nil, err
+	}
+	if in.ActivityType == ActivityTypeTask {
+		subject := strings.TrimSpace(in.Subject)
+		approvalchain.NotifyActorCreated(ctx, pool, approvalchain.ActorCreated{
+			EventType: createdEventType, Resource: createdResource, RecordUUID: newUUID,
+			ActorEmployeeID: actorEmployeeID,
+			Title:           "Task logged: " + subject,
+			Body:            "A task was logged against a CRM record.",
+		})
+	}
+	return act, nil
 }
 
 // List returns a CRM record's live activities, most recent first, optionally

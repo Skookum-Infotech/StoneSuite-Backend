@@ -54,12 +54,38 @@ func TestTenantToday(t *testing.T) {
 			now:  time.Date(2026, 10, 15, 2, 0, 0, 0, time.UTC),
 			tz:   "  America/Los_Angeles ", fallback: time.UTC, want: "2026-10-14",
 		},
+		{
+			name: "DST fall-back, second 01:30 is still Nov 1",
+			now:  time.Date(2026, 11, 1, 7, 30, 0, 0, time.UTC), // 01:30 CST (second pass)
+			tz:   "America/Chicago", fallback: time.UTC, want: "2026-11-01",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := TenantToday(tc.now, tc.tz, tc.fallback)
 			assert.Equal(t, tc.want, got.Format("2006-01-02"))
 			assert.Equal(t, 0, got.Hour())
+		})
+	}
+}
+
+func TestTenantLocation(t *testing.T) {
+	chicago, err := time.LoadLocation("America/Chicago")
+	require.NoError(t, err)
+	tests := []struct {
+		name, tz string
+		fallback *time.Location
+		want     string
+	}{
+		{"valid", "America/Denver", chicago, "America/Denver"},
+		{"trimmed", "  America/Phoenix ", chicago, "America/Phoenix"},
+		{"blank uses fallback", "", chicago, "America/Chicago"},
+		{"garbage uses fallback", "Mars/Base", chicago, "America/Chicago"},
+		{"nil fallback is UTC", "", nil, "UTC"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, TenantLocation(tc.tz, tc.fallback).String())
 		})
 	}
 }

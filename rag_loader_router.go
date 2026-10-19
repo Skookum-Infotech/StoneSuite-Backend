@@ -46,7 +46,8 @@ func (r *ragLoaderRouter) Load(ctx context.Context, recordType, sourceID string)
 // ragAuditObserver re-indexes an AI module's record whenever its controller
 // audits a write (workflow.LogAuditFull): a delete drops the vector, anything
 // else refreshes it. Best-effort — reconciliation is the correctness backstop.
-func ragAuditObserver(ctx context.Context, q workflow.Querier, action, resource, resourceID string) {
+func ragAuditObserver(ctx context.Context, q workflow.Querier, ev workflow.AuditEvent) {
+	action, resource, resourceID := ev.Action, ev.Resource, ev.ResourceID
 	p, ok := globalsearch.AIByAuditResource(resource)
 	if !ok || resourceID == "" {
 		return

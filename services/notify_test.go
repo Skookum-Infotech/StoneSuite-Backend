@@ -267,3 +267,13 @@ func TestSendNotification_OmitsReplyRoutingWhenUnset(t *testing.T) {
 		assert.NotContains(t, got, key, "existing callers' payloads must not change")
 	}
 }
+
+func TestNotificationRequest_IdempotencyKeyJSON(t *testing.T) {
+	b, err := json.Marshal(NotificationRequest{TenantID: "t", IdempotencyKey: "rule:invoice:42:2026-10-20:0"})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"idempotencyKey":"rule:invoice:42:2026-10-20:0"`)
+
+	b, err = json.Marshal(NotificationRequest{TenantID: "t"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "idempotencyKey", "omitted when empty so existing calls are unchanged")
+}

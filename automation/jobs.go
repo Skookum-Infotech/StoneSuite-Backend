@@ -2,7 +2,6 @@ package automation
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -17,12 +16,20 @@ type VendorPaymentDispatch struct{}
 func (VendorPaymentDispatch) Name() string { return "vendor_payment_dispatch" }
 
 // Run dispatches the tenant's due scheduled vendor payments.
-func (VendorPaymentDispatch) Run(ctx context.Context, pool *pgxpool.Pool, today time.Time) (Result, error) {
-	r, err := vendorpayment.RunSchedulerTick(ctx, pool, today)
+func (VendorPaymentDispatch) Run(ctx context.Context, pool *pgxpool.Pool, env JobEnv) (Result, error) {
+	r, err := vendorpayment.RunSchedulerTick(ctx, pool, env.Today)
 	return Result{Transitioned: r.Transitioned, Skipped: r.Skipped}, err
 }
 
+// Deps are the injected collaborators jobs need beyond the tenant database.
+type Deps struct {
+	// Send delivers outbound notifications.
+	Send Sender
+	// LinkURL builds the public link to a tenant record.
+	LinkURL func(tenantID, recordID string) string
+}
+
 // DefaultJobs is every date-triggered job the tick endpoint runs.
-func DefaultJobs() []Job {
-	return []Job{VendorPaymentDispatch{}}
+func DefaultJobs(d Deps) []Job {
+	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}}
 }

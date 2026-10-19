@@ -9868,3 +9868,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_provider
     ON record_email_message (provider_email_id) WHERE provider_email_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_msgid
     ON record_email_message (record_id, message_id) WHERE message_id <> '';
+
+-- ── Automation P1a: AR dunning (invoice payment reminders) ──
+-- sent_at is when Notify accepted the send; the per-contact weekly cap counts
+-- status='sent' rows by recipient over a trailing window, hence the partial index.
+ALTER TABLE automation_deliveries
+    ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_automation_deliveries_contact_sent
+    ON automation_deliveries (recipient_email, sent_at) WHERE status = 'sent';
+
+-- System rule, shipped disabled; offsets are days relative to the invoice due date.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('ar_dunning', 'Invoice payment reminders', FALSE, TRUE, 'external',
+        '{"cadence":[{"offsetDays":-3},{"offsetDays":0},{"offsetDays":7},{"offsetDays":14}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id)
+SELECT id FROM automation_rules WHERE rule_key = 'ar_dunning'
+ON CONFLICT (rule_id) DO NOTHING;

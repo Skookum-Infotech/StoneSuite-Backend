@@ -35,13 +35,34 @@ const (
 type Result struct {
 	Transitioned int
 	Skipped      int
+	// Sent counts outbound notifications delivered; Failed those that errored.
+	Sent   int
+	Failed int
+}
+
+// JobEnv is the per-tenant context a Job runs with. Today is the tenant-local
+// calendar date (see TenantToday); Loc is the tenant's resolved location.
+type JobEnv struct {
+	Tenant *tenancy.Tenant
+	Now    time.Time
+	Today  time.Time
+	Loc    *time.Location
 }
 
 // Job is one unit of date-triggered work run against a single tenant database.
-// today is that tenant's local calendar date (see TenantToday).
 type Job interface {
 	Name() string
-	Run(ctx context.Context, pool *pgxpool.Pool, today time.Time) (Result, error)
+	Run(ctx context.Context, pool *pgxpool.Pool, env JobEnv) (Result, error)
+}
+
+// newJobEnv builds the JobEnv for a tenant whose company profile names tzName.
+func newJobEnv(t *tenancy.Tenant, now time.Time, tzName string, fallback *time.Location) JobEnv {
+	return JobEnv{
+		Tenant: t,
+		Now:    now,
+		Today:  TenantToday(now, tzName, fallback),
+		Loc:    TenantLocation(tzName, fallback),
+	}
 }
 
 // TenantLister lists every tenant known to the control plane.
@@ -61,6 +82,16 @@ type Summary struct {
 	Transitioned int `json:"transitioned"`
 	Skipped      int `json:"skipped"`
 	Failed       int `json:"failed"`
+	Sent         int `json:"sent"`
+	FailedSends  int `json:"failed_sends"`
+}
+
+// add folds one tenant's job result into the tick summary.
+func (s *Summary) add(r Result) {
+	s.Transitioned += r.Transitioned
+	s.Skipped += r.Skipped
+	s.Sent += r.Sent
+	s.FailedSends += r.Failed
 }
 
 // Runner fans a tick out to every servable tenant and runs each Job there.
@@ -107,8 +138,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) (Summary, error) {
 			res, busy, err := r.runTenant(ctx, &t, now)
 			mu.Lock()
 			defer mu.Unlock()
-			sum.Transitioned += res.Transitioned
-			sum.Skipped += res.Skipped
+			sum.add(res)
 			if busy {
 				sum.Busy++
 			}
@@ -158,19 +188,21 @@ func (r *Runner) runTenant(ctx context.Context, t *tenancy.Tenant, now time.Time
 	if err != nil {
 		return res, false, fmt.Errorf("load company profile: %w", err)
 	}
-	today := TenantToday(now, profile.Timezone, r.fallback)
+	env := newJobEnv(t, now, profile.Timezone, r.fallback)
 
 	var errs error
 	for _, j := range r.jobs {
-		jr, jerr := j.Run(ctx, pool, today)
+		jr, jerr := j.Run(ctx, pool, env)
 		res.Transitioned += jr.Transitioned
 		res.Skipped += jr.Skipped
+		res.Sent += jr.Sent
+		res.Failed += jr.Failed
 		if jerr != nil {
 			errs = errors.Join(errs, fmt.Errorf("%s: %w", j.Name(), jerr))
 		}
-		if jr.Transitioned > 0 || jr.Skipped > 0 {
-			slog.Info("automation job ran", "tenant", t.Slug, "job", j.Name(), "today", today.Format("2006-01-02"),
-				"transitioned", jr.Transitioned, "skipped", jr.Skipped)
+		if jr.Transitioned > 0 || jr.Skipped > 0 || jr.Sent > 0 || jr.Failed > 0 {
+			slog.Info("automation job ran", "tenant", t.Slug, "job", j.Name(), "today", env.Today.Format("2006-01-02"),
+				"transitioned", jr.Transitioned, "skipped", jr.Skipped, "sent", jr.Sent, "failed_sends", jr.Failed)
 		}
 	}
 	return res, false, errs

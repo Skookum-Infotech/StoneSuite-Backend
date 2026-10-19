@@ -375,6 +375,7 @@ func ConvertFromQuote(ctx context.Context, pool *pgxpool.Pool, quoteUUID string,
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit convert quote: %w", err)
 	}
+	notifyCreated(ctx, pool, newUUID, internalID, actorEmployeeID)
 	got, err := Get(ctx, pool, newUUID)
 	if err != nil {
 		return nil, false, err

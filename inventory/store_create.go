@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/linedim"
 )
 
@@ -76,5 +77,22 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create inventory item: %w", err)
 	}
-	return Get(ctx, pool, newUUID)
+	item, err := Get(ctx, pool, newUUID)
+	if err != nil {
+		return nil, err
+	}
+	approvalchain.NotifyActorCreated(ctx, pool, approvalchain.ActorCreated{
+		EventType: createdEventType, Resource: createdResource, RecordUUID: newUUID,
+		ActorEmployeeID: actorEmployeeID,
+		Title:           "Inventory item created: " + in.Name,
+		Body:            "SKU " + in.SKU + " was added to inventory.",
+	})
+	return item, nil
 }
+
+// createdEventType and createdResource label the "item created" email and its
+// in-app bell entry.
+const (
+	createdEventType = "inventory_item.created"
+	createdResource  = "inventory_item"
+)

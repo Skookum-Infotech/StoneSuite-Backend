@@ -9902,3 +9902,14 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id)
 SELECT id FROM automation_rules WHERE rule_key IN ('quote_expiry', 'estimate_expiry')
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation P1c: stuck approval reminders (internal) ──
+-- System rule, shipped disabled; offsets are days after the record entered its approval gate.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('approval_stuck', 'Stuck approval reminders', FALSE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":2},{"offsetDays":4},{"offsetDays":6}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id)
+SELECT id FROM automation_rules WHERE rule_key = 'approval_stuck'
+ON CONFLICT (rule_id) DO NOTHING;

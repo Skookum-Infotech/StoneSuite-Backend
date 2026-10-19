@@ -42,3 +42,9 @@ func resourceRoute(resource, recordID string) string {
 	}
 	return fmt.Sprintf("/%s/%s/%s", r.Domain, r.Module, recordID)
 }
+
+// RecordRoute is the exported deep-link builder for resource+recordID, or ""
+// when the resource has no known route.
+func RecordRoute(resource, recordID string) string {
+	return resourceRoute(resource, recordID)
+}

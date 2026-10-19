@@ -158,7 +158,7 @@ func TestSetEnabledReEnableSkipsLeftoverRows(t *testing.T) {
 	check("unknown", ids["unknown"], "unknown", nil)
 }
 
-func TestListIncludesExpiryRules(t *testing.T) {
+func TestListIncludesBuiltInRules(t *testing.T) {
 	pool, _ := testCustomerTenantPool(t)
 	rules, err := pgAutomationRuleStore{pool: pool}.List(context.Background())
 	require.NoError(t, err)
@@ -174,4 +174,9 @@ func TestListIncludesExpiryRules(t *testing.T) {
 		assert.Equal(t, "internal", r.Audience, key)
 		assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: -3}}, r.Cadence, key)
 	}
+	stuck, ok := byKey[automation.RuleKeyApprovalStuck]
+	require.True(t, ok, automation.RuleKeyApprovalStuck)
+	assert.False(t, stuck.Enabled)
+	assert.Equal(t, "internal", stuck.Audience)
+	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: 2}, {OffsetDays: 4}, {OffsetDays: 6}}, stuck.Cadence)
 }

@@ -157,3 +157,21 @@ func TestSetEnabledReEnableSkipsLeftoverRows(t *testing.T) {
 	check("sent", ids["sent"], "sent", nil)
 	check("unknown", ids["unknown"], "unknown", nil)
 }
+
+func TestListIncludesExpiryRules(t *testing.T) {
+	pool, _ := testCustomerTenantPool(t)
+	rules, err := pgAutomationRuleStore{pool: pool}.List(context.Background())
+	require.NoError(t, err)
+	byKey := map[string]AutomationRule{}
+	for _, r := range rules {
+		byKey[r.RuleKey] = r
+	}
+	require.Contains(t, byKey, automation.RuleKeyARDunning)
+	for _, key := range []string{"quote_expiry", "estimate_expiry"} {
+		r, ok := byKey[key]
+		require.True(t, ok, key)
+		assert.False(t, r.Enabled, key)
+		assert.Equal(t, "internal", r.Audience, key)
+		assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: -3}}, r.Cadence, key)
+	}
+}

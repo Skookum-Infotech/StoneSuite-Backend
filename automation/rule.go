@@ -3,6 +3,12 @@ package automation
 // RuleKeyARDunning is the rule_key of the seeded accounts-receivable dunning rule.
 const RuleKeyARDunning = "ar_dunning"
 
+// RuleKeyQuoteExpiry is the rule_key of the seeded quote expiry reminder rule.
+const RuleKeyQuoteExpiry = "quote_expiry"
+
+// RuleKeyEstimateExpiry is the rule_key of the seeded estimate expiry reminder rule.
+const RuleKeyEstimateExpiry = "estimate_expiry"
+
 // ARCadenceStage is one reminder stage, as days relative to the invoice due date.
 type ARCadenceStage struct {
 	OffsetDays int `json:"offsetDays"`

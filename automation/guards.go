@@ -27,6 +27,9 @@ const (
 	reasonNotRender  = "not_rendered"
 )
 
+// recipientInternal marks a delivery addressed to tenant staff (recipientExternal is in ar_plan.go).
+const recipientInternal = "internal"
+
 const (
 	// defaultDailyExternalCap and defaultWeeklyContactCap apply only when the
 	// automation_settings singleton row is missing (the schema seeds it).
@@ -125,8 +128,8 @@ FROM automation_settings WHERE id`).Scan(&s.KillSwitch, &s.DailyCap, &s.WeeklyCa
 // suppression list, per-contact weekly cap. It returns the skip reason, or ""
 // when the email may be sent. The weekly cap counts DISTINCT digest_key among
 // sent and unknown-outcome rows (an unknown send may have been delivered) in the
-// 7 days before now, so one digest email counts once. Unknown rows have no
-// sent_at, so their updated_at stands in.
+// 7 days before now, so one digest email counts once. Internal (staff) rows
+// never count. Unknown rows have no sent_at, so their updated_at stands in.
 func guardExternal(ctx context.Context, q Querier, s automationSettings, email string, now time.Time) (string, error) {
 	if s.KillSwitch {
 		return reasonKillSwitch, nil
@@ -142,7 +145,7 @@ func guardExternal(ctx context.Context, q Querier, s automationSettings, email s
 	var weekly int
 	if err := q.QueryRow(ctx, `
 SELECT count(DISTINCT digest_key) FROM automation_deliveries
-WHERE status IN ('sent', 'unknown') AND lower(recipient_email) = $1 AND COALESCE(sent_at, updated_at) >= $2 -- lower() so mixed-case history counts; not index-assisted`,
+WHERE status IN ('sent', 'unknown') AND recipient_kind = 'external' AND lower(recipient_email) = $1 AND COALESCE(sent_at, updated_at) >= $2 -- lower() so mixed-case history counts; not index-assisted`,
 		addr, now.Add(-weeklyCapWindow)).Scan(&weekly); err != nil {
 		return "", fmt.Errorf("count weekly sends: %w", err)
 	}
@@ -150,6 +153,16 @@ WHERE status IN ('sent', 'unknown') AND lower(recipient_email) = $1 AND COALESCE
 		return reasonCap, nil
 	}
 	return "", nil
+}
+
+// guardInternal applies the only guard internal recipients get: the tenant kill
+// switch (a deferral). Suppression, the weekly contact cap and the daily
+// external cap do not apply to staff.
+func guardInternal(s automationSettings) string {
+	if s.KillSwitch {
+		return reasonKillSwitch
+	}
+	return ""
 }
 
 // guardDailyCap applies the tenant-wide daily external cap: distinct digests

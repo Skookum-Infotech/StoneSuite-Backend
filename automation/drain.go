@@ -54,14 +54,22 @@ func outOfTime(ctx context.Context, now func() time.Time) bool {
 // Delivery is one claimed automation_deliveries row.
 type Delivery struct {
 	ID, RuleID, Resource, RecordID, OccurrenceKey, DigestKey, RecipientEmail string
-	Anchor                                                                   time.Time
-	Attempts                                                                 int
+	// RecipientKind is recipientExternal or recipientInternal.
+	RecipientKind string
+	Anchor        time.Time
+	Attempts      int
 }
 
 // Group is one outbound email: all claimed deliveries sharing a digest_key.
 type Group struct {
 	DigestKey, RecipientEmail string
 	Items                     []Delivery
+}
+
+// internal reports whether the group goes to an internal recipient (a group
+// never mixes kinds: digest keys include the recipient).
+func (g Group) internal() bool {
+	return len(g.Items) > 0 && g.Items[0].RecipientKind == recipientInternal
 }
 
 // Renderer builds the email and live line items for a group; items it drops are
@@ -164,11 +172,15 @@ func drainGroup(ctx context.Context, pool *pgxpool.Pool, env JobEnv, send Sender
 
 	settings, err := loadSettings(ctx, conn)
 	var reason string
-	if err == nil {
+	switch {
+	case err != nil:
+	case g.internal():
+		reason = guardInternal(settings)
+	default:
 		reason, err = guardExternal(ctx, conn, settings, g.RecipientEmail, env.Now)
-	}
-	if err == nil && reason == "" {
-		reason, err = guardDailyCap(ctx, conn, settings, localDayStart(env.Today, env.Loc))
+		if err == nil && reason == "" {
+			reason, err = guardDailyCap(ctx, conn, settings, localDayStart(env.Today, env.Loc))
+		}
 	}
 	if err != nil {
 		return releaseAfter(ctx, conn, g.Items, env.Now, err, "guard")

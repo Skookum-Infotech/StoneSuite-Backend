@@ -9886,3 +9886,19 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id)
 SELECT id FROM automation_rules WHERE rule_key = 'ar_dunning'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation P1b-2: quote and estimate expiry reminders (internal) ──
+-- System rules, shipped disabled; the offset is days relative to valid_until.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('quote_expiry', 'Quote expiry reminders', FALSE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":-3}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('estimate_expiry', 'Estimate expiry reminders', FALSE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":-3}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id)
+SELECT id FROM automation_rules WHERE rule_key IN ('quote_expiry', 'estimate_expiry')
+ON CONFLICT (rule_id) DO NOTHING;

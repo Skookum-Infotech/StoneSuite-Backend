@@ -243,6 +243,11 @@ machine after the response).
    Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
    pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
    Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
+6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **disabled** and use a
+   `-3d` cadence (3 days before expiry). They send owner-only **internal** digests through the
+   drain's internal-recipient path, which honors only the tenant kill switch and ignores the
+   external caps and suppression. Eligible documents are `SENT`, not converted, with an active
+   user as owner.
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

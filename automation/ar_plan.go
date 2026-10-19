@@ -95,8 +95,8 @@ func (j *ARDunning) plan(ctx context.Context, pool *pgxpool.Pool, env JobEnv, ru
 const insertDeliverySQL = `
 INSERT INTO automation_deliveries
     (rule_id, resource, record_id, anchor_date, stage, occurrence_key, recipient_kind,
-     recipient_email, digest_key, run_at, status, reason)
-VALUES ($1::uuid, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12)
+     recipient_email, digest_key, run_at, status, reason, recipient_user_id)
+VALUES ($1::uuid, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11, $12, $13::uuid)
 ON CONFLICT (occurrence_key) DO NOTHING`
 
 // PlanRow is one delivery row the AR planner would write (or did write). Digest
@@ -163,20 +163,18 @@ func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule rule
 	}
 	rows := planRowsFor(cands, env, rule)
 
-	batch := &pgx.Batch{}
-	var isPlanned []bool
+	inserts := make([]deliveryInsert, 0, len(rows))
 	for _, row := range rows {
-		key := OccurrenceKey(rule.ID, resourceInvoice, row.InvoiceUUID, row.Anchor, row.Stage)
-		var digest, reasonArg *string
+		ins := deliveryInsert{RecordID: row.InvoiceUUID, Anchor: row.Anchor, Stage: row.Stage,
+			Key:   OccurrenceKey(rule.ID, resourceInvoice, row.InvoiceUUID, row.Anchor, row.Stage),
+			Email: row.Email, RunAt: row.RunAt, Status: row.Status}
 		if row.Digest != "" {
-			digest = &row.Digest
+			ins.Digest = &row.Digest
 		}
 		if row.Reason != "" {
-			reasonArg = &row.Reason
+			ins.Reason = &row.Reason
 		}
-		batch.Queue(insertDeliverySQL, rule.ID, resourceInvoice, row.InvoiceUUID, row.Anchor, row.Stage, key,
-			recipientExternal, row.Email, digest, row.RunAt, row.Status, reasonArg)
-		isPlanned = append(isPlanned, row.Status == statusPlanned)
+		inserts = append(inserts, ins)
 	}
 	uuids := make([]string, 0, len(cands))
 	anchors := make([]time.Time, 0, len(cands))
@@ -185,41 +183,14 @@ func (j *ARDunning) planTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule rule
 		anchors = append(anchors, c.Anchor)
 	}
 
-	if batch.Len() > 0 {
-		br := tx.SendBatch(ctx, batch)
-		for _, p := range isPlanned {
-			tag, execErr := br.Exec()
-			if execErr != nil {
-				_ = br.Close()
-				return 0, 0, fmt.Errorf("ar plan insert: %w", execErr)
-			}
-			if tag.RowsAffected() == 0 {
-				continue
-			}
-			if p {
-				planned++
-			} else {
-				skipped++
-			}
-		}
-		if err := br.Close(); err != nil {
-			return 0, 0, fmt.Errorf("ar plan batch close: %w", err)
-		}
+	if planned, skipped, err = insertDeliveries(ctx, tx, rule.ID, resourceInvoice, recipientExternal, inserts); err != nil {
+		return 0, 0, err
 	}
-
-	if len(uuids) > 0 {
-		if _, err := tx.Exec(ctx, `
-UPDATE automation_deliveries d
-SET status = 'skipped', reason = $4, updated_at = now()
-FROM unnest($2::text[], $3::date[]) AS cur(record_id, anchor)
-WHERE d.rule_id = $1::uuid AND d.resource = $5 AND d.record_id = cur.record_id
-  AND d.status IN ('planned', 'failed') AND d.anchor_date <> cur.anchor`,
-			rule.ID, uuids, anchors, reasonAnchorChanged, resourceInvoice); err != nil {
-			return 0, 0, fmt.Errorf("ar plan supersede anchors: %w", err)
-		}
+	if err := supersedeAnchors(ctx, tx, rule.ID, resourceInvoice, uuids, anchors); err != nil {
+		return 0, 0, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE automation_state SET last_planned_at = $2 WHERE rule_id = $1::uuid`, rule.ID, env.Now); err != nil {
-		return 0, 0, fmt.Errorf("ar plan state: %w", err)
+	if err := markPlanned(ctx, tx, rule.ID, env.Now); err != nil {
+		return 0, 0, err
 	}
 	return planned, skipped, nil
 }

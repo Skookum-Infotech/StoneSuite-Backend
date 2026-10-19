@@ -101,7 +101,8 @@ func approvalInsertsFor(spec approvalSpec, targets []approvalTarget, env JobEnv,
 	var out []deliveryInsert
 	for _, t := range targets {
 		stages := PlanStages(t.Rec.Entered, offsets, env.Today, enabledOn)
-		if len(t.Rcpts) == 0 {
+		rcpts := usableRecipients(t.Rcpts)
+		if len(rcpts) == 0 {
 			for _, sp := range stages {
 				reason := string(sp.Action)
 				if sp.Action == StageActionPlan {
@@ -111,7 +112,7 @@ func approvalInsertsFor(spec approvalSpec, targets []approvalTarget, env JobEnv,
 			}
 			continue
 		}
-		for _, rc := range t.Rcpts {
+		for _, rc := range rcpts {
 			for _, sp := range stages {
 				ins := approvalSkipRow(spec, t.Rec, rc.UserID, sp.Stage, rule, env, rc.Email, string(sp.Action))
 				if sp.Action == StageActionPlan {
@@ -123,10 +124,8 @@ func approvalInsertsFor(spec approvalSpec, targets []approvalTarget, env JobEnv,
 						ins.Status, ins.RunAt, ins.Digest, ins.Reason = statusPlanned, runAt, &digest, nil
 					}
 				}
-				if rc.UserID != "" {
-					uid := rc.UserID
-					ins.UserID = &uid
-				}
+				uid := rc.UserID
+				ins.UserID = &uid
 				out = append(out, ins)
 			}
 		}
@@ -140,4 +139,16 @@ func approvalSkipRow(spec approvalSpec, rec ApprovalRecord, recipientPart string
 	key := OccurrenceKey(rule.ID, spec.Workflow, rec.UUID+"~"+spec.Gate.StatusCode+"~"+recipientPart, rec.Entered, stage)
 	return deliveryInsert{RecordID: rec.UUID, Anchor: rec.Entered, Stage: stage, Key: key,
 		Email: email, RunAt: env.Now, Status: statusSkipped, Reason: &reason}
+}
+
+// usableRecipients drops recipients without a user id: their occurrence key would
+// end in the separator and collide with every other id-less recipient.
+func usableRecipients(in []approvalRecipient) []approvalRecipient {
+	out := make([]approvalRecipient, 0, len(in))
+	for _, rc := range in {
+		if rc.UserID != "" {
+			out = append(out, rc)
+		}
+	}
+	return out
 }

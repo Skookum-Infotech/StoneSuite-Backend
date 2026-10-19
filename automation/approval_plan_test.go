@@ -84,6 +84,18 @@ func TestApprovalInsertsFor(t *testing.T) {
 				assert.Equal(t, reasonNoEmail, *rows[0].Reason)
 				assert.Nil(t, rows[0].Digest)
 			}},
+		{"recipient without user id: unusable, falls to no_email", func() ruleRow { r := approvalRule(); r.EnabledOn = oldEnabled; return r },
+			approvalTarget{Rec: rec(3), Rcpts: []approvalRecipient{{Email: "z@x.test"}}}, 1,
+			func(t *testing.T, rows []deliveryInsert) {
+				assert.Equal(t, reasonNoEmail, *rows[0].Reason)
+				assert.Contains(t, rows[0].Key, "~none")
+				assert.False(t, strings.Contains(rows[0].Key, "~:"))
+			}},
+		{"id-less recipient skipped, others kept", func() ruleRow { r := approvalRule(); r.EnabledOn = oldEnabled; return r },
+			approvalTarget{Rec: rec(3), Rcpts: []approvalRecipient{{Email: "z@x.test"}, alice}}, 1,
+			func(t *testing.T, rows []deliveryInsert) {
+				assert.Equal(t, "a@x.test", rows[0].Email)
+			}},
 		{"1 day old: nothing due", func() ruleRow { r := approvalRule(); r.EnabledOn = oldEnabled; return r },
 			approvalTarget{Rec: rec(1), Rcpts: []approvalRecipient{alice}}, 0, nil},
 	}
@@ -96,4 +108,51 @@ func TestApprovalInsertsFor(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApprovalInsertsForSharedDigest(t *testing.T) {
+	today := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	env := JobEnv{Now: today.Add(10 * time.Hour), Today: today, Loc: time.UTC}
+	rule := approvalRule()
+	rule.EnabledOn = today.AddDate(0, 0, -30)
+	alice := approvalRecipient{UserID: "u-a", Email: "a@x.test"}
+	bob := approvalRecipient{UserID: "u-b", Email: "b@x.test"}
+	mk := func(uuid string, rc ...approvalRecipient) approvalTarget {
+		return approvalTarget{Rec: ApprovalRecord{UUID: uuid, Entered: today.AddDate(0, 0, -3)}, Rcpts: rc}
+	}
+	specs := approvalSpecs()
+	var other approvalSpec
+	for _, s := range specs {
+		if s.Workflow != specs[0].Workflow {
+			other = s
+			break
+		}
+	}
+	require.NotEmpty(t, other.Workflow)
+
+	digests := func(rows []deliveryInsert) map[string]string {
+		m := map[string]string{}
+		for _, r := range rows {
+			require.NotNil(t, r.Digest)
+			if prev, ok := m[r.Email]; ok {
+				assert.Equal(t, prev, *r.Digest)
+			}
+			m[r.Email] = *r.Digest
+		}
+		return m
+	}
+	t.Run("same email on two records", func(t *testing.T) {
+		rows := approvalInsertsFor(specs[0], []approvalTarget{mk("r1", alice, bob), mk("r2", alice)}, env, rule)
+		require.Len(t, rows, 3)
+		m := digests(rows)
+		assert.NotEqual(t, m["a@x.test"], m["b@x.test"])
+		assert.Equal(t, DigestKey(rule.ID, "a@x.test", today), m["a@x.test"])
+	})
+	t.Run("same email across workflows", func(t *testing.T) {
+		rows := append(approvalInsertsFor(specs[0], []approvalTarget{mk("r1", alice)}, env, rule),
+			approvalInsertsFor(other, []approvalTarget{mk("r2", alice)}, env, rule)...)
+		require.Len(t, rows, 2)
+		assert.Len(t, digests(rows), 1)
+		assert.NotEqual(t, rows[0].Key, rows[1].Key)
+	})
 }

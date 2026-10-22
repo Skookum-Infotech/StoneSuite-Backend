@@ -77,7 +77,7 @@ func TestAutomationTick(t *testing.T) {
 			assert.Equal(t, tc.wantCode, rec.Code)
 			assert.Equal(t, tc.wantCalls, ft.calls)
 			if tc.wantCode == http.StatusOK {
-				assert.JSONEq(t, `{"success":true,"tenants":2,"busy":0,"transitioned":3,"skipped":0,"failed":0}`, rec.Body.String())
+				assert.JSONEq(t, `{"success":true,"tenants":2,"busy":0,"transitioned":3,"skipped":0,"failed":0,"sent":0,"failed_sends":0}`, rec.Body.String())
 			} else {
 				assert.Contains(t, rec.Body.String(), `"success":false`)
 			}

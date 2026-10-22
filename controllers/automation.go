@@ -112,7 +112,7 @@ func (h *AutomationOps) Tick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("automation tick complete", "tenants", sum.Tenants, "busy", sum.Busy,
-		"transitioned", sum.Transitioned, "skipped", sum.Skipped, "failed", sum.Failed,
+		"transitioned", sum.Transitioned, "skipped", sum.Skipped, "failed", sum.Failed, "sent", sum.Sent, "failed_sends", sum.FailedSends,
 		"duration_ms", time.Since(started).Milliseconds())
 	writeJSON(w, http.StatusOK, tickResponse{Success: true, Summary: sum})
 }

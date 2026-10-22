@@ -14,7 +14,8 @@ a new teammate an invitation by email — you can also give them a full name
 and an initial role right away. From the Invites tab you can Resend an
 invitation that's pending or has expired. From a user's own detail view you
 can manage which roles they hold, and use Deactivate account to remove their
-access.
+access. A deactivated person also stops counting as an approver and stops
+receiving approval emails (see Approval chains).
 
 ## Roles and access
 
@@ -42,6 +43,18 @@ Fabrication Job has two — Templating and QC Pending). Turn the switch on for
 a gate and pick up to a set number of approvers from your employees; every
 approver you add must sign off before a record can leave that status. Turn
 the switch off to remove the approval requirement entirely.
+
+Only active people count as approvers. If an approver is deactivated, or their
+employee record is deleted, they no longer count toward the sign-offs a record
+needs and they stop receiving approval emails. The approvers who are still
+active are enough to approve: the record needs sign-off from each of them, not
+from the deactivated one. They still appear in the approver list so you can
+remove them.
+
+If every approver for a status has been deactivated, the record stays blocked
+rather than skipping approval. A super admin can approve it in the meantime,
+and all active super admins are emailed that it is waiting. To fix it for good,
+add a new approver on the workflow's Approval Chain section.
 
 ## Record numbering
 

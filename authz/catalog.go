@@ -444,6 +444,7 @@ var catalog = []Permission{
 	{ResourceAutomation, ActionCreate},
 	{ResourceAutomation, ActionUpdate},
 	{ResourceAutomation, ActionDelete},
+	{ResourceAutomation, ActionConfigure},
 
 	{ResourceAudit, ActionRead},
 

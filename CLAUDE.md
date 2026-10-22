@@ -22,10 +22,28 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── userstore/               # Tenant user store
 ├── quote/ estimate/ salesorder/ invoice/ payment/ creditmemo/ refund/ vendors/
 │                            # Relational document modules (clone twins) — see "Document Modules"
-├── inventory/               # Inventory items module (relational)
+├── purchaseorder/ requisition/ itemreceipt/ vendorbill/ vendorcredit/ vendorpayment/ expense/
+│                            # Purchasing & AP document modules (same clone discipline)
+├── fabrication/ orderform/ portal/
+│                            # Fabrication & Installation jobs; customer-portal order form + read surface
+├── inventory/ inventoryadjustment/ inventorycount/ inventorytransfer/ bintransfer/
+│                            # Inventory items + stock documents (IADJ, cycle count, ITRF, BTRF)
+├── chartofaccounts/ accountingperiod/ journal/ cashtransfer/
+│                            # Accounting: CoA, fiscal calendar, journal entries, cash transfers
+├── approvalchain/           # Shared approval engine + module registry + Notify* helpers
+├── globalsearch/            # Cross-module search fan-out + AI (RAG) per-module hooks
+├── docflow/ docpdf/ docextract/ docextractjob/ importer/ recordemail/
+│                            # Document status plumbing, PDF rendering, extraction, CSV/XLSX import, record email threads
+├── companyprofile/ companylocation/ onboardingseed/ aisettings/ dashboardui/ feedback/ auditstore/ crmactivity/ customernote/ mytransactions/
+│                            # Tenant settings, onboarding seed, dashboards, feedback, audit read model, activity/notes
+├── saml/                    # SAML 2.0 SSO wrapper (see docs/SAML_SETUP.md)
+├── duplicate/ kitref/ linedim/ dateonly/ dbtestutil/
+│                            # Small shared helpers (dup-error, kit/line-dimension resolution, DATE type, DB test fixtures)
+├── apidocs/ scripts/ deployment/
+│                            # OpenAPI/Postman generation (cmd/gen-apidocs), dev scripts, deploy assets
 ├── ai/                      # Provider-agnostic RAG primitives (Embedder/LLMClient, orchestrator); dep-free of app pkgs
 ├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
-├── cmd/rag-ingest-help/     # CLI: ingest embedded help docs into the RAG index
+├── cmd/                     # CLIs: rag-ingest-help, gen-apidocs, ai-e2e, docextract-eval, backfill-* one-offs
 ├── jobqueue/                # Async job queue
 ├── automation/              # Date-triggered automation: tick Runner, Jobs, tenant clock, send window
 ├── automation-cron/         # Cloudflare Worker that signs the 15-min automation tick
@@ -230,6 +248,33 @@ machine after the response).
    timeout can't double-send.
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
+5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
+   day for overdue/due-soon invoices. The rule is seeded **disabled**; tenants toggle it via
+   `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
+   (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
+   only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
+   flip and state write share one transaction. Each tick runs plan first (idempotent occurrence
+   rows, window `due_date` in [today-60, today+3], stages never before their date), then `drain`
+   (leases, guards, retry states). Caps and the tenant kill switch **defer** a digest (`planned`,
+   `run_at` pushed) rather than skip it; rows go `stale` 48h after `created_at`. `unknown` sends
+   count toward the weekly/daily caps. Disabling a rule skips its unsent rows (`rule_disabled`).
+   Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
+   pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
+   Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
+6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **disabled** and use a
+   `-3d` cadence (3 days before expiry). They send owner-only **internal** digests through the
+   drain's internal-recipient path, which honors only the tenant kill switch and ignores the
+   external caps and suppression. Eligible documents are `SENT`, not converted, with an active
+   user as owner.
+7. **Stuck approvals (`approval_stuck`, job `approval_reminders`, `automation/approval_*.go`)** is seeded **disabled**
+   with a `+2/+4/+6`-day cadence after the record entered its approval gate (max 3 reminders).
+   Covers only notify-wired `approvalchain` registry modules (`DisplayName != ""`) and only
+   gates whose `Reject != RejectInPlace`. Each unsigned live approver gets an **internal**
+   digest, one per approver per day across all modules; when no unsigned live approver remains
+   it falls back to the record owner plus active super admins. The clock restarts when the
+   record re-enters the gate (new history row, new anchor). The internal path honours only the
+   kill switch (plus the 08:00–18:00 send window), and the email links in-app (login required),
+   not a public link. The preview endpoint does not support this rule.
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

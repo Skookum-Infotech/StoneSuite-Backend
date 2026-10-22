@@ -22,10 +22,28 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── userstore/               # Tenant user store
 ├── quote/ estimate/ salesorder/ invoice/ payment/ creditmemo/ refund/ vendors/
 │                            # Relational document modules (clone twins) — see "Document Modules"
-├── inventory/               # Inventory items module (relational)
+├── purchaseorder/ requisition/ itemreceipt/ vendorbill/ vendorcredit/ vendorpayment/ expense/
+│                            # Purchasing & AP document modules (same clone discipline)
+├── fabrication/ orderform/ portal/
+│                            # Fabrication & Installation jobs; customer-portal order form + read surface
+├── inventory/ inventoryadjustment/ inventorycount/ inventorytransfer/ bintransfer/
+│                            # Inventory items + stock documents (IADJ, cycle count, ITRF, BTRF)
+├── chartofaccounts/ accountingperiod/ journal/ cashtransfer/
+│                            # Accounting: CoA, fiscal calendar, journal entries, cash transfers
+├── approvalchain/           # Shared approval engine + module registry + Notify* helpers
+├── globalsearch/            # Cross-module search fan-out + AI (RAG) per-module hooks
+├── docflow/ docpdf/ docextract/ docextractjob/ importer/ recordemail/
+│                            # Document status plumbing, PDF rendering, extraction, CSV/XLSX import, record email threads
+├── companyprofile/ companylocation/ onboardingseed/ aisettings/ dashboardui/ feedback/ auditstore/ crmactivity/ customernote/ mytransactions/
+│                            # Tenant settings, onboarding seed, dashboards, feedback, audit read model, activity/notes
+├── saml/                    # SAML 2.0 SSO wrapper (see docs/SAML_SETUP.md)
+├── duplicate/ kitref/ linedim/ dateonly/ dbtestutil/
+│                            # Small shared helpers (dup-error, kit/line-dimension resolution, DATE type, DB test fixtures)
+├── apidocs/ scripts/ deployment/
+│                            # OpenAPI/Postman generation (cmd/gen-apidocs), dev scripts, deploy assets
 ├── ai/                      # Provider-agnostic RAG primitives (Embedder/LLMClient, orchestrator); dep-free of app pkgs
 ├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
-├── cmd/rag-ingest-help/     # CLI: ingest embedded help docs into the RAG index
+├── cmd/                     # CLIs: rag-ingest-help, gen-apidocs, ai-e2e, docextract-eval, backfill-* one-offs
 ├── jobqueue/                # Async job queue
 ├── automation/              # Date-triggered automation: tick Runner, Jobs, tenant clock, send window
 ├── automation-cron/         # Cloudflare Worker that signs the 15-min automation tick

@@ -22,11 +22,31 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── userstore/               # Tenant user store
 ├── quote/ estimate/ salesorder/ invoice/ payment/ creditmemo/ refund/ vendors/
 │                            # Relational document modules (clone twins) — see "Document Modules"
-├── inventory/               # Inventory items module (relational)
+├── purchaseorder/ requisition/ itemreceipt/ vendorbill/ vendorcredit/ vendorpayment/ expense/
+│                            # Purchasing & AP document modules (same clone discipline)
+├── fabrication/ orderform/ portal/
+│                            # Fabrication & Installation jobs; customer-portal order form + read surface
+├── inventory/ inventoryadjustment/ inventorycount/ inventorytransfer/ bintransfer/
+│                            # Inventory items + stock documents (IADJ, cycle count, ITRF, BTRF)
+├── chartofaccounts/ accountingperiod/ journal/ cashtransfer/
+│                            # Accounting: CoA, fiscal calendar, journal entries, cash transfers
+├── approvalchain/           # Shared approval engine + module registry + Notify* helpers
+├── globalsearch/            # Cross-module search fan-out + AI (RAG) per-module hooks
+├── docflow/ docpdf/ docextract/ docextractjob/ importer/ recordemail/
+│                            # Document status plumbing, PDF rendering, extraction, CSV/XLSX import, record email threads
+├── companyprofile/ companylocation/ onboardingseed/ aisettings/ dashboardui/ feedback/ auditstore/ crmactivity/ customernote/ mytransactions/
+│                            # Tenant settings, onboarding seed, dashboards, feedback, audit read model, activity/notes
+├── saml/                    # SAML 2.0 SSO wrapper (see docs/SAML_SETUP.md)
+├── duplicate/ kitref/ linedim/ dateonly/ dbtestutil/
+│                            # Small shared helpers (dup-error, kit/line-dimension resolution, DATE type, DB test fixtures)
+├── apidocs/ scripts/ deployment/
+│                            # OpenAPI/Postman generation (cmd/gen-apidocs), dev scripts, deploy assets
 ├── ai/                      # Provider-agnostic RAG primitives (Embedder/LLMClient, orchestrator); dep-free of app pkgs
 ├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
-├── cmd/rag-ingest-help/     # CLI: ingest embedded help docs into the RAG index
+├── cmd/                     # CLIs: rag-ingest-help, gen-apidocs, ai-e2e, docextract-eval, backfill-* one-offs
 ├── jobqueue/                # Async job queue
+├── automation/              # Date-triggered automation: tick Runner, Jobs, tenant clock, send window
+├── automation-cron/         # Cloudflare Worker that signs the 15-min automation tick
 ├── provisioning/            # Provisioner: queue, worker, async job runner
 ├── services/                # Email service, provisioning helpers
 ├── storage/                 # R2 per-tenant bucket client
@@ -91,7 +111,7 @@ brew install flyctl
 fly auth login
 ```
 
-**Secrets** (`fly secrets set ...`): `CONTROL_PLANE_DB_URL`, `PROVISION_ADMIN_DB_URL`, `JWT_SECRET`, `SECRET_ENCRYPTION_KEY`; optional `SMTP_HOST`/`SENDER_EMAIL`/`SENDER_PASSWORD`, `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`CLOUDFLARE_API_TOKEN`, `SENTRY_DSN`, `METRICS_TOKEN`, `AXIOM_TOKEN`/`AXIOM_DATASET`.
+**Secrets** (`fly secrets set ...`): `CONTROL_PLANE_DB_URL`, `PROVISION_ADMIN_DB_URL`, `JWT_SECRET`, `SECRET_ENCRYPTION_KEY`, `NOTIFY_URL` (`https://stonesuite-notify.fly.dev` for **every** env — the one shared notify service), `NOTIFY_API_KEY` (the `X-Internal-Secret` shared secret `stonesuite-notify` checks; must match that app's `INTERNAL_SERVICE_SECRET`); optional `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`CLOUDFLARE_API_TOKEN`, `SENTRY_DSN`, `METRICS_TOKEN`, `AXIOM_TOKEN`/`AXIOM_DATASET`, `AUTOMATION_TICK_SECRET` (≥32 chars; must equal the `automation-cron` Worker's secret — unset disables date-triggered automation, so scheduled vendor payments never dispatch), `AUTOMATION_DEFAULT_TIMEZONE` (default `America/Chicago`, for tenants with no company-profile timezone), `AUTOMATION_KV_NAMESPACE_ID` + `AUTOMATION_KV_API_TOKEN` (with `CLOUDFLARE_ACCOUNT_ID`; all three or none — lets the platform switch mirror into the Worker's KV namespace; the token needs only Workers KV Storage: Edit, not the broad R2 token). (`SMTP_*`/`SENDER_*`/`RESEND_API_KEY` are dead config — every email now goes through `stonesuite-notify`, no direct SMTP/Resend path remains in this repo.) If `NOTIFY_URL`/`NOTIFY_API_KEY` are unset or wrong, `services.SendNotification` fails and document-send returns 502; if they're right but `stonesuite-notify`'s own downstream (Resend) is failing, sends return 200 and the email silently never arrives — check `fly logs -a stonesuite-notify` and the Resend dashboard.
 
 **GitHub Actions secret required:** `FLY_API_TOKEN` (repo secret, `environment: Prod`) — needed for `deploy-backend.yml` to run `flyctl deploy`.
 
@@ -160,11 +180,101 @@ separate deployed service, `stonesuite-notify` (its own repo, shares this app's
    Approve/reject already fire from the shared engine; transition does not, so hand-port
    this call to every new module the same way as auth/scope/logging.
 3. **Set `ActorUserID` on every `services.NotificationRequest`** you build outside the
-   engine (e.g. document-send in `controllers/documents.go`) — omitting it means Notify
-   can't tell who performed the action, which breaks any "you just did this" notification
-   addressed back to the actor.
+   engine (e.g. document-send in `controllers/documents.go`, workspace invites in
+   `controllers/user.go` via `services.SendUserInviteEmailWithResult`) — omitting it means
+   Notify can't tell who performed the action, which breaks any "you just did this"
+   notification addressed back to the actor.
 4. **Don't inline notify HTTP calls into `controllers/`** — go through `services/notify.go`'s
    existing client.
+5. **A handler that sends a transactional email must surface the outcome, not swallow it.**
+   Return `"emailSent": bool` in the JSON response and log failures via `slog` (never a new
+   `log.Printf` — CI guards this in the request-path packages). Best-effort delivery is fine
+   (the invite/reset link is still returned), but a silent "sent" when Notify or its
+   downstream Resend is failing is the bug that keeps recurring. Persist the returned notify
+   ids on the domain row (`SendNotificationWithResult` + a `notify_notification_ids TEXT[]`
+   column) so a "did it actually arrive?" reconciliation is possible — `controllers/user.go`
+   `InviteUser` and `controllers/documents.go` `Send` are the reference.
+6. **This backend never talks to Resend — inbound included.** A customer's reply to a record
+   email (Communication tab) is received by Resend, whose `email.received` event goes to
+   `stonesuite-notify`'s `POST /api/webhooks/resend`; notify fetches the mail and forwards it to
+   `POST /api/internal/email/inbound` (HMAC-signed with `NOTIFY_API_KEY`, verified by
+   `middleware.VerifyInternalSignature` + `ReplayGuard`). Don't add `RESEND_API_KEY`, a Resend
+   SDK/HTTP client or a Svix verifier here. `REPLY_EMAIL_DOMAIN` must equal notify's value —
+   notify uses it to decide which received mail to forward.
+
+### Global Search (`globalsearch/` + `GET /api/tenant/search`)
+Cross-module search fans a term out to every registered provider in parallel, each
+through that module's own `query.SearchResolver`, gated by its own RBAC resource +
+scope; denied/erroring groups are silently omitted. Results are grouped by entity
+type and carry `Domain`/`Module` route segments the frontend feeds to
+`recordRoute()`.
+1. **A module is search-dead until it's registered in `globalsearch/registry.go`**
+   (a `providers_*.go` `addProvider(...)`) **and added to
+   `globalsearch/registry_test.go`'s `TestRegistry_ExpectedKeys`.** Same
+   clone-discipline trap as `approvalchain/registry.go` — the `new-module` skill
+   covers this step.
+2. **`Provider.Module` is the frontend route segment, not always the registry
+   `Key`** (e.g. `fabrication_job` → `sales/installation`, `inventory_item` →
+   `inventory/item`). Cross-check every value against the frontend router.
+3. **The fan-out runs no SQL of its own** — a provider calls its module's existing
+   `Search(...)` with `query.Request{Search: term}`. Don't hand-roll search SQL in
+   `globalsearch/`; the exceptions (`userstore.Search`, `crmstore.SearchActivity`)
+   still use `query.StripLikeMeta` + `$n` params, never interpolation.
+
+### Automation Engine (`automation/` + `POST /api/internal/automation/tick`)
+The `automation-cron` Worker signs a tick every 15 min; `automation.Runner` runs every
+`DefaultJobs()` entry per servable tenant **inside the request** (scale-to-zero can stop the
+machine after the response).
+0. **Platform on/off, default OFF** (`platform_automation_settings`, control plane;
+   `GET/PUT /api/platform/automation`, platform-admin only). Every tick wakes the Fly
+   machine and Neon, so the Worker reads a Cloudflare KV mirror (`automation_enabled`) and
+   does not call the backend unless it is `"1"`; the tick re-checks the DB flag as a
+   backstop and fails closed. The DB row is the source of truth, KV is a mirror: PUT writes
+   DB first, then KV (502 + retry if KV fails). It also gates scheduled vendor-payment
+   dispatch. Any new job inherits this; don't add a second scheduler path around it.
+1. **"Today" is tenant-local, computed in Go** (`automation.TenantToday` /
+   `TenantLocation`, from `company_profile.timezone`, fallback
+   `AUTOMATION_DEFAULT_TIMEZONE`) and passed as a `$n` param. Automation SQL never uses
+   `CURRENT_DATE`. External sends respect `InSendWindow` (08:00–18:00 local).
+2. **Writes made by automation run under `automation.WithSystemActor(ctx)`**, so audit
+   observers ignore them (loop guard: check `automation.IsSystemActor(ctx)` — an empty
+   `AuditEvent.ActorUserID` does **not** mean automation; several human write paths pass
+   `""`). Employee-keyed columns use
+   `automation.SystemEmployeeID` (seeded employee 1). There is no automation `users` row;
+   don't add one.
+3. **Every outbound send carries `services.NotificationRequest.IdempotencyKey`** set to
+   `sha256hex(occurrence key or digest key)` (always 64 bytes; notify caps keys at 128 and
+   already scopes them per recipient, so never put the recipient in it), so a retry after a
+   timeout can't double-send.
+4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
+   panic-isolated, and none may block the write.
+5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
+   day for overdue/due-soon invoices. The rule is seeded **disabled**; tenants toggle it via
+   `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
+   (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
+   only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
+   flip and state write share one transaction. Each tick runs plan first (idempotent occurrence
+   rows, window `due_date` in [today-60, today+3], stages never before their date), then `drain`
+   (leases, guards, retry states). Caps and the tenant kill switch **defer** a digest (`planned`,
+   `run_at` pushed) rather than skip it; rows go `stale` 48h after `created_at`. `unknown` sends
+   count toward the weekly/daily caps. Disabling a rule skips its unsent rows (`rule_disabled`).
+   Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
+   pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
+   Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
+6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **disabled** and use a
+   `-3d` cadence (3 days before expiry). They send owner-only **internal** digests through the
+   drain's internal-recipient path, which honors only the tenant kill switch and ignores the
+   external caps and suppression. Eligible documents are `SENT`, not converted, with an active
+   user as owner.
+7. **Stuck approvals (`approval_stuck`, job `approval_reminders`, `automation/approval_*.go`)** is seeded **disabled**
+   with a `+2/+4/+6`-day cadence after the record entered its approval gate (max 3 reminders).
+   Covers only notify-wired `approvalchain` registry modules (`DisplayName != ""`) and only
+   gates whose `Reject != RejectInPlace`. Each unsigned live approver gets an **internal**
+   digest, one per approver per day across all modules; when no unsigned live approver remains
+   it falls back to the record owner plus active super admins. The clock restarts when the
+   record re-enters the gate (new history row, new anchor). The internal path honours only the
+   kill switch (plus the 08:00–18:00 send window), and the email links in-app (login required),
+   not a public link. The preview endpoint does not support this rule.
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.
@@ -179,8 +289,10 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 ### AI / RAG (`ai/`)
 1. **`ai/` is provider-agnostic and dependency-free of app packages** (Embedder + LLMClient interfaces, RAG orchestrator, record rendering) — same discipline as `query/`. Keep app types out of it.
 2. **LLM + embeddings are self-hosted via Ollama** (`ollama/` is its own Fly app), not a hosted API — chosen for data-residency/security. Don't swap in a hosted embeddings/LLM API without that trade-off being decided explicitly.
-3. **Help corpus is embedded** (`docs/embed.go`) and ingested with `go run ./cmd/rag-ingest-help`; reindex via `POST /api/platform/ai/reindex-help`.
+3. **Help corpus is embedded** (`docs/embed.go`, an explicit end-user-only manifest) and ingested with `go run ./cmd/rag-ingest-help`; reindex via `POST /api/platform/ai/reindex-help`.
 4. **Tenant RAG Q&A is `POST /api/tenant/ai/ask`** (auth + TenantResolver); `/api/embeddings` + `/api/chat` proxy the model.
+5. **Every business module is answerable through `globalsearch/`'s AI hooks.** A module is *AI-dead* until it has an `addAI(...)` entry (`globalsearch/ai_<domain>.go`: `Load` summarizer, `ListLive`, `Count`, `OwnScoped`, `Label`/`Nouns`) — the `new-module` skill covers it. Grants (`controllers/ai_scope.go`), retrieval scope, counts and record-number lookups are all generated from that registry; the queue carries `rag_index_queue.record_type`; writes re-index through the `workflow.LogAuditFull` observer (a module whose controller never audits is only caught by the 10-minute reconcile). A document's `Core` keys follow the shared convention (`number`, `status`, `customer`/`vendor`, `date`, `due_date`, `grand_total`, `balance`, `memo`, `po_number`, `line_items`) because the fast path reads them by name. Never widen a grant: a module's type is in `Grants` only when `authz.Check(read)` allowed it, and modules without an owner column (`OwnScoped=false`) are treated as `all`.
+6. **Help corpus is end-user docs only** (`docs/embed.go` explicit list). A user-visible feature change must update the matching help doc; the corpus re-ingests itself on the next boot when doc content changes (`cp_help_corpus_state`). `TestHelpCorpusIsUserFacing` guards against engineering content.
 
 ### Custom Fields & JSONB (Data Integrity)
 1. **custom_fields JSONB must validate against `workflow_field_definitions` before save** (type, required, enum, regex).
@@ -197,7 +309,7 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 7. **All queries accept `context.Context` as first parameter.**
 
 ### API & HTTP
-1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required).
+1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
 2. **All responses are JSON.** Status codes: 200, 400, 401, 403, 404, 409, 500.
 3. **Error responses always include `success: false, message: "..."`.**
 4. **Handlers must validate input.**

@@ -2,12 +2,14 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/cache"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
@@ -22,10 +24,25 @@ import (
 // Routes:
 //
 //	GET /api/tenant/crm/lookups
-type CRMLookups struct{}
+type CRMLookups struct {
+	// statics caches the seeded vocabularies per tenant; employees and parent
+	// customers are caller-scoped and volatile, so they are always read live.
+	statics *cache.TTLCache[string, *crmStaticLookups]
+}
 
 // NewCRMLookups constructs the handler group.
-func NewCRMLookups() *CRMLookups { return &CRMLookups{} }
+func NewCRMLookups() *CRMLookups { return &CRMLookups{statics: newCRMStaticCache()} }
+
+// static returns the tenant's cached seeded vocabularies, loading them once
+// per TTL (concurrent misses share one load). A request with no resolved
+// tenant bypasses the cache.
+func (h *CRMLookups) static(ctx context.Context, pool *pgxpool.Pool) (*crmStaticLookups, error) {
+	t, err := tenancy.TenantFromContext(ctx)
+	if err != nil || h.statics == nil {
+		return loadCRMStaticLookups(ctx, pool)
+	}
+	return h.statics.GetOrLoad(t.ID, func() (*crmStaticLookups, error) { return loadCRMStaticLookups(ctx, pool) })
+}
 
 // LookupItem is a generic {id, code, name} reference row.
 type LookupItem struct {
@@ -85,77 +102,14 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customerTypes, err := queryLookupItems(ctx, pool,
-		`SELECT customer_type_id, customer_type_code, customer_type_name FROM lkp_customer_type
-		 WHERE customer_type_is_active AND customer_type_deleted_at IS NULL ORDER BY customer_type_name`)
+	static, err := h.static(ctx, pool)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load customer types.")
-		return
-	}
-	arStatuses, err := queryLookupItems(ctx, pool,
-		`SELECT customer_ar_status_id, customer_ar_status_code, customer_ar_status_name FROM lkp_customer_ar_status
-		 WHERE customer_ar_status_is_active AND customer_ar_status_deleted_at IS NULL ORDER BY customer_ar_status_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load AR statuses.")
-		return
-	}
-	paymentTerms, err := queryLookupItems(ctx, pool,
-		`SELECT payment_terms_id, payment_terms_code, payment_terms_name FROM lkp_payment_terms
-		 WHERE payment_terms_is_active AND payment_terms_deleted_at IS NULL ORDER BY payment_terms_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load payment terms.")
-		return
-	}
-	currencies, err := queryCurrencyLookupItems(ctx, pool)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load currencies.")
-		return
-	}
-	countries, err := queryLookupItems(ctx, pool,
-		`SELECT country_id, country_code2, country_name FROM lkp_country
-		 WHERE country_is_active AND country_deleted_at IS NULL ORDER BY country_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load countries.")
-		return
-	}
-	leadSources, err := queryLookupItems(ctx, pool,
-		`SELECT lead_source_id, '', lead_source_name FROM lkp_crm_lead_source
-		 WHERE lead_source_is_active AND lead_source_deleted_at IS NULL ORDER BY lead_source_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load lead sources.")
-		return
-	}
-	contactMethods, err := queryLookupItems(ctx, pool,
-		`SELECT contact_method_id, '', contact_method_name FROM lkp_contact_method
-		 WHERE contact_method_is_active AND contact_method_deleted_at IS NULL ORDER BY contact_method_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load contact methods.")
-		return
-	}
-	priceLevels, err := queryLookupItems(ctx, pool,
-		`SELECT price_level_id, price_level_code, price_level_name FROM lkp_price_level
-		 WHERE price_level_is_active AND price_level_deleted_at IS NULL ORDER BY price_level_id`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load price levels.")
-		return
-	}
-	states, err := queryStateLookupItems(ctx, pool)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load states.")
-		return
-	}
-	recordTypes, err := queryLookupItems(ctx, pool,
-		`SELECT record_type_id, record_type_code, record_type_name FROM lkp_record_type
-		 WHERE record_type_is_active AND record_type_deleted_at IS NULL ORDER BY record_type_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record types.")
-		return
-	}
-	crmStatuses, err := queryLookupItems(ctx, pool,
-		`SELECT crm_status_id, crm_status_code, crm_status_name FROM lkp_crm_status
-		 WHERE crm_status_is_active AND crm_status_deleted_at IS NULL ORDER BY crm_status_name`)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load CRM statuses.")
+		var le *lookupLoadError
+		if errors.As(err, &le) {
+			fail(w, http.StatusInternalServerError, le.msg)
+		} else {
+			fail(w, http.StatusInternalServerError, "Failed to load lookups.")
+		}
 		return
 	}
 	// Employees: maps employee_id (integer FK) to display name, used for the
@@ -210,17 +164,17 @@ func (h *CRMLookups) GetLookups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 		"lookups": map[string]any{
-			"customerTypes":   customerTypes,
-			"arStatuses":      arStatuses,
-			"paymentTerms":    paymentTerms,
-			"currencies":      currencies,
-			"countries":       countries,
-			"states":          states,
-			"leadSources":     leadSources,
-			"contactMethods":  contactMethods,
-			"priceLevels":     priceLevels,
-			"recordTypes":     recordTypes,
-			"crmStatuses":     crmStatuses,
+			"customerTypes":   static.CustomerTypes,
+			"arStatuses":      static.ArStatuses,
+			"paymentTerms":    static.PaymentTerms,
+			"currencies":      static.Currencies,
+			"countries":       static.Countries,
+			"states":          static.States,
+			"leadSources":     static.LeadSources,
+			"contactMethods":  static.ContactMethods,
+			"priceLevels":     static.PriceLevels,
+			"recordTypes":     static.RecordTypes,
+			"crmStatuses":     static.CrmStatuses,
 			"employees":       employees,
 			"parentCustomers": parentCustomers,
 		},

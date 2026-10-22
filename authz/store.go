@@ -59,7 +59,7 @@ type grantsCacheKey struct {
 // grantsCache holds recently-resolved effective grants (role_permissions
 // rarely change but are checked on nearly every request). Entries are
 // invalidated tenant-wide on any role/assignment write.
-var grantsCache = cache.New[grantsCacheKey, []Grant](30 * time.Second)
+var grantsCache = cache.NewWithMax[grantsCacheKey, []Grant](30*time.Second, 20000)
 
 // invalidateGrants drops all cached grants for q's tenant pool, if q is a
 // tenant pool (transactions don't populate the cache, so nothing to do).

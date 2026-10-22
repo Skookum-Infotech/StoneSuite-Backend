@@ -212,7 +212,7 @@ type defCacheKey struct {
 // definitionCache holds recently-loaded Definitions (states/transitions/field
 // defs change rarely but are read on nearly every workflow/CRM request).
 // Entries are invalidated on SetWorkflowEnabled/CreateField/DeleteField.
-var definitionCache = cache.New[defCacheKey, *Definition](30 * time.Second)
+var definitionCache = cache.NewWithMax[defCacheKey, *Definition](30*time.Second, 5000)
 
 // invalidateDefinition drops the cached Definition for workflowID, if q is a
 // tenant pool (transactions don't populate the cache, so nothing to do).

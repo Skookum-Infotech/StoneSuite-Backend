@@ -9869,6 +9869,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_provider
 CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_msgid
     ON record_email_message (record_id, message_id) WHERE message_id <> '';
 
+-- internal marks a note typed into the Communication tab with "Internal only"
+-- on: it is kept on the record for the team and was never emailed, so it has
+-- direction 'out' but no recipients, no subject and no Message-ID. Reply
+-- threading (latest subject, reply target) skips these rows.
+ALTER TABLE record_email_message
+    ADD COLUMN IF NOT EXISTS internal BOOLEAN NOT NULL DEFAULT false;
+
 -- ── Automation P1a: AR dunning (invoice payment reminders) ──
 -- sent_at is when Notify accepted the send; the per-contact weekly cap counts
 -- status='sent' rows by recipient over a trailing window, hence the partial index.

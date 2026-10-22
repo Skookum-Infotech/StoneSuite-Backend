@@ -150,6 +150,51 @@ func TestLatestAndReplyTarget(t *testing.T) {
 	assert.Equal(t, []string{"<a@x>", "<b@x>"}, ids)
 }
 
+func note(record, body string) Message {
+	return Message{
+		RecordID: record, WorkflowKey: "sales_order", Direction: DirectionOut,
+		FromName: "Harish", Body: body, Internal: true,
+	}
+}
+
+func TestInternalNote_IsListedButNeverThreadedOrAddressed(t *testing.T) {
+	pool, ctx := tenantPool(t), context.Background()
+	rec := newID(t, pool)
+
+	// A note on a record that was never emailed: it is kept, but there is no
+	// customer to reply to and nothing to thread under.
+	ok, err := Insert(ctx, pool, note(rec, "Customer called, wants granite."))
+	require.NoError(t, err)
+	assert.True(t, ok)
+	target, err := ReplyTarget(ctx, pool, rec)
+	require.NoError(t, err)
+	assert.Equal(t, "", target, "a note has no recipient")
+	latest, err := Latest(ctx, pool, rec)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "a note has no subject to answer")
+
+	_, err = Insert(ctx, pool, outbound(rec, "priya@gmail.com", "Your order"))
+	require.NoError(t, err)
+	_, err = Insert(ctx, pool, note(rec, "Follow up Friday."))
+	require.NoError(t, err)
+
+	// The note written after the email must not become the thread's latest message.
+	latest, err = Latest(ctx, pool, rec)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, "Your order", latest.Body)
+	assert.False(t, latest.Internal)
+	target, err = ReplyTarget(ctx, pool, rec)
+	require.NoError(t, err)
+	assert.Equal(t, "priya@gmail.com", target)
+
+	msgs, err := List(ctx, pool, rec)
+	require.NoError(t, err)
+	require.Len(t, msgs, 3)
+	assert.Equal(t, []bool{true, false, true}, []bool{msgs[0].Internal, msgs[1].Internal, msgs[2].Internal})
+	assert.Equal(t, "Customer called, wants granite.", msgs[0].Body)
+}
+
 func insertTenant(t *testing.T, pool *pgxpool.Pool) string {
 	t.Helper()
 	var id string

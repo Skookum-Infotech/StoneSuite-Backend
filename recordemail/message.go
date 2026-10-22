@@ -14,6 +14,8 @@ const (
 )
 
 // Message is one email in a record's conversation. Bodies are plain text only.
+// Internal marks a team-only note: kept on the record, never emailed, so it has
+// DirectionOut but no recipients, subject or Message-ID.
 type Message struct {
 	ID              string    `json:"id"`
 	RecordID        string    `json:"recordId"`
@@ -26,6 +28,7 @@ type Message struct {
 	Subject         string    `json:"subject"`
 	Body            string    `json:"body"`
 	AttachmentCount int       `json:"attachmentCount"`
+	Internal        bool      `json:"internal"`
 	CreatedAt       time.Time `json:"createdAt"`
 
 	// Threading and bookkeeping fields: stored, never sent to the browser.

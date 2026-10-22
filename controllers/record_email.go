@@ -109,14 +109,34 @@ func (h *RecordEmailOps) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "enabled": h.Enabled(), "replyTo": replyTo, "messages": msgs})
 }
 
+// replyRequest is the body of a Communication-tab message. InternalOnly keeps it
+// on the record for the team: nothing is emailed.
 type replyRequest struct {
-	Message string `json:"message"`
+	Message      string `json:"message"`
+	InternalOnly bool   `json:"internalOnly"`
+}
+
+// cleanReplyText trims a typed message and returns the problem to show when it
+// cannot be used ("" when it can).
+func cleanReplyText(raw string, internal bool) (text, problem string) {
+	text = strings.TrimSpace(raw)
+	if text == "" {
+		if internal {
+			return "", "Write a note to save."
+		}
+		return "", "Write a message to send."
+	}
+	if utf8.RuneCountInString(text) > maxReplyChars {
+		return "", "That message is too long."
+	}
+	return text, ""
 }
 
 // Reply emails the customer from the Communication tab and records it in the
 // conversation. The reply carries the record's own Reply-To and the thread
 // headers, so the customer's answer comes back here and stays in the same Gmail
-// or Outlook conversation. RBAC: <type>:update.
+// or Outlook conversation. With internalOnly set it only saves a team note on the
+// record: nothing is sent. RBAC: <type>:update.
 func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
 	pool, info, identityID, ok := authRecordAccess(w, r, recordID, authz.ActionUpdate)
@@ -127,6 +147,23 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "Record not found.")
 		return
 	}
+
+	var req replyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	text, problem := cleanReplyText(req.Message, req.InternalOnly)
+	if problem != "" {
+		fail(w, http.StatusBadRequest, problem)
+		return
+	}
+	// A note is never sent, so it needs neither inbound email nor a customer address.
+	if req.InternalOnly {
+		saveInternalNote(w, r, pool, info.WorkflowKey, recordID, identityID, text)
+		return
+	}
+
 	if !h.Enabled() {
 		fail(w, http.StatusServiceUnavailable, "Email replies are not set up for this workspace.")
 		return
@@ -134,21 +171,6 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	tenant, err := tenancy.TenantFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
-		return
-	}
-
-	var req replyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	text := strings.TrimSpace(req.Message)
-	if text == "" {
-		fail(w, http.StatusBadRequest, "Write a message to send.")
-		return
-	}
-	if utf8.RuneCountInString(text) > maxReplyChars {
-		fail(w, http.StatusBadRequest, "That message is too long.")
 		return
 	}
 
@@ -213,6 +235,26 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	applyEmailOutcome(ctx, resp, outcome, "record email: reply not delivered",
 		"workflow", info.WorkflowKey, "record", recordID)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// saveInternalNote files a team-only note on the record's conversation. Nothing
+// is emailed, and the note is audit-logged like a reply.
+func saveInternalNote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, workflowKey, recordID, identityID, text string) {
+	ctx := r.Context()
+	actor := loadActor(ctx, pool, identityID)
+	note := recordemail.Message{
+		RecordID: recordID, WorkflowKey: workflowKey, Direction: recordemail.DirectionOut,
+		FromName: actor.FullName, FromEmail: actor.Email, Body: text,
+		SentByUserID: actor.ID, Internal: true,
+	}
+	if _, err := recordemail.Insert(ctx, pool, note); err != nil {
+		slog.ErrorContext(ctx, "record email: internal note not saved", "record", recordID, "error", err)
+		fail(w, http.StatusInternalServerError, "Failed to save the note.")
+		return
+	}
+	_ = workflow.LogAudit(ctx, pool, actor.ID, "record_email.note_added", "record_email", recordID,
+		map[string]any{"recordId": recordID, "workflowKey": workflowKey})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 // threadHeaders returns the reply's subject and its In-Reply-To / References

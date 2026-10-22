@@ -14,14 +14,14 @@ import (
 const messageColumns = `id, record_id, workflow_key, direction, from_name, from_email,
 	to_emails, cc_emails, subject, body_text, message_id, in_reply_to, references_header,
 	provider_email_id, attachment_count, COALESCE(sent_by_user_id::text, ''),
-	COALESCE(document_send_id::text, ''), created_at`
+	COALESCE(document_send_id::text, ''), internal, created_at`
 
 func scanMessage(row pgx.Row) (Message, error) {
 	var m Message
 	var direction string
 	err := row.Scan(&m.ID, &m.RecordID, &m.WorkflowKey, &direction, &m.FromName, &m.FromEmail,
 		&m.To, &m.CC, &m.Subject, &m.Body, &m.MessageID, &m.InReplyTo, &m.References,
-		&m.ProviderEmailID, &m.AttachmentCount, &m.SentByUserID, &m.DocumentSendID, &m.CreatedAt)
+		&m.ProviderEmailID, &m.AttachmentCount, &m.SentByUserID, &m.DocumentSendID, &m.Internal, &m.CreatedAt)
 	m.Direction = Direction(direction)
 	return m, err
 }
@@ -34,13 +34,13 @@ func Insert(ctx context.Context, pool *pgxpool.Pool, m Message) (bool, error) {
 		INSERT INTO record_email_message
 			(record_id, workflow_key, direction, from_name, from_email, to_emails, cc_emails,
 			 subject, body_text, message_id, in_reply_to, references_header, provider_email_id,
-			 attachment_count, sent_by_user_id, document_send_id)
+			 attachment_count, sent_by_user_id, document_send_id, internal)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			NULLIF($15, '')::uuid, NULLIF($16, '')::uuid)
+			NULLIF($15, '')::uuid, NULLIF($16, '')::uuid, $17)
 		ON CONFLICT DO NOTHING`,
 		m.RecordID, m.WorkflowKey, string(m.Direction), m.FromName, m.FromEmail, m.To, m.CC,
 		m.Subject, m.Body, m.MessageID, m.InReplyTo, m.References, m.ProviderEmailID,
-		m.AttachmentCount, m.SentByUserID, m.DocumentSendID)
+		m.AttachmentCount, m.SentByUserID, m.DocumentSendID, m.Internal)
 	if err != nil {
 		return false, fmt.Errorf("insert record email message for %s: %w", m.RecordID, err)
 	}
@@ -68,11 +68,12 @@ func List(ctx context.Context, pool *pgxpool.Pool, recordID string) ([]Message, 
 	return out, rows.Err()
 }
 
-// Latest returns the record's most recent message, or (nil, nil) when it has
-// none. A reply is threaded under it.
+// Latest returns the record's most recent real email, or (nil, nil) when it has
+// none. A reply is threaded under it, so an internal note is never the latest:
+// it has no subject to answer.
 func Latest(ctx context.Context, pool *pgxpool.Pool, recordID string) (*Message, error) {
 	m, err := scanMessage(pool.QueryRow(ctx,
-		`SELECT `+messageColumns+` FROM record_email_message WHERE record_id = $1
+		`SELECT `+messageColumns+` FROM record_email_message WHERE record_id = $1 AND NOT internal
 		 ORDER BY created_at DESC, id DESC LIMIT 1`, recordID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -101,7 +102,7 @@ func ReplyTarget(ctx context.Context, pool *pgxpool.Pool, recordID string) (stri
 	var to string
 	err = pool.QueryRow(ctx, `
 		SELECT to_emails FROM record_email_message
-		WHERE record_id = $1 AND direction = 'out' AND to_emails <> ''
+		WHERE record_id = $1 AND direction = 'out' AND NOT internal AND to_emails <> ''
 		ORDER BY created_at, id LIMIT 1`, recordID).Scan(&to)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil

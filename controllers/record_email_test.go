@@ -232,6 +232,35 @@ func TestReplyAddress_OnlyForThreadedRecordTypesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestCleanReplyText(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		internal    bool
+		wantText    string
+		wantProblem string
+	}{
+		{"trims surrounding whitespace", "  Thanks, see you Monday.\n", false, "Thanks, see you Monday.", ""},
+		{"keeps inner line breaks", "Hi\n\nBye", false, "Hi\n\nBye", ""},
+		{"empty email reply", "", false, "", "Write a message to send."},
+		{"blank email reply", " \n\t ", false, "", "Write a message to send."},
+		{"empty internal note", "", true, "", "Write a note to save."},
+		{"internal note keeps its text", "  Called the customer.  ", true, "Called the customer.", ""},
+		{"exactly the limit", strings.Repeat("x", maxReplyChars), false, strings.Repeat("x", maxReplyChars), ""},
+		{"over the limit", strings.Repeat("x", maxReplyChars+1), false, "", "That message is too long."},
+		{"limit counts characters, not bytes", strings.Repeat("é", maxReplyChars), true, strings.Repeat("é", maxReplyChars), ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text, problem := cleanReplyText(tc.raw, tc.internal)
+			if text != tc.wantText || problem != tc.wantProblem {
+				t.Fatalf("cleanReplyText(%q, %v) = (%q, %q), want (%q, %q)",
+					tc.raw, tc.internal, text, problem, tc.wantText, tc.wantProblem)
+			}
+		})
+	}
+}
+
 func TestSenderLabel(t *testing.T) {
 	tests := []struct{ person, company, want string }{
 		{"Harish Narne", "Acme Stone", "Harish Narne (Acme Stone)"},

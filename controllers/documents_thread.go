@@ -33,7 +33,7 @@ func (h *DocumentOps) WithRecordEmail(t recordThreads) *DocumentOps {
 func (h *DocumentOps) routeReplies(
 	ctx context.Context, pool *pgxpool.Pool, req *services.NotificationRequest, p *preparedSend, identityID string,
 ) userstore.User {
-	if !threadWorkflows[p.meta.WorkflowKey] {
+	if _, ok := emailThread(p.meta.WorkflowKey); !ok {
 		return userstore.User{}
 	}
 	actor := loadActor(ctx, pool, identityID)
@@ -53,7 +53,7 @@ func (h *DocumentOps) routeReplies(
 func (h *DocumentOps) recordSent(
 	ctx context.Context, pool *pgxpool.Pool, p *preparedSend, sendID string, actor userstore.User, email *services.Email,
 ) {
-	if !threadWorkflows[p.meta.WorkflowKey] || email == nil {
+	if _, ok := emailThread(p.meta.WorkflowKey); !ok || email == nil {
 		return
 	}
 	_, err := recordemail.Insert(ctx, pool, recordemail.Message{

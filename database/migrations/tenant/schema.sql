@@ -9830,7 +9830,8 @@ ALTER TABLE customer_order_form
     ADD COLUMN IF NOT EXISTS order_form_updated_at TIMESTAMP NULL;
 
 -- ── record_email_message ────────────────────────────────────────────────
--- The email conversation of one record (today: a Sales Order), shown on its
+-- The email conversation of one record (Sales Order, Quote, Estimate, Invoice,
+-- Purchase Order; team notes only on a Requisition), shown on its
 -- Communication tab. One row per message: direction 'out' is mail StoneSuite
 -- sent (the Send-to-customer email, or a reply typed into the tab); 'in' is a
 -- customer's reply that arrived on the record's inbound address (see the
@@ -9876,6 +9877,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_msgid
 ALTER TABLE record_email_message
     ADD COLUMN IF NOT EXISTS internal BOOLEAN NOT NULL DEFAULT false;
 
+-- ── record_email_attachment ─────────────────────────────────────────────
+-- A file that travelled with one message of a record's Communication thread:
+-- one the other party attached to a reply (copied here from the mail provider by
+-- stonesuite-notify, so keeping it no longer depends on the provider's own
+-- retention) or one staff attached when replying. The bytes live in the tenant's
+-- R2 bucket under storage_key; this row is the metadata plus the state of that copy.
+--
+-- status: 'pending' (received, not copied yet), 'stored', 'too_large' and
+-- 'blocked' (received but deliberately not kept), 'unavailable' (could not be
+-- kept: the tenant has no file storage, the record is over its cap, or the copy
+-- never finished). There is deliberately no CHECK on status: the Go side owns the
+-- vocabulary, so a new state needs no constraint migration.
+-- provider_attachment_id is the mail provider's id of a received file, the
+-- idempotency key of a retried delivery; '' for a file staff attached.
+CREATE TABLE IF NOT EXISTS record_email_attachment (
+    id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id             UUID        NOT NULL REFERENCES record_email_message(id) ON DELETE CASCADE,
+    record_id              UUID        NOT NULL,
+    file_name              TEXT        NOT NULL,
+    content_type           TEXT        NOT NULL DEFAULT '',
+    size_bytes             BIGINT      NOT NULL DEFAULT 0,
+    is_inline              BOOLEAN     NOT NULL DEFAULT false,
+    provider_attachment_id TEXT        NOT NULL DEFAULT '',
+    storage_key            TEXT        NOT NULL DEFAULT '',
+    status                 TEXT        NOT NULL,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_record_email_attachment_message
+    ON record_email_attachment (message_id);
+CREATE INDEX IF NOT EXISTS idx_record_email_attachment_record
+    ON record_email_attachment (record_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_attachment_provider
+    ON record_email_attachment (message_id, provider_attachment_id) WHERE provider_attachment_id <> '';
+
 -- ── Automation P1a: AR dunning (invoice payment reminders) ──
 -- sent_at is when Notify accepted the send; the per-contact weekly cap counts
 -- status='sent' rows by recipient over a trailing window, hence the partial index.
@@ -9920,3 +9955,70 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id)
 SELECT id FROM automation_rules WHERE rule_key = 'approval_stuck'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Domain events + AI proposed actions ──
+-- domain_event is a transactional-outbox style event log consumed by cursors.
+CREATE TABLE IF NOT EXISTS domain_event (
+  id            BIGSERIAL PRIMARY KEY,
+  event_type    TEXT NOT NULL,
+  resource      TEXT NOT NULL,
+  record_id     TEXT NOT NULL,
+  actor_user_id UUID NULL,
+  via           TEXT NOT NULL DEFAULT 'user',
+  depth         SMALLINT NOT NULL DEFAULT 0,
+  payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'domain_event_depth_chk') THEN
+    ALTER TABLE domain_event ADD CONSTRAINT domain_event_depth_chk CHECK (depth BETWEEN 0 AND 3);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_domain_event_created_at ON domain_event (created_at);
+
+CREATE TABLE IF NOT EXISTS domain_event_cursor (
+  consumer    TEXT PRIMARY KEY,
+  last_id     BIGINT NOT NULL DEFAULT 0,
+  failing_id  BIGINT NULL,
+  failures    INT NOT NULL DEFAULT 0,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ai_proposed_action (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  identity_id   UUID NOT NULL,
+  user_id       UUID NOT NULL,
+  kind          TEXT NOT NULL,
+  resource      TEXT NOT NULL,
+  payload       JSONB NOT NULL,
+  preview       JSONB NOT NULL,
+  source        TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  result_ref    JSONB NULL,
+  error_message TEXT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at   TIMESTAMPTZ NULL
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_proposed_action_kind_chk') THEN
+    ALTER TABLE ai_proposed_action ADD CONSTRAINT ai_proposed_action_kind_chk
+      CHECK (kind IN ('create', 'update'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_proposed_action_source_chk') THEN
+    ALTER TABLE ai_proposed_action ADD CONSTRAINT ai_proposed_action_source_chk
+      CHECK (source IN ('agent', 'docextract'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_proposed_action_status_chk') THEN
+    ALTER TABLE ai_proposed_action ADD CONSTRAINT ai_proposed_action_status_chk
+      CHECK (status IN ('pending', 'confirmed', 'cancelled', 'expired', 'failed'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_identity_status ON ai_proposed_action (identity_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_expires_at ON ai_proposed_action (expires_at);

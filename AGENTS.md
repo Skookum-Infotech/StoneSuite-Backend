@@ -200,7 +200,12 @@ separate deployed service, `stonesuite-notify` (its own repo, shares this app's
    `POST /api/internal/email/inbound` (HMAC-signed with `NOTIFY_API_KEY`, verified by
    `middleware.VerifyInternalSignature` + `ReplayGuard`). Don't add `RESEND_API_KEY`, a Resend
    SDK/HTTP client or a Svix verifier here. `REPLY_EMAIL_DOMAIN` must equal notify's value —
-   notify uses it to decide which received mail to forward.
+   notify uses it to decide which received mail to forward. Files attached to a reply follow the
+   same rule: the mail route only records their metadata (and answers with `uploadRef` + `pending`),
+   then notify sends each file to `PUT /api/internal/email/inbound/{ref}/attachments/{id}`
+   (signed, raw bytes, `recordemail` limits) and the backend copies it into the tenant's R2 bucket
+   (`record_email_attachment`). Staff attachments on a reply are multipart, 5 MB total
+   (`recordemail.ReplyMaxTotalBytes`, mirrored in the web app's `lib/recordEmail.ts`).
 
 ### Global Search (`globalsearch/` + `GET /api/tenant/search`)
 Cross-module search fans a term out to every registered provider in parallel, each

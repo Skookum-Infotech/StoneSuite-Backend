@@ -146,6 +146,11 @@ type Config struct {
 	AutomationKVNamespaceID string
 	AutomationKVAPIToken    string
 
+	// Domain events and AI proposed actions (tenant outbox + confirm-before-write).
+	DomainEventRetentionDays    int // DOMAIN_EVENT_RETENTION_DAYS: prune domain_event rows older than this
+	ProposedActionTTLMinutes    int // PROPOSED_ACTION_TTL_MINUTES: lifetime of a pending proposal
+	ProposedActionRetentionDays int // PROPOSED_ACTION_RETENTION_DAYS: prune resolved proposals older than this
+
 	// AI / RAG assistant (ADR-001). Both embedding and chat are self-hosted on
 	// the same Ollama box — no third-party LLM account, API key, or quota.
 	// All optional; the assistant no-ops when unconfigured.
@@ -287,6 +292,10 @@ func Load() {
 		AutomationDefaultTimezone: getEnv("AUTOMATION_DEFAULT_TIMEZONE", "America/Chicago"),
 		AutomationKVNamespaceID:   getEnv("AUTOMATION_KV_NAMESPACE_ID", ""),
 		AutomationKVAPIToken:      getEnv("AUTOMATION_KV_API_TOKEN", ""),
+		// Domain events / proposed actions
+		DomainEventRetentionDays:    getEnvInt("DOMAIN_EVENT_RETENTION_DAYS", defaultDomainEventRetentionDays),
+		ProposedActionTTLMinutes:    getEnvInt("PROPOSED_ACTION_TTL_MINUTES", defaultProposedActionTTLMinutes),
+		ProposedActionRetentionDays: getEnvInt("PROPOSED_ACTION_RETENTION_DAYS", defaultProposedActionRetentionDays),
 		// AI / RAG assistant (ADR-001)
 		OllamaBaseURL:               getEnv("OLLAMA_BASE_URL", "http://localhost:11434"),
 		AIChatModel:                 getEnv("AI_CHAT_MODEL", "llama3.2:3b"),
@@ -393,6 +402,15 @@ func (c Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("AUTOMATION_DEFAULT_TIMEZONE %q is not a valid IANA timezone", tz))
 		}
 	}
+	if c.DomainEventRetentionDays < 0 {
+		problems = append(problems, "DOMAIN_EVENT_RETENTION_DAYS must not be negative")
+	}
+	if c.ProposedActionTTLMinutes < 0 {
+		problems = append(problems, "PROPOSED_ACTION_TTL_MINUTES must not be negative")
+	}
+	if c.ProposedActionRetentionDays < 0 {
+		problems = append(problems, "PROPOSED_ACTION_RETENTION_DAYS must not be negative")
+	}
 
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid configuration: %s", strings.Join(problems, "; "))
@@ -493,3 +511,10 @@ func defaultAPIBaseURL() string {
 	}
 	return "http://localhost:8080"
 }
+
+// Domain-event and proposed-action defaults (see Config.DomainEventRetentionDays).
+const (
+	defaultDomainEventRetentionDays    int = 30
+	defaultProposedActionTTLMinutes    int = 15
+	defaultProposedActionRetentionDays int = 7
+)

@@ -193,6 +193,15 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		// NOTIFY_API_KEY, checked before anything is read or stored, with a 5-min
 		// replay window. 503 while REPLY_EMAIL_DOMAIN / NOTIFY_API_KEY are unset.
 		"POST /api/internal/email/inbound": true,
+
+		// Machine-only: stonesuite-notify sending one file of such a reply, copied
+		// from Resend, under the reply address the mail route named. No JWT; the
+		// same HMAC signature (it covers the method, the path with the reply
+		// address and file id, and the bytes) with the same replay window. The
+		// body is read first because the signature covers it, but only up to the
+		// file size limit and only after the signature headers are present; nothing
+		// is stored before the signature checks out. 503 while inbound email is off.
+		"PUT /api/internal/email/inbound/{ref}/attachments/{attachmentId}": true,
 	}
 
 	routes, _ := analyze(t)

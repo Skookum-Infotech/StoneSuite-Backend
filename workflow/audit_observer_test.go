@@ -35,7 +35,7 @@ func TestLogAuditFull_NotifiesEveryObserverWithActor(t *testing.T) {
 
 	logOne(t)
 
-	want := AuditEvent{Action: "update", Resource: "invoice", ResourceID: "42", ActorUserID: "user-1"}
+	want := AuditEvent{Action: "update", Resource: "invoice", ResourceID: "42", ActorUserID: "user-1", Via: "user"}
 	assert.Equal(t, []AuditEvent{want, want}, got)
 }
 
@@ -61,4 +61,27 @@ func TestRegisterAuditObserver_IgnoresNil(t *testing.T) {
 	resetAuditObservers()
 	RegisterAuditObserver(nil)
 	logOne(t)
+}
+
+func TestAuditDetailsVia(t *testing.T) {
+	tests := []struct {
+		name    string
+		via     string
+		wantVia bool
+	}{
+		{"user omitted", "user", false},
+		{"automation merged", "automation", true},
+		{"ai agent merged", "ai_agent", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := auditDetails(map[string]any{"a": 1}, map[string]any{"reason": "x"}, tt.via)
+			assert.Equal(t, "x", d["reason"])
+			v, ok := d["via"]
+			assert.Equal(t, tt.wantVia, ok)
+			if tt.wantVia {
+				assert.Equal(t, tt.via, v)
+			}
+		})
+	}
 }

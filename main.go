@@ -1036,19 +1036,25 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
 
 		// Communication tab: a record's email conversation. Mail sent about a
-		// Sales Order carries its own Reply-To (r-<token>@REPLY_EMAIL_DOMAIN), so the
-		// customer's reply from Gmail/Outlook is received by Resend, fetched by
-		// stonesuite-notify and forwarded to the internal route below, which files it
-		// under the order. This backend never contacts Resend. Switched off (mail
-		// goes out unchanged) while REPLY_EMAIL_DOMAIN is empty.
+		// Sales Order, Quote, Estimate, Invoice or Purchase Order carries its own
+		// Reply-To (r-<token>@REPLY_EMAIL_DOMAIN), so the reply from Gmail/Outlook is
+		// received by Resend, fetched by stonesuite-notify and forwarded to the
+		// internal route below, which files it under the record. A Requisition keeps
+		// team notes only (controllers.threadKinds). This backend never contacts
+		// Resend. Switched off (mail goes out unchanged) while REPLY_EMAIL_DOMAIN is empty.
 		var replyAddrs *recordemail.AddressStore
 		if cp != nil {
 			replyAddrs = recordemail.NewAddressStore(cp.Pool())
 		}
-		recordEmailOps := controllers.NewRecordEmailOps(replyAddrs, config.AppConfig.ReplyEmailDomain)
+		// Files on the thread (a customer's attachments, copied here by notify, and
+		// the ones staff attach when replying) live in each tenant's own R2 bucket;
+		// without R2 the thread still works and lists them as unavailable.
+		recordEmailOps := controllers.NewRecordEmailOps(replyAddrs, config.AppConfig.ReplyEmailDomain).
+			WithStorage(controllers.R2TenantStorage(r2Client))
 		docOps.WithRecordEmail(recordEmailOps)
 		mux.Handle("GET /api/tenant/records/{id}/emails", tenantChain(recordEmailOps.List))
 		mux.Handle("POST /api/tenant/records/{id}/emails", tenantChain(recordEmailOps.Reply))
+		mux.Handle("GET /api/tenant/records/{id}/emails/attachments/{attachmentId}/download", tenantChain(recordEmailOps.DownloadAttachment))
 		if cp != nil && tenantRouter != nil {
 			recordEmailOps.WithInbound(config.AppConfig.NotifyAPIKey, cp, tenantRouter.PoolFor)
 			// Machine-only: authenticated by notify's HMAC signature (NOTIFY_API_KEY),
@@ -1056,6 +1062,10 @@ func main() {
 			// login traffic.
 			inboundEmailRateLimiter := middleware.NewRateLimiter(shutdownCtx, 1, 10)
 			mux.Handle("POST /api/internal/email/inbound", inboundEmailRateLimiter.PerIPFunc(recordEmailOps.Inbound))
+			// One request per received file, so a mail with several files needs a
+			// bigger burst than the mail route; still its own bucket.
+			inboundAttachmentRateLimiter := middleware.NewRateLimiter(shutdownCtx, 2, 30)
+			mux.Handle("PUT /api/internal/email/inbound/{ref}/attachments/{attachmentId}", inboundAttachmentRateLimiter.PerIPFunc(recordEmailOps.InboundAttachment))
 		}
 
 		// Global search: fans a term out to every module the caller can read

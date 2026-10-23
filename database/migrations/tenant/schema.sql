@@ -9919,9 +9919,9 @@ ALTER TABLE automation_deliveries
 CREATE INDEX IF NOT EXISTS idx_automation_deliveries_contact_sent
     ON automation_deliveries (recipient_email, sent_at) WHERE status = 'sent';
 
--- System rule, shipped disabled; offsets are days relative to the invoice due date.
+-- System rule, shipped enabled (the platform switch is the master gate); offsets are days relative to the invoice due date.
 INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
-VALUES ('ar_dunning', 'Invoice payment reminders', FALSE, TRUE, 'external',
+VALUES ('ar_dunning', 'Invoice payment reminders', TRUE, TRUE, 'external',
         '{"cadence":[{"offsetDays":-3},{"offsetDays":0},{"offsetDays":7},{"offsetDays":14}]}')
 ON CONFLICT (rule_key) DO NOTHING;
 
@@ -9930,14 +9930,14 @@ SELECT id FROM automation_rules WHERE rule_key = 'ar_dunning'
 ON CONFLICT (rule_id) DO NOTHING;
 
 -- ── Automation P1b-2: quote and estimate expiry reminders (internal) ──
--- System rules, shipped disabled; the offset is days relative to valid_until.
+-- System rules, shipped enabled (the platform switch is the master gate); the offset is days relative to valid_until.
 INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
-VALUES ('quote_expiry', 'Quote expiry reminders', FALSE, TRUE, 'internal',
+VALUES ('quote_expiry', 'Quote expiry reminders', TRUE, TRUE, 'internal',
         '{"cadence":[{"offsetDays":-3}]}')
 ON CONFLICT (rule_key) DO NOTHING;
 
 INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
-VALUES ('estimate_expiry', 'Estimate expiry reminders', FALSE, TRUE, 'internal',
+VALUES ('estimate_expiry', 'Estimate expiry reminders', TRUE, TRUE, 'internal',
         '{"cadence":[{"offsetDays":-3}]}')
 ON CONFLICT (rule_key) DO NOTHING;
 
@@ -9946,15 +9946,36 @@ SELECT id FROM automation_rules WHERE rule_key IN ('quote_expiry', 'estimate_exp
 ON CONFLICT (rule_id) DO NOTHING;
 
 -- ── Automation P1c: stuck approval reminders (internal) ──
--- System rule, shipped disabled; offsets are days after the record entered its approval gate.
+-- System rule, shipped enabled (the platform switch is the master gate); offsets are days after the record entered its approval gate.
 INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
-VALUES ('approval_stuck', 'Stuck approval reminders', FALSE, TRUE, 'internal',
+VALUES ('approval_stuck', 'Stuck approval reminders', TRUE, TRUE, 'internal',
         '{"cadence":[{"offsetDays":2},{"offsetDays":4},{"offsetDays":6}]}')
 ON CONFLICT (rule_key) DO NOTHING;
 
 INSERT INTO automation_state (rule_id)
 SELECT id FROM automation_rules WHERE rule_key = 'approval_stuck'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation: rules default to enabled; the platform switch is the master gate ──
+-- A rule with enabled_at NULL is treated as "enabling today", so every stage is
+-- pre_enable forever and nothing would ever send. Every enabled system rule must
+-- therefore carry an enabled_at. This stamps a fresh seed, and flips rules that
+-- earlier schema versions shipped disabled and no admin ever enabled. Once stamped
+-- a rule never matches again, so a later admin disable is never reverted.
+WITH flipped AS (
+    UPDATE automation_rules r SET enabled = TRUE
+    FROM automation_state s
+    WHERE s.rule_id = r.id AND r.is_system AND NOT r.enabled AND s.enabled_at IS NULL
+      AND r.rule_key IN ('ar_dunning', 'quote_expiry', 'estimate_expiry', 'approval_stuck')
+    RETURNING r.id
+)
+UPDATE automation_state s SET enabled_at = NOW()
+WHERE s.enabled_at IS NULL
+  AND s.rule_id IN (
+      SELECT r.id FROM automation_rules r
+      WHERE r.is_system AND r.rule_key IN ('ar_dunning', 'quote_expiry', 'estimate_expiry', 'approval_stuck')
+        AND (r.enabled OR r.id IN (SELECT id FROM flipped))
+  );
 
 -- ── Domain events + AI proposed actions ──
 -- domain_event is a transactional-outbox style event log consumed by cursors.

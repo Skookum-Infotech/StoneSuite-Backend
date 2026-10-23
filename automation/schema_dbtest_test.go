@@ -96,7 +96,7 @@ func TestARDunningSchema(t *testing.T) {
 	assert.Equal(t, "Invoice payment reminders", name)
 	assert.Equal(t, "external", aud)
 	assert.True(t, system)
-	assert.False(t, enabled, "seeded rule must be disabled")
+	assert.True(t, enabled, "seeded rule must be enabled")
 
 	var cfg ARRuleConfig
 	require.NoError(t, json.Unmarshal(raw, &cfg))
@@ -107,13 +107,13 @@ func TestARDunningSchema(t *testing.T) {
 	assert.Equal(t, []int{-3, 0, 7, 14}, offsets)
 
 	var stateRows int
-	var enabledAtNull bool
+	var enabledAtSet bool
 	require.NoError(t, pool.QueryRow(ctx, `
-		SELECT count(*), COALESCE(bool_and(s.enabled_at IS NULL), TRUE)
+		SELECT count(*), COALESCE(bool_and(s.enabled_at IS NOT NULL), FALSE)
 		FROM automation_state s JOIN automation_rules r ON r.id = s.rule_id
-		WHERE r.rule_key = $1`, RuleKeyARDunning).Scan(&stateRows, &enabledAtNull))
+		WHERE r.rule_key = $1`, RuleKeyARDunning).Scan(&stateRows, &enabledAtSet))
 	assert.Equal(t, 1, stateRows)
-	assert.True(t, enabledAtNull)
+	assert.True(t, enabledAtSet, "an enabled seed must carry enabled_at, or every stage is pre_enable forever")
 
 	var colType string
 	require.NoError(t, pool.QueryRow(ctx, `
@@ -127,6 +127,18 @@ func TestARDunningSchema(t *testing.T) {
 		WHERE indexname = 'idx_automation_deliveries_contact_sent'`).Scan(&indexDef))
 	assert.Contains(t, indexDef, "recipient_email, sent_at")
 	assert.Contains(t, indexDef, "'sent'")
+}
+
+func TestApprovalRuleSchema(t *testing.T) {
+	ctx := context.Background()
+	pool := newTenantTestPool(t)
+	var on, stamped bool
+	require.NoError(t, pool.QueryRow(ctx, `
+		SELECT r.enabled, s.enabled_at IS NOT NULL
+		FROM automation_rules r JOIN automation_state s ON s.rule_id = r.id
+		WHERE r.rule_key = $1`, RuleKeyApprovalStuck).Scan(&on, &stamped))
+	assert.True(t, on, "seeded rule must be enabled")
+	assert.True(t, stamped, "an enabled seed must carry enabled_at")
 }
 
 func TestExpiryRulesSchema(t *testing.T) {
@@ -148,14 +160,14 @@ func TestExpiryRulesSchema(t *testing.T) {
 		assert.Equal(t, name, gotName)
 		assert.Equal(t, "internal", aud)
 		assert.True(t, system)
-		assert.False(t, on, "seeded rule must be disabled")
+		assert.True(t, on, "seeded rule must be enabled")
 		var cfg ARRuleConfig
 		require.NoError(t, json.Unmarshal(raw, &cfg))
 		require.Len(t, cfg.Cadence, 1)
 		assert.Equal(t, -3, cfg.Cadence[0].OffsetDays)
 		require.NoError(t, pool.QueryRow(ctx, `
 			SELECT count(*) FROM automation_state s JOIN automation_rules r ON r.id = s.rule_id
-			WHERE r.rule_key = $1`, key).Scan(&states))
+			WHERE r.rule_key = $1 AND s.enabled_at IS NOT NULL`, key).Scan(&states))
 		assert.Equal(t, 1, states)
 	}
 }

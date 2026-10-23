@@ -584,7 +584,8 @@ ALTER TABLE tenant_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT
 ALTER TABLE portal_invites ADD COLUMN IF NOT EXISTS notify_notification_ids TEXT[] NOT NULL DEFAULT '{}';
 
 -- ── record_email_address ────────────────────────────────────────────────
--- The inbound reply address of one tenant record (today: a Sales Order). Mail
+-- The inbound reply address of one tenant record (a Sales Order, Quote, Estimate,
+-- Invoice or Purchase Order). Mail
 -- StoneSuite sends about the record carries this address as Reply-To, so when
 -- the customer hits Reply in Gmail/Outlook the message lands on our inbound
 -- domain as r-<token>@<REPLY_EMAIL_DOMAIN>. An inbound mail carries no tenant

@@ -28,8 +28,11 @@ type Message struct {
 	Subject         string    `json:"subject"`
 	Body            string    `json:"body"`
 	AttachmentCount int       `json:"attachmentCount"`
-	Internal        bool      `json:"internal"`
-	CreatedAt       time.Time `json:"createdAt"`
+	// Attachments are the files kept for this message (List fills them in). A
+	// message that predates attachment support has a count but none listed.
+	Attachments []Attachment `json:"attachments"`
+	Internal    bool         `json:"internal"`
+	CreatedAt   time.Time    `json:"createdAt"`
 
 	// Threading and bookkeeping fields: stored, never sent to the browser.
 	MessageID       string `json:"-"`

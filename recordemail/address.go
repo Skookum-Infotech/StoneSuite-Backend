@@ -1,6 +1,7 @@
-// Package recordemail keeps the email conversation of a record (today a Sales
-// Order): the plain-text copy of what StoneSuite sent and the customer's replies
-// as they arrive on the record's own inbound address. Replies reach it already
+// Package recordemail keeps the email conversation of a record (a Sales Order,
+// Quote, Estimate, Invoice or Purchase Order; a Requisition keeps only team
+// notes): the plain-text copy of what StoneSuite sent and the other party's
+// replies as they arrive on the record's own inbound address. Replies reach it already
 // fetched from Resend by stonesuite-notify; this package never talks to Resend.
 //
 // Replies are matched to a record by an address, not by guessing from the

@@ -39,6 +39,9 @@ type InboundMail struct {
 	Text            string   `json:"text"`
 	HTML            string   `json:"html"`
 	AttachmentCount int      `json:"attachmentCount"`
+	// Attachments describes each attached file. An older notify sends only the
+	// count above; the message is then filed with no files to copy.
+	Attachments []InboundAttachment `json:"attachments"`
 }
 
 // Recipients returns every address the mail was sent to (to, cc, bcc), which is
@@ -75,7 +78,7 @@ func BuildMessage(target Target, in InboundMail) Message {
 		InReplyTo:       in.InReplyTo,
 		References:      in.References,
 		ProviderEmailID: in.EmailID,
-		AttachmentCount: in.AttachmentCount,
+		AttachmentCount: max(in.AttachmentCount, len(in.Attachments)),
 	}
 }
 

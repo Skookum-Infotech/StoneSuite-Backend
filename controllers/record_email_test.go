@@ -222,13 +222,71 @@ func TestReplyAddress_OnlyForThreadedRecordTypesWhenEnabled(t *testing.T) {
 		t.Fatal("no store and no domain must read as disabled")
 	}
 
-	// A record type that keeps no thread never reaches the (database-backed) store.
+	// A record type with no email thread never reaches the (database-backed) store:
+	// one that keeps no thread at all, and one that only keeps team notes.
 	on := NewRecordEmailOps(recordemail.NewAddressStore(nil), testInboundDomain)
 	if !on.Enabled() {
 		t.Fatal("a store and a domain must read as enabled")
 	}
-	if _, ok := on.ReplyAddress(context.Background(), "t", "r", "purchase_order"); ok {
-		t.Fatal("a purchase order has no Communication thread")
+	for _, key := range []string{"vendor_bill", "requisition", ""} {
+		if _, ok := on.ReplyAddress(context.Background(), "t", "r", key); ok {
+			t.Fatalf("%q has no email thread, so it must not get a reply address", key)
+		}
+	}
+}
+
+func TestThreadKinds(t *testing.T) {
+	tests := []struct {
+		key           string
+		wantThread    bool
+		wantEmailed   bool
+		wantParty     string
+		wantSendLabel string
+		wantSubject   string
+	}{
+		{"sales_order", true, true, "customer", "Send to customer", "Your order"},
+		{"quote", true, true, "customer", "Send to customer", "Your quote"},
+		{"estimate", true, true, "customer", "Send to customer", "Your estimate"},
+		{"invoice", true, true, "customer", "Send to customer", "Your invoice"},
+		{"purchase_order", true, true, "vendor", "Send to Vendor", "Your purchase order"},
+		{"requisition", true, false, "", "", ""},
+		{"vendor_bill", false, false, "", "", ""},
+		{"payment", false, false, "", "", ""},
+		{"", false, false, "", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			if _, ok := threadKinds[tc.key]; ok != tc.wantThread {
+				t.Fatalf("keeps a thread = %v, want %v", ok, tc.wantThread)
+			}
+			kind, emailed := emailThread(tc.key)
+			if emailed != tc.wantEmailed {
+				t.Fatalf("emailed = %v, want %v", emailed, tc.wantEmailed)
+			}
+			if !emailed {
+				return
+			}
+			if kind.party != tc.wantParty || kind.sendAction != tc.wantSendLabel || kind.fallbackSubject != tc.wantSubject {
+				t.Fatalf("kind = %+v, want party %q, send %q, subject %q",
+					kind, tc.wantParty, tc.wantSendLabel, tc.wantSubject)
+			}
+		})
+	}
+}
+
+func TestNoReplyTargetMessage(t *testing.T) {
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{"sales_order", "There is no customer email to reply to yet. Use Send to customer first."},
+		{"invoice", "There is no customer email to reply to yet. Use Send to customer first."},
+		{"purchase_order", "There is no vendor email to reply to yet. Use Send to Vendor first."},
+	}
+	for _, tc := range tests {
+		if got := noReplyTargetMessage(threadKinds[tc.key]); got != tc.want {
+			t.Errorf("noReplyTargetMessage(%s) = %q, want %q", tc.key, got, tc.want)
+		}
 	}
 }
 

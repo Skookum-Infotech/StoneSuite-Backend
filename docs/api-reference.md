@@ -4,15 +4,15 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-609 endpoints across 7 surfaces, read from `main.go`.
+611 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 515 |
+| staff token + tenant | 516 |
 | portal token + tenant | 32 |
-| none (rate-limited) | 22 |
+| none (rate-limited) | 23 |
 | none | 18 |
 | staff token | 17 |
 | portal token | 3 |
@@ -44,6 +44,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `GET` | `/api/healthz` | no rate limit |
 | `POST` | `/api/internal/automation/tick` | rate-limited per IP |
 | `POST` | `/api/internal/email/inbound` | rate-limited per IP |
+| `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | rate-limited per IP |
 | `GET` | `/api/metrics` | no rate limit |
 | `ANY` | `/api/onboarding/apply` | no rate limit |
 | `ANY` | `/api/onboarding/apply/` | no rate limit |
@@ -65,7 +66,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `GET` | `/api/portal/auth/reset-password/{token}` | rate-limited per IP |
 | `GET` | `/api/readyz` | no rate limit |
 
-## `system` — 6 endpoints
+## `system` — 7 endpoints
 
 Liveness, readiness and metrics. No credential.
 
@@ -89,6 +90,7 @@ Liveness, readiness and metrics. No credential.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `POST` | `/api/internal/email/inbound` | none (rate-limited) | `recordEmailOps.Inbound` |
+| `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | none (rate-limited) | `recordEmailOps.InboundAttachment` |
 
 ## `auth` — 16 endpoints
 
@@ -359,7 +361,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 514 endpoints
+## `tenant` — 515 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -910,6 +912,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/records/{id}/document/sends` | staff token + tenant | `docOps.Sends` |
 | `GET` | `/api/tenant/records/{id}/emails` | staff token + tenant | `recordEmailOps.List` |
 | `POST` | `/api/tenant/records/{id}/emails` | staff token + tenant | `recordEmailOps.Reply` |
+| `GET` | `/api/tenant/records/{id}/emails/attachments/{attachmentId}/download` | staff token + tenant | `recordEmailOps.DownloadAttachment` |
 | `POST` | `/api/tenant/records/{id}/transition` | staff token + tenant | `wf.TransitionRecord` |
 
 ### refunds

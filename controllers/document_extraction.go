@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	"stonesuite-backend/config"
 	"stonesuite-backend/docextract"
 	"stonesuite-backend/docextractjob"
+	"stonesuite-backend/proposedaction"
+	"stonesuite-backend/proposedentity"
 	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
@@ -84,6 +87,7 @@ type docExtractQueue interface {
 // reads the global config.AppConfig.
 type DocExtractSettings struct {
 	Enabled         bool
+	ProposeEntities bool
 	MaxBytes        int64
 	DailyCap        int
 	StagingMaxBytes int64
@@ -95,6 +99,7 @@ type DocExtractSettings struct {
 func DocExtractSettingsFromApp(c config.Config) DocExtractSettings {
 	return DocExtractSettings{
 		Enabled:         c.DocExtractEnabled,
+		ProposeEntities: c.DocExtractProposeEntities,
 		MaxBytes:        c.DocExtractMaxBytes,
 		DailyCap:        c.DocExtractDailyCap,
 		StagingMaxBytes: c.DocExtractStagingMaxBytes,
@@ -116,6 +121,7 @@ func DocExtractSettingsFromApp(c config.Config) DocExtractSettings {
 //	POST /api/tenant/document-extractions/{id}/notify
 //	POST /api/tenant/document-extractions/{id}/discard
 //	POST /api/tenant/document-extractions/{id}/complete
+//	POST /api/tenant/document-extractions/{id}/proposed-entities/{key}/propose
 //
 // Every handler checks the rollout flag (off -> 404), then the caller's
 // Require(<docType resource>, create); an extraction is owner-only and any
@@ -141,6 +147,13 @@ type DocExtractOps struct {
 	audit func(r *http.Request, c *docExtractCaller, ex *docextractjob.Extraction, recordUUID string)
 	// callerUserID returns the tenant users.id of the caller's identity.
 	callerUserID func(ctx context.Context, c *docExtractCaller) (string, error)
+	// refresh re-resolves a ready result against current master data.
+	refresh func(ctx context.Context, c *docExtractCaller, ex *docextractjob.Extraction, stored docextractjob.ResultDoc) (docextractjob.ResultDoc, error)
+	// buildPayload turns a stored proposed entity into a validated proposal payload.
+	buildPayload func(ctx context.Context, c *docExtractCaller, in proposedentity.ProposeInput) (authz.Resource, json.RawMessage, error)
+	// newActionStore builds the proposed-action store for a request; nil until
+	// WithProposedActions is called (proposing then answers 503).
+	newActionStore func(pool *pgxpool.Pool) docExtractActionStore
 }
 
 // NewDocExtractOps constructs the handler group. r2 may be nil (the endpoints
@@ -157,9 +170,23 @@ func NewDocExtractOps(r2 *storage.Client, queue docExtractQueue, cpPool *pgxpool
 	h.callerUserID = func(ctx context.Context, c *docExtractCaller) (string, error) {
 		return workflow.UserIDByIdentity(ctx, c.pool, c.identityID)
 	}
+	h.refresh = func(ctx context.Context, c *docExtractCaller, ex *docextractjob.Extraction, stored docextractjob.ResultDoc) (docextractjob.ResultDoc, error) {
+		return docextractjob.Refresh(ctx, c.pool, ex, stored)
+	}
+	h.buildPayload = func(ctx context.Context, c *docExtractCaller, in proposedentity.ProposeInput) (authz.Resource, json.RawMessage, error) {
+		return proposedentity.BuildPayload(ctx, c.pool, in)
+	}
 	h.notifyIfReady = func(ctx context.Context, c *docExtractCaller, id string) {
 		docextractjob.NotifyIfReady(ctx, docextractjob.NewStore(c.pool), services.SendNotification, c.tenant.ID, id)
 	}
+	return h
+}
+
+// WithProposedActions enables proposing new records from an extraction: reg is
+// the executor registry shared with the /actions endpoints and ttl the proposal
+// lifetime. It returns h for chaining.
+func (h *DocExtractOps) WithProposedActions(reg *proposedaction.Registry, ttl time.Duration) *DocExtractOps {
+	h.newActionStore = func(pool *pgxpool.Pool) docExtractActionStore { return proposedaction.NewStore(pool, reg, ttl) }
 	return h
 }
 

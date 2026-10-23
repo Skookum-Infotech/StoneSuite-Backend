@@ -164,6 +164,9 @@ type ResultDoc struct {
 	Extracted  docextract.Result `json:"extracted"`
 	Resolution Resolution        `json:"resolution"`
 	Duplicates []Duplicate       `json:"duplicates"`
+	// ProposedEntities are customers/vendors/items the document names that
+	// master data lacks (see DeriveProposedEntities).
+	ProposedEntities []ProposedEntity `json:"proposedEntities"`
 }
 
 // Resolve resolves the party, payment terms and line items of res. A sales

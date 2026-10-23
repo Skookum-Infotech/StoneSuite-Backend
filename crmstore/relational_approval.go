@@ -416,7 +416,7 @@ func (s *relationalStore) PendingApprovals(ctx context.Context, pool *pgxpool.Po
 // Called whenever a record ENTERS a stage -- creation, conversion, or a
 // stage-crossing transition -- not on every status change within a stage
 // (see checkTransitionGate for the within-stage lock).
-func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) (string, error) {
+func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool workflow.Querier, recordTypeCode string) (string, error) {
 	required, err := s.requiredApproversForType(ctx, pool, recordTypeCode)
 	if err != nil {
 		return "", err
@@ -431,7 +431,7 @@ func (s *relationalStore) entryApprovalStatus(ctx context.Context, pool *pgxpool
 // approvers are configured for recordTypeCode (e.g. "CUST") -- used when no
 // record row exists yet to key off (CreateRecord, ConvertRecord's new
 // record). activeApproverCount below is the record-in-hand equivalent.
-func (s *relationalStore) requiredApproversForType(ctx context.Context, pool *pgxpool.Pool, recordTypeCode string) (int, error) {
+func (s *relationalStore) requiredApproversForType(ctx context.Context, pool workflow.Querier, recordTypeCode string) (int, error) {
 	var configured, live int
 	err := pool.QueryRow(ctx, `
 		SELECT `+crmApproverCountCols+` FROM crm_workflow_approver a

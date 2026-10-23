@@ -6,9 +6,9 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/duplicate"
+	"stonesuite-backend/workflow"
 )
 
 // customerTypeCode is the record-type code of the customer stage. The `customer`
@@ -22,7 +22,7 @@ const customerTypeCode = "CUST"
 // ones count — already carries `name`. typeID is the CUST record type;
 // excludeUUID skips the record being renamed ("" on create or convert). A blank
 // name is left to CreateRecord's own required-field check.
-func (s *relationalStore) checkCustomerNameFree(ctx context.Context, pool *pgxpool.Pool, typeID int, name, excludeUUID string) error {
+func (s *relationalStore) checkCustomerNameFree(ctx context.Context, pool workflow.Querier, typeID int, name, excludeUUID string) error {
 	if duplicate.Key(name) == "" {
 		return nil
 	}

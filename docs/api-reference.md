@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-608 endpoints across 7 surfaces, read from `main.go`.
+609 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 514 |
+| staff token + tenant | 515 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 22 |
 | none | 18 |
@@ -359,7 +359,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 513 endpoints
+## `tenant` — 514 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -529,6 +529,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/document-extractions/{id}/discard` | staff token + tenant | `docExtractOps.Discard` |
 | `POST` | `/api/tenant/document-extractions/{id}/notify` | staff token + tenant | `docExtractOps.Notify` |
 | `POST` | `/api/tenant/document-extractions/{id}/presign` | staff token + tenant | `docExtractOps.Presign` |
+| `POST` | `/api/tenant/document-extractions/{id}/proposed-entities/{key}/propose` | staff token + tenant | `docExtractOps.ProposeEntity` |
 | `POST` | `/api/tenant/document-extractions/{id}/start` | staff token + tenant | `docExtractOps.Start` |
 
 ### estimates

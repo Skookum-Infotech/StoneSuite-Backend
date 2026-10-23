@@ -125,7 +125,12 @@ func scanVendor(row pgx.Row) (*Vendor, error) {
 
 // Get loads a single live vendor by its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Vendor, error) {
-	v, err := scanVendor(pool.QueryRow(ctx, vendorSelect+`
+	return GetQ(ctx, pool, uuid)
+}
+
+// GetQ loads a single live vendor by uuid through any Querier (pool or tx).
+func GetQ(ctx context.Context, q workflow.Querier, uuid string) (*Vendor, error) {
+	v, err := scanVendor(q.QueryRow(ctx, vendorSelect+`
 		WHERE v.vendor_uuid = $1 AND v.vendor_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -336,42 +341,10 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorInput, actor
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := checkVendorNameFree(ctx, tx, vendorDuplicateName(in.VendorType, in.vendorFields), ""); err != nil {
+	newUUID, err := CreateTx(ctx, tx, in, actorEmployeeID)
+	if err != nil {
 		return nil, err
 	}
-
-	recordTypeID, err := recordTypeIDByCode(ctx, tx, vendorRecordTypeCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve VNDR record type: %w", err)
-	}
-	statusID, err := statusIDByCode(ctx, tx, recordTypeID, defaultStatusCode)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ACT_ status: %w", err)
-	}
-
-	cv := append([]colVal{
-		{"record_type", recordTypeID, ""},
-		{"vendor_status", statusID, ""},
-		{"vendor_type", in.VendorType, ""},
-		{"vendor_owner_id", nullableInt(actorEmployeeID), ""},
-	}, vendorColVals(in.vendorFields)...)
-	cv = append(cv, colVal{"vendor_created_by", nullableInt(actorEmployeeID), ""})
-
-	insertSQL, insertArgs := buildInsert("vendor", cv, "vendor_id, vendor_uuid")
-	var internalID int
-	var newUUID string
-	if err := tx.QueryRow(ctx, insertSQL, insertArgs...).Scan(&internalID, &newUUID); err != nil {
-		if isForeignKeyViolation(err) {
-			return nil, ClientError{Msg: "The referenced nationality/country does not exist."}
-		}
-		return nil, fmt.Errorf("insert vendor: %w", err)
-	}
-
-	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
-		return nil, err
-	}
-
-	writeHistory(ctx, tx, internalID, "create", nil, &statusID, actorEmployeeID)
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor: %w", err)

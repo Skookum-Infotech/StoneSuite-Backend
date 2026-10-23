@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
@@ -32,8 +33,47 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := checkItemNameFree(ctx, tx, in.Name, ""); err != nil {
+	newUUID, err := createInTx(ctx, tx, in, custom, actorEmployeeID)
+	if err != nil {
 		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create inventory item: %w", err)
+	}
+	item, err := Get(ctx, pool, newUUID)
+	if err != nil {
+		return nil, err
+	}
+	approvalchain.NotifyActorCreated(ctx, pool, approvalchain.ActorCreated{
+		EventType: createdEventType, Resource: createdResource, RecordUUID: newUUID,
+		ActorEmployeeID: actorEmployeeID,
+		Title:           "Inventory item created: " + in.Name,
+		Body:            "SKU " + in.SKU + " was added to inventory.",
+	})
+	return item, nil
+}
+
+// CreateTx inserts a new inventory item inside the caller's transaction (no
+// Begin, Commit, read-back or notification) and returns its external uuid.
+// The caller owns commit and rollback; read the row back with GetQ on the tx.
+func CreateTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, actorEmployeeID int) (string, error) {
+	if err := validateItemInput(&in); err != nil {
+		return "", err
+	}
+	custom := in.CustomFields
+	if custom == nil {
+		custom = map[string]any{}
+	}
+	if err := validateCustom(ctx, tx, custom); err != nil {
+		return "", err
+	}
+	return createInTx(ctx, tx, in, custom, actorEmployeeID)
+}
+
+// createInTx runs the name check, insert, history and kit writes on tx.
+func createInTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, custom map[string]any, actorEmployeeID int) (string, error) {
+	if err := checkItemNameFree(ctx, tx, in.Name, ""); err != nil {
+		return "", err
 	}
 
 	dimensionUnit := in.DimensionUnit
@@ -44,7 +84,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 		newUUID string
 		newID   int
 	)
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		INSERT INTO inventory_item (
 			inventory_item_sku, inventory_item_name, inventory_item_description,
 			inventory_item_unit_id, inventory_item_unit_price, inventory_item_currency_id,
@@ -63,31 +103,18 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateItemInput, actorEm
 		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice, dimensionUnit,
 	).Scan(&newUUID, &newID)
 	if err != nil {
-		return nil, mapItemWriteErr(err, "insert")
+		return "", mapItemWriteErr(err, "insert")
 	}
 
 	if err := writeItemHistory(ctx, tx, newID, "create", "", "", in.SKU, actorEmployeeID); err != nil {
-		return nil, err
+		return "", err
 	}
 	if in.KitIDs != nil {
 		if err := setItemKits(ctx, tx, newID, in.KitIDs, actorEmployeeID); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit create inventory item: %w", err)
-	}
-	item, err := Get(ctx, pool, newUUID)
-	if err != nil {
-		return nil, err
-	}
-	approvalchain.NotifyActorCreated(ctx, pool, approvalchain.ActorCreated{
-		EventType: createdEventType, Resource: createdResource, RecordUUID: newUUID,
-		ActorEmployeeID: actorEmployeeID,
-		Title:           "Inventory item created: " + in.Name,
-		Body:            "SKU " + in.SKU + " was added to inventory.",
-	})
-	return item, nil
+	return newUUID, nil
 }
 
 // createdEventType and createdResource label the "item created" email and its

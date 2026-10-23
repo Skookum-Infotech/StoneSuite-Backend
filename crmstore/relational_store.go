@@ -24,6 +24,9 @@ import (
 // See ADR-002 — this supersedes the earlier crm_record master table.
 type relationalStore struct{}
 
+// customerKey is the CRM workflow key of the customer stage.
+const customerKey = "customer"
+
 var _ Store = (*relationalStore)(nil)
 
 // CRM stage ranks: a record may only advance to an equal-or-higher rank.
@@ -415,7 +418,12 @@ func (s *relationalStore) KeyForRecord(ctx context.Context, pool *pgxpool.Pool, 
 }
 
 func (s *relationalStore) GetRecord(ctx context.Context, pool *pgxpool.Pool, id string) (*workflow.Record, error) {
-	rec, err := scanRecord(pool.QueryRow(ctx, recordSelect+`
+	return s.getRecord(ctx, pool, id)
+}
+
+// getRecord reads one live record through any Querier (pool or open tx).
+func (s *relationalStore) getRecord(ctx context.Context, q workflow.Querier, id string) (*workflow.Record, error) {
+	rec, err := scanRecord(q.QueryRow(ctx, recordSelect+`
 		WHERE c.customer_uuid = $1 AND c.customer_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRecordNotFound
@@ -520,7 +528,7 @@ func (s *relationalStore) CountRecordsBetween(ctx context.Context, pool *pgxpool
 // number, and returns the new external uuid. workflowID is the target stage's
 // workflows.id (Lead/Prospect/Customer), used to honor that workflow's
 // Record Numbering config if one is enabled.
-func (s *relationalStore) insertCustomer(ctx context.Context, pool *pgxpool.Pool,
+func (s *relationalStore) insertCustomer(ctx context.Context, pool workflow.Querier,
 	typeID, statusID, ownerEmp int, approvalStatus, typeCode, workflowID string,
 	parentInternalID *int, core, custom map[string]any) (string, error) {
 
@@ -595,6 +603,18 @@ func requireContactEmailForCustomer(targetCode, contactEmail string) error {
 }
 
 func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, key string, in CreateInput) (*workflow.Record, error) {
+	return s.createRecord(ctx, pool, key, in)
+}
+
+// CreateCustomerTx creates a customer-stage record through q (typically an open
+// pgx.Tx) using the same sequence as CreateRecord, and returns the record read
+// back through q so uncommitted rows are visible to the caller.
+func CreateCustomerTx(ctx context.Context, q workflow.Querier, in CreateInput) (*workflow.Record, error) {
+	return (&relationalStore{}).createRecord(ctx, q, customerKey, in)
+}
+
+// createRecord is the shared create implementation behind CreateRecord and CreateCustomerTx.
+func (s *relationalStore) createRecord(ctx context.Context, pool workflow.Querier, key string, in CreateInput) (*workflow.Record, error) {
 	code, ok := crmKeyToCode[key]
 	if !ok {
 		return nil, ClientError{Msg: "Unknown CRM workflow: " + key}
@@ -645,7 +665,7 @@ func (s *relationalStore) CreateRecord(ctx context.Context, pool *pgxpool.Pool, 
 		return nil, err
 	}
 	s.writeHistory(ctx, pool, newUUID, "create", ownerEmp)
-	return s.GetRecord(ctx, pool, newUUID)
+	return s.getRecord(ctx, pool, newUUID)
 }
 
 func (s *relationalStore) UpdateRecord(ctx context.Context, pool *pgxpool.Pool, id string, core, custom map[string]any) error {
@@ -1055,7 +1075,7 @@ func (s *relationalStore) recordKeyInfo(ctx context.Context, pool *pgxpool.Pool,
 	return id, typeCode, sid, approvalStatus, nil
 }
 
-func (s *relationalStore) typeIDByCode(ctx context.Context, pool *pgxpool.Pool, code string) (int, error) {
+func (s *relationalStore) typeIDByCode(ctx context.Context, pool workflow.Querier, code string) (int, error) {
 	var id int
 	err := pool.QueryRow(ctx,
 		`SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1`, code).Scan(&id)
@@ -1082,7 +1102,7 @@ func (s *relationalStore) statusTypeAndCode(ctx context.Context, pool *pgxpool.P
 
 // validateCustom reuses the workflow field definitions for the matching CRM
 // workflow to validate dynamic fields (<=15, typed) before save.
-func (s *relationalStore) validateCustom(ctx context.Context, pool *pgxpool.Pool, key string, custom map[string]any) error {
+func (s *relationalStore) validateCustom(ctx context.Context, pool workflow.Querier, key string, custom map[string]any) error {
 	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
 	if errors.Is(err, workflow.ErrWorkflowNotFound) {
 		return nil // no definition: accept as-is
@@ -1104,7 +1124,7 @@ func (s *relationalStore) validateCustom(ctx context.Context, pool *pgxpool.Pool
 }
 
 // employeeIDByIdentity resolves a control-plane identity to a tenant employee_id.
-func (s *relationalStore) employeeIDByIdentity(ctx context.Context, pool *pgxpool.Pool, identityID string) (int, bool) {
+func (s *relationalStore) employeeIDByIdentity(ctx context.Context, pool workflow.Querier, identityID string) (int, bool) {
 	if identityID == "" {
 		return 0, false
 	}
@@ -1119,13 +1139,13 @@ func (s *relationalStore) employeeIDByIdentity(ctx context.Context, pool *pgxpoo
 	return id, true
 }
 
-func (s *relationalStore) employeeIDOrZero(ctx context.Context, pool *pgxpool.Pool, identityID string) int {
+func (s *relationalStore) employeeIDOrZero(ctx context.Context, pool workflow.Querier, identityID string) int {
 	id, _ := s.employeeIDByIdentity(ctx, pool, identityID)
 	return id
 }
 
 // ownerEmployee picks the owning employee: explicit user → employee, else caller.
-func (s *relationalStore) ownerEmployee(ctx context.Context, pool *pgxpool.Pool, ownerUserID, actorIdentityID string) int {
+func (s *relationalStore) ownerEmployee(ctx context.Context, pool workflow.Querier, ownerUserID, actorIdentityID string) int {
 	if ownerUserID != "" {
 		var id int
 		if err := pool.QueryRow(ctx,
@@ -1137,7 +1157,7 @@ func (s *relationalStore) ownerEmployee(ctx context.Context, pool *pgxpool.Pool,
 	return s.employeeIDOrZero(ctx, pool, actorIdentityID)
 }
 
-func (s *relationalStore) writeHistory(ctx context.Context, pool *pgxpool.Pool, uuid, action string, actorEmp int) {
+func (s *relationalStore) writeHistory(ctx context.Context, pool workflow.Querier, uuid, action string, actorEmp int) {
 	_, _ = pool.Exec(ctx, `
 		INSERT INTO customer_history (customer_id, to_type_id, to_crm_status_id, action, actor_employee_id)
 		SELECT customer_id, record_type, customer_crm_status, $2, $3

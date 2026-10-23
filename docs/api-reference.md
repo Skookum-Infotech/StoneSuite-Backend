@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-604 endpoints across 7 surfaces, read from `main.go`.
+608 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 510 |
+| staff token + tenant | 514 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 22 |
 | none | 18 |
@@ -359,9 +359,18 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 509 endpoints
+## `tenant` — 513 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
+
+### actions
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/actions` | staff token + tenant | `proposedActionOps.List` |
+| `GET` | `/api/tenant/actions/{id}` | staff token + tenant | `proposedActionOps.Get` |
+| `POST` | `/api/tenant/actions/{id}/cancel` | staff token + tenant | `proposedActionOps.Cancel` |
+| `POST` | `/api/tenant/actions/{id}/confirm` | staff token + tenant | `proposedActionOps.Confirm` |
 
 ### admin
 

@@ -30,6 +30,7 @@ import (
 	"stonesuite-backend/database"
 	"stonesuite-backend/docextractjob"
 	"stonesuite-backend/docpdf"
+	"stonesuite-backend/domainevent"
 	"stonesuite-backend/estimate"
 	"stonesuite-backend/importer"
 	"stonesuite-backend/invoice"
@@ -39,6 +40,7 @@ import (
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/portal"
+	"stonesuite-backend/proposedaction"
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/quote"
@@ -361,7 +363,10 @@ func main() {
 		automationSwitch := automation.NewPlatformStore(cp.Pool())
 		automationKV := automation.NewKVMirror(config.AppConfig.CloudflareAccountID,
 			config.AppConfig.AutomationKVAPIToken, config.AppConfig.AutomationKVNamespaceID)
-		automationDeps := automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL}
+		// No domain-event consumers are registered yet (ships dark); future
+		// features call domainEvents.Register at boot, before the first tick.
+		domainEvents := domainevent.NewRegistry()
+		automationDeps := automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL, Events: domainEvents}
 		automationOps := controllers.NewAutomationOps(
 			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs(automationDeps)...),
 			automationSwitch, automationKV,
@@ -594,6 +599,16 @@ func main() {
 		mux.Handle("POST /api/tenant/automation/rules/{key}/preview", tenantChain(controllers.NewAutomationPreviewOps(previewTZ).Preview))
 		automationDeliveryOps := controllers.NewAutomationDeliveryOps()
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
+
+		// No proposed-action executors are registered yet (ships dark); future
+		// features call proposedActionRegistry.Register at boot.
+		proposedActionRegistry := proposedaction.NewRegistry()
+		proposedActionOps := controllers.NewProposedActionOps(proposedActionRegistry,
+			time.Duration(config.AppConfig.ProposedActionTTLMinutes)*time.Minute)
+		mux.Handle("GET /api/tenant/actions", tenantChain(proposedActionOps.List))
+		mux.Handle("GET /api/tenant/actions/{id}", tenantChain(proposedActionOps.Get))
+		mux.Handle("POST /api/tenant/actions/{id}/confirm", tenantChain(proposedActionOps.Confirm))
+		mux.Handle("POST /api/tenant/actions/{id}/cancel", tenantChain(proposedActionOps.Cancel))
 
 		// Staff side of the portal: who may sign in as this customer.
 		mux.Handle("GET /api/tenant/customers/{customerUuid}/portal-users", tenantChain(portalAccessOps.ListPortalUsers))

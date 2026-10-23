@@ -5,6 +5,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/domainevent"
 	"stonesuite-backend/vendorpayment"
 )
 
@@ -27,9 +28,12 @@ type Deps struct {
 	Send Sender
 	// LinkURL builds the public link to a tenant record.
 	LinkURL func(tenantID, recordID string) string
+	// Events holds the domain-event consumers registered at boot; nil or empty
+	// means there is nothing to drain.
+	Events *domainevent.Registry
 }
 
 // DefaultJobs is every date-triggered job the tick endpoint runs.
 func DefaultJobs(d Deps) []Job {
-	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}, &ExpiryReminders{deps: d}, &ApprovalReminders{deps: d}}
+	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}, &ExpiryReminders{deps: d}, &ApprovalReminders{deps: d}, &DomainEventDrain{deps: d}, &ProposedActionSweep{}}
 }

@@ -256,7 +256,7 @@ machine after the response).
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
 5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
-   day for overdue/due-soon invoices. The rule is seeded **disabled**; tenants toggle it via
+   day for overdue/due-soon invoices. All four automation rules are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
    `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
    (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
    only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
@@ -268,12 +268,12 @@ machine after the response).
    Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
    pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
    Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
-6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **disabled** and use a
+6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **enabled** and use a
    `-3d` cadence (3 days before expiry). They send owner-only **internal** digests through the
    drain's internal-recipient path, which honors only the tenant kill switch and ignores the
    external caps and suppression. Eligible documents are `SENT`, not converted, with an active
    user as owner.
-7. **Stuck approvals (`approval_stuck`, job `approval_reminders`, `automation/approval_*.go`)** is seeded **disabled**
+7. **Stuck approvals (`approval_stuck`, job `approval_reminders`, `automation/approval_*.go`)** is seeded **enabled**
    with a `+2/+4/+6`-day cadence after the record entered its approval gate (max 3 reminders).
    Covers only notify-wired `approvalchain` registry modules (`DisplayName != ""`) and only
    gates whose `Reject != RejectInPlace`. Each unsigned live approver gets an **internal**

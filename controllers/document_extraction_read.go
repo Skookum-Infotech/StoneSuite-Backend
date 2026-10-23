@@ -56,18 +56,18 @@ func failureMessage(code, fileName string) string {
 // docExtractView is the owner-facing shape of an extraction. It deliberately
 // has no staging key, content hash or owner field.
 type docExtractView struct {
-	ID             string                   `json:"id"`
-	Status         string                   `json:"status"`
-	DocType        string                   `json:"docType"`
-	FileName       string                   `json:"fileName"`
-	SizeBytes      int64                    `json:"sizeBytes"`
-	Method         string                   `json:"method"`
-	FailureCode    string                   `json:"failureCode,omitempty"`
-	FailureMessage string                   `json:"failureMessage,omitempty"`
-	RecordUUID     string                   `json:"recordUuid,omitempty"`
-	CreatedAt      time.Time                `json:"createdAt"`
-	ExpiresAt      time.Time                `json:"expiresAt"`
-	Result         *docextractjob.ResultDoc `json:"result,omitempty"`
+	ID             string                `json:"id"`
+	Status         string                `json:"status"`
+	DocType        string                `json:"docType"`
+	FileName       string                `json:"fileName"`
+	SizeBytes      int64                 `json:"sizeBytes"`
+	Method         string                `json:"method"`
+	FailureCode    string                `json:"failureCode,omitempty"`
+	FailureMessage string                `json:"failureMessage,omitempty"`
+	RecordUUID     string                `json:"recordUuid,omitempty"`
+	CreatedAt      time.Time             `json:"createdAt"`
+	ExpiresAt      time.Time             `json:"expiresAt"`
+	Result         *docExtractResultView `json:"result,omitempty"`
 }
 
 // newDocExtractView builds the view of ex without a result.
@@ -141,13 +141,13 @@ func (h *DocExtractOps) Get(w http.ResponseWriter, r *http.Request) {
 		// A ready document may be resumed hours later: re-match it against
 		// today's customers, items, aliases and orders. Best-effort — on error
 		// the stored snapshot is still a valid answer.
-		if fresh, err := docextractjob.Refresh(r.Context(), c.pool, ex, doc); err != nil {
+		if fresh, err := h.refresh(r.Context(), c, ex, doc); err != nil {
 			slog.WarnContext(r.Context(), "doc extract: refresh resolution", "extractionId", ex.ID, "error", err)
 		} else {
 			doc = fresh
 		}
 		h.scopeResultDoc(r, c, &doc)
-		view.Result = &doc
+		view.Result = h.newResultView(r, c, ex, doc)
 	}
 	if ex.Status == docextractjob.StatusUsed || ex.Status == docextractjob.StatusAttached {
 		if ex.RecordUUID != "" && h.canReadCreatedRecord(r, c, docextract.DocType(ex.DocType), ex.RecordUUID) {

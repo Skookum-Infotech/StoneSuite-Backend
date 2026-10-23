@@ -134,6 +134,18 @@ from the invoice date and marked Needs review.
 Documents waiting for review appear under Pending documents on the list for
 24 hours.
 
+### When the vendor or an item isn't in your records yet
+
+If the document names a vendor or an item StoneSuite can't find, the review
+screen shows a "Create vendor" or "Create item" suggestion next to it. Nothing
+is created until you choose it: open the suggestion, check the details taken
+from the document, and press Confirm. The new record is then selected on the
+form for you. You need permission to create vendors or items to confirm one;
+without it the suggestion is greyed out with the reason. A suggestion expires
+after a few minutes and can simply be proposed again. If the record turns out
+to exist already, the suggestion tells you so and the matches refresh. Account
+or card numbers in a document are hidden and never copied into a new record.
+
 ## Vendor Payments
 
 A Vendor Payment records money you've paid to a vendor, created from

@@ -41,6 +41,7 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/portal"
 	"stonesuite-backend/proposedaction"
+	"stonesuite-backend/proposedentity"
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/quote"
@@ -600,11 +601,15 @@ func main() {
 		automationDeliveryOps := controllers.NewAutomationDeliveryOps()
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
 
-		// No proposed-action executors are registered yet (ships dark); future
-		// features call proposedActionRegistry.Register at boot.
+		// Executors are registered before the ops are built. The docextract create
+		// executors are inert until DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED lets
+		// document extraction create proposals; later features add their own here.
 		proposedActionRegistry := proposedaction.NewRegistry()
-		proposedActionOps := controllers.NewProposedActionOps(proposedActionRegistry,
-			time.Duration(config.AppConfig.ProposedActionTTLMinutes)*time.Minute)
+		if err := proposedentity.Register(proposedActionRegistry); err != nil {
+			log.Fatalf("CRITICAL ERROR: register proposed-action executors: %v", err)
+		}
+		proposedActionTTL := time.Duration(config.AppConfig.ProposedActionTTLMinutes) * time.Minute
+		proposedActionOps := controllers.NewProposedActionOps(proposedActionRegistry, proposedActionTTL)
 		mux.Handle("GET /api/tenant/actions", tenantChain(proposedActionOps.List))
 		mux.Handle("GET /api/tenant/actions/{id}", tenantChain(proposedActionOps.Get))
 		mux.Handle("POST /api/tenant/actions/{id}/confirm", tenantChain(proposedActionOps.Confirm))
@@ -857,7 +862,8 @@ func main() {
 		// off every route below answers 404. Nil interfaces, never typed nils,
 		// are passed for the optional Ollama waker.
 		docExtractOps := controllers.NewDocExtractOps(r2Client, jobQueue, cpPool, aiSettingsCache,
-			controllers.DocExtractSettingsFromApp(config.AppConfig))
+			controllers.DocExtractSettingsFromApp(config.AppConfig)).
+			WithProposedActions(proposedActionRegistry, proposedActionTTL)
 		mux.Handle("POST /api/tenant/document-extractions", tenantChain(docExtractOps.Create))
 		mux.Handle("GET /api/tenant/document-extractions", tenantChain(docExtractOps.List))
 		mux.Handle("GET /api/tenant/document-extractions/{id}", tenantChain(docExtractOps.Get))
@@ -866,6 +872,7 @@ func main() {
 		mux.Handle("POST /api/tenant/document-extractions/{id}/notify", tenantChain(docExtractOps.Notify))
 		mux.Handle("POST /api/tenant/document-extractions/{id}/discard", tenantChain(docExtractOps.Discard))
 		mux.Handle("POST /api/tenant/document-extractions/{id}/complete", tenantChain(docExtractOps.Complete))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/proposed-entities/{key}/propose", tenantChain(docExtractOps.ProposeEntity))
 		if config.AppConfig.DocExtractEnabled {
 			var docExtractWaker docextractjob.Waker
 			if aiToggler != nil && aiToggler.waker != nil {

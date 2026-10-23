@@ -115,6 +115,15 @@ decision are flagged Needs review; use the Needs review button (or Alt+Down and
 Alt+Up) to jump between them. When you correct a customer or item, StoneSuite
 remembers it for the next document from that customer.
 
+If the customer or an item isn't in your records yet, the review screen shows
+a "Create customer" or "Create item" suggestion. Nothing is created until you
+choose it and press Confirm after checking the details from the document. A
+new customer needs a contact email, which you type in; a new item needs a SKU
+if the document shows none. The new record is then selected on the form. You
+need permission to create customers or items to confirm one; without it the
+suggestion is greyed out with the reason. Account or card numbers in a
+document are hidden and never copied into a new record.
+
 You can also upload a builder's fillable countertop order form (the PDF a
 builder fills in with job details and one box per area, such as Kitchen,
 Island or Bath 2). StoneSuite reads what was typed into the form:

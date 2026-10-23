@@ -151,6 +151,8 @@ func (j *jobRunner) process(ctx context.Context, extractionID string) (out outco
 		return *eout
 	}
 
+	extracted = maskExtracted(extracted)
+
 	t0 = time.Now()
 	doc, rerr := ResolveDoc(ctx, j.pool, ex, sha, extracted, own)
 	metrics.ObserveDocExtractStage(stageResolve, time.Since(t0).Seconds())

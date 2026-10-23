@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -87,6 +86,9 @@ type RecordEmailOps struct {
 	replays *middleware.ReplayGuard
 	tenants docLinkTenants
 	poolFor func(context.Context, *tenancy.Tenant) (*pgxpool.Pool, error)
+
+	// storageFor is where files are kept, per tenant (see WithStorage); nil keeps none.
+	storageFor TenantStorage
 }
 
 // NewRecordEmailOps builds the handler group. addrs may be nil and domain empty
@@ -139,7 +141,16 @@ func (h *RecordEmailOps) List(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "record email: reply target unavailable", "record", recordID, "error", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "enabled": h.Enabled(), "replyTo": replyTo, "messages": msgs})
+	// Whether files can be attached and downloaded: independent of inbound email,
+	// since a note can carry files too.
+	attachmentsEnabled := false
+	if tenant, err := tenancy.TenantFromContext(r.Context()); err == nil {
+		attachmentsEnabled = h.storeFor(tenant) != nil
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true, "enabled": h.Enabled(), "attachmentsEnabled": attachmentsEnabled,
+		"replyTo": replyTo, "messages": msgs,
+	})
 }
 
 // replyRequest is the body of a Communication-tab message. InternalOnly keeps it
@@ -170,7 +181,9 @@ func cleanReplyText(raw string, internal bool) (text, problem string) {
 // the thread headers, so the answer comes back here and stays in the same Gmail
 // or Outlook conversation. With internalOnly set it only saves a team note on the
 // record: nothing is sent, and a notes-only record type (a requisition) accepts
-// nothing else. RBAC: <type>:update.
+// nothing else. Files may ride along, as multipart/form-data: they are copied into
+// the tenant's bucket first, sent with the email, and recorded with the message,
+// or removed again if the message is not recorded. RBAC: <type>:update.
 func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
 	pool, info, identityID, ok := authRecordAccess(w, r, recordID, authz.ActionUpdate)
@@ -183,19 +196,46 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req replyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	in, status, problem := readReply(w, r)
+	if status != 0 {
+		fail(w, status, problem)
 		return
 	}
+	req := in.req
 	text, problem := cleanReplyText(req.Message, req.InternalOnly)
 	if problem != "" {
 		fail(w, http.StatusBadRequest, problem)
 		return
 	}
+	if err := recordemail.ValidateReplyFiles(in.files); err != nil {
+		fail(w, http.StatusBadRequest, replyFilesProblem(err))
+		return
+	}
+	ctx := r.Context()
+	tenant, err := tenancy.TenantFromContext(ctx)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
+		return
+	}
+	// The message's id is chosen up front when it has files, so they can point at it.
+	var messageID string
+	if len(in.files) > 0 {
+		if messageID, err = newAttachUUID(); err != nil {
+			fail(w, http.StatusInternalServerError, "Failed to prepare the message.")
+			return
+		}
+	}
+
 	// A note is never sent, so it needs neither inbound email nor a customer address.
 	if req.InternalOnly {
-		saveInternalNote(w, r, pool, info.WorkflowKey, recordID, identityID, text)
+		atts, discard, status, problem := h.keepReplyFiles(ctx, pool, tenant, info.WorkflowKey, recordID, messageID, in.files)
+		if status != 0 {
+			fail(w, status, problem)
+			return
+		}
+		if !saveInternalNote(w, r, pool, info.WorkflowKey, recordID, identityID, text, messageID, atts) {
+			discard()
+		}
 		return
 	}
 	if kind.notesOnly {
@@ -207,13 +247,7 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, "Email replies are not set up for this workspace.")
 		return
 	}
-	tenant, err := tenancy.TenantFromContext(r.Context())
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
-		return
-	}
 
-	ctx := r.Context()
 	to, err := recordemail.ReplyTarget(ctx, pool, recordID)
 	if err != nil {
 		slog.ErrorContext(ctx, "record email: reply target failed", "record", recordID, "error", err)
@@ -233,6 +267,12 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	subject, inReplyTo, references := threadHeaders(ctx, pool, recordID, kind.fallbackSubject)
 	actor := loadActor(ctx, pool, identityID)
 
+	atts, discard, status, problem := h.keepReplyFiles(ctx, pool, tenant, info.WorkflowKey, recordID, messageID, in.files)
+	if status != 0 {
+		fail(w, status, problem)
+		return
+	}
+
 	res, sendErr := h.notify(ctx, services.NotificationRequest{
 		TenantID:        tenant.ID,
 		Recipients:      []services.RecipientTarget{{Email: to}},
@@ -249,25 +289,28 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		EmailFromName:   senderLabel(actor.FullName, tenant.DisplayName),
 		EmailInReplyTo:  inReplyTo,
 		EmailReferences: references,
+		Attachments:     notifyAttachments(in.files),
 	})
 	if sendErr != nil {
+		discard()
 		slog.WarnContext(ctx, "record email: reply not sent", "record", recordID, "error", sendErr)
 		fail(w, http.StatusBadGateway, "Failed to send the email.")
 		return
 	}
 
 	msg := recordemail.Message{
-		RecordID: recordID, WorkflowKey: info.WorkflowKey, Direction: recordemail.DirectionOut,
+		ID: messageID, RecordID: recordID, WorkflowKey: info.WorkflowKey, Direction: recordemail.DirectionOut,
 		FromName: actor.FullName, FromEmail: actor.Email, To: to, Subject: subject, Body: text,
-		SentByUserID: actor.ID,
+		AttachmentCount: len(atts), SentByUserID: actor.ID,
 	}
-	if _, err := recordemail.Insert(ctx, pool, msg); err != nil {
+	if err := recordemail.InsertWithFiles(ctx, pool, msg, atts); err != nil {
+		discard()
 		slog.ErrorContext(ctx, "record email: reply sent but not recorded", "record", recordID, "error", err)
 		fail(w, http.StatusInternalServerError, "The email was sent but could not be saved to the conversation.")
 		return
 	}
 	_ = workflow.LogAudit(ctx, pool, actor.ID, "record_email.replied", "record_email", recordID,
-		map[string]any{"recordId": recordID, "workflowKey": info.WorkflowKey, "to": to})
+		map[string]any{"recordId": recordID, "workflowKey": info.WorkflowKey, "to": to, "attachments": len(atts)})
 
 	resp := map[string]any{"success": true}
 	outcome := services.ConfirmEmailDelivery(ctx, tenant.ID, res, nil)
@@ -276,24 +319,39 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// saveInternalNote files a team-only note on the record's conversation. Nothing
-// is emailed, and the note is audit-logged like a reply.
-func saveInternalNote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, workflowKey, recordID, identityID, text string) {
+// saveInternalNote files a team-only note on the record's conversation, with the
+// files already kept for it (atts; messageID is the id they point at). Nothing is
+// emailed, and the note is audit-logged like a reply. It reports whether the note
+// was saved, so a caller that stored files can remove them when it was not.
+func saveInternalNote(
+	w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool,
+	workflowKey, recordID, identityID, text, messageID string, atts []recordemail.Attachment,
+) bool {
 	ctx := r.Context()
 	actor := loadActor(ctx, pool, identityID)
 	note := recordemail.Message{
-		RecordID: recordID, WorkflowKey: workflowKey, Direction: recordemail.DirectionOut,
-		FromName: actor.FullName, FromEmail: actor.Email, Body: text,
+		ID: messageID, RecordID: recordID, WorkflowKey: workflowKey, Direction: recordemail.DirectionOut,
+		FromName: actor.FullName, FromEmail: actor.Email, Body: text, AttachmentCount: len(atts),
 		SentByUserID: actor.ID, Internal: true,
 	}
-	if _, err := recordemail.Insert(ctx, pool, note); err != nil {
+	if err := recordemail.InsertWithFiles(ctx, pool, note, atts); err != nil {
 		slog.ErrorContext(ctx, "record email: internal note not saved", "record", recordID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to save the note.")
-		return
+		return false
 	}
 	_ = workflow.LogAudit(ctx, pool, actor.ID, "record_email.note_added", "record_email", recordID,
-		map[string]any{"recordId": recordID, "workflowKey": workflowKey})
+		map[string]any{"recordId": recordID, "workflowKey": workflowKey, "attachments": len(atts)})
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	return true
+}
+
+// notifyAttachments is the reply's files in the shape notify's create call takes.
+func notifyAttachments(files []recordemail.ReplyFile) []services.NotifyAttachment {
+	out := make([]services.NotifyAttachment, 0, len(files))
+	for _, f := range files {
+		out = append(out, services.NotifyAttachment{FileName: f.Name, ContentType: f.ContentType, Content: f.Data})
+	}
+	return out
 }
 
 // noReplyTargetMessage is what a reply attempt before the first email is told:

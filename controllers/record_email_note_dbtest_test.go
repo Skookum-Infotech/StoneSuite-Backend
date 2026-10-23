@@ -43,7 +43,7 @@ func TestSaveInternalNote_FilesATeamNoteUnderTheUsersName(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	saveInternalNote(rec, newNoteRequest(recordID), pool, "sales_order", recordID, identityID, "Customer wants granite.")
+	saveInternalNote(rec, newNoteRequest(recordID), pool, "sales_order", recordID, identityID, "Customer wants granite.", "", nil)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.JSONEq(t, `{"success":true}`, rec.Body.String())
@@ -88,7 +88,7 @@ func TestSaveInternalNote_StillSavesWhenTheUserCannotBeResolved(t *testing.T) {
 	})
 
 	rec := httptest.NewRecorder()
-	saveInternalNote(rec, newNoteRequest(recordID), pool, "sales_order", recordID, unknownIdentity, "Left a voicemail.")
+	saveInternalNote(rec, newNoteRequest(recordID), pool, "sales_order", recordID, unknownIdentity, "Left a voicemail.", "", nil)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	msgs, err := recordemail.List(ctx, pool, recordID)

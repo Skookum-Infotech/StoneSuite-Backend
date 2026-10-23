@@ -131,8 +131,9 @@ func TestResolveRecordAccess_Requisition(t *testing.T) {
 		t.Errorf("WorkflowKey = %q, want %q", info.WorkflowKey, "requisition")
 	}
 
+	// The table requires a deleted row to name who deleted it (chk_reqn_soft_delete).
 	if _, err := pool.Exec(ctx,
-		`UPDATE requisition SET requisition_deleted_at = now() WHERE requisition_uuid = $1::uuid`, reqn.ID); err != nil {
+		`UPDATE requisition SET requisition_deleted_at = now(), requisition_deleted_by = 1 WHERE requisition_uuid = $1::uuid`, reqn.ID); err != nil {
 		t.Fatalf("soft-delete requisition: %v", err)
 	}
 	if _, err := workflow.ResolveRecordAccess(ctx, pool, reqn.ID); err == nil {

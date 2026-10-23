@@ -9877,6 +9877,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_message_msgid
 ALTER TABLE record_email_message
     ADD COLUMN IF NOT EXISTS internal BOOLEAN NOT NULL DEFAULT false;
 
+-- ── record_email_attachment ─────────────────────────────────────────────
+-- A file that travelled with one message of a record's Communication thread:
+-- one the other party attached to a reply (copied here from the mail provider by
+-- stonesuite-notify, so keeping it no longer depends on the provider's own
+-- retention) or one staff attached when replying. The bytes live in the tenant's
+-- R2 bucket under storage_key; this row is the metadata plus the state of that copy.
+--
+-- status: 'pending' (received, not copied yet), 'stored', 'too_large' and
+-- 'blocked' (received but deliberately not kept), 'unavailable' (could not be
+-- kept: the tenant has no file storage, the record is over its cap, or the copy
+-- never finished). There is deliberately no CHECK on status: the Go side owns the
+-- vocabulary, so a new state needs no constraint migration.
+-- provider_attachment_id is the mail provider's id of a received file, the
+-- idempotency key of a retried delivery; '' for a file staff attached.
+CREATE TABLE IF NOT EXISTS record_email_attachment (
+    id                     UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id             UUID        NOT NULL REFERENCES record_email_message(id) ON DELETE CASCADE,
+    record_id              UUID        NOT NULL,
+    file_name              TEXT        NOT NULL,
+    content_type           TEXT        NOT NULL DEFAULT '',
+    size_bytes             BIGINT      NOT NULL DEFAULT 0,
+    is_inline              BOOLEAN     NOT NULL DEFAULT false,
+    provider_attachment_id TEXT        NOT NULL DEFAULT '',
+    storage_key            TEXT        NOT NULL DEFAULT '',
+    status                 TEXT        NOT NULL,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_record_email_attachment_message
+    ON record_email_attachment (message_id);
+CREATE INDEX IF NOT EXISTS idx_record_email_attachment_record
+    ON record_email_attachment (record_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_record_email_attachment_provider
+    ON record_email_attachment (message_id, provider_attachment_id) WHERE provider_attachment_id <> '';
+
 -- ── Automation P1a: AR dunning (invoice payment reminders) ──
 -- sent_at is when Notify accepted the send; the per-contact weekly cap counts
 -- status='sent' rows by recipient over a trailing window, hence the partial index.

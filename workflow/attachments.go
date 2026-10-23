@@ -354,6 +354,24 @@ func ResolveRecordAccess(ctx context.Context, q Querier, recordID string) (Recor
 		return RecordAccessInfo{}, fmt.Errorf("lookup expense: %w", err)
 	}
 
+	// requisition: dedicated relational module whose requester is the IDOR scope
+	// owner (no separate owner column), resolved the same way (employee ->
+	// users.id); no team column. Wired for the Communication tab's team notes.
+	var reqnOwnerUserID string
+	err = q.QueryRow(ctx, `
+		SELECT COALESCE(u.id::text,'')
+		FROM requisition rq
+		LEFT JOIN employee e ON e.employee_id = rq.requisition_requested_by_id
+		LEFT JOIN users u ON u.id = e.employee_user_id
+		WHERE rq.requisition_uuid = $1::uuid AND rq.requisition_deleted_at IS NULL`,
+		recordID).Scan(&reqnOwnerUserID)
+	if err == nil {
+		return RecordAccessInfo{WorkflowKey: "requisition", OwnerUserID: reqnOwnerUserID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return RecordAccessInfo{}, fmt.Errorf("lookup requisition: %w", err)
+	}
+
 	return RecordAccessInfo{}, ErrRecordNotFound
 }
 

@@ -25,14 +25,47 @@ const (
 	maxReplyChars = 10000
 	// eventRecordEmailReply is the notify event type of a staff reply.
 	eventRecordEmailReply = "record.email_reply"
-	// replyFallbackSubject heads a reply on a record that has no earlier subject.
-	replyFallbackSubject = "Your order"
 )
 
-// threadWorkflows are the record types that keep an email conversation. Sales
-// Order only for now; adding a type here is the whole opt-in for the send side,
-// the tab and the reply route.
-var threadWorkflows = map[string]bool{"sales_order": true}
+// threadKind is how one record type's Communication tab behaves.
+type threadKind struct {
+	// fallbackSubject heads a reply on a record that has no earlier subject.
+	fallbackSubject string
+	// party is who is on the other end of the conversation and sendAction the
+	// button that starts it; both only word the messages shown to staff.
+	party      string
+	sendAction string
+	// notesOnly keeps a timeline of team notes: nothing is ever emailed, no reply
+	// address is minted, and the record has no document to send.
+	notesOnly bool
+}
+
+const (
+	partyCustomer    = "customer"
+	partyVendor      = "vendor"
+	sendToCustomer   = "Send to customer"
+	sendToVendor     = "Send to Vendor"
+	notesOnlyRefusal = "This record only keeps internal notes; nothing can be emailed from it."
+)
+
+// threadKinds are the record types that keep a conversation. Adding a type here
+// is the whole opt-in for the send side, the tab and the reply route; the
+// document-send path (see routeReplies) needs the type to have a document loader.
+var threadKinds = map[string]threadKind{
+	"sales_order":    {fallbackSubject: "Your order", party: partyCustomer, sendAction: sendToCustomer},
+	"quote":          {fallbackSubject: "Your quote", party: partyCustomer, sendAction: sendToCustomer},
+	"estimate":       {fallbackSubject: "Your estimate", party: partyCustomer, sendAction: sendToCustomer},
+	"invoice":        {fallbackSubject: "Your invoice", party: partyCustomer, sendAction: sendToCustomer},
+	"purchase_order": {fallbackSubject: "Your purchase order", party: partyVendor, sendAction: sendToVendor},
+	"requisition":    {notesOnly: true},
+}
+
+// emailThread returns the thread of a record type whose conversation is carried
+// by email: the types the send path and the reply address apply to.
+func emailThread(workflowKey string) (threadKind, bool) {
+	kind, ok := threadKinds[workflowKey]
+	return kind, ok && !kind.notesOnly
+}
 
 // notifyFunc is services.SendNotificationWithResult, injectable for tests.
 type notifyFunc func(context.Context, services.NotificationRequest) (services.NotificationResult, error)
@@ -67,10 +100,10 @@ func (h *RecordEmailOps) Enabled() bool { return h != nil && h.addrs != nil && h
 
 // ReplyAddress returns the Reply-To address for mail about a record, minting the
 // record's token on first use. ok is false when the feature is off, the record
-// type keeps no thread, or the token could not be created: the caller then sends
-// without a per-record Reply-To rather than failing the send.
+// type keeps no email thread, or the token could not be created: the caller then
+// sends without a per-record Reply-To rather than failing the send.
 func (h *RecordEmailOps) ReplyAddress(ctx context.Context, tenantID, recordID, workflowKey string) (string, bool) {
-	if !h.Enabled() || !threadWorkflows[workflowKey] {
+	if _, ok := emailThread(workflowKey); !h.Enabled() || !ok {
 		return "", false
 	}
 	token, err := h.addrs.TokenFor(ctx, tenantID, recordID, workflowKey)
@@ -90,7 +123,7 @@ func (h *RecordEmailOps) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !threadWorkflows[info.WorkflowKey] {
+	if _, ok := threadKinds[info.WorkflowKey]; !ok {
 		fail(w, http.StatusNotFound, "Record not found.")
 		return
 	}
@@ -132,18 +165,20 @@ func cleanReplyText(raw string, internal bool) (text, problem string) {
 	return text, ""
 }
 
-// Reply emails the customer from the Communication tab and records it in the
-// conversation. The reply carries the record's own Reply-To and the thread
-// headers, so the customer's answer comes back here and stays in the same Gmail
+// Reply emails the record's customer (or vendor) from the Communication tab and
+// records it in the conversation. The reply carries the record's own Reply-To and
+// the thread headers, so the answer comes back here and stays in the same Gmail
 // or Outlook conversation. With internalOnly set it only saves a team note on the
-// record: nothing is sent. RBAC: <type>:update.
+// record: nothing is sent, and a notes-only record type (a requisition) accepts
+// nothing else. RBAC: <type>:update.
 func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
 	pool, info, identityID, ok := authRecordAccess(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	if !threadWorkflows[info.WorkflowKey] {
+	kind, ok := threadKinds[info.WorkflowKey]
+	if !ok {
 		fail(w, http.StatusNotFound, "Record not found.")
 		return
 	}
@@ -161,6 +196,10 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 	// A note is never sent, so it needs neither inbound email nor a customer address.
 	if req.InternalOnly {
 		saveInternalNote(w, r, pool, info.WorkflowKey, recordID, identityID, text)
+		return
+	}
+	if kind.notesOnly {
+		fail(w, http.StatusBadRequest, notesOnlyRefusal)
 		return
 	}
 
@@ -182,7 +221,7 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if to == "" {
-		fail(w, http.StatusConflict, "There is no customer email to reply to yet. Use Send to customer first.")
+		fail(w, http.StatusConflict, noReplyTargetMessage(kind))
 		return
 	}
 	replyTo, ok := h.ReplyAddress(ctx, tenant.ID, recordID, info.WorkflowKey)
@@ -191,7 +230,7 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject, inReplyTo, references := threadHeaders(ctx, pool, recordID)
+	subject, inReplyTo, references := threadHeaders(ctx, pool, recordID, kind.fallbackSubject)
 	actor := loadActor(ctx, pool, identityID)
 
 	res, sendErr := h.notify(ctx, services.NotificationRequest{
@@ -257,11 +296,18 @@ func saveInternalNote(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// noReplyTargetMessage is what a reply attempt before the first email is told:
+// the conversation starts with the record's own send button.
+func noReplyTargetMessage(kind threadKind) string {
+	return "There is no " + kind.party + " email to reply to yet. Use " + kind.sendAction + " first."
+}
+
 // threadHeaders returns the reply's subject and its In-Reply-To / References
-// values: "Re:" the conversation's latest subject, answering the newest customer
-// message and quoting every inbound Message-ID so mail clients keep one thread.
-func threadHeaders(ctx context.Context, pool *pgxpool.Pool, recordID string) (subject, inReplyTo, references string) {
-	subject = recordemail.ReplySubject(replyFallbackSubject)
+// values: "Re:" the conversation's latest subject (fallbackSubject when there is
+// none), answering the newest inbound message and quoting every inbound
+// Message-ID so mail clients keep one thread.
+func threadHeaders(ctx context.Context, pool *pgxpool.Pool, recordID, fallbackSubject string) (subject, inReplyTo, references string) {
+	subject = recordemail.ReplySubject(fallbackSubject)
 	if latest, err := recordemail.Latest(ctx, pool, recordID); err != nil {
 		slog.WarnContext(ctx, "record email: latest message unavailable", "record", recordID, "error", err)
 	} else if latest != nil {

@@ -1036,11 +1036,12 @@ func main() {
 		mux.Handle("GET /api/tenant/records/{id}/document/sends", tenantChain(docOps.Sends))
 
 		// Communication tab: a record's email conversation. Mail sent about a
-		// Sales Order carries its own Reply-To (r-<token>@REPLY_EMAIL_DOMAIN), so the
-		// customer's reply from Gmail/Outlook is received by Resend, fetched by
-		// stonesuite-notify and forwarded to the internal route below, which files it
-		// under the order. This backend never contacts Resend. Switched off (mail
-		// goes out unchanged) while REPLY_EMAIL_DOMAIN is empty.
+		// Sales Order, Quote, Estimate, Invoice or Purchase Order carries its own
+		// Reply-To (r-<token>@REPLY_EMAIL_DOMAIN), so the reply from Gmail/Outlook is
+		// received by Resend, fetched by stonesuite-notify and forwarded to the
+		// internal route below, which files it under the record. A Requisition keeps
+		// team notes only (controllers.threadKinds). This backend never contacts
+		// Resend. Switched off (mail goes out unchanged) while REPLY_EMAIL_DOMAIN is empty.
 		var replyAddrs *recordemail.AddressStore
 		if cp != nil {
 			replyAddrs = recordemail.NewAddressStore(cp.Pool())

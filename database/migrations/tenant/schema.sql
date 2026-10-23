@@ -9830,7 +9830,8 @@ ALTER TABLE customer_order_form
     ADD COLUMN IF NOT EXISTS order_form_updated_at TIMESTAMP NULL;
 
 -- ── record_email_message ────────────────────────────────────────────────
--- The email conversation of one record (today: a Sales Order), shown on its
+-- The email conversation of one record (Sales Order, Quote, Estimate, Invoice,
+-- Purchase Order; team notes only on a Requisition), shown on its
 -- Communication tab. One row per message: direction 'out' is mail StoneSuite
 -- sent (the Send-to-customer email, or a reply typed into the tab); 'in' is a
 -- customer's reply that arrived on the record's inbound address (see the

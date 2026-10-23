@@ -14,6 +14,7 @@ import (
 	"stonesuite-backend/estimate"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/quote"
+	"stonesuite-backend/requisition"
 	"stonesuite-backend/workflow"
 )
 
@@ -103,5 +104,38 @@ func TestResolveRecordAccess_DocumentModules(t *testing.T) {
 		t.Fatalf("ResolveRecordAccess(invoice) = %v", err)
 	} else if info.WorkflowKey != "invoice" {
 		t.Errorf("WorkflowKey = %q, want %q", info.WorkflowKey, "invoice")
+	}
+}
+
+// TestResolveRecordAccess_Requisition covers the requisition branch, which the
+// Communication tab's team notes depend on: the shared RBAC+IDOR gate must
+// recognize a live requisition and report its workflow key, and must stop
+// recognizing it once it is soft-deleted.
+func TestResolveRecordAccess_Requisition(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	_, itemUUID := seedCustomerAndItem(t, pool)
+
+	var in requisition.CreateRequisitionInput
+	in.Items = []requisition.LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
+	reqn, err := requisition.Create(ctx, pool, in, 1)
+	if err != nil {
+		t.Fatalf("create requisition: %v", err)
+	}
+
+	info, err := workflow.ResolveRecordAccess(ctx, pool, reqn.ID)
+	if err != nil {
+		t.Fatalf("ResolveRecordAccess(requisition) = %v", err)
+	}
+	if info.WorkflowKey != "requisition" {
+		t.Errorf("WorkflowKey = %q, want %q", info.WorkflowKey, "requisition")
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE requisition SET requisition_deleted_at = now() WHERE requisition_uuid = $1::uuid`, reqn.ID); err != nil {
+		t.Fatalf("soft-delete requisition: %v", err)
+	}
+	if _, err := workflow.ResolveRecordAccess(ctx, pool, reqn.ID); err == nil {
+		t.Error("a deleted requisition must not resolve")
 	}
 }

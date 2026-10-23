@@ -259,3 +259,23 @@ func TestLoadDocExtractConfig(t *testing.T) {
 		assert.Equal(t, 24*time.Hour, AppConfig.DocExtractStagingTTL)
 	})
 }
+
+func TestLoadDomainEventConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		Load()
+		assert.Equal(t, 30, AppConfig.DomainEventRetentionDays)
+		assert.Equal(t, 15, AppConfig.ProposedActionTTLMinutes)
+		assert.Equal(t, 7, AppConfig.ProposedActionRetentionDays)
+	})
+	t.Run("overrides", func(t *testing.T) {
+		t.Setenv("JWT_SECRET", "x")
+		t.Setenv("DOMAIN_EVENT_RETENTION_DAYS", "90")
+		t.Setenv("PROPOSED_ACTION_TTL_MINUTES", "5")
+		t.Setenv("PROPOSED_ACTION_RETENTION_DAYS", "14")
+		Load()
+		assert.Equal(t, 90, AppConfig.DomainEventRetentionDays)
+		assert.Equal(t, 5, AppConfig.ProposedActionTTLMinutes)
+		assert.Equal(t, 14, AppConfig.ProposedActionRetentionDays)
+	})
+}

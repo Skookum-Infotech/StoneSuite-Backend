@@ -44,6 +44,8 @@ The frontend (React 19 + TypeScript + Vite) lives in a separate repo: [Skookum-I
 ├── ai/                      # Provider-agnostic RAG primitives (Embedder/LLMClient, orchestrator); dep-free of app pkgs
 ├── ollama/                  # Self-hosted Ollama LLM — its own Fly app (Dockerfile/fly.toml/entrypoint)
 ├── cmd/                     # CLIs: rag-ingest-help, gen-apidocs, ai-e2e, docextract-eval, backfill-* one-offs
+├── domainevent/ proposedaction/ provenance/
+│                            # Domain-event outbox + drain; propose-then-confirm store; `via` provenance (ship dark)
 ├── jobqueue/                # Async job queue
 ├── automation/              # Date-triggered automation: tick Runner, Jobs, tenant clock, send window
 ├── automation-cron/         # Cloudflare Worker that signs the 15-min automation tick
@@ -275,6 +277,45 @@ machine after the response).
    record re-enters the gate (new history row, new anchor). The internal path honours only the
    kill switch (plus the 08:00–18:00 send window), and the email links in-app (login required),
    not a public link. The preview endpoint does not support this rule.
+
+### Domain Event Outbox (`domainevent/` + `provenance/`)
+Durable, per-tenant event log (`domain_event`) with per-consumer cursors (`domain_event_cursor`) for
+anomaly rules / auto-PO. **Ships dark: no producer or consumer is wired into a business module yet.**
+1. **`domainevent.Emit(ctx, tx, Event)` must receive the module store's TRANSACTION, never the pool.**
+   `workflow.LogAuditFull` is called with the pool after the commit at every module site, so the audit
+   observer cannot emit events atomically; emit inside the store tx so the write and event commit together
+   (at-least-once; a rollback drops the event).
+2. **Payloads are typed structs, ids / changed keys only.** No PII, secrets or free text.
+3. **Loop guard.** `Event.Depth` is bounded by `MaxDepth` (also a DB CHECK); a consumer emitting a follow-on
+   event passes `ChildDepth(ev)`. `provenance` (`With`/`From`) carries `via` (`user|automation|ai_agent|docextract`);
+   `automation.WithSystemActor` stamps `automation`, and `LogAuditFull` records non-`user` `via` in `details`.
+4. **Consumers** are registered by name in an injected `domainevent.Registry` (`automation.Deps.Events`, built in
+   `main.go`; no globals) and MUST be idempotent. `Drain` takes the cursor row `FOR UPDATE SKIP LOCKED`
+   (one drainer per consumer per tenant), runs each handler in a savepoint, advances the cursor in the same tx.
+   A failing handler does not advance the cursor; after `MaxAttempts` the event is skipped with slog + metric so one
+   poison event can't wedge the consumer. `DrainAll` caps events per tenant per tick (`MaxEventsPerTick`).
+5. **Scheduling.** The `domain_event_drain` job (in `automation.DefaultJobs`) drains and prunes inside the existing
+   tick (so it inherits the platform switch); `DrainNow` is the seam for a future worker process. Prune deletes events
+   older than `DOMAIN_EVENT_RETENTION_DAYS` (30) AND at/below every cursor. Do not reuse the dormant `automation_outbox`.
+
+### ProposedAction (`proposedaction/` + `/api/tenant/actions`)
+Propose-then-confirm write path for the future AI agent and document auto-create. **The LLM never holds
+credentials or calls write handlers**: it can only create a `ai_proposed_action` row the user sees in full.
+1. **Executors are Go-defined** (`proposedaction.Registry`, keyed by resource + kind; none registered in `main.go` yet,
+   `NoopExecutor` is for tests). `Execute(ctx, tx, caller, payload)` must call the module's EXISTING store path, never raw SQL.
+2. **No HTTP create route.** `Store.Propose` is called from Go (agent / docextract code) and validates + previews the payload.
+3. **Routes** (`tenantChain`): `GET /api/tenant/actions` (caller's own pending, keyset), `GET .../{id}`, `POST .../{id}/confirm`,
+   `POST .../{id}/cancel`. Reads are own-rows-only by construction (`identity_id` predicate).
+4. **Confirm is security-critical** (`store_confirm.go`): row lock; other identity or missing => **404** (+ `proposed_action_idor`
+   security event on mismatch); `authz.Check(target resource, create|update)` + executor `InScope` re-run under CURRENT roles
+   (missing resource permission => 403 + `permission_denied`; row-level scope denial => **404** identical to an unknown id
+   + `proposed_action_idor`, so ids can't be enumerated; either way the row stays pending and nothing executes); payload re-validated; atomic
+   `UPDATE ... WHERE status='pending' AND expires_at>now()`; execute and flip share one tx; executor error => rollback + row marked
+   `failed` with a sanitized message (422). Replay of a confirmed action => 200 with stored `result_ref`, no re-execute.
+   **Expired => 410**; cancelled/failed => 409; invalid or failed execution => 422 (410/422 extend the usual status set on purpose). Never log or return payloads.
+5. **Audit + events.** Execute runs under `provenance.AIAgent|DocExtract` (recorded as `via` in audit details) and emits
+   `proposed_action.confirmed` in the same tx. Expired rows are swept lazily on read and by the `proposed_action_sweep` job
+   (TTL `PROPOSED_ACTION_TTL_MINUTES` 15, resolved-row retention `PROPOSED_ACTION_RETENTION_DAYS` 7).
 
 ### Record Filter Engine (`query/`)
 The `query` package is the **single, store-agnostic** way to do server-side filtering, sorting, and keyset pagination on records. Both record-list designs (v1 JSONB `workflow.ListRecordsFiltered`, v2 relational `relationalStore.SearchRecords`) route through it. Do not hand-roll record filtering elsewhere.

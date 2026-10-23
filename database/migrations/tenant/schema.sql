@@ -9920,3 +9920,70 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id)
 SELECT id FROM automation_rules WHERE rule_key = 'approval_stuck'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Domain events + AI proposed actions ──
+-- domain_event is a transactional-outbox style event log consumed by cursors.
+CREATE TABLE IF NOT EXISTS domain_event (
+  id            BIGSERIAL PRIMARY KEY,
+  event_type    TEXT NOT NULL,
+  resource      TEXT NOT NULL,
+  record_id     TEXT NOT NULL,
+  actor_user_id UUID NULL,
+  via           TEXT NOT NULL DEFAULT 'user',
+  depth         SMALLINT NOT NULL DEFAULT 0,
+  payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'domain_event_depth_chk') THEN
+    ALTER TABLE domain_event ADD CONSTRAINT domain_event_depth_chk CHECK (depth BETWEEN 0 AND 3);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_domain_event_created_at ON domain_event (created_at);
+
+CREATE TABLE IF NOT EXISTS domain_event_cursor (
+  consumer    TEXT PRIMARY KEY,
+  last_id     BIGINT NOT NULL DEFAULT 0,
+  failing_id  BIGINT NULL,
+  failures    INT NOT NULL DEFAULT 0,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ai_proposed_action (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  identity_id   UUID NOT NULL,
+  user_id       UUID NOT NULL,
+  kind          TEXT NOT NULL,
+  resource      TEXT NOT NULL,
+  payload       JSONB NOT NULL,
+  preview       JSONB NOT NULL,
+  source        TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  result_ref    JSONB NULL,
+  error_message TEXT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at   TIMESTAMPTZ NULL
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_proposed_action_kind_chk') THEN
+    ALTER TABLE ai_proposed_action ADD CONSTRAINT ai_proposed_action_kind_chk
+      CHECK (kind IN ('create', 'update'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_proposed_action_source_chk') THEN
+    ALTER TABLE ai_proposed_action ADD CONSTRAINT ai_proposed_action_source_chk
+      CHECK (source IN ('agent', 'docextract'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_proposed_action_status_chk') THEN
+    ALTER TABLE ai_proposed_action ADD CONSTRAINT ai_proposed_action_status_chk
+      CHECK (status IN ('pending', 'confirmed', 'cancelled', 'expired', 'failed'));
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_identity_status ON ai_proposed_action (identity_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_expires_at ON ai_proposed_action (expires_at);

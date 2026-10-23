@@ -3573,6 +3573,160 @@
         ]
       }
     },
+    "/api/tenant/actions": {
+      "get": {
+        "operationId": "get_tenant_actions",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "proposedActionOps.List",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/actions/{id}": {
+      "get": {
+        "operationId": "get_tenant_actions_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "proposedActionOps.Get",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/actions/{id}/cancel": {
+      "post": {
+        "operationId": "post_tenant_actions_id_cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "proposedActionOps.Cancel",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/actions/{id}/confirm": {
+      "post": {
+        "operationId": "post_tenant_actions_id_confirm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "proposedActionOps.Confirm",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/admin/design-version": {
       "get": {
         "operationId": "get_tenant_admin_design_version",

@@ -1,6 +1,10 @@
 package automation
 
-import "context"
+import (
+	"context"
+
+	"stonesuite-backend/provenance"
+)
 
 // SystemEmployeeID is the tenant schema's seeded system employee
 // (employee_id = 1, employee_is_system = TRUE). Employee-keyed columns written
@@ -10,9 +14,10 @@ const SystemEmployeeID = 1
 type systemActorKey struct{}
 
 // WithSystemActor marks ctx as running on behalf of the automation engine, so
-// the automation audit observer ignores writes it caused (loop guard).
+// the automation audit observer ignores writes it caused (loop guard). It also
+// stamps provenance.Automation so audit rows record the channel.
 func WithSystemActor(ctx context.Context) context.Context {
-	return context.WithValue(ctx, systemActorKey{}, true)
+	return provenance.With(context.WithValue(ctx, systemActorKey{}, true), provenance.Automation)
 }
 
 // IsSystemActor reports whether ctx was marked by WithSystemActor.

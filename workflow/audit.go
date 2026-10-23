@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync/atomic"
+
+	"stonesuite-backend/provenance"
 )
 
 // AuditEvent describes one audit row LogAuditFull wrote.
@@ -14,6 +16,7 @@ type AuditEvent struct {
 	Resource    string
 	ResourceID  string
 	ActorUserID string // may be empty (several human write paths pass ""); the automation loop guard must use automation.IsSystemActor(ctx), never an empty actor
+	Via         string // provenance channel (provenance.From(ctx)); "user" for direct human writes
 }
 
 // AuditObserver is told about every audit row LogAuditFull writes, after the
@@ -94,10 +97,8 @@ func LogAuditFull(
 		b, _ := json.Marshal(newVal)
 		newRaw = b
 	}
-	detailsMap := map[string]any{"new": newVal}
-	for k, v := range extraMeta {
-		detailsMap[k] = v
-	}
+	via := string(provenance.From(ctx))
+	detailsMap := auditDetails(newVal, extraMeta, via)
 	details, _ := json.Marshal(detailsMap)
 	_, err := q.Exec(ctx, `
 		INSERT INTO audit_logs (
@@ -111,7 +112,23 @@ func LogAuditFull(
 		return fmt.Errorf("log audit (full): %w", err)
 	}
 	notifyAuditObservers(ctx, q, AuditEvent{
-		Action: action, Resource: resource, ResourceID: resourceID, ActorUserID: actorUserID,
+		Action: action, Resource: resource, ResourceID: resourceID, ActorUserID: actorUserID, Via: via,
 	})
 	return nil
+}
+
+// auditDetailsViaKey is the details JSONB key carrying non-user provenance.
+const auditDetailsViaKey = "via"
+
+// auditDetails builds the details JSONB map; "via" is added only for non-user
+// provenance so rows written by direct human actions are unchanged.
+func auditDetails(newVal, extraMeta map[string]any, via string) map[string]any {
+	detailsMap := map[string]any{"new": newVal}
+	for k, v := range extraMeta {
+		detailsMap[k] = v
+	}
+	if via != string(provenance.User) {
+		detailsMap[auditDetailsViaKey] = via
+	}
+	return detailsMap
 }

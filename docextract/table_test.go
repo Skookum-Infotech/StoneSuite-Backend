@@ -198,3 +198,35 @@ func TestPrunePages(t *testing.T) {
 	}
 	assert.Equal(t, []int{1, 3, 4}, nums, "terms page dropped, original page numbers kept")
 }
+
+func TestParseTable_SerialNumberColumnStaysOutOfDescription(t *testing.T) {
+	tests := []struct {
+		name   string
+		header Row
+		row    Row
+	}{
+		{"Sr. No", trowSplit(500, tcell{40, "Sr. No"}, tcell{110, "Product"}, tcell{330, "Qty"}, tcell{400, "Rate"}, tcell{480, "Amount"}),
+			trow(480, tcell{44, "1"}, tcell{110, "Trendy Silk Saree"}, tcell{335, "2"}, tcell{400, "10.00"}, tcell{485, "20.00"})},
+		{"S.No", trow(500, tcell{40, "S.No"}, tcell{110, "Description"}, tcell{330, "Qty"}, tcell{400, "Rate"}, tcell{480, "Amount"}),
+			trow(480, tcell{44, "1"}, tcell{110, "Trendy Silk Saree"}, tcell{335, "2"}, tcell{400, "10.00"}, tcell{485, "20.00"})},
+		{"leading #", trow(500, tcell{40, "#"}, tcell{110, "Description"}, tcell{330, "Qty"}, tcell{400, "Rate"}, tcell{480, "Amount"}),
+			trow(480, tcell{44, "1"}, tcell{110, "Trendy Silk Saree"}, tcell{335, "2"}, tcell{400, "10.00"}, tcell{485, "20.00"})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := parse(t, PageRows{Page: 1, Rows: []Row{tt.header, tt.row}})
+			require.Len(t, res.Lines, 1)
+			assert.Equal(t, "Trendy Silk Saree", res.Lines[0].Description.Value)
+		})
+	}
+}
+
+func TestDetectTableHeader_SerialColumnNeverMakesAHeader(t *testing.T) {
+	_, ok := detectTableHeader(trow(500, tcell{40, "Sr"}, tcell{110, "Description"}, tcell{330, "Notes"}))
+	assert.False(t, ok, "a serial column plus two words is not a line table")
+	cols, ok := detectTableHeader(trow(500, tcell{50, "Part #"}, tcell{120, "Desc."}, tcell{300, "Quantity"}, tcell{380, "Rate"}))
+	require.True(t, ok)
+	for _, c := range cols {
+		assert.NotEqual(t, roleSkip, c.role, "Part # must stay an SKU title")
+	}
+}

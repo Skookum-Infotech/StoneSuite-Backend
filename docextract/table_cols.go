@@ -55,6 +55,23 @@ var headerWords = map[string]colRole{
 	"extension": roleAmount,
 }
 
+// serialHeaders are column titles for a row-number column ("Sr. No", "S.No",
+// "Sl"); its values belong to no field. A bare "#" counts only as the first
+// header word, since "Part #" and "Item #" are SKU titles.
+var serialHeaders = map[string]bool{
+	"sr": true, "sr.": true, "sl": true, "sl.": true, "sno": true, "s.no": true, "s.no.": true,
+	"srno": true, "sr.no": true, "sr.no.": true, "slno": true, "sl.no": true, "sl.no.": true,
+}
+
+// isSerialHeader reports whether word i of a header row titles a row-number column.
+func isSerialHeader(text string, i int) bool {
+	t := strings.ToLower(strings.TrimRight(text, ":"))
+	if t == "#" {
+		return i == 0
+	}
+	return serialHeaders[t]
+}
+
 // normHeaderWord lower-cases a header word and trims punctuation.
 func normHeaderWord(s string) string {
 	return strings.ToLower(strings.Trim(s, headerTrimChars+" "))
@@ -66,6 +83,12 @@ func detectTableHeader(r Row) ([]column, bool) {
 	seen := map[colRole]bool{}
 	for i := 0; i < len(r.Words); i++ {
 		w := r.Words[i]
+		if isSerialHeader(w.Text, i) {
+			// Recognised so its values stay out of the description; it never
+			// counts toward the roles that make a header row.
+			cols = append(cols, column{role: roleSkip, x0: w.X, x1: w.X + w.W})
+			continue
+		}
 		tok := normHeaderWord(w.Text)
 		if tok == "" {
 			continue

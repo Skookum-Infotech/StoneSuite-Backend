@@ -56,9 +56,10 @@ var headerWords = map[string]colRole{
 }
 
 // serialHeaders are column titles for a row-number column ("Sr. No", "S.No",
-// "Sl"); its values belong to no field. A bare "#" counts only as the first
+// "SN.", "Sl"); its values belong to no field. A bare "#" counts only as the first
 // header word, since "Part #" and "Item #" are SKU titles.
 var serialHeaders = map[string]bool{
+	"sn": true, "sn.": true, "s.n": true, "s.n.": true,
 	"sr": true, "sr.": true, "sl": true, "sl.": true, "sno": true, "s.no": true, "s.no.": true,
 	"srno": true, "sr.no": true, "sr.no.": true, "slno": true, "sl.no": true, "sl.no.": true,
 }

@@ -209,6 +209,8 @@ func TestParseTable_SerialNumberColumnStaysOutOfDescription(t *testing.T) {
 			trow(480, tcell{44, "1"}, tcell{110, "Trendy Silk Saree"}, tcell{335, "2"}, tcell{400, "10.00"}, tcell{485, "20.00"})},
 		{"S.No", trow(500, tcell{40, "S.No"}, tcell{110, "Description"}, tcell{330, "Qty"}, tcell{400, "Rate"}, tcell{480, "Amount"}),
 			trow(480, tcell{44, "1"}, tcell{110, "Trendy Silk Saree"}, tcell{335, "2"}, tcell{400, "10.00"}, tcell{485, "20.00"})},
+		{"SN.", trow(500, tcell{41, "SN."}, tcell{121, "Description"}, tcell{320, "Unit"}, tcell{345, "Price"}, tcell{400, "Qty."}, tcell{480, "Total"}),
+			trow(480, tcell{41, "1"}, tcell{121, "Trendy Silk Saree"}, tcell{320, "Rs.993.77"}, tcell{400, "1"}, tcell{480, "Rs.993.77"})},
 		{"leading #", trow(500, tcell{40, "#"}, tcell{110, "Description"}, tcell{330, "Qty"}, tcell{400, "Rate"}, tcell{480, "Amount"}),
 			trow(480, tcell{44, "1"}, tcell{110, "Trendy Silk Saree"}, tcell{335, "2"}, tcell{400, "10.00"}, tcell{485, "20.00"})},
 	}

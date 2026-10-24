@@ -192,6 +192,7 @@ func TestDeriveProposedEntities_SkipsJunkNames(t *testing.T) {
 		{"bare phone number customer", soResult("1800-889-9991"), 0},
 		{"digits-only vendor", poResult("123456"), 0},
 		{"real customer", soResult("Prasanna Kumar"), 1},
+		{"long digit run inside a name", soResult("Brandnew1792877753021104529 Builders"), 1},
 		{"name with digits", soResult("7-Eleven Stores"), 1},
 	}
 	for _, tt := range tests {

@@ -120,7 +120,7 @@ func isOwnName(key string, own []string) bool {
 
 // contactLineRe matches a party "name" that is really a contact line
 // ("Support: 1800-889-9991", "Tel 555-0100").
-var contactLineRe = regexp.MustCompile(`(?i)^\s*(?:support|helpline|help\s*line|customer\s+care|tel|telephone|phone|ph|mobile|fax|e-?mail)\b|\d[\d\s().-]{6,}\d`)
+var contactLineRe = regexp.MustCompile(`(?i)^\s*(?:support|helpline|help\s*line|customer\s+care|tel|telephone|phone|ph|mobile|fax|e-?mail)\b|(?:^|[^\w])\+?\d[\d\s().-]{6,}\d(?:$|[^\w])`)
 
 // hasLetter reports whether s holds at least one letter.
 func hasLetter(s string) bool {

@@ -113,7 +113,7 @@ func actorOrSystem(actorEmployeeID int) int {
 // dedicated relational domain (not a v1 JSONB workflow), so in practice no
 // such workflow exists and validation is a no-op — kept for parity with
 // crmstore.validateCustom and to support a future admin-configured field set.
-func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]any) error {
+func validateCustom(ctx context.Context, pool workflow.Querier, custom map[string]any) error {
 	wf, err := workflow.GetWorkflowByKey(ctx, pool, "inventory_item")
 	if errors.Is(err, workflow.ErrWorkflowNotFound) {
 		return nil
@@ -136,6 +136,11 @@ func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]a
 
 // Get loads a single live inventory item by its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, uuid string) (*Item, error) {
+	return GetQ(ctx, pool, uuid)
+}
+
+// GetQ loads a single live inventory item by uuid through any Querier (pool or tx).
+func GetQ(ctx context.Context, pool workflow.Querier, uuid string) (*Item, error) {
 	it, err := scanItem(pool.QueryRow(ctx, itemSelect+`
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -370,7 +370,7 @@ func checkConvertFrom(typeCode, statusCode string) error {
 // initialStatusID resolves the initial status of the stage whose record type id
 // is typeID. It is what CreateRecord and ConvertRecord give a new record: the
 // entry status is decided here, never chosen by the caller.
-func (s *relationalStore) initialStatusID(ctx context.Context, pool *pgxpool.Pool, typeID int, typeCode string) (int, error) {
+func (s *relationalStore) initialStatusID(ctx context.Context, pool workflow.Querier, typeID int, typeCode string) (int, error) {
 	code, ok := crmInitialStatusCode[typeCode]
 	if !ok {
 		return 0, fmt.Errorf("no initial CRM status is defined for record type %q", typeCode)

@@ -109,6 +109,7 @@ type Config struct {
 
 	// Document extraction (PDF/DOCX -> draft document via the LLM). Off by default.
 	DocExtractEnabled         bool          // DOC_EXTRACT_ENABLED
+	DocExtractProposeEntities bool          // DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED: propose missing customer/vendor/items from an extraction
 	DocExtractMaxBytes        int64         // DOC_EXTRACT_MAX_BYTES: max upload size
 	DocExtractMaxPages        int           // DOC_EXTRACT_MAX_PAGES
 	DocExtractMaxLines        int           // DOC_EXTRACT_MAX_LINES: max extracted line items
@@ -314,6 +315,7 @@ func Load() {
 		AIRerankCandidates: getEnvInt("AI_RERANK_CANDIDATES", 15),
 		// Document extraction (see Config.DocExtractEnabled doc)
 		DocExtractEnabled:         getEnvBool("DOC_EXTRACT_ENABLED", false),
+		DocExtractProposeEntities: getEnvBool("DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED", false),
 		DocExtractMaxBytes:        getEnvInt64("DOC_EXTRACT_MAX_BYTES", defaultDocExtractMaxBytes),
 		DocExtractMaxPages:        getEnvInt("DOC_EXTRACT_MAX_PAGES", defaultDocExtractMaxPages),
 		DocExtractMaxLines:        getEnvInt("DOC_EXTRACT_MAX_LINES", defaultDocExtractMaxLines),

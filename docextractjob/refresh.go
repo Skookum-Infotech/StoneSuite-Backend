@@ -59,7 +59,8 @@ func ResolveDoc(ctx context.Context, pool *pgxpool.Pool, ex *Extraction, sha str
 		resolution.LinkedPO.Lines = []LinkedPOLine{}
 	}
 	all := append([]Duplicate{}, dups...)
-	return ResultDoc{Extracted: extracted, Resolution: resolution, Duplicates: append(all, found...)}, nil
+	proposed := DeriveProposedEntities(extracted, resolution, own)
+	return ResultDoc{Extracted: extracted, Resolution: resolution, Duplicates: append(all, found...), ProposedEntities: proposed}, nil
 }
 
 // Refresh re-resolves a ready extraction's stored text against current master
@@ -90,14 +91,14 @@ func Refresh(ctx context.Context, pool *pgxpool.Pool, ex *Extraction, stored Res
 	return fresh, nil
 }
 
-// sameResolution compares the resolution and duplicates by their JSON form,
+// sameResolution compares the resolution, duplicates and proposed entities by their JSON form,
 // which is what is stored, so nil-vs-empty differences don't force a write.
 func sameResolution(a, b ResultDoc) (bool, error) {
-	ja, err := json.Marshal([]any{a.Resolution, a.Duplicates})
+	ja, err := json.Marshal([]any{a.Resolution, a.Duplicates, a.ProposedEntities})
 	if err != nil {
 		return false, fmt.Errorf("marshal stored resolution: %w", err)
 	}
-	jb, err := json.Marshal([]any{b.Resolution, b.Duplicates})
+	jb, err := json.Marshal([]any{b.Resolution, b.Duplicates, b.ProposedEntities})
 	if err != nil {
 		return false, fmt.Errorf("marshal fresh resolution: %w", err)
 	}

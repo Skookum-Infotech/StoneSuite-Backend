@@ -88,10 +88,24 @@ func proposedKey(kind, dedupeKey string) string {
 	return proposedKeyPrefix + hex.EncodeToString(sum[:])[:proposedKeyHexChars]
 }
 
+// proposeWeakScore is the Dice score below which a resolver candidate is too
+// dissimilar to be the same party ("Akhila N" for "Akhila Tailors Surat"), so
+// the document's party still counts as new and may be proposed.
+const proposeWeakScore = 0.5
+
 // unmatchedParty reports whether m is a clean miss: nothing matched, nothing
-// ambiguous, and so safe to propose as a new record.
+// ambiguous (every candidate scores below proposeWeakScore), and so safe to
+// propose as a new record.
 func unmatchedParty(m PartyMatch) bool {
-	return m.UUID == "" && len(m.Candidates) == 0 && m.Confidence == docextract.ConfNotFound
+	if m.UUID != "" || m.Confidence != docextract.ConfNotFound {
+		return false
+	}
+	for _, c := range m.Candidates {
+		if c.Score >= proposeWeakScore {
+			return false
+		}
+	}
+	return true
 }
 
 // isOwnName reports whether key equals the key of one of the tenant's own names.

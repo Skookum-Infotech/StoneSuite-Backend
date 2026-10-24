@@ -232,3 +232,45 @@ func TestDetectTableHeader_SerialColumnNeverMakesAHeader(t *testing.T) {
 		assert.NotEqual(t, roleSkip, c.role, "Part # must stay an SKU title")
 	}
 }
+
+// twoRowHeader is the Item/Qty/Unit Price header split over three rows.
+func twoRowHeader() []Row {
+	return []Row{
+		trowSplit(598, tcell{269, "Item"}, tcell{304, "Unit Price"}, tcell{357, "Discount"}, tcell{402, "Net Price"}, tcell{449, "Tax Amount"}),
+		trowSplit(592, tcell{78, "Item Details"}, tcell{201, "HSN Code"}, tcell{518, "Total"}),
+		trowSplit(586, tcell{271, "Qty"}, tcell{316, "(Rs.)"}, tcell{369, "(Rs)"}, tcell{518, "(Rs.)"}),
+	}
+}
+
+func TestParseTable_MultiRowHeaderAndWrappedName(t *testing.T) {
+	rows := append(twoRowHeader(),
+		trow(564, tcell{26, "Heathered Joggers with"}),
+		trow(552, tcell{26, "Pockets,White,XL"}, tcell{209, "610310"}, tcell{273, "1.0"}, tcell{312, "419.16"}, tcell{366, "162.3"}, tcell{409, "256.86"}, tcell{465, "12.84"}, tcell{527, "269.70"}),
+		trow(520, tcell{67, "Shipping Charges"}),
+		trow(516, tcell{207, "996819"}, tcell{411, "22.88"}, tcell{468, "4.12"}, tcell{529, "27.00"}),
+		trowSplit(397, tcell{56, "Total :"}, tcell{273, "1.0"}, tcell{525, "296.7"}),
+	)
+	res := parse(t, PageRows{Page: 1, Rows: rows})
+	require.Len(t, res.Lines, 1)
+	ln := res.Lines[0]
+	assert.Equal(t, "Heathered Joggers with Pockets,White,XL", ln.Description.Value)
+	assert.Equal(t, "1", ln.Qty.Value)
+	assert.Equal(t, "419.16", ln.UnitPrice.Value, "discount column must not leak into the price")
+	assert.Equal(t, "269.70", ln.Amount.Value)
+	require.Len(t, res.Charges, 1, "the shipping row is a charge, not a product named by its HSN code")
+	assert.Equal(t, "Shipping Charges", res.Charges[0].Description.Value)
+	assert.Equal(t, "27.00", res.Charges[0].Amount.Value)
+}
+
+func TestParseTable_HeadingAboveLineStaysANote(t *testing.T) {
+	rows := []Row{
+		trow(500, tcell{57, "Quantity"}, tcell{185, "Description"}, tcell{331, "Qty"}, tcell{403, "Rate"}, tcell{511, "Amount"}),
+		trow(485, tcell{185, "CO06"}),
+		trow(473, tcell{185, "Option: 3900-CO"}),
+		trow(461, tcell{57, "83.00"}, tcell{185, "Countertops Labor"}, tcell{339, "83"}, tcell{410, "25.00"}, tcell{513, "2,075.00"}),
+	}
+	res := parse(t, PageRows{Page: 1, Rows: rows})
+	require.Len(t, res.Lines, 1)
+	assert.Equal(t, "Countertops Labor", res.Lines[0].Description.Value)
+	assert.Len(t, res.Notes, 2)
+}

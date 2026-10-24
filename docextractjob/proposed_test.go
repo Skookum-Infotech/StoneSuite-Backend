@@ -180,3 +180,29 @@ func TestDeriveProposedEntities_EmptyIsNonNilSlice(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Empty(t, got)
 }
+
+func TestDeriveProposedEntities_SkipsJunkNames(t *testing.T) {
+	tests := []struct {
+		name string
+		res  docextract.Result
+		want int
+	}{
+		{"phone-like customer", soResult("Support: 1800-889-9991"), 0},
+		{"bare phone number customer", soResult("1800-889-9991"), 0},
+		{"digits-only vendor", poResult("123456"), 0},
+		{"real customer", soResult("Prasanna Kumar"), 1},
+		{"name with digits", soResult("7-Eleven Stores"), 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DeriveProposedEntities(tt.res, Resolution{Customer: notFoundParty(), Vendor: notFoundParty()}, nil)
+			assert.Len(t, got, tt.want)
+		})
+	}
+
+	r := soResult("")
+	r.Lines = []docextract.Line{productLine("996819", "996819"), productLine("", "996819"), productLine("A-1", "Granite")}
+	got := DeriveProposedEntities(r, Resolution{Lines: []LineMatch{unmatched(0), unmatched(1), unmatched(2)}}, nil)
+	require.Len(t, got, 1, "an item whose name has no letters is not proposed")
+	assert.Equal(t, "Granite", got[0].Name)
+}

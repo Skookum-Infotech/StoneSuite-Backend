@@ -3,6 +3,8 @@ package docextractjob
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
+	"unicode"
 
 	"stonesuite-backend/docextract"
 	"stonesuite-backend/duplicate"
@@ -102,6 +104,24 @@ func isOwnName(key string, own []string) bool {
 	return false
 }
 
+// contactLineRe matches a party "name" that is really a contact line
+// ("Support: 1800-889-9991", "Tel 555-0100").
+var contactLineRe = regexp.MustCompile(`(?i)^\s*(?:support|helpline|help\s*line|customer\s+care|tel|telephone|phone|ph|mobile|fax|e-?mail)\b|\d[\d\s().-]{6,}\d`)
+
+// hasLetter reports whether s holds at least one letter.
+func hasLetter(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// plausiblePartyName reports whether name could be a company or person: it has
+// a letter and is not a phone or contact line.
+func plausiblePartyName(name string) bool { return hasLetter(name) && !contactLineRe.MatchString(name) }
+
 // partyNameLimit is the column width of the party name for kind.
 func partyNameLimit(kind string) int {
 	if kind == ProposedKindCustomer {
@@ -117,7 +137,7 @@ func proposeParty(kind, field string, f docextract.Field, m PartyMatch, own []st
 	}
 	name := docextract.Clean(f.Value, partyNameLimit(kind))
 	key := duplicate.Key(name)
-	if name == "" || key == "" || isOwnName(key, own) {
+	if name == "" || key == "" || !plausiblePartyName(name) || isOwnName(key, own) {
 		return ProposedEntity{}, false
 	}
 	return ProposedEntity{
@@ -180,6 +200,9 @@ func proposeItems(extracted docextract.Result, res Resolution) []ProposedEntity 
 		name, conf, src := docextract.Clean(desc, proposedMaxItemName), l.Description.Confidence, l.Description
 		if name == "" {
 			name, conf, src = sku, l.SKU.Confidence, l.SKU
+		}
+		if !hasLetter(name) {
+			continue // "996819" is an HSN code, not a product name
 		}
 		e := ProposedEntity{
 			Key: key, Kind: ProposedKindItem, Name: name, Confidence: conf,

@@ -37,6 +37,10 @@ type labelSpec struct {
 	nearBelow bool
 }
 
+// customerNoiseRe rejects "Customer Support: 1800-…", "Customer Care", "Customer GSTIN"
+// and the like: a contact or tax-id line, not the customer's name.
+var customerNoiseRe = regexp.MustCompile(`(?i)^\s*(support|care|service|helpline|help|gstin|gst|id|no\b|number|code|copy)`)
+
 var totalRejectRe = regexp.MustCompile(`(?i)^\s*(qty|quantity|units?|items?|lines?|weight|pieces?|pcs)\b`)
 
 // labelSpecs are ordered by claim priority: earlier specs claim their text
@@ -47,8 +51,8 @@ var labelSpecs = []labelSpec{
 	{key: keyPO, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:(?:customer|your|buyer'?s?)\s+)?(?:p\.?\s?o\.?|purchase\s+order|order)\s*(?:#|no\b\.?|number)`)},
 	{key: keyPO, prio: 1, below: false, nearBelow: true, re: regexp.MustCompile(`(?i)\b(?:(?:customer|your|buyer'?s?)\s+)?(?:p\.?o\.?|purchase\s+order)\b`)},
 	{key: keyShipTo, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:ship(?:ping)?\s+to|deliver(?:y)?\s+to|ship(?:ping)?\s+address|delivery\s+address|job\s*site)\b`)},
-	{key: keyBillTo, prio: 3, below: true, re: regexp.MustCompile(`(?i)\b(?:bill(?:ed)?\s+to|sold\s+to|invoice\s+to)\b`)},
-	{key: keyBillTo, prio: 1, below: true, labelOnly: true, re: regexp.MustCompile(`(?i)\b(?:customer(?:\s+name)?|buyer)\b`)},
+	{key: keyBillTo, prio: 3, below: true, re: regexp.MustCompile(`(?i)\b(?:bill(?:ed)?\s+to|sold\s+to|invoice\s+to|recipient\s+address)\b`)},
+	{key: keyBillTo, prio: 1, below: true, labelOnly: true, reject: func(rest string) bool { return customerNoiseRe.MatchString(rest) }, re: regexp.MustCompile(`(?i)\b(?:customer(?:\s+name)?|buyer)\b`)},
 	{key: keyTerms, prio: 1, below: true, re: regexp.MustCompile(`(?i)\b(?:payment\s+terms|terms(?:\s+of\s+payment)?|terms)\b`)},
 	{key: keySubtotal, prio: 1, below: true, re: regexp.MustCompile(`(?i)\bsub\s*-?\s*total\b`)},
 	{key: keyTotal, prio: 2, below: true, re: regexp.MustCompile(`(?i)\b(?:grand\s+total|order\s+total|invoice\s+total|total\s+due|amount\s+due|balance\s+due)\b`)},

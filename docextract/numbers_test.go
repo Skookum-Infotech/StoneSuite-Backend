@@ -30,6 +30,10 @@ func TestParseMoney(t *testing.T) {
 		{"12,50", 0, IssueEUDecimal},
 		{"1,23", 0, IssueEUDecimal},
 		{"$.", 0, IssueInvalid},
+		{"Rs.993.77", 99377, ""},
+		{"Rs. 1,250.00", 125000, ""},
+		{"INR 40", 4000, ""},
+		{"₹12.50", 1250, ""},
 		{"1,2345.00", 0, IssueInvalid},
 	}
 	for _, tt := range tests {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -15,8 +16,10 @@ const (
 )
 
 var (
-	totalsRe  = regexp.MustCompile(`(?i)^(sub\s*-?\s*total|total|grand\s+total|amount\s+due|balance\s+due|order\s+total|invoice\s+total|sales\s+tax|tax|vat)\b`)
-	skipRowRe = regexp.MustCompile(`(?i)^(page\s+\d+(\s+of\s+\d+)?|\d+\s+of\s+\d+)$`)
+	totalsRe = regexp.MustCompile(`(?i)^(sub\s*-?\s*total|total|grand\s+total|amount\s+due|balance\s+due|order\s+total|invoice\s+total|sales\s+tax|tax|vat)\b`)
+	// totalColonRe is a "Total :" footer row; it carries a qty sum like a line would.
+	totalColonRe = regexp.MustCompile(`(?i)^total\s*:`)
+	skipRowRe    = regexp.MustCompile(`(?i)^(page\s+\d+(\s+of\s+\d+)?|\d+\s+of\s+\d+)$`)
 	// notePrefixRe starts a note instead of continuing a description: remarks
 	// and contact boilerplate a buyer types into the description column.
 	notePrefixRe = regexp.MustCompile(`(?i)^(notes?\b|nb\b|comments?\b|please\b|\*|if\s+you\s+have\b|questions?\b|contact\b)`)
@@ -40,7 +43,10 @@ type tableParser struct {
 	done   bool
 	all    []Line
 	count  int // non-note lines seen
-	res    tableResult
+	// lead is the run of adjacent description-only rows just above the next
+	// numeric row; a name wrapped over several rows ends on the row with the numbers.
+	lead []leadNote
+	res  tableResult
 }
 
 // parseTable finds the line-item table and parses its rows.
@@ -78,9 +84,14 @@ func (tp *tableParser) page(p PageRows) error {
 	if tp.active {
 		start = 0
 	}
+	hdrEnd := -1
 	for i, r := range p.Rows {
+		if i <= hdrEnd {
+			continue
+		}
 		if cols, ok := detectTableHeader(r); ok {
-			pitch = pagePitch(p.Rows[i+1:])
+			cols, hdrEnd = extendHeader(p.Rows, i, cols)
+			pitch = pagePitch(p.Rows[hdrEnd+1:])
 			tp.cols = cols
 			if !tp.active {
 				tp.res.Found = true
@@ -89,7 +100,7 @@ func (tp *tableParser) page(p PageRows) error {
 				}
 			}
 			tp.active = true
-			start, last = i, i
+			start, last = i, hdrEnd
 			continue
 		}
 		if !tp.active {
@@ -101,7 +112,7 @@ func (tp *tableParser) page(p PageRows) error {
 			continue
 		}
 		cells := assignWords(r, tp.cols)
-		if totalsRe.MatchString(text) && !validQty(cells[roleQty]) {
+		if totalsRe.MatchString(text) && (!validQty(cells[roleQty]) || totalColonRe.MatchString(text)) {
 			tp.done = true
 			break
 		}
@@ -159,6 +170,7 @@ func (tp *tableParser) row(page, idx int, r Row, cells map[colRole][]Word, gap, 
 		return nil
 	}
 	ln := buildLine(page, idx, text, cells, tp.cols, tp.lim)
+	tp.absorbLead(&ln, page, idx, gap, pitch)
 	ln.Kind = tp.kindFor(ln, cells)
 	tp.all = append(tp.all, ln)
 	tp.count++
@@ -183,6 +195,77 @@ func (tp *tableParser) noNumbers(page, idx int, text string, cells map[colRole][
 	}
 	note := Line{Kind: KindNote, Description: field(text, text, page, idx, ConfHigh)}
 	tp.all = append(tp.all, note)
+	tp.trackLead(page, idx, gap, pitch)
+}
+
+const (
+	// maxLeadRows bounds how many wrapped rows may precede a numeric row.
+	maxLeadRows = 3
+	// leadGapFactor is looser than contGapFactor: cells vertically centred in a
+	// tall row shrink the table's smallest row gap, so the pitch under-reads.
+	leadGapFactor = 3.0
+)
+
+// leadNote remembers a note row that may be the start of the next line's name.
+type leadNote struct{ page, idx int }
+
+// trackLead records a just-appended note row, restarting the run when it is
+// not directly under the previous one.
+func (tp *tableParser) trackLead(page, idx int, gap, pitch float64) {
+	near := pitch == 0 || gap <= leadGapFactor*pitch
+	if n := len(tp.lead); n == 0 || !near || tp.lead[n-1].page != page || tp.lead[n-1].idx != idx-1 || n >= maxLeadRows {
+		tp.lead = tp.lead[:0]
+	}
+	tp.lead = append(tp.lead, leadNote{page, idx})
+}
+
+// danglingRe ends a row that stops mid-phrase: a connector word or a dash/comma.
+var danglingRe = regexp.MustCompile(`(?i)(?:\b(?:with|and|or|of|for|in|on|to|the|a|an|by|w/)|[&,/(-])\s*$`)
+
+// startsLower reports whether s begins with a lower-case letter.
+func startsLower(s string) bool {
+	for _, r := range s {
+		return unicode.IsLower(r)
+	}
+	return false
+}
+
+// absorbLead moves the description-only rows right above a numeric row into
+// that line's description: "Heathered Joggers with / Pockets,White,XL 1.0 …".
+// A line with its own item number keeps its name, and a row that is not
+// directly under the run leaves it as notes.
+func (tp *tableParser) absorbLead(ln *Line, page, idx int, gap, pitch float64) {
+	defer func() { tp.lead = tp.lead[:0] }()
+	k := len(tp.lead)
+	if k == 0 || len(tp.all) < k || (pitch > 0 && gap > leadGapFactor*pitch) {
+		return
+	}
+	if last := tp.lead[k-1]; last.page != page || last.idx != idx-1 {
+		return
+	}
+	if ln.SKU.Found() && ln.SKU.Value != ln.Description.Value {
+		return
+	}
+	notes := tp.all[len(tp.all)-k:]
+	parts := make([]string, 0, k+1)
+	for _, n := range notes {
+		if n.Kind != KindNote {
+			return
+		}
+		parts = append(parts, n.Description.Value)
+	}
+	// A heading above a line ("CO06 / Option: 3900-CO") is not part of its name:
+	// the rows join only when the line has no name of its own, or the run stops
+	// mid-phrase / the line continues in lower case.
+	if desc := ln.Description.Value; desc != "" && !danglingRe.MatchString(parts[len(parts)-1]) && !startsLower(desc) {
+		return
+	}
+	name := strings.TrimSpace(strings.Join(append(parts, ln.Description.Value), " "))
+	ln.Description = field(name, name, page, idx, ConfHigh)
+	if ln.SKU.Found() {
+		ln.SKU = notFound()
+	}
+	tp.all = tp.all[:len(tp.all)-k]
 }
 
 // alignedWithDesc reports whether a row's text starts at the description column.

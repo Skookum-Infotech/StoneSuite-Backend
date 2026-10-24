@@ -191,3 +191,12 @@ func TestParseHeader_ProvenanceSnippet(t *testing.T) {
 	assert.Equal(t, 1, f.Row)
 	assert.Equal(t, SourceDocument, f.Source)
 }
+
+func TestParseHeader_CustomerLabelIsNotSupportLine(t *testing.T) {
+	out := hdrFrom(
+		trowSplit(700, tcell{50, "Customer Support: 1800-889-9991"}),
+		trowSplit(660, tcell{50, "Recipient Address: Prasanna Kumar"}, tcell{365, "Mobile No. : 9113026799"}),
+		trow(646, tcell{50, "Banashankari 3rd stage"}),
+	)
+	assert.Equal(t, "Prasanna Kumar", out.Header.CustomerName.Value)
+}

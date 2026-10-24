@@ -46,12 +46,19 @@ func extractParty(rows []hrow, hits []labelHit, key string, own []string, wantNa
 		r := rows[h.ri]
 		block = field(strings.Join(lines, "\n"), r.text, r.page, r.idx, ConfHigh)
 		if wantName {
-			name = field(cleanName(lines[0]), r.text, r.page, r.idx, ConfHigh)
+			name = field(cleanName(stripContactTail(lines[0])), r.text, r.page, r.idx, ConfHigh)
 		}
 		return name, block
 	}
 	return name, block
 }
+
+// contactTailRe starts the contact detail an inline value runs into when a
+// "Mobile No. : …" column sits to the right of the party name.
+var contactTailRe = regexp.MustCompile(`(?i)\s+(?:mobile|mob|phone|ph|tel|telephone|contact|e-?mail|fax|gstin|state\s+code)\b.*$`)
+
+// stripContactTail drops a trailing contact-detail run from a party name line.
+func stripContactTail(s string) string { return contactTailRe.ReplaceAllString(s, "") }
 
 // cleanName trims trailing punctuation from a party name line.
 func cleanName(s string) string {

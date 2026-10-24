@@ -27,7 +27,7 @@ const (
 var (
 	usMoneyRe  = regexp.MustCompile(`^(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$`)
 	euMoneyRe  = regexp.MustCompile(`^(\d{1,3}(\.\d{3})+,\d{1,2}|\d+,\d{1,2})$`)
-	currencyRe = regexp.MustCompile(`(?i)USD|[$€£¥]`)
+	currencyRe = regexp.MustCompile(`(?i)USD|INR|Rs\.?|[$€£¥₹]`)
 )
 
 const (

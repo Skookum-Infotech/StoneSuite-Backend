@@ -24,7 +24,6 @@ go build ./...             # verify build compiles
 golangci-lint run          # lint (requires golangci-lint installed)
 ```
 
-**Note:** `gh` CLI may not be authenticated in this environment — if `gh pr create`/`gh auth login` fails, use the GitHub MCP connector tools (`mcp__github__create_pull_request`, etc.) instead.
 
 ## Feature Pipeline
 

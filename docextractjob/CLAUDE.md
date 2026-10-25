@@ -1,0 +1,12 @@
+# Docextract proposed entities — Claude rules
+
+_Loaded automatically when Claude reads files under `docextractjob/`. Moved verbatim from the root CLAUDE.md._
+
+## Docextract proposed entities (`docextractjob/proposed.go` + `proposedentity/`)
+Unmatched customer/vendor/item found by extraction become **proposed new records**, created only on a user click via the ProposedAction confirm path.
+1. **Derive, then propose on click.** `DeriveProposedEntities(extracted, resolution, own)` is pure and runs inside `ResolveDoc` (pipeline AND every `Refresh`), stored as `ResultDoc.ProposedEntities` (`pe_<hash>` key, de-duplicated per document; ambiguous/inactive/own-company matches are never proposed). `ProposedAction` rows are created only by `POST /api/tenant/document-extractions/{id}/proposed-entities/{key}/propose` (owner-only, doc-type create + target-resource create, logs `permission_denied`/`doc_extract_idor`). Linkage is `payload.sourceRef = "<extractionId>:<key>"` (no schema column); propose is idempotent for a pending/confirmed row, an expired one is simply re-proposed from the stored entity.
+2. **Only whitelisted user input.** The request body carries `overrides.contactEmail` / `overrides.sku` and nothing else; kind → resource, name, address, price, unit all come from the stored entity. Document text never chooses resource, permission or owner.
+3. **Executors** (`proposedentity.Register`, registered in `main.go` before `NewProposedActionOps`) call `vendors.CreateTx`, `inventory.CreateTx`, `crmstore.CreateCustomerTx` inside the confirm tx and write `LogAuditFull(tx, …)` (`via=docextract`). A new module create path must expose a `CreateTx` twin, not open its own pool tx. No post-commit side effects (welcome email, bell, immediate RAG enqueue) — add a post-commit hook to `proposedaction` before adding any.
+4. **Sanitization**: `docextract.Clean/CleanBlock/MaskSensitive` — Luhn card runs, IBANs and labelled routing/account numbers become `[masked]` in the LLM residual and in stored free-text fields (Snippet, Notes, BillTo, ShipTo, Detail, page words); parsed values (PO number, SKU, totals) are never masked. Identifier fields (SKU, unit) skip the sensitive-shape check; limits equal the DB column widths.
+5. **Gate**: `DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED` (default off) on top of `DOC_EXTRACT_ENABLED`; off ⇒ no entities in GET, propose 404.
+6. Extraction produces no tax ID, phone, email or structured address today; customer address is shown but not persisted.

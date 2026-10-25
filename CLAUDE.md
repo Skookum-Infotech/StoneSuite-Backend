@@ -24,7 +24,6 @@ go build ./...             # verify build compiles
 golangci-lint run          # lint (requires golangci-lint installed)
 ```
 
-
 ## Feature Pipeline
 
 `/feature <description>` (`.claude/commands/feature.md`) drives a feature end-to-end:

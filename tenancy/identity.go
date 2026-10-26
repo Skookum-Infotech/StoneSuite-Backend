@@ -110,6 +110,7 @@ func (c *ControlPlane) IdentityBySetupTokenHash(ctx context.Context, tokenHash s
 // ActivatePlatformOwner marks the platform-owner tenant active. Called once
 // the admin successfully activates their account via the setup token.
 func (c *ControlPlane) ActivatePlatformOwner(ctx context.Context, tenantID string) error {
+	defer c.forgetTenant(tenantID)
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET status = 'active', updated_at = NOW() WHERE id = $1`,
 		tenantID); err != nil {

@@ -30,3 +30,36 @@ func TestRefreshTokenState(t *testing.T) {
 		})
 	}
 }
+
+func TestRotationLifetime(t *testing.T) {
+	const fallback, max = 24 * time.Hour, 720 * time.Hour
+	tests := []struct {
+		name   string
+		stored time.Duration
+		want   time.Duration
+	}{
+		{"normal session keeps its lifetime", 24 * time.Hour, 24 * time.Hour},
+		{"remember-me session keeps its lifetime", 720 * time.Hour, 720 * time.Hour},
+		{"sub-second clock skew is rounded away", 720*time.Hour + 300*time.Millisecond, 720 * time.Hour},
+		{"longer than max falls back", 721 * time.Hour, fallback},
+		{"non-positive falls back", 0, fallback},
+		{"negative falls back", -time.Hour, fallback},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, rotationLifetime(tc.stored, fallback, max))
+		})
+	}
+}
+
+func TestWithIdentity(t *testing.T) {
+	err := withIdentity(ErrRefreshTokenReused, "identity-1")
+	assert.ErrorIs(t, err, ErrRefreshTokenReused)
+	var reused *RefreshTokenReusedError
+	if assert.ErrorAs(t, err, &reused) {
+		assert.Equal(t, "identity-1", reused.IdentityID)
+	}
+
+	assert.Equal(t, ErrRefreshTokenNotFound, withIdentity(ErrRefreshTokenNotFound, "identity-1"))
+	assert.NoError(t, withIdentity(nil, "identity-1"))
+}

@@ -20,7 +20,7 @@ type Config struct {
 	Port                   string
 	JWTSecret              string
 	JWTExpiresIn           string
-	JWTRememberMeExpiresIn string
+	JWTRememberMeExpiresIn string // refresh-token lifetime of a "remember me" login; access tokens always use JWTExpiresIn
 	RefreshTokenExpiresIn  string
 	DBHost                 string
 	DBPort                 string

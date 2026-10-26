@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/jobqueue"
+	"stonesuite-backend/safego"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
 	"stonesuite-backend/workflow"
@@ -153,7 +155,20 @@ func (w *Worker) processNext(ctx context.Context) {
 	runCtx, cancel := context.WithTimeout(ctx, jobTimeout)
 	defer cancel()
 
-	if err := w.runImport(runCtx, job.ID, *job.TenantID, payload); err != nil {
+	// A panic while parsing an uploaded file is deterministic: retrying the job
+	// would just panic again, so it goes straight to dead. Without this guard
+	// the panic killed the whole process, and the stale-job reaper re-queued
+	// the job into a crash loop.
+	var runErr error
+	if panicErr := safego.Do(runCtx, "importer.runImport", func() {
+		runErr = w.runImport(runCtx, job.ID, *job.TenantID, payload)
+	}); panicErr != nil {
+		if err := w.queue.MarkDead(ctx, job.ID, "import crashed while processing the file"); err != nil {
+			slog.Error("importer: mark panicked job dead", "job", job.ID, "err", err)
+		}
+		return
+	}
+	if err := runErr; err != nil {
 		log.Printf("importer: job %s failed: %v", job.ID, err)
 		_ = w.queue.MarkFailed(ctx, job.ID, err.Error())
 		return

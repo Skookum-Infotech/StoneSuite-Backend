@@ -23,6 +23,7 @@ type Identity struct {
 	SSOProvider     string
 	SSOSubject      string
 	SSOSessionIndex string
+	MFAEnabled      bool // emailed sign-in code step at password login
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -30,12 +31,13 @@ type Identity struct {
 // ----- Identity writes/reads -------------------------------------------------
 
 const identityColumns = `id, tenant_id, email, COALESCE(password_hash,''), full_name,
-	email_verified, COALESCE(sso_provider,''), COALESCE(sso_subject,''), COALESCE(sso_session_index,''), created_at, updated_at`
+	email_verified, COALESCE(sso_provider,''), COALESCE(sso_subject,''), COALESCE(sso_session_index,''),
+	mfa_enabled, created_at, updated_at`
 
 func scanIdentity(row pgx.Row) (*Identity, error) {
 	var i Identity
 	err := row.Scan(&i.ID, &i.TenantID, &i.Email, &i.PasswordHash, &i.FullName,
-		&i.EmailVerified, &i.SSOProvider, &i.SSOSubject, &i.SSOSessionIndex, &i.CreatedAt, &i.UpdatedAt)
+		&i.EmailVerified, &i.SSOProvider, &i.SSOSubject, &i.SSOSessionIndex, &i.MFAEnabled, &i.CreatedAt, &i.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrIdentityNotFound
 	}
@@ -126,6 +128,25 @@ func (c *ControlPlane) SetIdentityPassword(ctx context.Context, identityID, pass
 		 email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
 		identityID, passwordHash); err != nil {
 		return fmt.Errorf("set identity password: %w", err)
+	}
+	return nil
+}
+
+// SetIdentityMFAEnabled turns the emailed sign-in code step on or off.
+// mfa_enabled_at records when it was last turned on and is cleared on off.
+func (c *ControlPlane) SetIdentityMFAEnabled(ctx context.Context, identityID string, enabled bool) error {
+	tag, err := c.pool.Exec(ctx,
+		`UPDATE identities
+		 SET mfa_enabled = $2,
+		     mfa_enabled_at = CASE WHEN $2 THEN NOW() ELSE NULL END,
+		     updated_at = NOW()
+		 WHERE id = $1`,
+		identityID, enabled)
+	if err != nil {
+		return fmt.Errorf("set identity mfa enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrIdentityNotFound
 	}
 	return nil
 }

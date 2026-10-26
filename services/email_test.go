@@ -96,6 +96,55 @@ func TestBuildPasswordResetNotification(t *testing.T) {
 	assert.Contains(t, mustEmailHTML(t, req), "PASSWORD RESET", "banner pill badge")
 }
 
+func TestBuildSignInCodeNotification(t *testing.T) {
+	const code = "042917"
+	tests := []struct {
+		name          string
+		enabling      bool
+		wantEventType string
+		wantTitle     string
+		wantCopy      string
+	}{
+		{"sign in", false, "identity.mfa_code", "Your StoneSuite sign-in code", "finish signing in"},
+		{"turning it on", true, "identity.mfa_setup_code", "Confirm two-step verification", "turn on two-step verification"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := buildSignInCodeNotification("tenant-1", "identity-1", "user@example.com", "Sam User", code, tc.enabling, 10)
+
+			assert.Equal(t, tc.wantEventType, req.EventType)
+			assert.Equal(t, tc.wantTitle, req.Title)
+			assert.Equal(t, "identity", req.Resource)
+			assert.Equal(t, "identity-1", req.ResourceID)
+			html := mustEmailHTML(t, req)
+			assert.Contains(t, html, ">"+code+"<", "the code is in the body")
+			assert.Contains(t, html, tc.wantCopy)
+			assert.Contains(t, html, "This code expires in 10 minutes")
+			assert.Contains(t, html, "Sam User")
+			assert.Empty(t, req.Email.ActionURL, "a code email has no link to click")
+
+			// notify stores the title and body summary, and inboxes show the
+			// preheader on a lock screen -- the code must stay out of all three.
+			assert.NotContains(t, req.Title, code)
+			assert.NotContains(t, req.Body, code)
+			assert.NotContains(t, req.Email.Preheader, code)
+		})
+	}
+}
+
+func TestBuildMFAStatusNotification(t *testing.T) {
+	on := buildMFAStatusNotification("tenant-1", "identity-1", "user@example.com", "Sam User", true)
+	assert.Equal(t, "identity.mfa_enabled", on.EventType)
+	assert.Equal(t, "Two-step verification is on", on.Title)
+	assert.Contains(t, mustEmailHTML(t, on), "was turned on")
+
+	off := buildMFAStatusNotification("tenant-1", "identity-1", "user@example.com", "Sam User", false)
+	assert.Equal(t, "identity.mfa_disabled", off.EventType)
+	assert.Equal(t, "Two-step verification is off", off.Title)
+	assert.Contains(t, mustEmailHTML(t, off), "was turned off")
+	assert.Contains(t, mustEmailHTML(t, off), "is off.")
+}
+
 func TestBuildPortalInviteNotification(t *testing.T) {
 	req := buildPortalInviteNotification("tenant-1", "invite-1", "actor-1", "/crm/customer/c-1", "staffer@example.com", "Pat Staffer", "Acme Stone Co", "https://app.example/portal-setup?token=abc", 72)
 
@@ -169,6 +218,10 @@ func TestTransactionalEmailBuilders_ContractHolds(t *testing.T) {
 		"portal_invite":          buildPortalInviteNotification("t", "id", "actor", "/crm/customer/c-1", "to@x.com", "Name", "Workspace", "https://x/portal?token=abc", 72),
 		"customer_portal_invite": buildCustomerPortalInviteNotification("t", "id", "actor", "/crm/customer/c-1", "to@x.com", "Name", "Workspace", "https://x/portal?token=abc"),
 		"customer_note_confirm":  buildCustomerNoteConfirmationNotification("t", "id", "to@x.com", "Name", "Workspace"),
+		"sign_in_code":           buildSignInCodeNotification("t", "id", "to@x.com", "Name", "042917", false, 10),
+		"mfa_setup_code":         buildSignInCodeNotification("t", "id", "to@x.com", "Name", "042917", true, 10),
+		"mfa_turned_on":          buildMFAStatusNotification("t", "id", "to@x.com", "Name", true),
+		"mfa_turned_off":         buildMFAStatusNotification("t", "id", "to@x.com", "Name", false),
 	}
 
 	for name, req := range builders {

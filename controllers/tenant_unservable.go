@@ -28,11 +28,11 @@ func (h *TenantOps) isPlatformAdminIdentity(ctx context.Context, identityID stri
 //   - A portal customer's home tenant is just one of their links; suspending
 //     that business must not lock them out of the others, so the portal login
 //     (which only offers servable workspaces) gets its turn first.
-func (h *TenantOps) refuseUnservableLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity, tenant *tenancy.Tenant) bool {
+func (h *TenantOps) refuseUnservableLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity, tenant *tenancy.Tenant, at loginAttempt) bool {
 	if h.isPlatformAdminIdentity(r.Context(), identity.ID) {
 		return false
 	}
-	if h.tryPortalLogin(w, r, identity) {
+	if h.tryPortalLogin(w, r, identity, at) {
 		return true
 	}
 	logSecurityEvent(r, "login_blocked", "identity", identity.ID, "tenant", tenant.ID,

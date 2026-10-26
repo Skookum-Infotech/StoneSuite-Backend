@@ -24,7 +24,11 @@ Portal tokens carry `kind: "portal"` and are otherwise the same HS256 JWT as sta
 — same `auth_token` httpOnly cookie, same `Authorization: Bearer` fallback, same CSRF
 double-submit when `COOKIE_SAME_SITE_MODE=none`.
 
-### `POST /api/portal/auth/login`
+### Signing in: `POST /api/auth/tenant-login`
+
+Customers sign in at the same endpoint as staff (the old `POST /api/portal/auth/login` is
+gone). When the identity holds no staff `users` row but has portal access, the response is
+a portal session, marked `kind: "portal"`:
 
 ```json
 { "email": "buyer@acme.test", "password": "..." }
@@ -33,6 +37,7 @@ double-submit when `COOKIE_SAME_SITE_MODE=none`.
 ```json
 {
   "success": true,
+  "kind": "portal",
   "token": "eyJ...",
   "expiresAt": 1755600000000,
   "tenantId": "8f3c...",
@@ -47,9 +52,11 @@ double-submit when `COOKIE_SAME_SITE_MODE=none`.
 The session starts on the first workspace. Render the switcher whenever `workspaces` has
 more than one entry.
 
-**Every failure returns the same 401**, `"Invalid email or password."` — unknown address,
-wrong password, revoked access, and "this is a staff account" are deliberately
-indistinguishable. Do not try to branch on the message.
+**Failures return the same 401**, `"Invalid email or password."` — unknown address and
+wrong password are deliberately indistinguishable. Do not try to branch on the message.
+The one exception: a correct password for a customer whose portal access is suspended or
+revoked gets a 403 saying so, since "invalid password" would send them down a
+forgot-password loop that can never restore access.
 
 ### `POST /api/portal/auth/switch-workspace`
 

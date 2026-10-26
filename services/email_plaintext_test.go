@@ -36,6 +36,15 @@ func TestEmailPlainText(t *testing.T) {
 			},
 			want: "Amount: $10.00\nDue: Jan 1\n\nLink expires in 7 days.",
 		},
+		{
+			name: "one-time code sits after the paragraphs",
+			in: Email{
+				Paragraphs: []Paragraph{{Text("Use this code to finish signing in.")}},
+				Code:       "042917",
+				FinePrint:  []string{"This code expires in 10 minutes."},
+			},
+			want: "Use this code to finish signing in.\n\n042917\n\nThis code expires in 10 minutes.",
+		},
 		{name: "empty", in: Email{}, want: ""},
 	}
 	for _, tc := range tests {

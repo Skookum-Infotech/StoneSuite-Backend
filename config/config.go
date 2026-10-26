@@ -99,6 +99,26 @@ type Config struct {
 	// local development against an S3-compatible server. Honoured only when
 	// APP_ENV=development; ignored everywhere else.
 	R2Endpoint string
+	// R2HTTPTimeout (R2_HTTP_TIMEOUT, default 30s) bounds every R2 and
+	// Cloudflare API call, including reading the body, so a stalled R2 can't
+	// hang PDF renders, attachment handling or tenant purge indefinitely.
+	R2HTTPTimeout time.Duration
+
+	// DBStatementTimeout / DBLockTimeout / DBIdleInTxTimeout (DB_STATEMENT_TIMEOUT
+	// 30s, DB_LOCK_TIMEOUT 5s, DB_IDLE_IN_TX_TIMEOUT 60s) are set on every
+	// tenant and control-plane connection, so one slow or blocked query can't
+	// pin a pool connection forever. Schema migrations lift the first two for
+	// their own transaction.
+	DBStatementTimeout time.Duration
+	DBLockTimeout      time.Duration
+	DBIdleInTxTimeout  time.Duration
+
+	// RequestTimeout (REQUEST_TIMEOUT, default 110s) is the context deadline on
+	// every request. It must sit between the Ollama chat client's own 100s
+	// timeout (so POST /ai/ask still gets that clean error first) and the
+	// server's 120s WriteTimeout (so a handler can still answer). Streaming
+	// responses and the internal automation tick are exempt and bound themselves.
+	RequestTimeout time.Duration
 
 	// PDFDefaultClientLogo (PDF_DEFAULT_CLIENT_LOGO, default true) makes document
 	// PDFs show the client's logo -- the one the app header already shows -- as
@@ -281,6 +301,11 @@ func Load() {
 		R2AccessKeyID:       getEnv("R2_ACCESS_KEY_ID", ""),
 		R2SecretAccessKey:   getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2Endpoint:          getEnv("R2_ENDPOINT", ""),
+		R2HTTPTimeout:       getEnvDuration("R2_HTTP_TIMEOUT", defaultR2HTTPTimeout),
+		DBStatementTimeout:  getEnvDuration("DB_STATEMENT_TIMEOUT", defaultDBStatementTimeout),
+		DBLockTimeout:       getEnvDuration("DB_LOCK_TIMEOUT", defaultDBLockTimeout),
+		DBIdleInTxTimeout:   getEnvDuration("DB_IDLE_IN_TX_TIMEOUT", defaultDBIdleInTxTimeout),
+		RequestTimeout:      getEnvDuration("REQUEST_TIMEOUT", defaultRequestTimeout),
 		// Document PDFs
 		PDFDefaultClientLogo: getEnvBool("PDF_DEFAULT_CLIENT_LOGO", true),
 		// Observability
@@ -436,6 +461,16 @@ func getEnvInt(key string, defaultValue int) int {
 	}
 	return defaultValue
 }
+
+// Timeout defaults (see Config.R2HTTPTimeout, Config.DBStatementTimeout,
+// Config.RequestTimeout).
+const (
+	defaultR2HTTPTimeout      = 30 * time.Second
+	defaultDBStatementTimeout = 30 * time.Second
+	defaultDBLockTimeout      = 5 * time.Second
+	defaultDBIdleInTxTimeout  = 60 * time.Second
+	defaultRequestTimeout     = 110 * time.Second
+)
 
 // Document-extraction defaults (see Config.DocExtractEnabled).
 const (

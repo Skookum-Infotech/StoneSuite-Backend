@@ -50,6 +50,12 @@ func (c *ControlPlane) forgetTenant(id string) {
 
 // NewControlPlane opens a pool to the control-plane database at dsn.
 func NewControlPlane(ctx context.Context, dsn string) (*ControlPlane, error) {
+	return NewControlPlaneWithTimeouts(ctx, dsn, SessionTimeouts{})
+}
+
+// NewControlPlaneWithTimeouts is NewControlPlane with session limits set on
+// every pooled connection.
+func NewControlPlaneWithTimeouts(ctx context.Context, dsn string, timeouts SessionTimeouts) (*ControlPlane, error) {
 	if dsn == "" {
 		return nil, errors.New("control-plane DSN is empty (set CONTROL_PLANE_DB_URL)")
 	}
@@ -59,6 +65,9 @@ func NewControlPlane(ctx context.Context, dsn string) (*ControlPlane, error) {
 	}
 	cfg.MaxConns = 10
 	cfg.MaxConnLifetime = time.Hour
+	if !timeouts.IsZero() {
+		cfg.AfterConnect = timeouts.apply
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

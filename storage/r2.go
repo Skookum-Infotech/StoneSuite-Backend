@@ -47,6 +47,19 @@ type Client struct {
 	secretKey string
 	host      string // {accountID}.r2.cloudflarestorage.com
 	scheme    string // "" means https; "http" only via the development endpoint override
+	http      *http.Client
+}
+
+// fallbackHTTPTimeout applies when the config carries no R2HTTPTimeout.
+const fallbackHTTPTimeout = 30 * time.Second
+
+// newHTTPClient returns a client whose Timeout bounds the whole exchange,
+// body included; http.DefaultClient has none, so a stalled peer hung callers.
+func newHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = fallbackHTTPTimeout
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 // defaultScheme is the scheme for every real R2 request.
@@ -76,6 +89,7 @@ func New(cfg config.Config) (*Client, error) {
 		accessKey: cfg.R2AccessKeyID,
 		secretKey: cfg.R2SecretAccessKey,
 		host:      cfg.CloudflareAccountID + ".r2.cloudflarestorage.com",
+		http:      newHTTPClient(cfg.R2HTTPTimeout),
 	}
 	// Development-only: point at a local S3-compatible server (MinIO or a
 	// fake) so upload flows can be exercised without real R2. Ignored in
@@ -188,7 +202,7 @@ func (c *Client) Put(ctx context.Context, key, contentType string, body []byte) 
 	req.Header.Set("x-amz-content-sha256", payloadHash)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("execute r2 put: %w", err)
 	}
@@ -252,7 +266,7 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
 	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute r2 get: %w", err)
 	}
@@ -360,7 +374,7 @@ func (c *Client) listPage(ctx context.Context, continuationToken string) (listPa
 	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return listPage{}, fmt.Errorf("execute r2 list: %w", err)
 	}
@@ -487,7 +501,7 @@ func (c *Client) signedDelete(ctx context.Context, key string) error {
 	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("execute r2 delete: %w", err)
 	}

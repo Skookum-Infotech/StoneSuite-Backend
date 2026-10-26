@@ -3,7 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -123,13 +123,13 @@ func (h *TenantOps) requireLoginCode(w http.ResponseWriter, r *http.Request, ide
 		return true
 	}
 	if err != nil {
-		log.Printf("open sign-in code challenge for identity %s: %v", identity.ID, err)
+		slog.ErrorContext(r.Context(), "open sign-in code challenge", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Login failed.")
 		return true
 	}
 	name := tenantDisplayName(r.Context(), h.CP, h.Router, identity)
 	if err := services.SendSignInCodeEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, name, code, mfaCodeTTLMinutes); err != nil {
-		log.Printf("sign-in code email to identity %s failed: %v", identity.ID, err)
+		slog.ErrorContext(r.Context(), "sign-in code email failed", "identity", identity.ID, "error", err)
 		failWithCode(w, http.StatusServiceUnavailable, msgMFASendFailed, mfaSendFailed)
 		return true
 	}
@@ -258,7 +258,7 @@ func (h *TenantOps) MFAResend(w http.ResponseWriter, r *http.Request) {
 	}
 	name := tenantDisplayName(r.Context(), h.CP, h.Router, identity)
 	if err := services.SendSignInCodeEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, name, code, mfaCodeTTLMinutes); err != nil {
-		log.Printf("sign-in code resend to identity %s failed: %v", identity.ID, err)
+		slog.ErrorContext(r.Context(), "sign-in code resend email failed", "identity", identity.ID, "error", err)
 		failWithCode(w, http.StatusServiceUnavailable, msgMFASendFailed, mfaSendFailed)
 		return
 	}

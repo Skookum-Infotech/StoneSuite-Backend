@@ -3,7 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -118,13 +118,13 @@ func (h *TenantOps) MFAEnableStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("open mfa enable challenge for identity %s: %v", identity.ID, err)
+		slog.ErrorContext(r.Context(), "open mfa enable challenge", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to send a code.")
 		return
 	}
 	name := tenantDisplayName(r.Context(), h.CP, h.Router, identity)
 	if err := services.SendMFASetupCodeEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, name, code, mfaCodeTTLMinutes); err != nil {
-		log.Printf("mfa setup code email to identity %s failed: %v", identity.ID, err)
+		slog.ErrorContext(r.Context(), "mfa setup code email failed", "identity", identity.ID, "error", err)
 		failWithCode(w, http.StatusServiceUnavailable, msgMFASendFailed, mfaSendFailed)
 		return
 	}
@@ -187,8 +187,8 @@ func (h *TenantOps) MFAEnableConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logSecurityEvent(r, "mfa_enabled", "identity", identity.ID)
-	h.sendMFAStatusNotice(r, identity, true)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "enabled": true})
+	emailSent := h.sendMFAStatusNotice(r, identity, true)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "enabled": true, "emailSent": emailSent})
 }
 
 // MFADisable turns two-step verification off. It asks for the current
@@ -226,15 +226,18 @@ func (h *TenantOps) MFADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logSecurityEvent(r, "mfa_disabled", "identity", identity.ID)
-	h.sendMFAStatusNotice(r, identity, false)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "enabled": false})
+	emailSent := h.sendMFAStatusNotice(r, identity, false)
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "enabled": false, "emailSent": emailSent})
 }
 
 // sendMFAStatusNotice emails the "turned on/off" security notice. Best effort:
-// the change already happened, so a failed send is logged, not returned.
-func (h *TenantOps) sendMFAStatusNotice(r *http.Request, identity *tenancy.Identity, enabled bool) {
+// the change already happened, so a failed send is not an error response; it is
+// logged and reported to the caller as emailSent=false.
+func (h *TenantOps) sendMFAStatusNotice(r *http.Request, identity *tenancy.Identity, enabled bool) bool {
 	name := tenantDisplayName(r.Context(), h.CP, h.Router, identity)
 	if err := services.SendMFAStatusEmail(r.Context(), identity.TenantID, identity.ID, identity.Email, name, enabled); err != nil {
-		log.Printf("mfa status notice to identity %s failed: %v", identity.ID, err)
+		slog.WarnContext(r.Context(), "mfa status notice email failed", "identity", identity.ID, "enabled", enabled, "error", err)
+		return false
 	}
+	return true
 }

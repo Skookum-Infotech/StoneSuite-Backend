@@ -137,6 +137,7 @@ type Config struct {
 	DocExtractDailyCap        int           // DOC_EXTRACT_DAILY_CAP: extractions per tenant per day
 	DocExtractStagingTTL      time.Duration // DOC_EXTRACT_STAGING_TTL
 	DocExtractStagingMaxBytes int64         // DOC_EXTRACT_STAGING_MAX_BYTES: per-tenant staging quota
+	MaxRequestBodyBytes       int64         // MAX_REQUEST_BODY_BYTES: global request body cap (upload routes set their own)
 	DocExtractPresignTTL      time.Duration // DOC_EXTRACT_PRESIGN_TTL
 	DocExtractLLMTokenBudget  int           // DOC_EXTRACT_LLM_TOKEN_BUDGET
 	DocExtractLLMTimeout      time.Duration // DOC_EXTRACT_LLM_TIMEOUT
@@ -348,6 +349,7 @@ func Load() {
 		DocExtractDailyCap:        getEnvInt("DOC_EXTRACT_DAILY_CAP", defaultDocExtractDailyCap),
 		DocExtractStagingTTL:      getEnvDuration("DOC_EXTRACT_STAGING_TTL", defaultDocExtractStagingTTL),
 		DocExtractStagingMaxBytes: getEnvInt64("DOC_EXTRACT_STAGING_MAX_BYTES", defaultDocExtractStagingMaxBytes),
+		MaxRequestBodyBytes:       getEnvInt64("MAX_REQUEST_BODY_BYTES", defaultMaxRequestBodyBytes),
 		DocExtractPresignTTL:      getEnvDuration("DOC_EXTRACT_PRESIGN_TTL", defaultDocExtractPresignTTL),
 		DocExtractLLMTokenBudget:  getEnvInt("DOC_EXTRACT_LLM_TOKEN_BUDGET", defaultDocExtractLLMTokenBudget),
 		DocExtractLLMTimeout:      getEnvDuration("DOC_EXTRACT_LLM_TIMEOUT", defaultDocExtractLLMTimeout),
@@ -481,6 +483,7 @@ const (
 	defaultDocExtractDailyCap        int           = 100
 	defaultDocExtractStagingTTL      time.Duration = 24 * time.Hour
 	defaultDocExtractStagingMaxBytes int64         = 500 << 20
+	defaultMaxRequestBodyBytes       int64         = 1 << 20
 	defaultDocExtractPresignTTL      time.Duration = 15 * time.Minute
 	defaultDocExtractLLMTokenBudget  int           = 2500
 	defaultDocExtractLLMTimeout      time.Duration = 60 * time.Second

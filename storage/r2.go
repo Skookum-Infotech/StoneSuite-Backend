@@ -145,8 +145,8 @@ func (c *Client) PresignGet(_ context.Context, key string, ttl time.Duration) (s
 }
 
 // Delete removes an object from R2. Returns nil when the object does not
-// exist (idempotent, matches S3 semantics). Errors are logged by the caller
-// and the metadata row is removed regardless (best-effort semantics).
+// exist (idempotent, matches S3 semantics). Callers decide whether a failure
+// blocks removing their own metadata row.
 func (c *Client) Delete(ctx context.Context, key string) error {
 	if c == nil {
 		return ErrStorageNotConfigured

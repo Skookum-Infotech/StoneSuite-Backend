@@ -117,6 +117,10 @@ func main() {
 	// (login, password reset, activation). Token bucket: 10 immediate attempts,
 	// then refills at 1 every 5s (~12/min sustained) per client IP.
 	authRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 10)
+	// Refresh gets its own, looser bucket: it is called automatically by every
+	// open tab, so sharing the login bucket let one busy office (many users
+	// behind one NAT IP) exhaust it and lock its own users out of login too.
+	refreshRateLimiter := middleware.NewRateLimiter(shutdownCtx, 1, 30)
 
 	// 2. Initialize the multi-tenant control plane (required).
 	// When CONTROL_PLANE_DB_URL is set, requests can be resolved to a tenant and
@@ -382,7 +386,7 @@ func main() {
 		// credential-stuffing attacks (no tenant id exists yet to key on).
 		mux.Handle("/api/auth/tenant-login", authRateLimiter.PerIPFunc(tenantOps.TenantLogin))
 		mux.Handle("POST /api/auth/identify", authRateLimiter.PerIPFunc(tenantOps.Identify))
-		mux.Handle("POST /api/auth/refresh", authRateLimiter.PerIPFunc(tenantOps.RefreshSession))
+		mux.Handle("POST /api/auth/refresh", refreshRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
 		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(http.HandlerFunc(tenantOps.ChangePassword)))
 		mux.Handle("POST /api/auth/forgot-password", authRateLimiter.PerIPFunc(tenantOps.ForgotPassword))
@@ -1048,7 +1052,10 @@ func main() {
 		if cp != nil && tenantRouter != nil {
 			docOps.WithPublicDownload(cp, tenantRouter.PoolFor)
 			// Customer PDF link from the email card: no login, signed + expiring.
-			mux.HandleFunc("GET "+controllers.DocLinkPathPrefix+"{token}", docOps.DownloadByLink)
+			// Per-IP limited: every hit renders a PDF, and the route needs no login,
+			// so an unthrottled link (forwarded, or replayed) burns CPU for free.
+			docLinkRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.5, 10)
+			mux.Handle("GET "+controllers.DocLinkPathPrefix+"{token}", docLinkRateLimiter.PerIPFunc(docOps.DownloadByLink))
 		}
 		if config.AppConfig.PDFDefaultClientLogo {
 			// Same client logo the app header shows, for tenants that have not
@@ -1792,10 +1799,12 @@ func main() {
 	// work stops and releases its DB connection. Exempt: routes that bound
 	// their own duration -- the AI answer stream (rolling write deadline plus
 	// streamMaxDuration) and the automation tick (per-tenant timeouts).
+	// MaxBody sits inside Recover so an oversized request is still logged.
 	deadlineExemptPrefixes := []string{"/api/internal/automation/"}
 	deadlineExemptSuffixes := []string{"/ask/stream"}
 	globalHandler := middleware.RequestLogger(middleware.Recover(
-		middleware.Deadline(config.AppConfig.RequestTimeout, deadlineExemptPrefixes, deadlineExemptSuffixes, corsHandler)))
+		middleware.MaxBody(config.AppConfig.MaxRequestBodyBytes, ownBodyCapRoute,
+			middleware.Deadline(config.AppConfig.RequestTimeout, deadlineExemptPrefixes, deadlineExemptSuffixes, corsHandler))))
 
 	// 5. Start Server
 	port := config.AppConfig.Port
@@ -2102,4 +2111,18 @@ func dbSessionTimeouts() tenancy.SessionTimeouts {
 		Lock:      config.AppConfig.DBLockTimeout,
 		IdleInTx:  config.AppConfig.DBIdleInTxTimeout,
 	}
+}
+
+// ownBodyCapRoute reports the upload routes that take bodies over the global
+// cap and enforce their own limit in the handler (see middleware.MaxBody).
+func ownBodyCapRoute(r *http.Request) bool {
+	p := r.URL.Path
+	switch r.Method {
+	case http.MethodPut:
+		return p == "/api/tenant/company-profile/logo" ||
+			(strings.HasPrefix(p, "/api/internal/email/inbound/") && strings.Contains(p, "/attachments/"))
+	case http.MethodPost:
+		return strings.HasPrefix(p, "/api/tenant/records/") && strings.HasSuffix(p, "/emails")
+	}
+	return false
 }

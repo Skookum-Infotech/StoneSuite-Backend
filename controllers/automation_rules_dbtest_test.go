@@ -170,13 +170,13 @@ func TestListIncludesBuiltInRules(t *testing.T) {
 	for _, key := range []string{"quote_expiry", "estimate_expiry"} {
 		r, ok := byKey[key]
 		require.True(t, ok, key)
-		assert.False(t, r.Enabled, key)
+		assert.True(t, r.Enabled, key) // built-in rules are seeded enabled
 		assert.Equal(t, "internal", r.Audience, key)
 		assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: -3}}, r.Cadence, key)
 	}
 	stuck, ok := byKey[automation.RuleKeyApprovalStuck]
 	require.True(t, ok, automation.RuleKeyApprovalStuck)
-	assert.False(t, stuck.Enabled)
+	assert.True(t, stuck.Enabled)
 	assert.Equal(t, "internal", stuck.Audience)
 	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: 2}, {OffsetDays: 4}, {OffsetDays: 6}}, stuck.Cadence)
 }

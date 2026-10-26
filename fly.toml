@@ -5,6 +5,7 @@
 
 app            = "stonesuite-backend"
 primary_region = 'iad'
+kill_timeout   = 30
 
 [build]
   dockerfile = "Dockerfile"

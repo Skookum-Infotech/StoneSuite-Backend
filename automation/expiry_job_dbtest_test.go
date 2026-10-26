@@ -94,6 +94,10 @@ func (f *expiryJobFx) commit(enable bool) {
 		f.enableExpiryRule(quoteSpec, arToday.AddDate(0, 0, -30))
 		f.enableExpiryRule(estimateSpec, arToday.AddDate(0, 0, -30))
 	}
+	if !enable { // the rules are seeded enabled, so a disabled case switches them off explicitly
+		_, err := f.tx.Exec(f.ctx, `UPDATE automation_rules SET enabled = FALSE WHERE rule_key IN ($1, $2)`, RuleKeyQuoteExpiry, RuleKeyEstimateExpiry)
+		require.NoError(f.t, err)
+	}
 	require.NoError(f.t, f.tx.Commit(f.ctx))
 }
 
@@ -102,8 +106,8 @@ func (f *expiryJobFx) cleanup() {
 	_ = f.tx.Rollback(ctx)
 	for _, k := range []string{RuleKeyQuoteExpiry, RuleKeyEstimateExpiry} {
 		_, _ = f.pool.Exec(ctx, `DELETE FROM automation_deliveries WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, k)
-		_, _ = f.pool.Exec(ctx, `UPDATE automation_rules SET enabled = FALSE WHERE rule_key = $1`, k)
-		_, _ = f.pool.Exec(ctx, `UPDATE automation_state SET enabled_at = NULL, last_planned_at = NULL WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, k)
+		_, _ = f.pool.Exec(ctx, `UPDATE automation_rules SET enabled = TRUE WHERE rule_key = $1`, k)
+		_, _ = f.pool.Exec(ctx, `UPDATE automation_state SET enabled_at = NOW(), last_planned_at = NULL WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, k)
 	}
 	_, _ = f.pool.Exec(ctx, `DELETE FROM quote_conversion WHERE quote_id IN (SELECT quote_id FROM quote WHERE quote_uuid = ANY($1::uuid[]))`, f.quotes)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM sales_order WHERE sales_order_id = ANY($1::int[])`, f.soIDs)

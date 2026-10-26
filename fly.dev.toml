@@ -1,5 +1,6 @@
 app            = "dev-stonesuite-api"
 primary_region = "iad"
+kill_timeout   = 30
 
 [env]
   # APP_ENV must be "production" here even though this is the dev instance —

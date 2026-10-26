@@ -1,5 +1,6 @@
 app            = "uat-stonesuite-api"
 primary_region = "iad"
+kill_timeout   = 30
 
 [env]
   PORT                = "8080"

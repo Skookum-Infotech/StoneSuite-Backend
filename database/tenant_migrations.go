@@ -3,7 +3,6 @@ package database
 import (
 	"context"
 	_ "embed"
-	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -14,6 +13,9 @@ import (
 //go:embed migrations/tenant/schema.sql
 var tenantSchemaSQL string
 
+// tenantSchemaLockKey is the stable advisory lock key for tenant databases.
+const tenantSchemaLockKey int64 = 7369746573756974
+
 // ApplyTenantSchema applies the full tenant schema to the given pool.
 // All statements use CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS /
 // INSERT ON CONFLICT DO NOTHING, so the call is idempotent on any DB state.
@@ -21,22 +23,8 @@ var tenantSchemaSQL string
 // Returns 1 (the constant "current schema version") for backward-compat with
 // callers that store a schema version on the tenant row.
 func ApplyTenantSchema(ctx context.Context, pool *pgxpool.Pool) (int, error) {
-	// Stable advisory lock constant for tenant databases.
-	if _, err := pool.Exec(ctx, `SELECT pg_advisory_lock(7369746573756974)`); err != nil {
-		return 0, fmt.Errorf("acquire tenant schema lock: %w", err)
-	}
-	defer pool.Exec(ctx, `SELECT pg_advisory_unlock(7369746573756974)`) //nolint:errcheck
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("begin tenant schema tx: %w", err)
-	}
-	if _, err := tx.Exec(ctx, tenantSchemaSQL); err != nil {
-		_ = tx.Rollback(ctx)
-		return 0, fmt.Errorf("apply tenant schema: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit tenant schema: %w", err)
+	if err := applySchemaUnderLock(ctx, pool, tenantSchemaLockKey, tenantSchemaSQL, "tenant"); err != nil {
+		return 0, err
 	}
 	return 1, nil
 }

@@ -23,6 +23,7 @@ func (c *ControlPlane) CreateTenant(ctx context.Context, slug, displayName strin
 // addresses, contacts) as JSONB on the tenant row. metadataJSON must be a
 // valid JSON object string; pass "{}" to clear.
 func (c *ControlPlane) SetTenantMetadata(ctx context.Context, id, metadataJSON string) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET metadata = $2::jsonb, updated_at = NOW() WHERE id = $1`,
 		id, metadataJSON); err != nil {
@@ -33,6 +34,7 @@ func (c *ControlPlane) SetTenantMetadata(ctx context.Context, id, metadataJSON s
 
 // SetTenantProvisioned marks a tenant active with its database routing info.
 func (c *ControlPlane) SetTenantProvisioned(ctx context.Context, id, dbName, dbConnRef string, schemaVersion int) error {
+	defer c.forgetTenant(id)
 	_, err := c.pool.Exec(ctx, `
 		UPDATE tenants
 		SET db_name = $2, db_connection_ref = $3, schema_version = $4,
@@ -47,6 +49,7 @@ func (c *ControlPlane) SetTenantProvisioned(ctx context.Context, id, dbName, dbC
 // SetTenantR2Bucket stores the name of the Cloudflare R2 bucket provisioned for
 // this tenant's file attachments. Called once at provisioning time.
 func (c *ControlPlane) SetTenantR2Bucket(ctx context.Context, id, bucket string) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET r2_bucket = $2, updated_at = NOW() WHERE id = $1`,
 		id, bucket); err != nil {
@@ -57,6 +60,7 @@ func (c *ControlPlane) SetTenantR2Bucket(ctx context.Context, id, bucket string)
 
 // SetTenantSchemaVersion updates the tracked schema version after a migration fan-out.
 func (c *ControlPlane) SetTenantSchemaVersion(ctx context.Context, id string, version int) error {
+	defer c.forgetTenant(id)
 	_, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET schema_version = $2, updated_at = NOW() WHERE id = $1`, id, version)
 	if err != nil {
@@ -69,6 +73,7 @@ func (c *ControlPlane) SetTenantSchemaVersion(ctx context.Context, id string, ve
 // Both schemas coexist in the tenant database, so this is a behavior flag flip
 // with no data migration.
 func (c *ControlPlane) SetTenantDesignVersion(ctx context.Context, id, version string) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET design_version = $2, updated_at = NOW() WHERE id = $1`, id, version); err != nil {
 		return fmt.Errorf("set tenant design version: %w", err)
@@ -78,6 +83,7 @@ func (c *ControlPlane) SetTenantDesignVersion(ctx context.Context, id, version s
 
 // SetTenantStatus updates only the lifecycle status.
 func (c *ControlPlane) SetTenantStatus(ctx context.Context, id, status string) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET status = $2, updated_at = NOW() WHERE id = $1`, id, status); err != nil {
 		return fmt.Errorf("set tenant status: %w", err)
@@ -87,6 +93,7 @@ func (c *ControlPlane) SetTenantStatus(ctx context.Context, id, status string) e
 
 // SetTenantMigrationStatus records a migration outcome (ok/failed/pending).
 func (c *ControlPlane) SetTenantMigrationStatus(ctx context.Context, id, status string) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE tenants SET migration_status = $2, updated_at = NOW() WHERE id = $1`, id, status); err != nil {
 		return fmt.Errorf("set tenant migration status: %w", err)
@@ -96,6 +103,7 @@ func (c *ControlPlane) SetTenantMigrationStatus(ctx context.Context, id, status 
 
 // MarkTenantDeleted soft-deletes a tenant and sets the hard-delete deadline.
 func (c *ControlPlane) MarkTenantDeleted(ctx context.Context, id string, hardDeleteAfter time.Time) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx, `
 		UPDATE tenants
 		SET status = 'deleted', deleted_at = NOW(), hard_delete_after = $2, updated_at = NOW()
@@ -107,6 +115,7 @@ func (c *ControlPlane) MarkTenantDeleted(ctx context.Context, id string, hardDel
 
 // RestoreTenant reverses a soft-delete during the grace window.
 func (c *ControlPlane) RestoreTenant(ctx context.Context, id string) error {
+	defer c.forgetTenant(id)
 	if _, err := c.pool.Exec(ctx, `
 		UPDATE tenants
 		SET status = 'active', deleted_at = NULL, hard_delete_after = NULL, updated_at = NOW()
@@ -123,6 +132,7 @@ func (c *ControlPlane) RestoreTenant(ctx context.Context, id string) error {
 // first. The platform-owner tenant is refused here as well as in the handler:
 // deleting it would lock the platform admin out.
 func (c *ControlPlane) PurgeTenant(ctx context.Context, id string) error {
+	defer c.forgetTenant(id)
 	tag, err := c.pool.Exec(ctx, `DELETE FROM tenants WHERE id = $1 AND is_platform_owner = FALSE`, id)
 	if err != nil {
 		return fmt.Errorf("purge tenant: %w", err)

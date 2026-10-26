@@ -5,6 +5,7 @@
 
 app            = "stonesuite-backend"
 primary_region = 'iad'
+kill_timeout   = 30
 
 [build]
   dockerfile = "Dockerfile"
@@ -20,6 +21,14 @@ primary_region = 'iad'
   INVITE_EXPIRY_HOURS = "24"
   # Gates who may hold platform-admin / tenant super_admin in the platform-owner tenant.
   PLATFORM_ADMIN_EMAIL_DOMAIN = "skookuminfotech.com"
+
+  # Document extraction: offer "create customer/vendor/item" chips for unmatched parties and lines.
+  # Only takes effect when DOC_EXTRACT_ENABLED is also true; every create still needs a user click.
+  DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED = "true"
+
+  # Self-hosted Ollama over Fly 6PN (see docs/ai-assistant.md). Without it the app falls back to
+  # localhost:11434, so document-extraction LLM fallback and the AI assistant are unavailable.
+  OLLAMA_BASE_URL = "http://stonesuite-ollama.internal:11434"
 
   # Cloudflare R2 — non-secret config (account ID and bucket name are not sensitive).
   # Secrets (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY) must be set via:

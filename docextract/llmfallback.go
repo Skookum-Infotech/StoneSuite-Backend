@@ -75,7 +75,7 @@ func BuildPromptFor(dt DocType, residual string, missing []string, budget int) (
 	b.WriteString("Requested keys: ")
 	b.WriteString(strings.Join(missing, ", "))
 	b.WriteString("\nDates must be written as in the document.\n")
-	b.WriteString(FenceDocument(residual))
+	b.WriteString(FenceDocument(MaskSensitive(residual)))
 	user = b.String()
 	if estimateTokens(system)+estimateTokens(user) > budget {
 		return "", "", ErrContextBudget

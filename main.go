@@ -41,6 +41,7 @@ import (
 	"stonesuite-backend/models"
 	"stonesuite-backend/portal"
 	"stonesuite-backend/proposedaction"
+	"stonesuite-backend/proposedentity"
 	"stonesuite-backend/provisioning"
 	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/quote"
@@ -600,11 +601,15 @@ func main() {
 		automationDeliveryOps := controllers.NewAutomationDeliveryOps()
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
 
-		// No proposed-action executors are registered yet (ships dark); future
-		// features call proposedActionRegistry.Register at boot.
+		// Executors are registered before the ops are built. The docextract create
+		// executors are inert until DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED lets
+		// document extraction create proposals; later features add their own here.
 		proposedActionRegistry := proposedaction.NewRegistry()
-		proposedActionOps := controllers.NewProposedActionOps(proposedActionRegistry,
-			time.Duration(config.AppConfig.ProposedActionTTLMinutes)*time.Minute)
+		if err := proposedentity.Register(proposedActionRegistry); err != nil {
+			log.Fatalf("CRITICAL ERROR: register proposed-action executors: %v", err)
+		}
+		proposedActionTTL := time.Duration(config.AppConfig.ProposedActionTTLMinutes) * time.Minute
+		proposedActionOps := controllers.NewProposedActionOps(proposedActionRegistry, proposedActionTTL)
 		mux.Handle("GET /api/tenant/actions", tenantChain(proposedActionOps.List))
 		mux.Handle("GET /api/tenant/actions/{id}", tenantChain(proposedActionOps.Get))
 		mux.Handle("POST /api/tenant/actions/{id}/confirm", tenantChain(proposedActionOps.Confirm))
@@ -857,7 +862,8 @@ func main() {
 		// off every route below answers 404. Nil interfaces, never typed nils,
 		// are passed for the optional Ollama waker.
 		docExtractOps := controllers.NewDocExtractOps(r2Client, jobQueue, cpPool, aiSettingsCache,
-			controllers.DocExtractSettingsFromApp(config.AppConfig))
+			controllers.DocExtractSettingsFromApp(config.AppConfig)).
+			WithProposedActions(proposedActionRegistry, proposedActionTTL)
 		mux.Handle("POST /api/tenant/document-extractions", tenantChain(docExtractOps.Create))
 		mux.Handle("GET /api/tenant/document-extractions", tenantChain(docExtractOps.List))
 		mux.Handle("GET /api/tenant/document-extractions/{id}", tenantChain(docExtractOps.Get))
@@ -866,6 +872,7 @@ func main() {
 		mux.Handle("POST /api/tenant/document-extractions/{id}/notify", tenantChain(docExtractOps.Notify))
 		mux.Handle("POST /api/tenant/document-extractions/{id}/discard", tenantChain(docExtractOps.Discard))
 		mux.Handle("POST /api/tenant/document-extractions/{id}/complete", tenantChain(docExtractOps.Complete))
+		mux.Handle("POST /api/tenant/document-extractions/{id}/proposed-entities/{key}/propose", tenantChain(docExtractOps.ProposeEntity))
 		if config.AppConfig.DocExtractEnabled {
 			var docExtractWaker docextractjob.Waker
 			if aiToggler != nil && aiToggler.waker != nil {
@@ -1082,10 +1089,10 @@ func main() {
 		crm := controllers.NewCRMOps()
 		// Reference data for the unified CRM core-field selects (design-agnostic).
 		crmLookups := controllers.NewCRMLookups()
-		mux.Handle("GET /api/tenant/crm/lookups", tenantChain(crmLookups.GetLookups))
+		mux.Handle("GET /api/tenant/crm/lookups", middleware.ETag(tenantChain(crmLookups.GetLookups)))
 		// Status / dropdown endpoints.
-		mux.Handle("GET /api/tenant/crm/statuses", tenantChain(crm.AllStatuses))
-		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", tenantChain(crm.WorkflowStatuses))
+		mux.Handle("GET /api/tenant/crm/statuses", middleware.ETag(tenantChain(crm.AllStatuses)))
+		mux.Handle("GET /api/tenant/crm/{workflowKey}/statuses", middleware.ETag(tenantChain(crm.WorkflowStatuses)))
 		// Per-workflow list + create.
 		mux.Handle("GET /api/tenant/crm/{workflowKey}/records", tenantChain(crm.ListRecords))
 		mux.Handle("POST /api/tenant/crm/{workflowKey}/records/search", tenantChain(crm.SearchRecords))
@@ -1156,8 +1163,8 @@ func main() {
 		// in the app previously returned lkp_unit or lkp_warehouse and
 		// inventory_item_unit_id is NOT NULL.
 		invLookup := controllers.NewInventoryLookupOps()
-		mux.Handle("GET /api/tenant/inventory/lookups", tenantChain(invLookup.All))
-		mux.Handle("GET /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.List))
+		mux.Handle("GET /api/tenant/inventory/lookups", middleware.ETag(tenantChain(invLookup.All)))
+		mux.Handle("GET /api/tenant/inventory/lookups/{kind}", middleware.ETag(tenantChain(invLookup.List)))
 		mux.Handle("POST /api/tenant/inventory/lookups/{kind}", tenantChain(invLookup.Create))
 		mux.Handle("PATCH /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Update))
 		mux.Handle("DELETE /api/tenant/inventory/lookups/{kind}/{id}", tenantChain(invLookup.Delete))
@@ -1812,21 +1819,28 @@ func main() {
 	<-shutdownCtx.Done()
 	stopSignal() // release signal resources
 
-	log.Println("Shutting down: draining in-flight requests (up to 10s)...")
-	if provisioner != nil {
-		provisioner.Stop()
-	}
-	if importWorker != nil {
-		importWorker.Stop()
-	}
-	if docExtractWorker != nil {
-		docExtractWorker.Stop()
-	}
-	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Order: stop accepting and drain HTTP first, so a slow worker Stop (the
+	// provisioner can take minutes) can't eat the kill_timeout budget before
+	// the listener closes; then workers in parallel; then lease, logs, pools.
+	log.Printf("Shutting down: draining in-flight requests (up to %s)...", shutdownDrainTimeout)
+	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownDrainTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutCtx); err != nil {
 		log.Printf("Server shutdown error: %v", err)
 	}
+
+	var workers []namedStopper
+	if provisioner != nil {
+		workers = append(workers, namedStopper{"provisioner", provisioner})
+	}
+	if importWorker != nil {
+		workers = append(workers, namedStopper{"import", importWorker})
+	}
+	if docExtractWorker != nil {
+		workers = append(workers, namedStopper{"docextract", docExtractWorker})
+	}
+	stopWorkersConcurrently(workers, workerStopTimeout)
+
 	// Release this holder's Ollama lease and stop the shared embedder box
 	// alongside this process — but only if no other holder (the other
 	// environment sharing the Fly app) still holds an unexpired lease; see
@@ -1834,17 +1848,28 @@ func main() {
 	// not Fly Proxy, owns this. Falls back to a plain StopAll if the lease
 	// system itself is degraded or unconfigured.
 	if ollamaLifecycle != nil {
-		if err := aiToggler.lease.ReleaseAndMaybeStop(shutCtx); err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), shutdownCleanupTimeout)
+		if err := aiToggler.lease.ReleaseAndMaybeStop(cleanupCtx); err != nil {
 			log.Printf("ollama-lifecycle: release/stop failed: %v", err)
 		}
+		cleanupCancel()
 	}
 	// Flush any buffered logs to Axiom before exit (worker already draining on
 	// shutdownCtx cancellation; Stop waits for its final batch).
 	if shipper != nil {
 		shipper.Stop()
 	}
+	if tenantRouter != nil {
+		tenantRouter.Close()
+	}
+	if cp != nil {
+		cp.Close()
+	}
 	log.Println("Server stopped.")
 }
+
+// tenantMigrateTimeout bounds one tenant's boot-time schema apply.
+const tenantMigrateTimeout = 2 * time.Minute
 
 // migrateAllTenants runs ApplyTenantMigrations on every provisioned tenant DB.
 // Called synchronously on startup, before RAG workers start, so schema.sql
@@ -1869,33 +1894,41 @@ func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *te
 		if t.Status != tenancy.StatusActive || t.DBName == "" {
 			continue
 		}
-		pool, err := router.PoolFor(ctx, &t)
-		if err != nil {
-			log.Printf("migrate-all: tenant %s: pool error: %v", t.Slug, err)
-			continue
-		}
-		ver, err := database.ApplyTenantMigrations(ctx, pool)
-		if err != nil {
-			log.Printf("migrate-all: tenant %s: migration failed: %v", t.Slug, err)
-			continue
-		}
-		if err := cp.SetTenantSchemaVersion(ctx, t.ID, ver); err != nil {
-			log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
+		migrateTenant(ctx, cp, router, t)
+	}
+}
+
+// migrateTenant migrates one tenant under its own tenantMigrateTimeout, so a
+// slow or lock-blocked tenant fails on its own instead of hanging boot.
+func migrateTenant(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, t tenancy.Tenant) {
+	ctx, cancel := context.WithTimeout(ctx, tenantMigrateTimeout)
+	defer cancel()
+	pool, err := router.PoolFor(ctx, &t)
+	if err != nil {
+		log.Printf("migrate-all: tenant %s: pool error: %v", t.Slug, err)
+		return
+	}
+	ver, err := database.ApplyTenantMigrations(ctx, pool)
+	if err != nil {
+		log.Printf("migrate-all: tenant %s: migration failed: %v", t.Slug, err)
+		return
+	}
+	if err := cp.SetTenantSchemaVersion(ctx, t.ID, ver); err != nil {
+		log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
+	} else {
+		log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
+	}
+	if t.MigrationStatus != tenancy.MigrationOK {
+		if err := cp.SetTenantMigrationStatus(ctx, t.ID, tenancy.MigrationOK); err != nil {
+			log.Printf("migrate-all: tenant %s: failed to recover migration_status to ok: %v", t.Slug, err)
 		} else {
-			log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
+			log.Printf("migrate-all: tenant %s: migration_status recovered to ok", t.Slug)
 		}
-		if t.MigrationStatus != tenancy.MigrationOK {
-			if err := cp.SetTenantMigrationStatus(ctx, t.ID, tenancy.MigrationOK); err != nil {
-				log.Printf("migrate-all: tenant %s: failed to recover migration_status to ok: %v", t.Slug, err)
-			} else {
-				log.Printf("migrate-all: tenant %s: migration_status recovered to ok", t.Slug)
-			}
-		}
-		if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
-			log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
-		} else if len(empty) > 0 {
-			log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
-		}
+	}
+	if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
+		log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
+	} else if len(empty) > 0 {
+		log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
 	}
 }
 

@@ -42,6 +42,8 @@ var headerPhrases = map[string]colRole{
 	"item number": roleSKU, "item no": roleSKU, "part number": roleSKU, "part no": roleSKU,
 	"product code": roleSKU, "item code": roleSKU,
 	"item cost": rolePrice, "ext cost": roleAmount, "extended cost": roleAmount,
+	// Two-row headers (GST invoices): "Item Details / HSN Code", "Unit Price / Net Price".
+	"item details": roleDesc, "item name": roleDesc, "hsn code": roleSkip, "hsn/sac": roleSkip, "net price": roleSkip,
 }
 
 // headerWords are single-word column titles.
@@ -53,6 +55,71 @@ var headerWords = map[string]colRole{
 	"price": rolePrice, "rate": rolePrice, "cost": rolePrice,
 	"amount": roleAmount, "total": roleAmount, "ext": roleAmount, "extended": roleAmount,
 	"extension": roleAmount,
+	// Columns whose numbers belong to no field; they never make a header row.
+	"discount": roleSkip, "tax": roleSkip, "vat": roleSkip,
+}
+
+// serialHeaders are column titles for a row-number column ("Sr. No", "S.No",
+// "SN.", "Sl"); its values belong to no field. A bare "#" counts only as the first
+// header word, since "Part #" and "Item #" are SKU titles.
+var serialHeaders = map[string]bool{
+	"sn": true, "sn.": true, "s.n": true, "s.n.": true,
+	"sr": true, "sr.": true, "sl": true, "sl.": true, "sno": true, "s.no": true, "s.no.": true,
+	"srno": true, "sr.no": true, "sr.no.": true, "slno": true, "sl.no": true, "sl.no.": true,
+}
+
+// isSerialHeader reports whether word i of a header row titles a row-number column.
+func isSerialHeader(text string, i int) bool {
+	t := strings.ToLower(strings.TrimRight(text, ":"))
+	if t == "#" {
+		return i == 0
+	}
+	return serialHeaders[t]
+}
+
+// maxHeaderBandRows bounds how many rows under the first header row may
+// continue a multi-row header ("Qty." / "(Rs.)" under "Item" / "Unit Price").
+const maxHeaderBandRows = 2
+
+// extendHeader joins the rows under header row i that only continue it into
+// one band and re-detects the columns on the merged words. It returns the
+// columns and the index of the last header row; without a continuation (or when
+// the merged band is no longer a header) it returns base and i.
+func extendHeader(rows []Row, i int, base []column) ([]column, int) {
+	words := append([]Word(nil), rows[i].Words...)
+	end := i
+	for j := i + 1; j < len(rows) && j <= i+maxHeaderBandRows; j++ {
+		if !headerContinuation(rows[j]) {
+			break
+		}
+		words = append(words, rows[j].Words...)
+		end = j
+	}
+	if end == i {
+		return base, i
+	}
+	sort.SliceStable(words, func(a, b int) bool { return words[a].X < words[b].X })
+	cols, ok := detectTableHeader(Row{Y: rows[i].Y, Words: words})
+	if !ok {
+		return base, i
+	}
+	return cols, end
+}
+
+// headerContinuation reports whether a row holds only header vocabulary: no
+// digits, and at least one column word. A data row always carries a number.
+func headerContinuation(r Row) bool {
+	vocab := false
+	for _, w := range r.Words {
+		if hasDigit(w.Text) {
+			return false
+		}
+		tok := normHeaderWord(w.Text)
+		if _, ok := headerWords[tok]; ok || tok == "details" || tok == "hsn" {
+			vocab = true
+		}
+	}
+	return vocab
 }
 
 // normHeaderWord lower-cases a header word and trims punctuation.
@@ -66,6 +133,12 @@ func detectTableHeader(r Row) ([]column, bool) {
 	seen := map[colRole]bool{}
 	for i := 0; i < len(r.Words); i++ {
 		w := r.Words[i]
+		if isSerialHeader(w.Text, i) {
+			// Recognised so its values stay out of the description; it never
+			// counts toward the roles that make a header row.
+			cols = append(cols, column{role: roleSkip, x0: w.X, x1: w.X + w.W})
+			continue
+		}
 		tok := normHeaderWord(w.Text)
 		if tok == "" {
 			continue
@@ -89,6 +162,8 @@ func detectTableHeader(r Row) ([]column, bool) {
 		last := r.Words[i+span-1]
 		col := column{role: role, x0: w.X, x1: last.X + last.W}
 		switch {
+		case role == roleSkip:
+			// Recognised only so its numbers stay out of the neighbouring columns.
 		case !seen[role]:
 			seen[role] = true
 		case role == roleAmount:

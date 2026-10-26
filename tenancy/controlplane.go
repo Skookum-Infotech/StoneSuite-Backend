@@ -8,6 +8,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"stonesuite-backend/cache"
+)
+
+const (
+	// tenantCacheTTL bounds how long a request may see a stale tenant row
+	// (e.g. a suspension) on a machine other than the one that wrote it.
+	tenantCacheTTL = 30 * time.Second
+	// tenantCacheMax caps the per-process tenant cache.
+	tenantCacheMax = 2000
 )
 
 // ErrTenantNotFound is returned when no tenant matches the lookup.
@@ -21,7 +30,22 @@ var ErrPlatformOwnerProtected = errors.New("the platform owner tenant cannot be 
 // ControlPlane owns the connection pool to the shared control-plane database
 // and exposes lookups against the tenant registry.
 type ControlPlane struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	tenants *cache.TTLCache[string, *Tenant] // TenantByID read-through cache
+}
+
+// newTenantCache builds the TenantByID cache.
+func newTenantCache() *cache.TTLCache[string, *Tenant] {
+	return cache.NewWithMax[string, *Tenant](tenantCacheTTL, tenantCacheMax)
+}
+
+// forgetTenant drops a tenant from the TenantByID cache. Every method that
+// writes the tenants row calls it so this process never serves its own stale
+// write; other processes converge within tenantCacheTTL.
+func (c *ControlPlane) forgetTenant(id string) {
+	if c.tenants != nil {
+		c.tenants.Delete(id)
+	}
 }
 
 // NewControlPlane opens a pool to the control-plane database at dsn.
@@ -44,7 +68,7 @@ func NewControlPlane(ctx context.Context, dsn string) (*ControlPlane, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping control-plane db: %w", err)
 	}
-	return &ControlPlane{pool: pool}, nil
+	return &ControlPlane{pool: pool, tenants: newTenantCache()}, nil
 }
 
 // Pool exposes the underlying control-plane pool for control-plane queries
@@ -83,8 +107,21 @@ func scanTenant(row pgx.Row) (*Tenant, error) {
 	return &t, nil
 }
 
-// TenantByID loads a tenant by its UUID.
+// TenantByID loads a tenant by its UUID, served from a short-TTL cache with
+// concurrent misses collapsed into one query. Callers get their own copy.
+// Not-found and other errors are never cached.
 func (c *ControlPlane) TenantByID(ctx context.Context, id string) (*Tenant, error) {
+	if c.tenants == nil {
+		return c.loadTenantByID(ctx, id)
+	}
+	t, err := c.tenants.GetOrLoad(id, func() (*Tenant, error) { return c.loadTenantByID(ctx, id) })
+	if err != nil {
+		return nil, err
+	}
+	return t.clone(), nil
+}
+
+func (c *ControlPlane) loadTenantByID(ctx context.Context, id string) (*Tenant, error) {
 	q := "SELECT " + tenantColumns + " FROM tenants WHERE id = $1"
 	return scanTenant(c.pool.QueryRow(ctx, q, id))
 }

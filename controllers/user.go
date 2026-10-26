@@ -863,6 +863,18 @@ func (h *UserOps) AcceptUserInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Claim the invite before touching any account. Marking it accepted only at
+	// the end let two concurrent submissions of one link both run — and on the
+	// existing-identity path below, each one overwrites the password.
+	if err := h.CP.MarkUserInviteAccepted(r.Context(), invite.ID); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This invitation has already been accepted.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to accept invitation.")
+		return
+	}
+
 	// Resolve the display name: request body overrides invite-time name.
 	fullName := invite.FullName
 	if req.FullName != "" {
@@ -940,11 +952,6 @@ func (h *UserOps) AcceptUserInvite(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("accept invite: initial role %s no longer exists, skipping assignment", invite.InitialRoleID)
 		}
-	}
-
-	// Mark the invite accepted (idempotent if called twice).
-	if err := h.CP.MarkUserInviteAccepted(r.Context(), invite.ID); err != nil {
-		log.Printf("accept invite: failed to mark invite accepted (non-fatal): %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

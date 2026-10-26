@@ -666,18 +666,24 @@ func (h *TenantOps) tenantJobs(w http.ResponseWriter, r *http.Request, admin mid
 }
 
 // inviteView is the JSON shape returned for invites (token is the "invite key").
+// Tokens are stored hashed, so token/inviteLink are only present on the
+// create/resend response that minted them; a listed invite has neither, and
+// a fresh link comes from resending it.
 func inviteView(inv tenancy.Invite) map[string]any {
-	return map[string]any{
+	view := map[string]any{
 		"id":           inv.ID,
 		"contactEmail": inv.ContactEmail,
-		"token":        inv.Token,
 		"status":       inv.Status,
 		"expiresAt":    inv.ExpiresAt,
 		"acceptedAt":   inv.AcceptedAt,
 		"createdAt":    inv.CreatedAt,
 		"expired":      inv.Status == "pending" && time.Now().After(inv.ExpiresAt),
-		"inviteLink":   applyLink(inv.Token),
 	}
+	if inv.Token != "" {
+		view["token"] = inv.Token
+		view["inviteLink"] = applyLink(inv.Token)
+	}
+	return view
 }
 
 type resendInviteRequest struct {
@@ -799,6 +805,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 
 	identity, err := h.CP.IdentityByEmail(r.Context(), req.Email)
 	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		burnPasswordCheck(req.Password) // same latency as a wrong password
 		logSecurityEvent(r, "login_failed", "email", req.Email, "reason", "unknown_identity")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
@@ -808,14 +815,20 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if identity.PasswordHash == "" {
+		burnPasswordCheck(req.Password)
 		fail(w, http.StatusUnauthorized, "This account uses single sign-on.")
 		return
 	}
+	if refuseIfLoginLocked(w, r, h.CP, identity.ID, "login_failed") {
+		return
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(identity.PasswordHash), []byte(req.Password)); err != nil {
+		noteLoginFailure(r, h.CP, identity.ID)
 		logSecurityEvent(r, "login_failed", "email", req.Email, "identity", identity.ID, "reason", "bad_password")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
 	}
+	noteLoginSuccess(r, h.CP, identity.ID)
 
 	h.completeLogin(w, r, identity, loginAttempt{email: req.Email, rememberMe: req.RememberMe})
 }
@@ -1425,9 +1438,14 @@ func (h *TenantOps) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	// NULLs the token — single-use enforced at the DB level — and ends every
-	// session: whoever forced a reset may be holding one of them.
-	if err := h.CP.SetIdentityPasswordRevokingSessions(r.Context(), identity.ID, string(hash), ""); err != nil {
+	// ConsumePasswordToken sets the password only while the token is still
+	// unspent, so two concurrent submissions of one link can't both succeed,
+	// and ends every session: whoever forced a reset may be holding one.
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(hash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This reset link is invalid or has expired.")
+			return
+		}
 		slog.Error("reset password", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to update password.")
 		return
@@ -1656,7 +1674,11 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(pwHash)); err != nil {
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(pwHash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusUnauthorized, "Invalid or expired setup token.")
+			return
+		}
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
 	}

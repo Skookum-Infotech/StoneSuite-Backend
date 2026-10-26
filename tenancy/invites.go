@@ -32,7 +32,9 @@ type Invite struct {
 	NotifyNotificationIDs []string
 }
 
-const inviteColumns = `id, tenant_id, contact_email, token, status, expires_at, accepted_at, created_at, notify_notification_ids`
+// inviteColumns reads an empty string for token: the column holds a hash (see HashToken),
+// which is useless to callers and must not leak into API responses.
+const inviteColumns = `id, tenant_id, contact_email, '' AS token, status, expires_at, accepted_at, created_at, notify_notification_ids`
 
 func scanInvite(row pgx.Row) (*Invite, error) {
 	var inv Invite
@@ -50,17 +52,18 @@ func (c *ControlPlane) CreateInvite(ctx context.Context, tenantID, email, token 
 	inv, err := scanInvite(c.pool.QueryRow(ctx, `
 		INSERT INTO tenant_invites (tenant_id, contact_email, token, status, expires_at, sent_at)
 		VALUES ($1, $2, $3, 'pending', $4, NOW())
-		RETURNING `+inviteColumns, tenantID, email, token, expiresAt))
+		RETURNING `+inviteColumns, tenantID, email, HashToken(token), expiresAt))
 	if err != nil {
 		return nil, fmt.Errorf("create invite: %w", err)
 	}
+	inv.Token = token // the raw token is only ever available to the caller that minted it
 	return inv, nil
 }
 
 // InviteByToken loads an invite by its token.
 func (c *ControlPlane) InviteByToken(ctx context.Context, token string) (*Invite, error) {
 	inv, err := scanInvite(c.pool.QueryRow(ctx,
-		`SELECT `+inviteColumns+` FROM tenant_invites WHERE token = $1`, token))
+		`SELECT `+inviteColumns+` FROM tenant_invites WHERE token = $1`, HashToken(token)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrInviteNotFound
 	}
@@ -70,11 +73,18 @@ func (c *ControlPlane) InviteByToken(ctx context.Context, token string) (*Invite
 	return inv, nil
 }
 
-// MarkInviteAccepted flips an invite to accepted.
+// MarkInviteAccepted flips a pending invite to accepted. It is the atomic
+// claim: of two concurrent redemptions only one sees a row change, the other
+// gets ErrTokenAlreadyUsed.
 func (c *ControlPlane) MarkInviteAccepted(ctx context.Context, id string) error {
-	if _, err := c.pool.Exec(ctx,
-		`UPDATE tenant_invites SET status = 'accepted', accepted_at = NOW(), updated_at = NOW() WHERE id = $1`, id); err != nil {
+	tag, err := c.pool.Exec(ctx,
+		`UPDATE tenant_invites SET status = 'accepted', accepted_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'pending'`, id)
+	if err != nil {
 		return fmt.Errorf("mark invite accepted: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTokenAlreadyUsed
 	}
 	return nil
 }
@@ -122,10 +132,11 @@ func (c *ControlPlane) RefreshInvite(ctx context.Context, id, token string, expi
 		SET token = $2, expires_at = $3, status = 'pending', accepted_at = NULL,
 		    notify_notification_ids = '{}', sent_at = NOW(), updated_at = NOW()
 		WHERE id = $1
-		RETURNING `+inviteColumns, id, token, expiresAt))
+		RETURNING `+inviteColumns, id, HashToken(token), expiresAt))
 	if err != nil {
 		return nil, fmt.Errorf("refresh invite: %w", err)
 	}
+	inv.Token = token
 	return inv, nil
 }
 
@@ -171,8 +182,9 @@ type UserInvite struct {
 	NotifyNotificationIDs []string
 }
 
+// userInviteColumns reads an empty string for token; see inviteColumns.
 const userInviteColumns = `id, tenant_id, email, full_name,
-	COALESCE(initial_role_id::text,''), token, status,
+	COALESCE(initial_role_id::text,''), '' AS token, status,
 	COALESCE(invited_by::text,''), expires_at, accepted_at, created_at,
 	notify_notification_ids`
 
@@ -203,19 +215,24 @@ func (c *ControlPlane) CreateUserInvite(
 		(tenant_id, email, full_name, initial_role_id, token, status, invited_by, expires_at)
 		VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
 		RETURNING ` + userInviteColumns
-	return scanUserInvite(c.pool.QueryRow(ctx, q,
+	inv, err := scanUserInvite(c.pool.QueryRow(ctx, q,
 		tenantID, email, fullName,
 		nullable(initialRoleID),
-		token,
+		HashToken(token),
 		nullable(invitedByIdentityID),
 		expiresAt,
 	))
+	if err != nil {
+		return nil, err
+	}
+	inv.Token = token
+	return inv, nil
 }
 
 // UserInviteByToken loads a user invite by its token.
 func (c *ControlPlane) UserInviteByToken(ctx context.Context, token string) (*UserInvite, error) {
 	q := `SELECT ` + userInviteColumns + ` FROM user_invites WHERE token = $1`
-	return scanUserInvite(c.pool.QueryRow(ctx, q, token))
+	return scanUserInvite(c.pool.QueryRow(ctx, q, HashToken(token)))
 }
 
 // UserInviteByID loads a user invite by its primary key.
@@ -253,12 +270,18 @@ func (c *ControlPlane) ListUserInvitesByTenant(ctx context.Context, tenantID str
 	return out, rows.Err()
 }
 
-// MarkUserInviteAccepted transitions a user invite to accepted status.
+// MarkUserInviteAccepted transitions a pending user invite to accepted. Like
+// MarkInviteAccepted it is the atomic claim: a second concurrent redemption
+// gets ErrTokenAlreadyUsed.
 func (c *ControlPlane) MarkUserInviteAccepted(ctx context.Context, id string) error {
-	_, err := c.pool.Exec(ctx,
-		`UPDATE user_invites SET status = 'accepted', accepted_at = NOW(), updated_at = NOW() WHERE id = $1`, id)
+	tag, err := c.pool.Exec(ctx,
+		`UPDATE user_invites SET status = 'accepted', accepted_at = NOW(), updated_at = NOW()
+		 WHERE id = $1 AND status = 'pending'`, id)
 	if err != nil {
 		return fmt.Errorf("mark user invite accepted: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTokenAlreadyUsed
 	}
 	return nil
 }
@@ -285,7 +308,12 @@ func (c *ControlPlane) RefreshUserInvite(ctx context.Context, id, token string, 
 		    notify_notification_ids = '{}', updated_at = NOW()
 		WHERE id = $1
 		RETURNING ` + userInviteColumns
-	return scanUserInvite(c.pool.QueryRow(ctx, q, id, token, expiresAt))
+	inv, err := scanUserInvite(c.pool.QueryRow(ctx, q, id, HashToken(token), expiresAt))
+	if err != nil {
+		return nil, err
+	}
+	inv.Token = token
+	return inv, nil
 }
 
 // SetUserInviteNotifyIDs records the stonesuite-notify notification ids returned

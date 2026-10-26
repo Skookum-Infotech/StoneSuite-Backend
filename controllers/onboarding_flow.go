@@ -375,6 +375,17 @@ func (h *TenantOps) SubmitApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Claim the invite before writing anything: it only flips while pending, so
+	// a double submit can't overwrite an application already under review.
+	if err := h.CP.MarkInviteAccepted(r.Context(), inv.ID); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This invite is no longer valid.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to accept invite.")
+		return
+	}
+
 	if md, mErr := json.Marshal(req.FormData); mErr == nil {
 		if err := h.CP.SetTenantMetadata(r.Context(), inv.TenantID, string(md)); err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to save submission.")
@@ -385,8 +396,6 @@ func (h *TenantOps) SubmitApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to update status.")
 		return
 	}
-	_ = h.CP.MarkInviteAccepted(r.Context(), inv.ID)
-
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"success": true,
 		"message": "Thanks! Your application was submitted and is pending review.",
@@ -442,7 +451,11 @@ func (h *TenantOps) SetPassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(hash)); err != nil {
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(hash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This link is invalid or has expired.")
+			return
+		}
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
 	}

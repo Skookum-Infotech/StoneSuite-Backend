@@ -394,15 +394,20 @@ func (h *PortalAuthOps) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
 	}
+	// Claim the invite first (it only flips while still pending), so two
+	// concurrent submissions of one link can't both set the password. If the
+	// password write below then fails, the customer uses forgot-password.
+	if err := h.CP.MarkPortalInviteAccepted(r.Context(), invite.ID); err != nil {
+		if errors.Is(err, tenancy.ErrPortalInviteNotFound) {
+			fail(w, http.StatusBadRequest, "This invitation is no longer valid.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to accept the invitation.")
+		return
+	}
 	if err := h.CP.SetIdentityPassword(r.Context(), invite.IdentityID, string(hash)); err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
-	}
-	// Close the invite last: if this fails the password is already set, and a
-	// still-pending invite is harmless because the identity now has a password
-	// (which is what the resend path refuses to overwrite).
-	if err := h.CP.MarkPortalInviteAccepted(r.Context(), invite.ID); err != nil {
-		log.Printf("warn: mark portal invite %s accepted: %v", invite.ID, err)
 	}
 
 	logSecurityEvent(r, "portal_invite_accepted", "identity", invite.IdentityID)
@@ -505,9 +510,14 @@ func (h *PortalAuthOps) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to reset password.")
 		return
 	}
-	// NULLs the token in the same statement, so the link is single-use without
-	// a separate delete, and ends every session the identity holds.
-	if err := h.CP.SetIdentityPasswordRevokingSessions(r.Context(), identity.ID, string(hash), ""); err != nil {
+	// ConsumePasswordToken sets the password and NULLs the token in one
+	// conditional statement, so the link is single-use even under a race, and
+	// ends every session the identity holds.
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(hash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This reset link is invalid or has expired.")
+			return
+		}
 		slog.Error("portal reset password", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to reset password.")
 		return

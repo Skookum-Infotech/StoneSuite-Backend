@@ -69,6 +69,10 @@ func (f *arJobFx) commit(enable bool) {
 	if enable {
 		f.enableRule(arToday.AddDate(0, 0, -30))
 	}
+	if !enable { // the rule is seeded enabled, so a disabled case switches it off explicitly
+		_, err := f.tx.Exec(f.ctx, `UPDATE automation_rules SET enabled = FALSE WHERE rule_key = $1`, RuleKeyARDunning)
+		require.NoError(f.t, err)
+	}
 	require.NoError(f.t, f.tx.Commit(f.ctx))
 }
 
@@ -76,8 +80,8 @@ func (f *arJobFx) cleanup() {
 	ctx := context.Background()
 	_ = f.tx.Rollback(ctx)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM automation_deliveries WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, RuleKeyARDunning)
-	_, _ = f.pool.Exec(ctx, `UPDATE automation_rules SET enabled = FALSE WHERE rule_key = $1`, RuleKeyARDunning)
-	_, _ = f.pool.Exec(ctx, `UPDATE automation_state SET enabled_at = NULL, last_planned_at = NULL WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, RuleKeyARDunning)
+	_, _ = f.pool.Exec(ctx, `UPDATE automation_rules SET enabled = TRUE WHERE rule_key = $1`, RuleKeyARDunning)
+	_, _ = f.pool.Exec(ctx, `UPDATE automation_state SET enabled_at = NOW(), last_planned_at = NULL WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $1)`, RuleKeyARDunning)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM document_sends WHERE record_id = ANY($1::uuid[])`, f.uuids)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM invoice WHERE invoice_uuid = ANY($1::uuid[])`, f.uuids)
 	_, _ = f.pool.Exec(ctx, `DELETE FROM customer WHERE customer_id = ANY($1::int[])`, f.custs)

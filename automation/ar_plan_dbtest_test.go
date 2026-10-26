@@ -83,13 +83,15 @@ func TestARPlanDueDateMove(t *testing.T) {
 }
 
 func TestARPlanDisabledRule(t *testing.T) {
-	pool := newTenantTestPool(t)
-	ctx := t.Context()
-	rule, enabled, err := loadRule(ctx, pool, RuleKeyARDunning)
+	f := newARFixture(t) // the rule is seeded enabled; switch it off inside the fixture tx
+	ctx := f.ctx
+	_, err := f.tx.Exec(ctx, `UPDATE automation_rules SET enabled = FALSE WHERE rule_key = $1`, RuleKeyARDunning)
+	require.NoError(t, err)
+	rule, enabled, err := loadRule(ctx, f.tx, RuleKeyARDunning)
 	require.NoError(t, err)
 	assert.False(t, enabled)
 	assert.Empty(t, rule.ID)
-	_, enabled, err = loadRule(ctx, pool, "no.such.rule")
+	_, enabled, err = loadRule(ctx, f.tx, "no.such.rule")
 	require.NoError(t, err)
 	assert.False(t, enabled)
 }

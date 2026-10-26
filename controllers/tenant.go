@@ -817,6 +817,24 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.completeLogin(w, r, identity, loginAttempt{email: req.Email, rememberMe: req.RememberMe})
+}
+
+// loginAttempt carries what the password step established into completeLogin.
+type loginAttempt struct {
+	email      string // as typed at sign-in, for security logs
+	rememberMe bool
+	// codeVerified is set once the emailed sign-in code has been checked
+	// (MFAVerify), so completeLogin mints the session instead of asking again.
+	codeVerified bool
+}
+
+// completeLogin runs everything between a verified password and a session:
+// workspace standing, the staff-or-portal decision, the emailed-code step for
+// an identity with two-step verification on, then the session itself.
+// MFAVerify re-enters here after a correct code, so standing is checked again
+// at that moment rather than trusted from when the code was sent.
+func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity, at loginAttempt) {
 	// Check the user's workspace standing — suspended/disabled accounts must not
 	// be able to log in even though their control-plane identity still exists.
 	//
@@ -847,7 +865,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		// under maintenance) must not get a session at all: skipping this check
 		// used to mint a token with no grants, so the user landed on an empty
 		// dashboard whose every request was refused.
-		if !tenant.Servable() && h.refuseUnservableLogin(w, r, identity, tenant) {
+		if !tenant.Servable() && h.refuseUnservableLogin(w, r, identity, tenant, at) {
 			return
 		}
 		if tenant.Servable() {
@@ -856,7 +874,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 				u, uErr := userstore.GetUserByIdentityID(r.Context(), pool, identity.ID)
 				switch {
 				case errors.Is(uErr, userstore.ErrUserNotFound):
-					if h.tryPortalLogin(w, r, identity) {
+					if h.tryPortalLogin(w, r, identity, at) {
 						return
 					}
 					loginFailed = true
@@ -881,14 +899,17 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		// standing on either surface) returns this same message and reason —
 		// distinguishing them would let this endpoint be used to enumerate
 		// which emails have a StoneSuite account of any kind.
-		logSecurityEvent(r, "login_failed", "email", req.Email,
+		logSecurityEvent(r, "login_failed", "email", at.email,
 			"identity", identity.ID, "reason", "no_workspace_user")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
 	}
+	if h.requireLoginCode(w, r, identity, at) {
+		return
+	}
 
 	accessDur := config.AppConfig.JWTExpiresIn
-	if req.RememberMe {
+	if at.rememberMe {
 		accessDur = config.AppConfig.JWTRememberMeExpiresIn
 	}
 	d, err := time.ParseDuration(accessDur)
@@ -976,7 +997,11 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 // mirroring the same UX the staff branch above already gives a suspended
 // workspace user. So a former-or-current portal identity with zero
 // currently-active links gets a specific, honest response here instead.
-func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity) bool {
+//
+// An identity with two-step verification on is asked for its emailed code
+// here too, before any portal session exists: the code step keys off the
+// identity, not off which surface the session lands on.
+func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, identity *tenancy.Identity, at loginAttempt) bool {
 	links, err := h.CP.PortalTenantsForIdentity(r.Context(), identity.ID)
 	if err != nil {
 		return false
@@ -991,6 +1016,9 @@ func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, ident
 			return true
 		}
 		return false
+	}
+	if h.requireLoginCode(w, r, identity, at) {
+		return true
 	}
 	active := workspaces[0].TenantID
 	workspaces[0].Active = true

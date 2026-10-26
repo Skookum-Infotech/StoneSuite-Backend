@@ -102,6 +102,7 @@ type Email struct {
 	Greet         bool      // open with "Hello {RecipientName}," ("Hello," when blank)
 	RecipientName string    // filled per recipient by SendNotification when left blank
 	Paragraphs    []Paragraph
+	Code          string          // one-time code shown large in a grey box (optional)
 	Details       []Detail        // grey label/value box (optional)
 	Attachment    *AttachmentCard // PDF card (optional)
 	ActionURL     string          // absolute CTA link; the button is omitted when empty

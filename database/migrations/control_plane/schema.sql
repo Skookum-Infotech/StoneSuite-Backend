@@ -296,6 +296,40 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_identity ON refresh_tokens(identity_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash     ON refresh_tokens(token_hash);
 
+-- ── two-step verification (emailed sign-in codes) ─────────────────────
+-- Opt-in per identity from Account Settings. Staff only: the toggle routes
+-- live under /api/auth/mfa/, which a portal token can never reach. Once on, a
+-- correct password at /api/auth/tenant-login mints no session; it opens an
+-- mfa_challenges row and emails a 6-digit code, and only
+-- POST /api/auth/mfa/verify with that code mints the session. The login gate
+-- keys off this flag alone, not off which surface the session lands on. SSO
+-- identities never get it: their identity provider owns second factors.
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS mfa_enabled    BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS mfa_enabled_at TIMESTAMPTZ;
+
+-- One emailed code. purpose 'login' is the second sign-in step (the browser
+-- holds the raw challenge token; only its SHA-256 is stored here); 'enable'
+-- proves the inbox works before mfa_enabled flips on (looked up by identity,
+-- since that caller is already signed in). code_hash is bcrypt. A row is dead
+-- once consumed_at is set: on success, after too many wrong codes, or when a
+-- newer challenge of the same purpose replaces it. Rows older than a day are
+-- pruned whenever the identity opens a new challenge.
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_id   UUID         NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    purpose       VARCHAR(20)  NOT NULL CHECK (purpose IN ('login', 'enable')),
+    token_hash    TEXT         NOT NULL UNIQUE,
+    code_hash     TEXT         NOT NULL,
+    attempts      INT          NOT NULL DEFAULT 0,
+    send_count    INT          NOT NULL DEFAULT 1,
+    remember_me   BOOLEAN      NOT NULL DEFAULT FALSE,
+    last_sent_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ  NOT NULL,
+    consumed_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_identity ON mfa_challenges(identity_id, purpose);
+
 -- ── cp_rag_chunks ─────────────────────────────────────────────────────
 -- App-help/documentation vectors. Identical for every tenant and not
 -- anyone's private data, so it lives ONCE in the control plane and is

@@ -388,6 +388,15 @@ func main() {
 		mux.Handle("POST /api/auth/forgot-password", authRateLimiter.PerIPFunc(tenantOps.ForgotPassword))
 		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
 		mux.Handle("POST /api/auth/reset-password", authRateLimiter.PerIPFunc(tenantOps.ResetPassword))
+		// Two-step verification: the emailed-code step of sign-in (public, and
+		// rate-limited like the password step it follows), then turning it on
+		// and off from Account Settings (signed-in staff).
+		mux.Handle("POST /api/auth/mfa/verify", authRateLimiter.PerIPFunc(tenantOps.MFAVerify))
+		mux.Handle("POST /api/auth/mfa/resend", authRateLimiter.PerIPFunc(tenantOps.MFAResend))
+		mux.Handle("GET /api/auth/mfa", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFAStatus)))
+		mux.Handle("POST /api/auth/mfa/enable/start", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFAEnableStart)))
+		mux.Handle("POST /api/auth/mfa/enable/confirm", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFAEnableConfirm)))
+		mux.Handle("POST /api/auth/mfa/disable", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFADisable)))
 
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
@@ -538,7 +547,8 @@ func main() {
 				portalOrderUserRateLimiter.PerUser(tenantRateLimiter.PerTenant(resolver.Middleware(h)))))
 		}
 
-		mux.Handle("POST /api/portal/auth/login", portalPublic(portalAuthOps.Login))
+		// No portal login route: customers sign in at /api/auth/tenant-login
+		// (TenantOps.tryPortalLogin), the one place every login check lives.
 		mux.Handle("POST /api/portal/auth/refresh", portalPublic(portalAuthOps.Refresh))
 		mux.Handle("POST /api/portal/auth/logout", portalPublic(portalAuthOps.Logout))
 		mux.Handle("GET /api/portal/auth/invite/{token}", portalPublic(portalAuthOps.GetInvite))

@@ -175,6 +175,182 @@
         ]
       }
     },
+    "/api/auth/mfa": {
+      "get": {
+        "operationId": "get_auth_mfa",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "tenantOps.MFAStatus",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/mfa/disable": {
+      "post": {
+        "operationId": "post_auth_mfa_disable",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "tenantOps.MFADisable",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/mfa/enable/confirm": {
+      "post": {
+        "operationId": "post_auth_mfa_enable_confirm",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "tenantOps.MFAEnableConfirm",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/mfa/enable/start": {
+      "post": {
+        "operationId": "post_auth_mfa_enable_start",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "tenantOps.MFAEnableStart",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/mfa/resend": {
+      "post": {
+        "operationId": "post_auth_mfa_resend",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "tenantOps.MFAResend",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/mfa/verify": {
+      "post": {
+        "operationId": "post_auth_mfa_verify",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "tenantOps.MFAVerify",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/refresh": {
       "post": {
         "operationId": "post_auth_refresh",
@@ -2019,32 +2195,6 @@
           }
         },
         "summary": "portalAuthOps.GetInvite",
-        "tags": [
-          "portal"
-        ]
-      }
-    },
-    "/api/portal/auth/login": {
-      "post": {
-        "operationId": "post_portal_auth_login",
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not permitted for this session"
-          },
-          "404": {
-            "description": "Not found, or outside the caller's scope"
-          }
-        },
-        "summary": "portalAuthOps.Login",
         "tags": [
           "portal"
         ]

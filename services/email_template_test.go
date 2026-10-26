@@ -293,6 +293,26 @@ func TestRenderEmail_AttachmentCardLink(t *testing.T) {
 // TestRenderEmail_NoDefaultTableBorders guards against Outlook/legacy clients
 // drawing a default 1px border on any <table> that omits the HTML border
 // attribute (CSS alone does not suppress it in every client).
+func TestRenderEmail_CodeBlock(t *testing.T) {
+	withTestEmailBrand(t)
+	out := mustRender(t, Email{
+		Badge: "Sign-in Code", Heading: "Your sign-in", HeadingAccent: "code.",
+		Paragraphs: []Paragraph{{Text("Use this code to finish signing in.")}},
+		Code:       "042917",
+		FinePrint:  []string{"This code expires in 10 minutes."},
+	})
+
+	assert.Contains(t, out, "letter-spacing:.3em;color:#18181b;text-align:center;\">042917</td>", "the code renders in its own large box")
+	assert.Less(t, strings.Index(out, "finish signing in."), strings.Index(out, ">042917<"), "the code follows the paragraphs")
+	assert.Less(t, strings.Index(out, ">042917<"), strings.Index(out, "This code expires"), "the fine print follows the code")
+	for _, tbl := range regexp.MustCompile(`<table[^>]*>`).FindAllString(out, -1) {
+		assert.Contains(t, tbl, `border="0"`, tbl)
+	}
+
+	without := mustRender(t, sampleEmail())
+	assert.NotContains(t, without, "letter-spacing:.3em", "no code means no code box")
+}
+
 func TestRenderEmail_NoDefaultTableBorders(t *testing.T) {
 	withTestEmailBrand(t)
 	out := mustRender(t, sampleEmail())

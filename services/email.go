@@ -177,6 +177,113 @@ func SendPasswordResetEmail(ctx context.Context, tenantID, identityID, recipient
 	return SendNotification(ctx, buildPasswordResetNotification(tenantID, identityID, recipientEmail, recipientName, resetLink))
 }
 
+// buildSignInCodeNotification builds the email carrying a two-step
+// verification code. enabling picks the copy: false finishes a sign-in, true
+// confirms turning the feature on from Account Settings. The code is only in
+// the email body -- never the title, body summary or preheader, which notify
+// stores or a lock screen shows.
+func buildSignInCodeNotification(tenantID, identityID, recipientEmail, recipientName, code string, enabling bool, ttlMinutes int) NotificationRequest {
+	expiry := fmt.Sprintf("This code expires in %d minutes and works once.", ttlMinutes)
+	req := NotificationRequest{
+		TenantID:   tenantID,
+		Recipients: []RecipientTarget{{Email: recipientEmail}},
+		EventType:  "identity.mfa_code",
+		Resource:   "identity",
+		ResourceID: identityID,
+		Title:      "Your StoneSuite sign-in code",
+		Body:       "Sign-in code email sent.",
+		Channels:   []string{"email"},
+		Email: &Email{
+			Preheader: "Your StoneSuite sign-in code.", Badge: "Sign-in Code", Icon: IconLock,
+			Heading: "Your sign-in", HeadingAccent: "code.",
+			Subtitle: "Finish signing in to StoneSuite.",
+			Greet:    true, RecipientName: recipientName,
+			Paragraphs: []Paragraph{
+				{Text("Enter this code on the sign-in screen to finish signing in to your StoneSuite account.")},
+			},
+			Code: code,
+			FinePrint: []string{
+				expiry,
+				"If you didn't just try to sign in, someone may know your password. Change it from Account Settings.",
+			},
+			Reason: "two-step verification is on for your StoneSuite account.",
+		},
+	}
+	if enabling {
+		req.EventType = "identity.mfa_setup_code"
+		req.Title = "Confirm two-step verification"
+		req.Body = "Two-step verification setup code email sent."
+		req.Email.Preheader = "Confirm two-step verification for your StoneSuite account."
+		req.Email.Badge = "Two-Step Verification"
+		req.Email.Heading, req.Email.HeadingAccent = "Confirm two-step", "verification."
+		req.Email.Subtitle = "Keep your account secure."
+		req.Email.Paragraphs = []Paragraph{
+			{Text("Enter this code in Account Settings to turn on two-step verification. After that, each time you sign in with your password we'll email you a code like this one.")},
+		}
+		req.Email.FinePrint = []string{
+			expiry,
+			"If you didn't ask for this, ignore this email. Nothing changes on your account.",
+		}
+		req.Email.Reason = "you asked to turn on two-step verification."
+	}
+	return req
+}
+
+// SendSignInCodeEmail emails the code that finishes a password sign-in.
+func SendSignInCodeEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName, code string, ttlMinutes int) error {
+	return SendNotification(ctx, buildSignInCodeNotification(tenantID, identityID, recipientEmail, recipientName, code, false, ttlMinutes))
+}
+
+// SendMFASetupCodeEmail emails the code that confirms turning two-step
+// verification on.
+func SendMFASetupCodeEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName, code string, ttlMinutes int) error {
+	return SendNotification(ctx, buildSignInCodeNotification(tenantID, identityID, recipientEmail, recipientName, code, true, ttlMinutes))
+}
+
+// buildMFAStatusNotification builds the security notice sent whenever
+// two-step verification is turned on or off, so a change the owner didn't
+// make doesn't go unnoticed.
+func buildMFAStatusNotification(tenantID, identityID, recipientEmail, recipientName string, enabled bool) NotificationRequest {
+	req := NotificationRequest{
+		TenantID:   tenantID,
+		Recipients: []RecipientTarget{{Email: recipientEmail}},
+		EventType:  "identity.mfa_enabled",
+		Resource:   "identity",
+		ResourceID: identityID,
+		Title:      "Two-step verification is on",
+		Body:       "Two-step verification turned on.",
+		Channels:   []string{"email"},
+		Email: &Email{
+			Preheader: "Two-step verification is now on for your StoneSuite account.", Badge: "Security Notice", Icon: IconLock,
+			Heading: "Two-step verification", HeadingAccent: "is on.",
+			Subtitle: "Keep your account secure.",
+			Greet:    true, RecipientName: recipientName,
+			Paragraphs: []Paragraph{
+				{Text("Two-step verification was turned on for your StoneSuite account. From now on, after you enter your password we'll email a sign-in code to this address.")},
+			},
+			FinePrint: []string{"If you didn't make this change, contact your workspace administrator right away."},
+			Reason:    "a security setting on your StoneSuite account changed.",
+		},
+	}
+	if !enabled {
+		req.EventType = "identity.mfa_disabled"
+		req.Title = "Two-step verification is off"
+		req.Body = "Two-step verification turned off."
+		req.Email.Preheader = "Two-step verification is now off for your StoneSuite account."
+		req.Email.HeadingAccent = "is off."
+		req.Email.Paragraphs = []Paragraph{
+			{Text("Two-step verification was turned off for your StoneSuite account. You'll now sign in with just your password.")},
+		}
+		req.Email.FinePrint = []string{"If you didn't make this change, change your password and turn two-step verification back on from Account Settings."}
+	}
+	return req
+}
+
+// SendMFAStatusEmail sends the "two-step verification is on/off" notice.
+func SendMFAStatusEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName string, enabled bool) error {
+	return SendNotification(ctx, buildMFAStatusNotification(tenantID, identityID, recipientEmail, recipientName, enabled))
+}
+
 // buildPortalInviteNotification builds the Notify request for an approved
 // customer's portal-login setup invite.
 func buildPortalInviteNotification(tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) NotificationRequest {

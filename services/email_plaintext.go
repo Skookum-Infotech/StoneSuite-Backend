@@ -28,6 +28,10 @@ func (e Email) PlainText() string {
 		}
 	}
 
+	if e.Code != "" {
+		blocks = append(blocks, e.Code)
+	}
+
 	if len(e.Details) > 0 {
 		rows := make([]string, 0, len(e.Details))
 		for _, d := range e.Details {

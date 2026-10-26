@@ -151,6 +151,12 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		"POST /api/auth/forgot-password": true, "POST /api/auth/reset-password": true,
 		"GET /api/auth/reset-password/{token}": true,
 
+		// Two-step verification's emailed-code step: reached after a correct
+		// password, before any session exists. Rate-limited per IP; the
+		// challenge token is the credential, and a challenge dies after
+		// mfa.MaxAttempts wrong codes.
+		"POST /api/auth/mfa/verify": true, "POST /api/auth/mfa/resend": true,
+
 		// SAML: the IdP and the browser reach these unauthenticated by design.
 		"POST /api/auth/saml/discover": true, "POST /api/auth/saml/exchange": true,
 		"POST /api/auth/saml/{provider}/acs":            true,
@@ -171,8 +177,7 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		"GET /api/platform/setup/status": true, "POST /api/platform/activate": true,
 
 		// Customer-portal credential endpoints.
-		"POST /api/portal/auth/login": true, "POST /api/portal/auth/logout": true,
-		"POST /api/portal/auth/refresh":               true,
+		"POST /api/portal/auth/logout": true, "POST /api/portal/auth/refresh": true,
 		"GET /api/portal/auth/invite/{token}":         true,
 		"POST /api/portal/auth/accept-invite":         true,
 		"POST /api/portal/auth/forgot-password":       true,

@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-611 endpoints across 7 surfaces, read from `main.go`.
+616 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -12,9 +12,9 @@
 |---|---:|
 | staff token + tenant | 516 |
 | portal token + tenant | 32 |
-| none (rate-limited) | 23 |
+| none (rate-limited) | 24 |
+| staff token | 21 |
 | none | 18 |
-| staff token | 17 |
 | portal token | 3 |
 | customer token | 2 |
 
@@ -28,6 +28,8 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `POST` | `/api/auth/forgot-password` | rate-limited per IP |
 | `POST` | `/api/auth/identify` | rate-limited per IP |
 | `POST` | `/api/auth/logout` | no rate limit |
+| `POST` | `/api/auth/mfa/resend` | rate-limited per IP |
+| `POST` | `/api/auth/mfa/verify` | rate-limited per IP |
 | `POST` | `/api/auth/refresh` | rate-limited per IP |
 | `POST` | `/api/auth/reset-password` | rate-limited per IP |
 | `GET` | `/api/auth/reset-password/{token}` | no rate limit |
@@ -59,7 +61,6 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `POST` | `/api/portal/auth/accept-invite` | rate-limited per IP |
 | `POST` | `/api/portal/auth/forgot-password` | rate-limited per IP |
 | `GET` | `/api/portal/auth/invite/{token}` | rate-limited per IP |
-| `POST` | `/api/portal/auth/login` | rate-limited per IP |
 | `POST` | `/api/portal/auth/logout` | rate-limited per IP |
 | `POST` | `/api/portal/auth/refresh` | rate-limited per IP |
 | `POST` | `/api/portal/auth/reset-password` | rate-limited per IP |
@@ -92,7 +93,7 @@ Liveness, readiness and metrics. No credential.
 | `POST` | `/api/internal/email/inbound` | none (rate-limited) | `recordEmailOps.Inbound` |
 | `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | none (rate-limited) | `recordEmailOps.InboundAttachment` |
 
-## `auth` — 16 endpoints
+## `auth` — 22 endpoints
 
 Staff sign-in, session rotation, password reset and SAML SSO.
 
@@ -119,6 +120,17 @@ Staff sign-in, session rotation, password reset and SAML SSO.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `POST` | `/api/auth/logout` | none | `tenantOps.Logout` |
+
+### mfa
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/auth/mfa` | staff token | `tenantOps.MFAStatus` |
+| `POST` | `/api/auth/mfa/disable` | staff token | `tenantOps.MFADisable` |
+| `POST` | `/api/auth/mfa/enable/confirm` | staff token | `tenantOps.MFAEnableConfirm` |
+| `POST` | `/api/auth/mfa/enable/start` | staff token | `tenantOps.MFAEnableStart` |
+| `POST` | `/api/auth/mfa/resend` | none (rate-limited) | `tenantOps.MFAResend` |
+| `POST` | `/api/auth/mfa/verify` | none (rate-limited) | `tenantOps.MFAVerify` |
 
 ### refresh
 
@@ -189,7 +201,7 @@ Public tenant onboarding and workspace-user invitations.
 | `POST` | `/api/onboarding/user-invite/accept` | none | `userOps.AcceptUserInvite` |
 | `GET` | `/api/onboarding/user-invite/{token}` | none | `userOps.GetUserInvite` |
 
-## `portal` — 43 endpoints
+## `portal` — 42 endpoints
 
 Customer portal — scoped read access, invitations, workspace switching.
 
@@ -201,7 +213,6 @@ Customer portal — scoped read access, invitations, workspace switching.
 | `POST` | `/api/portal/auth/change-password` | portal token | `portalAuthOps.ChangePassword` |
 | `POST` | `/api/portal/auth/forgot-password` | none (rate-limited) | `portalAuthOps.ForgotPassword` |
 | `GET` | `/api/portal/auth/invite/{token}` | none (rate-limited) | `portalAuthOps.GetInvite` |
-| `POST` | `/api/portal/auth/login` | none (rate-limited) | `portalAuthOps.Login` |
 | `POST` | `/api/portal/auth/logout` | none (rate-limited) | `portalAuthOps.Logout` |
 | `POST` | `/api/portal/auth/refresh` | none (rate-limited) | `portalAuthOps.Refresh` |
 | `POST` | `/api/portal/auth/reset-password` | none (rate-limited) | `portalAuthOps.ResetPassword` |

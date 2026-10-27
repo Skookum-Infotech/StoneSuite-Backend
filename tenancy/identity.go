@@ -151,6 +151,42 @@ func (c *ControlPlane) SetIdentityMFAEnabled(ctx context.Context, identityID str
 	return nil
 }
 
+// MFAState is one identity's two-step setting as an administrator sees it.
+type MFAState struct {
+	Enabled bool
+	// Available is false for identities with no password step to add a code
+	// to (single sign-on only).
+	Available bool
+}
+
+// IdentityMFAStates loads the two-step setting of the given identities in one
+// query, keyed by identity id. Scoped to tenantID, so an id from another
+// workspace is simply absent from the result.
+func (c *ControlPlane) IdentityMFAStates(ctx context.Context, tenantID string, identityIDs []string) (map[string]MFAState, error) {
+	states := make(map[string]MFAState, len(identityIDs))
+	if len(identityIDs) == 0 {
+		return states, nil
+	}
+	rows, err := c.pool.Query(ctx,
+		`SELECT id::text, mfa_enabled, COALESCE(password_hash, '') <> ''
+		 FROM identities
+		 WHERE tenant_id = $1 AND id::text = ANY($2)`,
+		tenantID, identityIDs)
+	if err != nil {
+		return nil, fmt.Errorf("identity mfa states: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var s MFAState
+		if err := rows.Scan(&id, &s.Enabled, &s.Available); err != nil {
+			return nil, fmt.Errorf("scan identity mfa state: %w", err)
+		}
+		states[id] = s
+	}
+	return states, rows.Err()
+}
+
 // CreateSSOIdentity inserts a central login identity created via SAML/SSO
 // first-login. Unlike CreateIdentity (password path), there is no password
 // hash, and email_verified is always true -- the identity provider already

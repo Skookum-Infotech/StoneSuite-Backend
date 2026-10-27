@@ -72,7 +72,8 @@ func (h *UserOps) authorizeUser(w http.ResponseWriter, r *http.Request, action a
 // ListUsers GET /api/tenant/users
 // Returns all workspace members with their assigned roles.
 func (h *UserOps) ListUsers(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.authorizeUser(w, r, authz.ActionRead); !ok {
+	payload, ok := h.authorizeUser(w, r, authz.ActionRead)
+	if !ok {
 		return
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
@@ -85,7 +86,13 @@ func (h *UserOps) ListUsers(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to list users.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "users": users})
+	// Each member's two-step setting rides along so the Users page can show it.
+	withMFA, err := h.withMFAStates(r, payload.TenantID, users)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to list users.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "users": withMFA})
 }
 
 // ListAssignableUsers GET /api/tenant/users/assignable

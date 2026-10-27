@@ -94,8 +94,11 @@ func (h *UserOps) SetUsersMFA(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
 		return
 	}
-	isSA, err := userstore.IsSuperAdmin(r.Context(), pool, payload.UserID)
+	// Keyed by the caller's identity, like authorizeUser's own check: the token's
+	// tenant user_id claim is not always present.
+	isSA, err := authz.IsSuperAdmin(r.Context(), pool, payload.ID)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "admin mfa: check super admin", "identity", payload.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to check admin status.")
 		return
 	}
@@ -143,7 +146,7 @@ func (h *UserOps) SetUsersMFA(w http.ResponseWriter, r *http.Request) {
 	results := make([]mfaChangeResult, len(ids))
 	var changed []int // indexes into results that need a notice email
 	for i, id := range ids {
-		results[i] = h.applyUserMFA(r, payload.UserID, id, targets[id], states, enabled)
+		results[i] = h.applyUserMFA(r, payload.ID, id, targets[id], states, enabled)
 		if results[i].Status == mfaResultChanged {
 			changed = append(changed, i)
 		}
@@ -155,7 +158,7 @@ func (h *UserOps) SetUsersMFA(w http.ResponseWriter, r *http.Request) {
 }
 
 // applyUserMFA makes the change for one member and reports what happened.
-func (h *UserOps) applyUserMFA(r *http.Request, actorID, id string, target *userstore.User, states map[string]tenancy.MFAState, enabled bool) mfaChangeResult {
+func (h *UserOps) applyUserMFA(r *http.Request, actorIdentityID, id string, target *userstore.User, states map[string]tenancy.MFAState, enabled bool) mfaChangeResult {
 	skip := func(reason string) mfaChangeResult {
 		return mfaChangeResult{UserID: id, Status: mfaResultSkipped, Reason: reason}
 	}
@@ -167,7 +170,7 @@ func (h *UserOps) applyUserMFA(r *http.Request, actorID, id string, target *user
 	}
 	// Your own setting goes through Account Settings, which proves the inbox
 	// (to turn on) or the password (to turn off).
-	if id == actorID {
+	if target.IdentityID == actorIdentityID {
 		return skip(mfaSkipSelf)
 	}
 	state, found := states[target.IdentityID]
@@ -188,7 +191,7 @@ func (h *UserOps) applyUserMFA(r *http.Request, actorID, id string, target *user
 	if enabled {
 		event = "mfa_admin_enabled"
 	}
-	logSecurityEvent(r, event, "identity", target.IdentityID, "user", id, "actor", actorID)
+	logSecurityEvent(r, event, "identity", target.IdentityID, "user", id, "actor", actorIdentityID)
 	return mfaChangeResult{UserID: id, Status: mfaResultChanged}
 }
 

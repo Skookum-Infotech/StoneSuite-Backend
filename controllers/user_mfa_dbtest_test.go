@@ -84,7 +84,7 @@ func (f *adminMFAFixture) do(t *testing.T, identity *tenancy.Identity, user *use
 	t.Helper()
 	req := httptest.NewRequest(method, path, jsonBody(t, body))
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey,
-		middleware.UserContextPayload{ID: identity.ID, Email: identity.Email, TenantID: f.tenantID, UserID: user.ID}))
+		middleware.UserContextPayload{ID: identity.ID, Email: identity.Email, TenantID: f.tenantID}))
 	rec := httptest.NewRecorder()
 	f.resolver.Middleware(handler).ServeHTTP(rec, req)
 	return rec

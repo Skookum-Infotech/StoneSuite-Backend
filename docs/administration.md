@@ -140,8 +140,10 @@ or Dismiss, optionally with a note. Dismissed anomalies stay dismissed, and you
 can Reopen any of them later. Use the tabs at the top to switch between Open,
 Confirmed, Reviewed, Dismissed and All. Anomaly checks run only while the
 platform's automation scheduler is turned on. A workspace admin can also pause
-it for just this workspace with the Anomaly scanning switch at the top of the page
-(it needs the Automation permissions). While it is off nothing is checked and no
+it for just this workspace with the Anomaly scanning switch at the top of the page,
+and use Run scan now beside it to check straight away instead of waiting for the
+next scheduled check (both need the Automation permissions). While it is off
+nothing is checked and no
 alerts are sent; switching it back on resumes at the next check and may raise
 anything from the last month that was missed.
 

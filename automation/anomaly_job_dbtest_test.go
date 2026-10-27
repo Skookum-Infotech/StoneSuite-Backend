@@ -66,3 +66,45 @@ func TestAnomalyScanHonoursTheWorkspaceSwitch(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, notified(), "once switched back on, the pending finding is announced")
 }
+
+// TestAnomalyScanNow covers the manual scan: it reports a switched-off workspace
+// and a scan already in progress instead of silently doing nothing, and it runs
+// otherwise.
+func TestAnomalyScanNow(t *testing.T) {
+	pool := newTenantTestPool(t)
+	ctx := context.Background()
+	tenant := &tenancy.Tenant{ID: "tenant-anomaly-now"}
+	job := NewAnomalyScan(Deps{Send: &fakeSender{}})
+	now := time.Now()
+	setRule := func(on bool) {
+		_, err := pool.Exec(ctx, `UPDATE automation_rules SET enabled = $2 WHERE rule_key = $1`, RuleKeyAnomalyScan, on)
+		require.NoError(t, err)
+	}
+	t.Cleanup(func() { setRule(true) })
+
+	setRule(false)
+	_, err := job.ScanNow(ctx, tenant, pool, now, time.UTC)
+	assert.ErrorIs(t, err, ErrAnomalyScanOff)
+
+	setRule(true)
+	_, err = job.ScanNow(ctx, tenant, pool, now, time.UTC)
+	assert.NoError(t, err, "an enabled workspace scans")
+
+	// Another session holds the scan lock: the manual scan must say so.
+	holder, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer holder.Release()
+	var got bool
+	require.NoError(t, holder.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, anomalyScanLockKey).Scan(&got))
+	require.True(t, got)
+	_, err = job.ScanNow(ctx, tenant, pool, now, time.UTC)
+	assert.ErrorIs(t, err, ErrAnomalyScanBusy)
+	res, err := job.Run(ctx, pool, JobEnv{Tenant: tenant, Now: now, Today: now, Loc: time.UTC})
+	assert.NoError(t, err, "the tick treats a running scan as a quiet skip")
+	assert.Equal(t, Result{}, res)
+	_, err = holder.Exec(ctx, `SELECT pg_advisory_unlock($1)`, anomalyScanLockKey)
+	require.NoError(t, err)
+
+	_, err = job.ScanNow(ctx, tenant, pool, now, time.UTC)
+	assert.NoError(t, err, "the lock is released after a scan")
+}

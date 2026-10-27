@@ -1,6 +1,9 @@
 package controllers
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"stonesuite-backend/anomaly"
+	"stonesuite-backend/automation"
 )
 
 func TestParseAnomalyFilter(t *testing.T) {
@@ -50,5 +54,35 @@ func TestAnomalyUUIDRE(t *testing.T) {
 	assert.True(t, anomalyUUIDRE.MatchString("0f8fad5b-d9cb-469f-a165-70867728950e"))
 	for _, bad := range []string{"", "not-a-uuid", "0F8FAD5B-D9CB-469F-A165-70867728950E", "0f8fad5b-d9cb-469f-a165-70867728950e'; --"} {
 		assert.False(t, anomalyUUIDRE.MatchString(bad), bad)
+	}
+}
+
+func TestScanNowOutcome(t *testing.T) {
+	tests := []struct {
+		name       string
+		res        automation.Result
+		err        error
+		wantStatus int
+		wantMsg    string
+	}{
+		{name: "ok", res: automation.Result{Transitioned: 2, Skipped: 5, Sent: 2}, wantStatus: http.StatusOK},
+		{name: "switched off", err: automation.ErrAnomalyScanOff, wantStatus: http.StatusConflict, wantMsg: "switched off"},
+		{name: "wrapped off still recognised", err: fmt.Errorf("x: %w", automation.ErrAnomalyScanOff), wantStatus: http.StatusConflict, wantMsg: "switched off"},
+		{name: "already running", err: automation.ErrAnomalyScanBusy, wantStatus: http.StatusConflict, wantMsg: "already running"},
+		{name: "failure hides the cause", err: errors.New("pq: secret detail"), wantStatus: http.StatusInternalServerError, wantMsg: "did not finish"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, body := scanNowOutcome(tt.res, tt.err)
+			assert.Equal(t, tt.wantStatus, status)
+			raw, err := json.Marshal(body)
+			require.NoError(t, err)
+			if tt.wantMsg != "" {
+				assert.Contains(t, string(raw), tt.wantMsg)
+				assert.NotContains(t, string(raw), "secret detail")
+				return
+			}
+			assert.JSONEq(t, `{"success":true,"raised":2,"alreadyKnown":5,"alertsSent":2,"alertsFailed":0}`, string(raw))
+		})
 	}
 }

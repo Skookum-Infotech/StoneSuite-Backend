@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,11 +26,16 @@ const sharedTemplateMarker = "linear-gradient(135deg,#001219 0%,#005f73 15%,#0a2
 // returns the decoded JSON body of every create call it received.
 func fakeNotify(t *testing.T) *[]map[string]any {
 	t.Helper()
-	var got []map[string]any
+	var (
+		got []map[string]any
+		mu  sync.Mutex // notices can go out concurrently
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		mu.Lock()
 		got = append(got, body)
+		mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"success":true,"data":{"notifications":[{"id":"n-1"}]}}`))
 	}))

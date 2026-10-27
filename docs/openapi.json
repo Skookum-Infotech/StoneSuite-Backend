@@ -21201,6 +21201,37 @@
         ]
       }
     },
+    "/api/tenant/users/mfa": {
+      "post": {
+        "operationId": "post_tenant_users_mfa",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "userOps.SetUsersMFA",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/users/{id}": {
       "delete": {
         "operationId": "delete_tenant_users_id",

@@ -243,6 +243,10 @@ func (h *RBACOps) UserRoles(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(w, r, authz.ResourceRole, authz.ActionUpdate) {
 		return
 	}
+	// A super admin's roles are theirs to change, not a plain role:update holder's.
+	if blockNonSuperAdmin(w, r, pool, userID) {
+		return
+	}
 
 	switch r.Method {
 	case http.MethodPost:

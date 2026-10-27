@@ -727,6 +727,9 @@ func main() {
 		mux.Handle("PATCH /api/tenant/users/me", tenantChain(userOps.UpdateMyProfile))
 		mux.Handle("GET /api/tenant/users", tenantChain(userOps.ListUsers))
 		mux.Handle("POST /api/tenant/users/invite", tenantChain(userOps.InviteUser))
+		// Super admin only (checked in the handler): turn two-step verification
+		// on or off for one or many members.
+		mux.Handle("POST /api/tenant/users/mfa", tenantChain(userOps.SetUsersMFA))
 		mux.Handle("GET /api/tenant/users/{id}", tenantChain(userOps.GetUser))
 		mux.Handle("PATCH /api/tenant/users/{id}", tenantChain(userOps.UpdateUser))
 		mux.Handle("DELETE /api/tenant/users/{id}", tenantChain(userOps.DeactivateUser))

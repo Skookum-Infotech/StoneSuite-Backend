@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-616 endpoints across 7 surfaces, read from `main.go`.
+618 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 516 |
+| staff token + tenant | 518 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 515 endpoints
+## `tenant` — 517 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -406,6 +406,13 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PUT` | `/api/tenant/ai/settings` | staff token + tenant | `aiOps.UpdateSettings` |
 | `GET` | `/api/tenant/ai/status` | staff token + tenant | `aiOps.Status` |
 | `POST` | `/api/tenant/ai/warm` | staff token + tenant | `aiOps.Warm` |
+
+### anomalies
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/anomalies` | staff token + tenant | `anomalyOps.List` |
+| `PATCH` | `/api/tenant/anomalies/{uuid}` | staff token + tenant | `anomalyOps.UpdateStatus` |
 
 ### audit
 

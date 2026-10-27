@@ -284,6 +284,32 @@ func SendMFAStatusEmail(ctx context.Context, tenantID, identityID, recipientEmai
 	return SendNotification(ctx, buildMFAStatusNotification(tenantID, identityID, recipientEmail, recipientName, enabled))
 }
 
+// buildMFAAdminChangeNotification is the status notice for a change a workspace
+// administrator made on the owner's behalf, so it doesn't read as something the
+// owner did themselves.
+func buildMFAAdminChangeNotification(tenantID, identityID, recipientEmail, recipientName string, enabled bool) NotificationRequest {
+	req := buildMFAStatusNotification(tenantID, identityID, recipientEmail, recipientName, enabled)
+	if enabled {
+		req.Body = "Two-step verification turned on by an administrator."
+		req.Email.Paragraphs = []Paragraph{
+			{Text("A workspace administrator turned on two-step verification for your StoneSuite account. From your next sign-in, after you enter your password we'll email a sign-in code to this address.")},
+		}
+		req.Email.FinePrint = []string{"Make sure you can open email sent to this address. Questions? Contact your workspace administrator."}
+		return req
+	}
+	req.Body = "Two-step verification turned off by an administrator."
+	req.Email.Paragraphs = []Paragraph{
+		{Text("A workspace administrator turned off two-step verification for your StoneSuite account. You'll now sign in with just your password.")},
+	}
+	req.Email.FinePrint = []string{"If you weren't expecting this, contact your workspace administrator. You can turn two-step verification back on from Account Settings."}
+	return req
+}
+
+// SendMFAAdminChangeEmail sends the notice for an administrator-made change.
+func SendMFAAdminChangeEmail(ctx context.Context, tenantID, identityID, recipientEmail, recipientName string, enabled bool) error {
+	return SendNotification(ctx, buildMFAAdminChangeNotification(tenantID, identityID, recipientEmail, recipientName, enabled))
+}
+
 // buildPortalInviteNotification builds the Notify request for an approved
 // customer's portal-login setup invite.
 func buildPortalInviteNotification(tenantID, inviteID, actorUserID, statusLink, recipientEmail, recipientName, workspaceName, setupLink string, expiryHours int) NotificationRequest {

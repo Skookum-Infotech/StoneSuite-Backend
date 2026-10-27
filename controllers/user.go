@@ -390,6 +390,10 @@ func (h *UserOps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if blockNonSuperAdmin(w, r, pool, id) {
+		return
+	}
+
 	var req struct {
 		FullName string `json:"fullName"`
 		Status   string `json:"status"`
@@ -481,6 +485,10 @@ func (h *UserOps) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		fail(w, http.StatusBadRequest, "Missing user id.")
+		return
+	}
+
+	if blockNonSuperAdmin(w, r, pool, id) {
 		return
 	}
 

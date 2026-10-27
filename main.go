@@ -610,6 +610,10 @@ func main() {
 		mux.Handle("POST /api/tenant/automation/rules/{key}/preview", tenantChain(controllers.NewAutomationPreviewOps(previewTZ).Preview))
 		automationDeliveryOps := controllers.NewAutomationDeliveryOps()
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
+		anomalyOps := controllers.NewAnomalyOps(automation.NewAnomalyScan(automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL}), previewTZ)
+		mux.Handle("GET /api/tenant/anomalies", tenantChain(anomalyOps.List))
+		mux.Handle("POST /api/tenant/anomalies/scan", tenantChain(anomalyOps.ScanNow))
+		mux.Handle("PATCH /api/tenant/anomalies/{uuid}", tenantChain(anomalyOps.UpdateStatus))
 
 		// Executors are registered before the ops are built. The docextract create
 		// executors are inert until DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED lets

@@ -26,9 +26,10 @@ func internalIDByUUID(ctx context.Context, pool *pgxpool.Pool, id string) (int, 
 
 // Update edits non-monetary fields only (spec AD-8: amount and source
 // identity are immutable post-creation — void + recreate to correct them).
+// The refund row is locked FOR UPDATE before the void and ExpectedVersion
+// checks, so both judge the state the write will land on.
 func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateRefundInput, actorEmployeeID int) (*Refund, error) {
-	internalID, err := internalIDByUUID(ctx, pool, id)
-	if err != nil {
+	if _, err := internalIDByUUID(ctx, pool, id); err != nil {
 		return nil, err
 	}
 	if err := resolveMethod(ctx, pool, in.MethodID); err != nil {
@@ -46,6 +47,23 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateRefundI
 		return nil, fmt.Errorf("begin update refund: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	lr, err := lockRefundForUpdate(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	var currentVersion int
+	if err := tx.QueryRow(ctx,
+		`SELECT refund_record_version FROM refund WHERE refund_id = $1`, lr.internalID).Scan(&currentVersion); err != nil {
+		return nil, fmt.Errorf("read refund version: %w", err)
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, currentVersion); err != nil {
+		return nil, err
+	}
+	if lr.statusCode == voidStatusCode {
+		return nil, ClientError{Msg: "Cannot edit a voided refund."}
+	}
+	internalID := lr.internalID
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE refund SET
@@ -75,28 +93,35 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateRefundI
 // (409-mapped ClientError) while any live application references it — must
 // Unapply (or Transition to VOID, which cascades) first (spec AD-9).
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID int) error {
-	internalID, err := internalIDByUUID(ctx, pool, id)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete refund: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the refund (same lock Apply takes first) so a concurrent apply
+	// cannot commit between the live-application count and the delete.
+	lr, err := lockRefundForUpdate(ctx, tx, id)
 	if err != nil {
 		return err
 	}
 	var liveApplications int
-	if err := pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT COUNT(*) FROM refund_application WHERE refund_id = $1 AND application_deleted_at IS NULL`,
-		internalID).Scan(&liveApplications); err != nil {
+		lr.internalID).Scan(&liveApplications); err != nil {
 		return fmt.Errorf("count live applications: %w", err)
 	}
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete a refund with live applications; unapply or void it first."}
 	}
 	deletedBy := actorOrSystem(actorEmployeeID)
-	tag, err := pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		UPDATE refund SET refund_deleted_at = NOW(), refund_deleted_by = $1
-		WHERE refund_uuid = $2 AND refund_deleted_at IS NULL`, deletedBy, id)
-	if err != nil {
+		WHERE refund_id = $2`, deletedBy, lr.internalID); err != nil {
 		return fmt.Errorf("delete refund: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete refund: %w", err)
 	}
 	return nil
 }

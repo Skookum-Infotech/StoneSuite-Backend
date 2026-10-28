@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
 
@@ -109,13 +110,25 @@ func resolveLineageInvoice(ctx context.Context, pool *pgxpool.Pool, invoiceUUID 
 // row, assigns the refund number, writes the 'create' history row). New
 // refunds start at PEND — nothing is authorized to move money yet (AD-5), so
 // there is no inline-application step here; compose the refund via
-// POST .../apply once it has been approved.
+// POST .../apply once it has been approved. A non-empty IdempotencyKey makes
+// a retried create return the first refund instead of making a second.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actorEmployeeID int) (*Refund, error) {
 	if in.CustomerUUID == "" {
 		return nil, ClientError{Msg: "customerUuid is required."}
 	}
-	if in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", in.Amount); err != nil {
+		return nil, err
+	}
+	// A retry whose first attempt already committed gets that refund back
+	// before any validation: a replay must answer like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
 	}
 	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
 	if err != nil {
@@ -195,6 +208,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
+
 	var newID int
 	var newUUID string
 	err = tx.QueryRow(ctx, `
@@ -229,6 +255,12 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRefundInput, actor
 		INSERT INTO refund_history (refund_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1, NULL, $2, 'create', $3)`, newID, initialStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert refund create history: %w", err)
+	}
+
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

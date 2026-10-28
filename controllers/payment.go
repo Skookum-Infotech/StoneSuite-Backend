@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/dberr"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
@@ -136,6 +138,12 @@ func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
 		errors.Is(err, payment.ErrApprovalRequired),
 		errors.Is(err, payment.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, payment.ErrVersionConflict):
+		fail(w, http.StatusConflict, "This payment was changed by someone else — reload and try again")
+	case errors.Is(err, idempotency.ErrKeyReuse):
+		fail(w, http.StatusConflict, "Idempotency-Key was already used with a different request")
+	case errors.Is(err, idempotency.ErrInProgress):
+		fail(w, http.StatusConflict, "A request with this Idempotency-Key is still in progress")
 	case errors.Is(err, payment.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())
 	default:
@@ -157,6 +165,10 @@ func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
 			fail(w, http.StatusBadRequest, ife.Error())
 			return
 		}
+		if status, msg, ok := dberr.Map(err); ok {
+			fail(w, status, msg)
+			return
+		}
 		fail(w, http.StatusInternalServerError, serverMsg)
 	}
 }
@@ -167,9 +179,17 @@ func (h *PaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in payment.CreatePaymentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	for _, app := range in.Applications {
 		if !h.invoiceInScopeForUpdate(w, r, pool, identityID, app.InvoiceUUID) {
@@ -245,8 +265,7 @@ func (h *PaymentOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in payment.UpdatePaymentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	before, _ := payment.Get(r.Context(), pool, id)

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
 
@@ -28,6 +29,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 	if len(items) == 0 {
 		return nil, ClientError{Msg: "At least one expense line is required."}
 	}
+	if err := validateLineCount(len(items)); err != nil {
+		return nil, err
+	}
 	out := make([]resolvedLine, 0, len(items))
 	seenLine := map[int]bool{}
 	for _, in := range items {
@@ -38,11 +42,14 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		if in.Amount < 0 {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: amount cannot be negative.", in.LineNumber)}
+		if err := validateLineAmount(in.LineNumber, in.Amount); err != nil {
+			return nil, err
 		}
 		if strings.TrimSpace(in.ExpenseDate) == "" {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: expense date is required.", in.LineNumber)}
+		}
+		if err := validateLineDate(in.LineNumber, in.ExpenseDate); err != nil {
+			return nil, err
 		}
 		if strings.TrimSpace(in.CategoryCode) == "" {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: category is required.", in.LineNumber)}
@@ -103,6 +110,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 	if actorEmployeeID <= 0 {
 		return nil, ClientError{Msg: "Unable to resolve your employee record. Contact an administrator."}
 	}
+
+	// Replay check before any other database-dependent work: a retried request
+	// must answer like the original, not fail on state the original changed.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
+
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
 	}
@@ -112,6 +132,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 		return nil, fmt.Errorf("begin create expense: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	active, err := employeeActive(ctx, tx, actorEmployeeID)
 	if err != nil {
@@ -165,6 +198,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 
 	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

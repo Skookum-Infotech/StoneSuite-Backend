@@ -95,8 +95,8 @@ func capForApply(unapplied, billBalance float64) float64 {
 // (409) if the payment is VOID or the bill isn't in a payable status, and
 // (400) on a vendor mismatch.
 func Apply(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID, vendorBillUUID string, amount float64, actorEmployeeID int) (*VendorPayment, error) {
-	if amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", amount); err != nil {
+		return nil, err
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -104,37 +104,50 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID, vendorBil
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	lp, err := lockVendorPaymentForUpdate(ctx, tx, vendorPaymentUUID) // lock order: payment first (AD-11)
-	if err != nil {
+	if err := applyTx(ctx, tx, vendorPaymentUUID, vendorBillUUID, amount, actorEmployeeID); err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit apply: %w", err)
+	}
+	return Get(ctx, pool, vendorPaymentUUID)
+}
+
+// applyTx is Apply's body inside a caller-owned transaction: it neither begins
+// nor commits, so Create can compose it with the header insert atomically and
+// ApplyIdempotent can claim its key in the same transaction.
+func applyTx(ctx context.Context, tx pgx.Tx, vendorPaymentUUID, vendorBillUUID string, amount float64, actorEmployeeID int) error {
+	lp, err := lockVendorPaymentForUpdate(ctx, tx, vendorPaymentUUID) // lock order: payment first (AD-11)
+	if err != nil {
+		return err
+	}
 	if lp.statusCode == "VOID" {
-		return nil, ClientError{Msg: "Cannot apply a voided vendor payment."}
+		return ClientError{Msg: "Cannot apply a voided vendor payment."}
 	}
 	li, err := vendorbill.LockForUpdate(ctx, tx, vendorBillUUID) // then bill (AD-11)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if li.VendorID != lp.vendorID {
-		return nil, ClientError{Msg: "Vendor bill belongs to a different vendor than the payment."}
+		return ClientError{Msg: "Vendor bill belongs to a different vendor than the payment."}
 	}
 	if msg, err := invoice.CurrencyConflictMsg(ctx, tx, "payment", lp.currencyID, "vendor bill", li.CurrencyID); err != nil {
-		return nil, err
+		return err
 	} else if msg != "" {
-		return nil, ClientError{Msg: msg}
+		return ClientError{Msg: msg}
 	}
 	if !vendorbill.PayableStatuses[li.StatusCode] {
-		return nil, ClientError{Msg: "Cannot apply payment to a " + li.StatusCode + " vendor bill; it must be approved first."}
+		return ClientError{Msg: "Cannot apply payment to a " + li.StatusCode + " vendor bill; it must be approved first."}
 	}
 
 	var applied float64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(application_amount),0) FROM vendor_payment_application WHERE vendor_payment_id = $1 AND application_deleted_at IS NULL`, lp.internalID).Scan(&applied); err != nil {
-		return nil, fmt.Errorf("sum vendor payment applications: %w", err)
+		return fmt.Errorf("sum vendor payment applications: %w", err)
 	}
 	unapplied := round2(lp.amount - applied)
 	capAmt := capForApply(unapplied, li.BalanceDue())
 	if amount > capAmt+0.001 {
-		return nil, ClientError{Msg: "Amount exceeds available balance."}
+		return ClientError{Msg: "Amount exceeds available balance."}
 	}
 
 	var existingID int
@@ -145,35 +158,32 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID, vendorBil
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO vendor_payment_application (vendor_payment_id, vendor_bill_id, application_amount, application_created_by)
 			VALUES ($1,$2,$3,$4)`, lp.internalID, li.InternalID, round2(amount), nullableInt(actorEmployeeID)); err != nil {
-			return nil, fmt.Errorf("insert vendor payment application: %w", err)
+			return fmt.Errorf("insert vendor payment application: %w", err)
 		}
 	case err != nil:
-		return nil, fmt.Errorf("check existing vendor payment application: %w", err)
+		return fmt.Errorf("check existing vendor payment application: %w", err)
 	default:
 		if _, err := tx.Exec(ctx, `
 			UPDATE vendor_payment_application SET application_amount = application_amount + $1, application_record_version = application_record_version + 1
 			WHERE application_id = $2`, round2(amount), existingID); err != nil {
-			return nil, fmt.Errorf("increase vendor payment application: %w", err)
+			return fmt.Errorf("increase vendor payment application: %w", err)
 		}
 	}
 
 	if err := recomputeVendorPayment(ctx, tx, lp.internalID, lp.amount, actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 	if err := vendorbill.RecomputeBalance(ctx, tx, li, "apply", actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO vendor_payment_history (vendor_payment_id, from_status_id, to_status_id, action, actor_employee_id)
 		SELECT vendor_payment_id, vendor_payment_status, vendor_payment_status, 'apply', $2 FROM vendor_payment WHERE vendor_payment_id = $1`,
 		lp.internalID, nullableInt(actorEmployeeID)); err != nil {
-		return nil, fmt.Errorf("insert vendor payment apply history: %w", err)
+		return fmt.Errorf("insert vendor payment apply history: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit apply: %w", err)
-	}
-	return Get(ctx, pool, vendorPaymentUUID)
+	return nil
 }
 
 // Unapply reverses the live application between vendorPaymentUUID and

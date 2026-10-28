@@ -10136,3 +10136,61 @@ CREATE TABLE IF NOT EXISTS request_idempotency (
     CONSTRAINT uq_request_idempotency UNIQUE (scope, idem_key)
 );
 CREATE INDEX IF NOT EXISTS idx_request_idempotency_created_at ON request_idempotency (created_at);
+
+-- -- write-safety uniqueness backstops ---------------------------------------
+-- DB-level guards behind the application checks. Each is created only when the
+-- existing data has no duplicates; otherwise a WARNING is raised and the index
+-- is skipped so a boot never breaks on legacy rows. Re-runs are no-ops (the
+-- pg_indexes guard). Like the other *_number keys, deleted rows stay in the
+-- key: a soft-deleted job's number is never reissued.
+DO $$
+DECLARE
+    dup_count BIGINT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = current_schema() AND indexname = 'uq_fabrication_job_number') THEN
+        SELECT COUNT(*) INTO dup_count FROM (
+            SELECT fabrication_job_number FROM fabrication_job
+            WHERE fabrication_job_number IS NOT NULL
+            GROUP BY fabrication_job_number HAVING COUNT(*) > 1
+        ) d;
+        IF dup_count = 0 THEN
+            -- Subtransaction: a duplicate committed between the count and the
+            -- build becomes a warning, never a failed boot.
+            BEGIN
+                CREATE UNIQUE INDEX uq_fabrication_job_number
+                    ON fabrication_job (fabrication_job_number) WHERE fabrication_job_number IS NOT NULL;
+            EXCEPTION WHEN unique_violation THEN
+                RAISE WARNING 'skipping uq_fabrication_job_number: duplicate fabrication_job_number committed concurrently';
+            END;
+        ELSE
+            RAISE WARNING 'skipping uq_fabrication_job_number: % duplicate fabrication_job_number value(s) exist', dup_count;
+        END IF;
+    END IF;
+END $$;
+
+DO $$
+DECLARE
+    dup_count BIGINT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = current_schema() AND indexname = 'uq_je_reverses') THEN
+        SELECT COUNT(*) INTO dup_count FROM (
+            SELECT reverses_journal_entry_id FROM journal_entry
+            WHERE reverses_journal_entry_id IS NOT NULL
+            GROUP BY reverses_journal_entry_id HAVING COUNT(*) > 1
+        ) d;
+        IF dup_count = 0 THEN
+            -- Subtransaction: a duplicate committed between the count and the
+            -- build becomes a warning, never a failed boot.
+            BEGIN
+                CREATE UNIQUE INDEX uq_je_reverses
+                    ON journal_entry (reverses_journal_entry_id) WHERE reverses_journal_entry_id IS NOT NULL;
+            EXCEPTION WHEN unique_violation THEN
+                RAISE WARNING 'skipping uq_je_reverses: second reversal of a journal entry committed concurrently';
+            END;
+        ELSE
+            RAISE WARNING 'skipping uq_je_reverses: % journal entry(ies) are reversed more than once', dup_count;
+        END IF;
+    END IF;
+END $$;

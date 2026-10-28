@@ -39,7 +39,7 @@ const poSelect = `
 	       po.purchase_order_shipping_charge, po.purchase_order_adjustment, po.purchase_order_grand_total,
 	       po.purchase_order_created_at, po.purchase_order_updated_at,
 	       po.purchase_order_status, po.purchase_order_vendor_id,
-	       COALESCE(cu.id::text,'')
+	       COALESCE(cu.id::text,''), po.purchase_order_record_version
 	FROM purchase_order po
 	JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 	JOIN vendor v ON v.vendor_id = po.purchase_order_vendor_id
@@ -78,7 +78,7 @@ func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, poMeta, error) {
 		&p.Subtotal, &p.DiscountTotal, &p.TaxTotal,
 		&p.ShippingCharge, &p.Adjustment, &p.GrandTotal,
 		&p.CreatedAt, &p.UpdatedAt,
-		&meta.statusID, &meta.vendorID, &p.CreatedByUserID,
+		&meta.statusID, &meta.vendorID, &p.CreatedByUserID, &p.RecordVersion,
 	); err != nil {
 		return nil, poMeta{}, err
 	}

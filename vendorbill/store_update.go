@@ -17,8 +17,8 @@ import (
 // so amountPaid is always 0 here -- no "can't reduce below what's paid"
 // guard is needed, unlike invoice's Update.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendorBillInput, actorEmployeeID int) (*VendorBill, error) {
-	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
-		return nil, ClientError{Msg: "salesTaxPercent must be between 0 and 100."}
+	if err := validateWriteInput(in.Items, in.SalesTaxPercent, in.Adjustment, in.BillDate, in.DueDate); err != nil {
+		return nil, err
 	}
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
@@ -32,17 +32,24 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 
 	var internalID, vendorInternalID int
 	var statusCode, currentInvoice string
+	var currentVersion int
 	err = tx.QueryRow(ctx, `
-		SELECT vb.vendor_bill_id, rs.record_status_code, vb.vendor_bill_vendor_id, vb.vendor_bill_vendor_invoice_number
+		SELECT vb.vendor_bill_id, rs.record_status_code, vb.vendor_bill_vendor_id, vb.vendor_bill_vendor_invoice_number,
+		       vb.vendor_bill_record_version
 		FROM vendor_bill vb JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
 		WHERE vb.vendor_bill_uuid = $1 AND vb.vendor_bill_deleted_at IS NULL
 		FOR UPDATE OF vb`, uuid,
-	).Scan(&internalID, &statusCode, &vendorInternalID, &currentInvoice)
+	).Scan(&internalID, &statusCode, &vendorInternalID, &currentInvoice, &currentVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load vendor bill for update: %w", err)
+	}
+	// Version first, under the row lock: a stale form is a conflict, not an
+	// "only drafts can be edited" error caused by someone else's transition.
+	if err := checkExpectedVersion(in.ExpectedVersion, currentVersion); err != nil {
+		return nil, err
 	}
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft vendor bill can be edited. Recall it to draft first."}
@@ -66,6 +73,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.Adjustment, 0)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The vendor bill total cannot be negative."}
+	}
 
 	custom := in.CustomFields
 	if custom == nil {

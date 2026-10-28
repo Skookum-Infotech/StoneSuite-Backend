@@ -46,9 +46,9 @@ type purchaseOrderSnapshot struct {
 }
 
 // loadPurchaseOrderSnapshot loads a live purchase order's header snapshot by
-// external uuid inside tx (row is not locked -- a source document does not
-// change once converted, and purchase order has no FOR UPDATE convention
-// elsewhere for this read, mirroring loadRequisitionSnapshot).
+// external uuid inside tx. The order row is read FOR SHARE so its SoftDelete
+// (FOR UPDATE plus a reference count) serializes against a bill being created
+// from it.
 func loadPurchaseOrderSnapshot(ctx context.Context, tx pgx.Tx, poUUID string) (*purchaseOrderSnapshot, error) {
 	var s purchaseOrderSnapshot
 	var customRaw []byte
@@ -60,7 +60,8 @@ func loadPurchaseOrderSnapshot(ctx context.Context, tx pgx.Tx, poUUID string) (*
 		       po.purchase_order_memo, po.purchase_order_notes, po.purchase_order_internal_notes, po.purchase_order_terms_conditions,
 		       po.purchase_order_custom_fields
 		FROM purchase_order po JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
-		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL`, poUUID).Scan(
+		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL
+		FOR SHARE OF po`, poUUID).Scan(
 		&s.internalID, &s.statusCode,
 		&s.vendorID, &s.vendorName,
 		&s.referenceNumber, &s.paymentTermsID, &s.currencyID,

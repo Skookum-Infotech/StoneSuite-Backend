@@ -101,7 +101,7 @@ const headerSelect = `
 	           AND l.count_variance <> 0),
 	       (SELECT COALESCE(SUM(l.count_variance),0) FROM inventory_count_line l
 	         WHERE l.inventory_count_id = c.inventory_count_id AND l.line_deleted_at IS NULL),
-	       c.count_created_at, c.count_updated_at
+	       c.count_created_at, c.count_updated_at, c.count_record_version
 	FROM inventory_count c
 	JOIN lkp_record_status rs ON rs.record_status_id = c.count_status
 	JOIN company_location w   ON w.company_location_id = c.warehouse_id
@@ -115,7 +115,7 @@ func scanHeader(row pgx.Row) (*Count, error) {
 		&c.Date, &c.FrozenAt, &c.Notes, &c.InternalNotes, &c.OwnerID,
 		&c.PostedAt, &c.CancelledAt, &c.CancelReason,
 		&c.LineCount, &c.CountedCount, &c.VarianceCount, &c.NetVariance,
-		&c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.CreatedAt, &c.UpdatedAt, &c.RecordVersion); err != nil {
 		return nil, err
 	}
 	return &c, nil

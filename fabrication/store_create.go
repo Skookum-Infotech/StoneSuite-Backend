@@ -61,7 +61,10 @@ func CreateOnce(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, acto
 // existingByRequestID returns the live job this caller already created for
 // in.SalesOrderUUID under in.RequestID, if any.
 func existingByRequestID(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmployeeID int) (*Job, bool, error) {
-	if in.RequestID == "" {
+	// No resolved employee: every such caller would share the NULL created_by
+	// bucket and could replay another's job, so never replay for them (a
+	// duplicate requestId then fails on uq_fj_create_request instead).
+	if in.RequestID == "" || actorEmployeeID == 0 {
 		return nil, false, nil
 	}
 	var uuid string

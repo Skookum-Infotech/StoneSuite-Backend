@@ -21,6 +21,9 @@ import (
 // than diffed: a pending receipt has no ledger rows pointing at its lines yet,
 // so there is nothing for a stale line id to strand.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemReceiptInput, actorEmployeeID int) (*ItemReceipt, error) {
+	if err := validateWriteInput(len(in.Items), in.ReceiptDate); err != nil {
+		return nil, err
+	}
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
 	}
@@ -31,15 +34,16 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var irInternalID, poInternalID int
+	var irInternalID, poInternalID, curVersion int
 	var curStatusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT ir.item_receipt_id, ir.purchase_order_id, rs.record_status_code
+		SELECT ir.item_receipt_id, ir.purchase_order_id, rs.record_status_code,
+		       ir.item_receipt_record_version
 		FROM item_receipt ir
 		JOIN lkp_record_status rs ON rs.record_status_id = ir.item_receipt_status
 		WHERE ir.item_receipt_uuid = $1 AND ir.item_receipt_deleted_at IS NULL
 		FOR UPDATE OF ir`, uuid,
-	).Scan(&irInternalID, &poInternalID, &curStatusCode)
+	).Scan(&irInternalID, &poInternalID, &curStatusCode, &curVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -51,6 +55,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateItemR
 	}
 	if curStatusCode != pendingStatusCode {
 		return nil, ClientError{Msg: "Only a pending item receipt can be edited."}
+	}
+	// Checked under the row lock, after the status gate, so a stale save can
+	// neither race another writer nor mask a status refusal.
+	if err := checkExpectedVersion(in.ExpectedVersion, curVersion); err != nil {
+		return nil, err
 	}
 
 	// The warehouse is resolved before the lines: a slab's bin is validated

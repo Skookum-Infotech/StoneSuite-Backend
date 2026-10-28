@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/inventorytransfer"
 	"stonesuite-backend/query"
 )
@@ -120,9 +121,17 @@ func (h *InventoryTransferOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in inventorytransfer.Input
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	t, err := inventorytransfer.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
@@ -139,8 +148,7 @@ func (h *InventoryTransferOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in inventorytransfer.Input
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	if err := inventorytransfer.Update(r.Context(), pool, r.PathValue("uuid"), in, resolveEmployeeID(r, identityID)); err != nil {

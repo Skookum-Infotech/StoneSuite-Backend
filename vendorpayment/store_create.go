@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
 
@@ -50,19 +51,27 @@ func resolveMethod(ctx context.Context, pool *pgxpool.Pool, methodID int) error 
 // payment method and custom fields, inserts the row, assigns the VPAY
 // document number post-insert, and writes a 'create' history row. New
 // payments start at DRFT, with applied_total 0 and unapplied_amount equal to
-// the full amount. Any inline in.Applications run AFTER the header
-// transaction commits, each as its own Apply call/transaction — so a later
-// application failing does not roll back the header. This is the same
-// accepted trade-off payment.Create documents: the header always persists;
-// callers must check the returned error and reconcile any partially-applied
-// state (e.g. via the returned payment's Applications) rather than assume
-// all-or-nothing.
+// the full amount. Any inline in.Applications run in that same transaction via
+// applyTx, so a failing application leaves no payment behind and a retry
+// cannot create a second one. A non-empty IdempotencyKey makes a retried
+// create return the first payment.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput, actorEmployeeID int) (*VendorPayment, error) {
 	if in.VendorUUID == "" {
 		return nil, ClientError{Msg: "vendorUuid is required."}
 	}
-	if in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateCreateAmounts(in.Amount, in.Applications); err != nil {
+		return nil, err
+	}
+	// A retry whose first attempt already committed gets that payment back
+	// before any database-dependent check: a replay must answer like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
 	}
 	vendorID, vendorName, err := vendorSnapshot(ctx, pool, in.VendorUUID)
 	if err != nil {
@@ -101,6 +110,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 		return nil, fmt.Errorf("begin create vendor payment: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	var newID int
 	var newUUID string
@@ -141,15 +163,21 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 		return nil, fmt.Errorf("insert vendor payment create history: %w", err)
 	}
 
+	// Same lock order as Apply: this payment (just inserted), then each bill.
+	for _, app := range in.Applications {
+		if err := applyTx(ctx, tx, newUUID, app.VendorBillUUID, app.Amount, actorEmployeeID); err != nil {
+			return nil, fmt.Errorf("apply inline application to vendor bill %s: %w", app.VendorBillUUID, err)
+		}
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor payment: %w", err)
 	}
 	notifyCreated(ctx, pool, newUUID, newID, actorEmployeeID)
-
-	for _, app := range in.Applications {
-		if _, err := Apply(ctx, pool, newUUID, app.VendorBillUUID, app.Amount, actorEmployeeID); err != nil {
-			return nil, fmt.Errorf("apply inline application to vendor bill %s: %w", app.VendorBillUUID, err)
-		}
-	}
 	return Get(ctx, pool, newUUID)
 }

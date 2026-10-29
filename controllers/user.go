@@ -464,13 +464,15 @@ func (h *UserOps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	// When suspending, revoke all active refresh tokens so the user is forced
 	// to re-authenticate and the status check at login blocks them immediately.
 	if req.Status == "suspended" || req.Status == "disabled" {
-		revoked := true
 		if rErr := h.CP.RevokeAllRefreshTokens(r.Context(), u.IdentityID); rErr != nil {
 			slog.Error("suspend user: revoke refresh tokens", "user", id, "error", rErr)
-			revoked = false
+			logSecurityEvent(r, "user_suspended", "user", id, "identity", u.IdentityID,
+				"by_identity", payload.ID, "sessions_revoked", false)
+			fail(w, http.StatusInternalServerError, "User status updated, but their sessions could not be ended. Please try again.")
+			return
 		}
 		logSecurityEvent(r, "user_suspended", "user", id, "identity", u.IdentityID,
-			"by_identity", payload.ID, "sessions_revoked", revoked)
+			"by_identity", payload.ID, "sessions_revoked", true)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})

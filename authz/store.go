@@ -101,6 +101,17 @@ func EffectiveGrantsForRole(ctx context.Context, q Querier, identityID, activeRo
 	if pool, ok := q.(*pgxpool.Pool); ok {
 		key := grantsCacheKey{pool: pool, identityID: identityID, activeRoleID: activeRoleID}
 		if g, ok := grantsCache.Get(key); ok {
+			// The cache is per process, so a deactivation handled by another
+			// machine never invalidates this one: re-check the (cheap) status
+			// on every hit and drop the entry when the user is no longer active.
+			active, err := identityIsActive(ctx, q, identityID)
+			if err != nil {
+				return nil, err
+			}
+			if !active {
+				grantsCache.Delete(key)
+				return nil, nil
+			}
 			return g, nil
 		}
 		g, err := loadEffectiveGrants(ctx, q, identityID, activeRoleID)
@@ -121,6 +132,22 @@ func activeRoleFromContext(ctx context.Context) string {
 		return ""
 	}
 	return payload.ActiveRoleID
+}
+
+// identityIsActive reports whether the tenant user for identityID exists and
+// has status 'active'. A missing user is not active.
+func identityIsActive(ctx context.Context, q Querier, identityID string) (bool, error) {
+	var active bool
+	err := q.QueryRow(ctx,
+		`SELECT status = 'active' FROM users WHERE identity_id = $1`, identityID,
+	).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("effective grants: check user status: %w", err)
+	}
+	return active, nil
 }
 
 func loadEffectiveGrants(ctx context.Context, q Querier, identityID, activeRoleID string) ([]Grant, error) {

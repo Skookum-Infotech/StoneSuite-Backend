@@ -10,6 +10,7 @@ import (
 	"stonesuite-backend/docpdf"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/userstore"
 	"stonesuite-backend/workflow"
 )
 
@@ -69,20 +70,32 @@ func prepareSend(tenantID, recordID string, doc docpdf.PrintableDoc, meta DocMet
 	}, nil
 }
 
-// deliver renders the prepared document, emails it via Notify, records the
+// deliver is deliverKeyed with no client idempotency key: every call is a
+// fresh attempt (still pending-first, with a Notify idempotency key).
+func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityID, ownerUserID string, p *preparedSend) (string, services.EmailOutcome, *sendError) {
+	return h.deliverKeyed(ctx, pool, identityID, ownerUserID, p, "")
+}
+
+// deliverKeyed renders the prepared document, emails it via Notify, records the
 // send and audit row, and pings the record owner. identityID is the caller's
 // control-plane identity (what Notify scopes by); it returns the document_sends
 // row id and what really happened to the email.
 //
+// The send is pending-first (see runSendAttempt): an attempt row is written
+// before the email is queued, and Notify gets an attempt-derived idempotency
+// key, so a retry with the same idemKey never re-sends to a recipient that
+// already got the email. A completed send under the same key is replayed
+// without notifying or re-recording anything.
+//
 // The *sendError covers a send that could not be made at all (render failed,
-// Notify unreachable or refusing). The EmailOutcome covers the rest: Notify
-// accepts before it sends, so after recording the send deliver waits briefly
-// for the first delivery attempt (services.ConfirmEmailDelivery) and reports it
-// — a provider refusal such as an unverified sender domain arrives here as a
-// non-Sent outcome, not as a success. The send row is kept either way: Notify
-// keeps retrying a refused delivery, and the row's notification ids are how it
-// is traced.
-func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityID, ownerUserID string, p *preparedSend) (string, services.EmailOutcome, *sendError) {
+// Notify unreachable or refusing, key conflict). The EmailOutcome covers the
+// rest: Notify accepts before it sends, so after recording the send deliver
+// waits briefly for the first delivery attempt (services.ConfirmEmailDelivery)
+// and reports it — a provider refusal such as an unverified sender domain
+// arrives here as a non-Sent outcome, not as a success. The send row is kept
+// either way: Notify keeps retrying a refused delivery, and the row's
+// notification ids are how it is traced.
+func (h *DocumentOps) deliverKeyed(ctx context.Context, pool *pgxpool.Pool, identityID, ownerUserID string, p *preparedSend, idemKey string) (string, services.EmailOutcome, *sendError) {
 	pdf, err := h.renderPDF(p.doc)
 	if err != nil {
 		return "", services.EmailOutcome{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to render PDF."}
@@ -98,36 +111,49 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 	// instead of a direct, unretried call. The returned notification ids are
 	// stored on the send row so the async delivery outcome can be looked back
 	// up from notify later.
-	sendReq := customerSendRequest(p.tenantID, identityID, p.meta, p.recordID, p.subject, p.doc, p.message, p.to, p.cc, fileName, pdf)
-	// A Sales Order's customer email carries the order's own Reply-To, so the
-	// customer's reply comes back to its Communication tab.
-	sender := h.routeReplies(ctx, pool, &sendReq, p, identityID)
-	notifyResult, err := services.SendNotificationWithResult(ctx, sendReq)
-	if err != nil {
-		slog.WarnContext(ctx, "document send: notify failed",
-			"workflow", p.meta.WorkflowKey, "record", p.recordID, "error", err)
-		return "", services.EmailOutcome{}, &sendError{Status: http.StatusBadGateway, Msg: "Failed to send email."}
+	var sender userstore.User
+	var emailBody *services.Email
+	buildReq := func(string) services.NotificationRequest {
+		sendReq := customerSendRequest(p.tenantID, identityID, p.meta, p.recordID, p.subject, p.doc, p.message, p.to, p.cc, fileName, pdf)
+		// A Sales Order's customer email carries the order's own Reply-To, so the
+		// customer's reply comes back to its Communication tab.
+		sender = h.routeReplies(ctx, pool, &sendReq, p, identityID)
+		emailBody = sendReq.Email
+		return sendReq
 	}
-
-	sendID, err := workflow.InsertDocumentSend(ctx, pool, workflow.DocumentSend{
-		RecordID: p.recordID, WorkflowKey: p.meta.WorkflowKey,
-		SentTo: joinRecipients(p.to), CC: joinRecipients(p.cc),
-		Subject: p.subject, SentByUserID: actorUserID,
-		NotifyNotificationIDs: notifyResult.NotificationIDs,
-	})
-	if err != nil {
-		return "", services.EmailOutcome{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to record send."}
+	out, serr := runSendAttempt(ctx, pool, h.notifySender(),
+		workflow.DocumentSendAttempt{
+			RecordID: p.recordID, WorkflowKey: p.meta.WorkflowKey, IdempotencyKey: idemKey,
+			RequestFingerprint: sendFingerprint(p), SentByUserID: actorUserID,
+		},
+		workflow.DocumentSend{
+			RecordID: p.recordID, WorkflowKey: p.meta.WorkflowKey,
+			SentTo: joinRecipients(p.to), CC: joinRecipients(p.cc),
+			Subject: p.subject, SentByUserID: actorUserID,
+		}, buildReq)
+	if serr != nil {
+		return "", services.EmailOutcome{}, serr
 	}
-	h.recordSent(ctx, pool, p, sendID, sender, sendReq.Email)
-	_ = workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
-		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to})
+	if out.Replay {
+		return out.SendID, services.ConfirmEmailDelivery(ctx, p.tenantID, out.Notify, nil), nil
+	}
+	sendID := out.SendID
+	h.recordSent(ctx, pool, p, sendID, sender, emailBody)
+	if err := workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
+		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to}); err != nil {
+		slog.WarnContext(ctx, "document send: audit log failed", "send_id", sendID, "error", err)
+	}
 
 	ownerAddr, ownerIdentityID, ownerName := ownerSendContact(ctx, pool, ownerUserID)
-	notifyOwnerOfSend(ctx, services.SendNotification, sendOwner{Email: ownerAddr, IdentityID: ownerIdentityID, Name: ownerName},
+	pingKey := documentOwnerPingKey(sendID)
+	notifyOwnerOfSend(ctx, func(c context.Context, req services.NotificationRequest) error {
+		req.IdempotencyKey = pingKey
+		return services.SendNotification(c, req)
+	}, sendOwner{Email: ownerAddr, IdentityID: ownerIdentityID, Name: ownerName},
 		p.tenantID, identityID, p.doc, p.meta.Number, p.meta.WorkflowKey, p.recordID, p.to, pdf, fileName)
 
 	// Last, so recording the send and pinging the owner are not held up by the wait.
-	return sendID, services.ConfirmEmailDelivery(ctx, p.tenantID, notifyResult, nil), nil
+	return sendID, services.ConfirmEmailDelivery(ctx, p.tenantID, out.Notify, nil), nil
 }
 
 // loadRecordDoc loads recordID's printable document through the loader

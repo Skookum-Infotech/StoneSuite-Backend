@@ -10045,6 +10045,28 @@ CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_identity_status ON ai_proposed
 CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_expires_at ON ai_proposed_action (expires_at);
 
 -- =====================================================================
+-- DOCUMENT SEND ATTEMPTS (idempotent customer emails)
+-- =====================================================================
+-- One row per attempt to email a document, written BEFORE the email is queued
+-- so a retry (same Idempotency-Key) reuses the attempt instead of re-sending.
+-- Pending/failed attempts live here, not in document_sends: document_sends
+-- means "the document was sent" (send history, AR automation). On success the
+-- attempt is finalized into document_sends with the attempt's own id.
+CREATE TABLE IF NOT EXISTS document_send_attempt (
+    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    record_id               UUID        NOT NULL,
+    workflow_key            TEXT        NOT NULL,
+    idempotency_key         TEXT        NOT NULL DEFAULT '',
+    request_fingerprint     TEXT        NOT NULL DEFAULT '',
+    status                  TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed')),
+    sent_by_user_id         UUID        REFERENCES users(id) ON DELETE SET NULL,
+    notify_notification_ids TEXT[]      NOT NULL DEFAULT '{}',
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_document_send_attempt_key
+    ON document_send_attempt (record_id, workflow_key, idempotency_key) WHERE idempotency_key <> '';
+
 -- Anomaly detection: findings raised by the scheduled anomaly scan
 -- (anomaly/), who each one is addressed to, and how a reviewer resolved
 -- it. UNIQUE (rule_key, subject_key) is what makes a rescan idempotent: a

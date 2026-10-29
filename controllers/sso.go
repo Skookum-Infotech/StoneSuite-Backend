@@ -1,9 +1,9 @@
 package controllers
 
 import (
-	"log/slog"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"

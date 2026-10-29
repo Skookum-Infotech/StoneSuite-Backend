@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"log/slog"
 	"context"
 	"encoding/json"
 	"errors"
@@ -118,7 +119,7 @@ func (h *TenantOps) reviewOnboarding(w http.ResponseWriter, r *http.Request, adm
 			fail(w, http.StatusInternalServerError, "Failed to reject application.")
 			return
 		}
-		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.rejected", "{}")
+		logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.rejected", "{}"))
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Application rejected."})
 		return
 	}
@@ -133,7 +134,7 @@ func (h *TenantOps) reviewOnboarding(w http.ResponseWriter, r *http.Request, adm
 		fail(w, http.StatusInternalServerError, "Approval failed: "+err.Error())
 		return
 	}
-	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.approved", "{}")
+	logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.approved", "{}"))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "message": "Approved. Provisioning started.", "passwordSetupLink": setup,
 	})
@@ -385,7 +386,11 @@ func (h *TenantOps) SubmitApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to update status.")
 		return
 	}
-	_ = h.CP.MarkInviteAccepted(r.Context(), inv.ID)
+	if err := h.CP.MarkInviteAccepted(r.Context(), inv.ID); err != nil {
+		slog.Error("mark invite accepted failed", "invite", inv.ID, "tenant", inv.TenantID, "error", err)
+		fail(w, http.StatusInternalServerError, "Failed to finalize submission. Please try again.")
+		return
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"success": true,

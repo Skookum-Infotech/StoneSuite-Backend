@@ -33,40 +33,55 @@ type InventoryAdjustmentOps struct{}
 // NewInventoryAdjustmentOps constructs the handler group.
 func NewInventoryAdjustmentOps() *InventoryAdjustmentOps { return &InventoryAdjustmentOps{} }
 
+// auth is authScoped for callers that do not need the grant's scope.
 func (h *InventoryAdjustmentOps) auth(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
+	pool, identityID, _, ok := h.authScoped(w, r, action)
+	return pool, identityID, ok
+}
+
+// authScoped runs the permission check and also returns the grant's scope.
+func (h *InventoryAdjustmentOps) authScoped(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceInventoryAdjustment, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if !decision.Allowed {
 		logSecurityEvent(r, "permission_denied",
 			"identity", payload.ID, "resource", string(authz.ResourceInventoryAdjustment), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" inventory adjustments.")
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return pool, payload.ID, true
+	return pool, payload.ID, decision.Scope, true
 }
 
 // authByUUID adds the existence guard for single-record mutations, 404ing so
 // document ids cannot be enumerated.
 func (h *InventoryAdjustmentOps) authByUUID(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
-	pool, identityID, ok := h.auth(w, r, action)
+	pool, identityID, scope, ok := h.authScoped(w, r, action)
 	if !ok {
 		return nil, "", false
 	}
-	if _, err := inventoryadjustment.Get(r.Context(), pool, r.PathValue("uuid")); err != nil {
+	a, err := inventoryadjustment.Get(r.Context(), pool, r.PathValue("uuid"))
+	if err != nil {
 		adjustmentFail(w, err, "Failed to load adjustment.")
+		return nil, "", false
+	}
+	if !ownerEmployeeAllows(r.Context(), pool, scope, identityID, a.OwnerID) {
+		logSecurityEvent(r, "idor_denied",
+			"identity", identityID, "record", r.PathValue("uuid"), "resource", string(authz.ResourceInventoryAdjustment),
+			"action", string(action), "scope", string(scope))
+		fail(w, http.StatusNotFound, "Adjustment not found.")
 		return nil, "", false
 	}
 	return pool, identityID, true
@@ -92,7 +107,7 @@ func adjustmentFail(w http.ResponseWriter, err error, fallback string) {
 
 // List GET /api/tenant/inventory/adjustments
 func (h *InventoryAdjustmentOps) List(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -100,12 +115,12 @@ func (h *InventoryAdjustmentOps) List(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
 		req.Limit = n
 	}
-	h.search(w, r, pool, req)
+	h.search(w, r, pool, identityID, scope, req)
 }
 
 // Search POST /api/tenant/inventory/adjustments/search
 func (h *InventoryAdjustmentOps) Search(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -116,11 +131,16 @@ func (h *InventoryAdjustmentOps) Search(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	h.search(w, r, pool, req)
+	h.search(w, r, pool, identityID, scope, req)
 }
 
-func (h *InventoryAdjustmentOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, req query.Request) {
-	page, err := inventoryadjustment.Search(r.Context(), pool, req)
+func (h *InventoryAdjustmentOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope, req query.Request) {
+	owner, ok := ownerEmployeeFilter(r.Context(), pool, scope, identityID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": []any{}, "hasMore": false})
+		return
+	}
+	page, err := inventoryadjustment.SearchOwned(r.Context(), pool, owner, req)
 	if err != nil {
 		adjustmentFail(w, err, "Failed to search adjustments.")
 		return
@@ -135,7 +155,7 @@ func (h *InventoryAdjustmentOps) search(w http.ResponseWriter, r *http.Request, 
 
 // Get GET /api/tenant/inventory/adjustments/{uuid}
 func (h *InventoryAdjustmentOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, _, ok := h.authByUUID(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -266,7 +286,7 @@ func (h *InventoryAdjustmentOps) Post(w http.ResponseWriter, r *http.Request) {
 
 // History GET /api/tenant/inventory/adjustments/{uuid}/history
 func (h *InventoryAdjustmentOps) History(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, _, ok := h.authByUUID(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}

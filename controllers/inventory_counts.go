@@ -39,7 +39,7 @@ func NewInventoryCountOps() *InventoryCountOps { return &InventoryCountOps{} }
 
 // List GET /api/tenant/inventory/counts
 func (h *InventoryCountOps) List(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -47,12 +47,12 @@ func (h *InventoryCountOps) List(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
 		req.Limit = n
 	}
-	h.search(w, r, pool, req)
+	h.search(w, r, pool, identityID, scope, req)
 }
 
 // Search POST /api/tenant/inventory/counts/search
 func (h *InventoryCountOps) Search(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -63,11 +63,16 @@ func (h *InventoryCountOps) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.search(w, r, pool, req)
+	h.search(w, r, pool, identityID, scope, req)
 }
 
-func (h *InventoryCountOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, req query.Request) {
-	page, err := inventorycount.Search(r.Context(), pool, req)
+func (h *InventoryCountOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope, req query.Request) {
+	owner, ok := ownerEmployeeFilter(r.Context(), pool, scope, identityID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": []any{}, "hasMore": false})
+		return
+	}
+	page, err := inventorycount.SearchOwned(r.Context(), pool, owner, req)
 	if err != nil {
 		countFail(w, err, "Failed to search counts.")
 		return
@@ -82,7 +87,7 @@ func (h *InventoryCountOps) search(w http.ResponseWriter, r *http.Request, pool 
 
 // Get GET /api/tenant/inventory/counts/{uuid}
 func (h *InventoryCountOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, _, ok := h.authByUUID(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -249,7 +254,7 @@ func (h *InventoryCountOps) Post(w http.ResponseWriter, r *http.Request) {
 
 // History GET /api/tenant/inventory/counts/{uuid}/history
 func (h *InventoryCountOps) History(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, _, ok := h.authByUUID(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}

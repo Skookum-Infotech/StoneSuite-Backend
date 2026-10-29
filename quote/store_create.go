@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"stonesuite-backend/historywrite"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -160,7 +161,7 @@ func insertLines(ctx context.Context, tx pgx.Tx, quoteInternalID int, lines []re
 
 // writeHistory records one quote_history row inside the caller's transaction.
 func writeHistory(ctx context.Context, tx pgx.Tx, quoteInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO quote_history (quote_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1,$2,$3,$4,$5)`,
 		quoteInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

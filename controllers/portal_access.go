@@ -44,29 +44,29 @@ var errStaffEmailConflict = errors.New("email already belongs to a workspace use
 
 // authPortalAccess checks the caller's permission and returns the tenant pool.
 // Follows the per-module auth<Module> convention used across controllers.
-func (h *PortalAccessOps) authPortalAccess(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
+func (h *PortalAccessOps) authPortalAccessScoped(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourcePortalAccess, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if !decision.Allowed {
 		logSecurityEvent(r, "permission_denied", "identity", payload.ID,
 			"resource", string(authz.ResourcePortalAccess), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to manage customer portal access.")
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return pool, payload.ID, true
+	return pool, payload.ID, decision.Scope, true
 }
 
 // customerForPortal resolves the {customerUuid} path value and confirms the
@@ -613,11 +613,16 @@ func (h *PortalAccessOps) ResumePortalUser(w http.ResponseWriter, r *http.Reques
 // workspace, without visiting each customer record individually.
 // Path: GET /api/tenant/portal-users
 func (h *PortalAccessOps) ListAllPortalUsers(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.authPortalAccess(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authPortalAccessScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
-	users, err := portal.ListUsersForTenant(r.Context(), pool)
+	owner, ok := ownerEmployeeFilter(r.Context(), pool, scope, identityID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "portalUsers": []map[string]any{}})
+		return
+	}
+	users, err := portal.ListUsersForTenant(r.Context(), pool, owner)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to list portal logins.")
 		return
@@ -670,4 +675,35 @@ func employeeIDOrNil(r *http.Request, pool *pgxpool.Pool, identityID string) *in
 		return &empID
 	}
 	return nil
+}
+
+// authPortalAccess checks the permission and, for an own-scoped caller acting
+// on a {customerUuid} route, that the customer is one they own. A customer
+// outside scope 404s (never 403) so customer ids cannot be enumerated.
+func (h *PortalAccessOps) authPortalAccess(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
+	pool, identityID, scope, ok := h.authPortalAccessScoped(w, r, action)
+	if !ok {
+		return nil, "", false
+	}
+	uuid := r.PathValue("customerUuid")
+	if scope == authz.ScopeAll || uuid == "" {
+		return pool, identityID, true
+	}
+	owner, err := portal.CustomerOwnerEmployeeID(r.Context(), pool, uuid)
+	switch {
+	case errors.Is(err, portal.ErrPortalUserNotFound):
+		fail(w, http.StatusNotFound, "Customer not found.")
+		return nil, "", false
+	case err != nil:
+		fail(w, http.StatusInternalServerError, "Failed to load customer.")
+		return nil, "", false
+	}
+	if !ownerEmployeeAllows(r.Context(), pool, scope, identityID, owner) {
+		logSecurityEvent(r, "idor_denied",
+			"identity", identityID, "record", uuid, "resource", string(authz.ResourcePortalAccess),
+			"action", string(action), "scope", string(scope))
+		fail(w, http.StatusNotFound, "Customer not found.")
+		return nil, "", false
+	}
+	return pool, identityID, true
 }

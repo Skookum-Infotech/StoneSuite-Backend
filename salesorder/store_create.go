@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"stonesuite-backend/historywrite"
 	"strings"
 	"time"
 
@@ -128,7 +129,7 @@ func insertLines(ctx context.Context, tx pgx.Tx, orderInternalID int, lines []re
 // this returns the error for the caller to propagate, unlike crmstore's
 // fire-and-forget writeHistory which runs outside any transaction).
 func writeHistory(ctx context.Context, tx pgx.Tx, orderInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO sales_order_history (sales_order_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1,$2,$3,$4,$5)`,
 		orderInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

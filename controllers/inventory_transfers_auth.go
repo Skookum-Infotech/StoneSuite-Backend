@@ -16,40 +16,55 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
+// auth is authScoped for callers that do not need the grant's scope.
 func (h *InventoryTransferOps) auth(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
+	pool, identityID, _, ok := h.authScoped(w, r, action)
+	return pool, identityID, ok
+}
+
+// authScoped runs the permission check and also returns the grant's scope.
+func (h *InventoryTransferOps) authScoped(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
 	if err != nil || payload.ID == "" {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	decision, err := authz.Check(r.Context(), pool, payload.ID, authz.ResourceInventoryTransfer, action)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Permission check failed.")
-		return nil, "", false
+		return nil, "", "", false
 	}
 	if !decision.Allowed {
 		logSecurityEvent(r, "permission_denied",
 			"identity", payload.ID, "resource", string(authz.ResourceInventoryTransfer), "action", string(action))
 		fail(w, http.StatusForbidden, "You do not have permission to "+string(action)+" inventory transfers.")
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return pool, payload.ID, true
+	return pool, payload.ID, decision.Scope, true
 }
 
 // authByUUID adds the existence guard for single-record mutations, 404ing so
 // document ids cannot be enumerated.
 func (h *InventoryTransferOps) authByUUID(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, bool) {
-	pool, identityID, ok := h.auth(w, r, action)
+	pool, identityID, scope, ok := h.authScoped(w, r, action)
 	if !ok {
 		return nil, "", false
 	}
-	if _, err := inventorytransfer.Get(r.Context(), pool, r.PathValue("uuid")); err != nil {
+	t, err := inventorytransfer.Get(r.Context(), pool, r.PathValue("uuid"))
+	if err != nil {
 		transferFail(w, err, "Failed to load transfer.")
+		return nil, "", false
+	}
+	if !ownerEmployeeAllows(r.Context(), pool, scope, identityID, t.OwnerID) {
+		logSecurityEvent(r, "idor_denied",
+			"identity", identityID, "record", r.PathValue("uuid"), "resource", string(authz.ResourceInventoryTransfer),
+			"action", string(action), "scope", string(scope))
+		fail(w, http.StatusNotFound, "Transfer not found.")
 		return nil, "", false
 	}
 	return pool, identityID, true

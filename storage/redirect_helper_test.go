@@ -29,11 +29,11 @@ func redirectTransport(t *testing.T, srv *httptest.Server) http.RoundTripper {
 	})
 }
 
-// redirectDefaultClient points http.DefaultClient (which Client uses) at srv
+// redirectDefaultClient points storageHTTPClient (which Client uses) at srv
 // for the duration of the test.
 func redirectDefaultClient(t *testing.T, srv *httptest.Server) {
 	t.Helper()
-	prev := http.DefaultClient.Transport
-	http.DefaultClient.Transport = redirectTransport(t, srv)
-	t.Cleanup(func() { http.DefaultClient.Transport = prev })
+	prev := storageHTTPClient.Transport
+	storageHTTPClient.Transport = redirectTransport(t, srv)
+	t.Cleanup(func() { storageHTTPClient.Transport = prev })
 }

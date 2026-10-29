@@ -153,7 +153,7 @@ func (w *Worker) processNext(ctx context.Context) {
 	runCtx, cancel := context.WithTimeout(ctx, jobTimeout)
 	defer cancel()
 
-	if err := w.runImport(runCtx, job.ID, *job.TenantID, payload); err != nil {
+	if err := w.runImportRecovered(runCtx, job.ID, *job.TenantID, payload); err != nil {
 		log.Printf("importer: job %s failed: %v", job.ID, err)
 		_ = w.queue.MarkFailed(ctx, job.ID, err.Error())
 		return
@@ -250,4 +250,16 @@ func (w *Worker) stageExtracted(ctx context.Context, rows *Store, jobID, text st
 	}
 	_ = w.queue.UpdateProgress(ctx, jobID, map[string]any{"step": "staging", "staged": 1, "total": 1})
 	return nil
+}
+
+// runImportRecovered runs runImport and converts a panic (a malformed upload
+// reaching a parser bug) into a failed job, so it cannot take the process down
+// when the importer runs inline in the web process.
+func (w *Worker) runImportRecovered(ctx context.Context, jobID, tenantID string, payload JobPayload) (err error) {
+	defer func() {
+		if x := recover(); x != nil {
+			err = fmt.Errorf("importer panic: %v", x)
+		}
+	}()
+	return w.runImport(ctx, jobID, tenantID, payload)
 }

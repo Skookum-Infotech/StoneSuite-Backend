@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"stonesuite-backend/historywrite"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -272,7 +273,7 @@ func nullableDate(d string) any {
 
 // writeHistory appends a fabrication_job_history row (best-effort inside tx).
 func writeHistory(ctx context.Context, tx pgx.Tx, jobInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO fabrication_job_history (fabrication_job_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1,$2,$3,$4,$5)`,
 		jobInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

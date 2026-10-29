@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -281,7 +282,7 @@ type confirmBatchRequest struct {
 // for the malware-scanning extension point comment.
 func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Request) {
 	recordID := r.PathValue("id")
-	pool, _, identityID, ok := h.attachAuth(w, r, recordID, authz.ActionUpdate)
+	pool, info, identityID, ok := h.attachAuth(w, r, recordID, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -310,7 +311,11 @@ func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Reques
 		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
 		return
 	}
-	tenantPrefix := tenant.Slug + "/"
+	// The key must belong to THIS record (presign mints
+	// slug/workflowKey/recordID/<uuid>.<ext>), not merely this tenant —
+	// otherwise a caller could attach another record's object to their own.
+	recordPrefix := tenant.Slug + "/" + info.WorkflowKey + "/" + recordID + "/"
+	r2 := h.r2ForTenant(tenant)
 
 	inserted := make([]workflow.Attachment, 0, len(req.Attachments))
 	for i, a := range req.Attachments {
@@ -318,10 +323,29 @@ func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Reques
 			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: storageKey is required.", i+1))
 			return
 		}
-		if !strings.HasPrefix(a.StorageKey, tenantPrefix) {
+		if !strings.HasPrefix(a.StorageKey, recordPrefix) || strings.Contains(a.StorageKey[len(recordPrefix):], "/") {
+			logSecurityEvent(r, "attachment_key_rejected",
+				"identity", identityID, "record", recordID, "reason", "key_not_for_record")
 			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: invalid storageKey.", i+1))
 			return
 		}
+		// Trust the stored object, not the client's claim: it must exist, and
+		// its real size/type are what get validated and recorded.
+		obj, headErr := r2.Head(r.Context(), a.StorageKey)
+		if errors.Is(headErr, storage.ErrNotFound) {
+			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: file was not uploaded.", i+1))
+			return
+		}
+		if headErr != nil {
+			slog.Error("attachment confirm head failed", "record", recordID, "error", headErr)
+			fail(w, http.StatusServiceUnavailable, "Could not verify the uploaded file. Try again.")
+			return
+		}
+		if vErr := validateAttachFile(a.FileName, a.ContentType, obj.Size); vErr != nil {
+			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: %s.", i+1, vErr.Error()))
+			return
+		}
+		a.SizeBytes = obj.Size
 		safe := workflow.SanitizeFileName(a.FileName)
 		id, insErr := workflow.InsertAttachment(r.Context(), pool, workflow.Attachment{
 			RecordID:         recordID,

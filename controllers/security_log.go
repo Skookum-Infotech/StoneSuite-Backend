@@ -26,3 +26,12 @@ func logSecurityEvent(r *http.Request, event string, kv ...any) {
 	attrs = append(attrs, kv...)
 	slog.Warn("security event", attrs...)
 }
+
+// logAuditErr records a failed audit write instead of silently dropping it.
+// Audit failures never fail the request (the action already happened) but must
+// be visible, so they log under the stable security_event key.
+func logAuditErr(event string, err error) {
+	if err != nil {
+		slog.Warn("security event", "security_event", "audit_write_failed", "audit", event, "error", err.Error())
+	}
+}

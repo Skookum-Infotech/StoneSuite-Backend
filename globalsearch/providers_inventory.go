@@ -12,11 +12,12 @@ import (
 	"stonesuite-backend/inventorycount"
 	"stonesuite-backend/inventorytransfer"
 	"stonesuite-backend/query"
+	"stonesuite-backend/workflow"
 )
 
 // inventory items and units have no owner column — RBAC is resource-level
-// only (permission-gate, no "own" narrowing), so these adapters ignore the
-// scope/identityID parameters.
+// only, so those two adapters ignore scope. Adjustments, transfers and counts
+// carry an owner and honour an "own" read grant.
 
 var _ = addProvider(Provider{Key: "inventory_item", Resource: authz.ResourceInventoryItem, Domain: "inventory", Module: "item", Search: searchInventoryItems})
 
@@ -48,8 +49,12 @@ func searchInventoryUnits(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope
 
 var _ = addProvider(Provider{Key: "inventory_adjustment", Resource: authz.ResourceInventoryAdjustment, Domain: "inventory", Module: "adjustment", Search: searchInventoryAdjustments})
 
-func searchInventoryAdjustments(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
-	page, err := inventoryadjustment.Search(ctx, pool, query.Request{Search: term, Limit: cap})
+func searchInventoryAdjustments(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
+	owner, ok := inventoryOwner(ctx, pool, scope, identityID)
+	if !ok {
+		return nil, false, nil
+	}
+	page, err := inventoryadjustment.SearchOwned(ctx, pool, owner, query.Request{Search: term, Limit: cap})
 	if err != nil {
 		return nil, false, err
 	}
@@ -62,8 +67,12 @@ func searchInventoryAdjustments(ctx context.Context, pool *pgxpool.Pool, _ authz
 
 var _ = addProvider(Provider{Key: "inventory_transfer", Resource: authz.ResourceInventoryTransfer, Domain: "inventory", Module: "transfer", Search: searchInventoryTransfers})
 
-func searchInventoryTransfers(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
-	page, err := inventorytransfer.Search(ctx, pool, query.Request{Search: term, Limit: cap})
+func searchInventoryTransfers(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
+	owner, ok := inventoryOwner(ctx, pool, scope, identityID)
+	if !ok {
+		return nil, false, nil
+	}
+	page, err := inventorytransfer.SearchOwned(ctx, pool, owner, query.Request{Search: term, Limit: cap})
 	if err != nil {
 		return nil, false, err
 	}
@@ -92,8 +101,12 @@ func searchBinTransfers(ctx context.Context, pool *pgxpool.Pool, scope authz.Sco
 
 var _ = addProvider(Provider{Key: "inventory_count", Resource: authz.ResourceInventoryCount, Domain: "inventory", Module: "count", Search: searchInventoryCounts})
 
-func searchInventoryCounts(ctx context.Context, pool *pgxpool.Pool, _ authz.Scope, _, term string, cap int) ([]Result, bool, error) {
-	page, err := inventorycount.Search(ctx, pool, query.Request{Search: term, Limit: cap})
+func searchInventoryCounts(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID, term string, cap int) ([]Result, bool, error) {
+	owner, ok := inventoryOwner(ctx, pool, scope, identityID)
+	if !ok {
+		return nil, false, nil
+	}
+	page, err := inventorycount.SearchOwned(ctx, pool, owner, query.Request{Search: term, Limit: cap})
 	if err != nil {
 		return nil, false, err
 	}
@@ -102,4 +115,18 @@ func searchInventoryCounts(ctx context.Context, pool *pgxpool.Pool, _ authz.Scop
 		out[i] = Result{Type: "inventory_count", ID: c.ID, Number: c.Number, DisplayName: "Count " + c.Number, Subtitle: c.WarehouseName, UpdatedAt: c.UpdatedAt}
 	}
 	return out, page.HasMore, nil
+}
+
+// inventoryOwner resolves the owner-employee narrowing for an own-scope caller:
+// nil for scope=all, the caller's employee id otherwise. ok=false means an
+// own-scoped caller with no employee row, who owns nothing (fail closed).
+func inventoryOwner(ctx context.Context, pool *pgxpool.Pool, scope authz.Scope, identityID string) (owner *int, ok bool) {
+	if scope == authz.ScopeAll {
+		return nil, true
+	}
+	id, found := workflow.EmployeeIDByIdentity(ctx, pool, identityID)
+	if !found {
+		return nil, false
+	}
+	return &id, true
 }

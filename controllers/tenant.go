@@ -362,9 +362,11 @@ func (h *TenantOps) CreateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if md, mErr := json.Marshal(req.FormData); mErr == nil {
-		_ = h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md))
+		if mdErr := h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md)); mdErr != nil {
+			slog.Error("save tenant metadata failed", "tenant", tenant.ID, "error", mdErr)
+		}
 	}
-	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.created", "{}")
+	logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.created", "{}"))
 
 	// Provision now + email the customer their password-setup link.
 	setupLink, err := h.finalizeOnboarding(r.Context(), tenant, req.FormData)
@@ -434,7 +436,9 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 		"super_admin_email": req.ContactEmail,
 	}
 	if md, mErr := json.Marshal(seed); mErr == nil {
-		_ = h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md))
+		if mdErr := h.CP.SetTenantMetadata(r.Context(), tenant.ID, string(md)); mdErr != nil {
+			slog.Error("save tenant metadata failed", "tenant", tenant.ID, "error", mdErr)
+		}
 	}
 
 	token, err := randomToken()
@@ -454,7 +458,7 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	res, sendErr := services.SendOnboardingInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, req.ContactEmail, req.RecipientName, link)
 	persistNotifyIDs(r.Context(), "tenant invite", invite.ID, res, sendErr, h.CP.SetInviteNotifyIDs)
 	outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
-	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.invited", "{}")
+	logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenant.ID, "tenant.invited", "{}"))
 
 	resp := map[string]any{
 		"success":    true,
@@ -596,7 +600,7 @@ func (h *TenantOps) TenantLifecycle(w http.ResponseWriter, r *http.Request) {
 	if action != lifecycleRestore {
 		h.evictTenantPool(id)
 	}
-	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, id, "tenant."+action, "{}")
+	logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, id, "tenant."+action, "{}"))
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Tenant " + action + " applied."})
 }
 
@@ -657,7 +661,7 @@ func (h *TenantOps) tenantJobs(w http.ResponseWriter, r *http.Request, admin mid
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "job.retry", "{}")
+		logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "job.retry", "{}"))
 		writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Job requeued."})
 
 	default:
@@ -757,7 +761,7 @@ func (h *TenantOps) tenantInvites(w http.ResponseWriter, r *http.Request, admin 
 		res, sendErr := services.SendOnboardingInviteEmailWithResult(r.Context(), tenant.ID, invite.ID, contactEmail, tenant.DisplayName, link)
 		persistNotifyIDs(r.Context(), "tenant invite resend", invite.ID, res, sendErr, h.CP.SetInviteNotifyIDs)
 		outcome := services.ConfirmEmailDelivery(r.Context(), tenant.ID, res, sendErr)
-		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}")
+		logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.invite_resent", "{}"))
 
 		resp := map[string]any{
 			"success": true,

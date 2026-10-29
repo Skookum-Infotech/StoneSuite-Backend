@@ -55,7 +55,7 @@ func FetchIdPMetadata(ctx context.Context, metadataURL string) (*IdPMetadata, er
 		return nil, fmt.Errorf("saml: building idp metadata request: %w", err)
 	}
 
-	client := &http.Client{Timeout: metadataFetchTimeout}
+	client := newMetadataClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("saml: fetching idp metadata: %w", err)

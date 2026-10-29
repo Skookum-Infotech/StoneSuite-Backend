@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"stonesuite-backend/historywrite"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -121,7 +122,7 @@ func nullableInt(v int) any {
 // itemreceipt.writeHistory — a history-write failure must never roll back the
 // primary operation it is documenting.
 func writeHistory(ctx context.Context, tx pgx.Tx, ctInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO cash_transfer_history (cash_transfer_id, from_status_id, to_status_id, history_action, history_by)
 		VALUES ($1,$2,$3,$4,$5)`,
 		ctInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

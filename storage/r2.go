@@ -188,7 +188,7 @@ func (c *Client) Put(ctx context.Context, key, contentType string, body []byte) 
 	req.Header.Set("x-amz-content-sha256", payloadHash)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := storageHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("execute r2 put: %w", err)
 	}
@@ -252,7 +252,7 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
 	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := storageHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute r2 get: %w", err)
 	}
@@ -360,7 +360,7 @@ func (c *Client) listPage(ctx context.Context, continuationToken string) (listPa
 	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := storageHTTPClient.Do(req)
 	if err != nil {
 		return listPage{}, fmt.Errorf("execute r2 list: %w", err)
 	}
@@ -487,7 +487,7 @@ func (c *Client) signedDelete(ctx context.Context, key string) error {
 	req.Header.Set("x-amz-content-sha256", emptyBodySHA256)
 	req.Header.Set("Authorization", authHeader)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := storageHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("execute r2 delete: %w", err)
 	}

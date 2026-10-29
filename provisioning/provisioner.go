@@ -175,7 +175,7 @@ func (p *Provisioner) processNext(ctx context.Context) {
 	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	if err := p.provision(runCtx, job.ID, j); err != nil {
+	if err := p.provisionRecovered(runCtx, job.ID, j); err != nil {
 		log.Printf("provisioning tenant %s (%s) failed: %v", j.Slug, j.TenantID, err)
 		_ = p.cp.SetTenantMigrationStatus(context.Background(), j.TenantID, tenancy.MigrationFailed)
 		if ferr := p.queue.MarkFailed(ctx, job.ID, err.Error()); ferr != nil {
@@ -314,4 +314,15 @@ func (p *Provisioner) provision(ctx context.Context, jobID string, j Job) error 
 	}
 	_ = p.queue.UpdateProgress(ctx, jobID, map[string]string{"step": "done"})
 	return p.cp.SetTenantProvisioned(ctx, j.TenantID, dbName, connRef, version)
+}
+
+// provisionRecovered runs provision and converts a panic into a failed job so
+// one bad tenant cannot crash the process.
+func (p *Provisioner) provisionRecovered(ctx context.Context, jobID string, j Job) (err error) {
+	defer func() {
+		if x := recover(); x != nil {
+			err = fmt.Errorf("provisioning panic: %v", x)
+		}
+	}()
+	return p.provision(ctx, jobID, j)
 }

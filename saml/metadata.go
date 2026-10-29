@@ -44,8 +44,15 @@ type IdPMetadata struct {
 // FetchIdPMetadata downloads and parses an IdP SAML metadata XML document.
 // The only network call in this package. Enforces https:// (reject http://
 // and any other scheme), a reasonable timeout (10s), and a response size cap
-// (2MB) to avoid abuse. ctx must carry the caller's timeout/cancellation too.
+// (2MB) to avoid abuse, and refuses redirects and non-public destination
+// addresses (see metadata_client.go). ctx must carry the caller's
+// timeout/cancellation too.
 func FetchIdPMetadata(ctx context.Context, metadataURL string) (*IdPMetadata, error) {
+	return fetchIdPMetadata(ctx, newMetadataClient(), metadataURL)
+}
+
+// fetchIdPMetadata is FetchIdPMetadata with the HTTP client supplied.
+func fetchIdPMetadata(ctx context.Context, client *http.Client, metadataURL string) (*IdPMetadata, error) {
 	if !strings.HasPrefix(metadataURL, "https://") {
 		return nil, fmt.Errorf("saml: idp metadata url must use https")
 	}
@@ -55,7 +62,6 @@ func FetchIdPMetadata(ctx context.Context, metadataURL string) (*IdPMetadata, er
 		return nil, fmt.Errorf("saml: building idp metadata request: %w", err)
 	}
 
-	client := &http.Client{Timeout: metadataFetchTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("saml: fetching idp metadata: %w", err)

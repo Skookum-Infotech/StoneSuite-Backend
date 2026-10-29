@@ -76,10 +76,11 @@ func (c *ControlPlane) AnyIdentityForTenant(ctx context.Context, tenantID string
 
 // SetIdentityPasswordSetupToken stores a one-time token + expiry an onboarded
 // customer uses to set their initial password (reuses the password-reset cols).
+// Only HashToken(token) is persisted.
 func (c *ControlPlane) SetIdentityPasswordSetupToken(ctx context.Context, identityID, token string, expiry time.Time) error {
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE identities SET password_reset_token = $2, password_reset_expiry = $3, updated_at = NOW() WHERE id = $1`,
-		identityID, token, expiry); err != nil {
+		identityID, HashToken(token), expiry); err != nil {
 		return fmt.Errorf("set password setup token: %w", err)
 	}
 	return nil
@@ -99,7 +100,42 @@ func (c *ControlPlane) SetIdentitySetupTokenHash(ctx context.Context, identityID
 // IdentityByPasswordToken loads an identity by its (unexpired) setup/reset token.
 func (c *ControlPlane) IdentityByPasswordToken(ctx context.Context, token string) (*Identity, error) {
 	q := "SELECT " + identityColumns + " FROM identities WHERE password_reset_token = $1 AND password_reset_expiry > NOW()"
-	return scanIdentity(c.pool.QueryRow(ctx, q, token))
+	return scanIdentity(c.pool.QueryRow(ctx, q, HashToken(token)))
+}
+
+// ConsumePasswordToken sets the password and burns the setup/reset token in
+// one statement, matched on the token still being present and unexpired. A
+// lookup followed by an unconditional update let two concurrent requests both
+// spend the same link; here only one row change wins and the other gets
+// ErrTokenAlreadyUsed. In the same transaction it revokes every refresh token
+// the identity holds: whoever forced a reset may be holding one of them.
+// rawToken is what the link carried.
+func (c *ControlPlane) ConsumePasswordToken(ctx context.Context, identityID, rawToken, passwordHash string) error {
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("consume password token: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	tag, err := tx.Exec(ctx,
+		`UPDATE identities SET password_hash = $2, password_reset_token = NULL, password_reset_expiry = NULL,
+		 email_verified = TRUE, updated_at = NOW()
+		 WHERE id = $1 AND password_reset_token = $3 AND password_reset_expiry > NOW()`,
+		identityID, passwordHash, HashToken(rawToken))
+	if err != nil {
+		return fmt.Errorf("consume password token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTokenAlreadyUsed
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = NOW() WHERE identity_id = $1 AND revoked_at IS NULL`,
+		identityID); err != nil {
+		return fmt.Errorf("consume password token: revoke sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("consume password token: commit: %w", err)
+	}
+	return nil
 }
 
 // IdentityBySetupTokenHash loads an identity by SHA-256(raw_token) for the

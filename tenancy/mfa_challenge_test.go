@@ -53,6 +53,45 @@ func backdateLastSent(t *testing.T, cp *ControlPlane, challengeID string) {
 	}
 }
 
+func TestIdentityMFAStates(t *testing.T) {
+	cp := newCPTestControlPlane(t)
+	ctx := context.Background()
+	tenantID := seedTestTenant(t, cp)
+	suffix := time.Now().UnixNano()
+
+	withPassword, err := cp.CreateIdentity(ctx, tenantID, fmt.Sprintf("states-pw-%d@example.com", suffix), "hash", "Has Password", true)
+	if err != nil {
+		t.Fatalf("seed identity: %v", err)
+	}
+	noPassword, err := cp.CreateIdentity(ctx, tenantID, fmt.Sprintf("states-sso-%d@example.com", suffix), "", "No Password", true)
+	if err != nil {
+		t.Fatalf("seed identity: %v", err)
+	}
+	elsewhere := seedMFAIdentity(t, cp) // another tenant
+	if err := cp.SetIdentityMFAEnabled(ctx, withPassword.ID, true); err != nil {
+		t.Fatalf("SetIdentityMFAEnabled: %v", err)
+	}
+
+	states, err := cp.IdentityMFAStates(ctx, tenantID, []string{withPassword.ID, noPassword.ID, elsewhere.ID})
+	if err != nil {
+		t.Fatalf("IdentityMFAStates: %v", err)
+	}
+	if got := states[withPassword.ID]; !got.Enabled || !got.Available {
+		t.Errorf("password identity = %+v, want enabled and available", got)
+	}
+	if got := states[noPassword.ID]; got.Enabled || got.Available {
+		t.Errorf("password-less identity = %+v, want off and unavailable", got)
+	}
+	if _, found := states[elsewhere.ID]; found {
+		t.Error("an identity from another tenant must not be reported")
+	}
+
+	empty, err := cp.IdentityMFAStates(ctx, tenantID, nil)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("no ids = %v, %v; want empty and no error", empty, err)
+	}
+}
+
 func TestSetIdentityMFAEnabled(t *testing.T) {
 	cp := newCPTestControlPlane(t)
 	ctx := context.Background()

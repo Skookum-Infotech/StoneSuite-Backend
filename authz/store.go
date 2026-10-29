@@ -69,8 +69,17 @@ func invalidateGrants(q Querier) {
 	}
 }
 
+// InvalidateGrants drops q's tenant's cached effective grants so a change to a
+// user's standing (suspend, deactivate) takes effect on the next request
+// instead of after the cache TTL.
+func InvalidateGrants(q Querier) {
+	invalidateGrants(q)
+}
+
 // EffectiveGrants returns every grant the given control-plane identity has in
-// this tenant, resolved through users -> user_roles -> role_permissions.
+// this tenant, resolved through users -> user_roles -> role_permissions. A
+// user whose status is not 'active' (suspended, disabled, invited) has no
+// grants, so an access token that outlives a deactivation authorizes nothing.
 // Results are cached briefly per tenant pool (ADR-3); callers passing a
 // *pgxpool.Pool benefit from the cache, callers inside a transaction (pgx.Tx)
 // always read through.
@@ -120,7 +129,8 @@ func loadEffectiveGrants(ctx context.Context, q Querier, identityID, activeRoleI
 		FROM users u
 		JOIN user_roles ur       ON ur.user_id = u.id
 		JOIN role_permissions rp ON rp.role_id = ur.role_id
-		WHERE u.identity_id = $1`
+		WHERE u.identity_id = $1
+		  AND u.status = 'active'`
 	args := []any{identityID}
 	if activeRoleID != "" {
 		query += ` AND ur.role_id = $2`

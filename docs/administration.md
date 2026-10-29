@@ -93,6 +93,60 @@ referenced elsewhere, such as the history behind an accounting period close;
 it gives administrators one place to look up who made a change, what
 changed, and when it happened, across every module.
 
+## Anomalies
+
+Anomalies in the sidebar lists things that look wrong, sent to the people who
+can do something about them. StoneSuite checks your workspace regularly and,
+when it finds one, adds it to this page and shows an alert in the bell at the
+top of the screen. Serious ones are also emailed. It checks these areas:
+
+- Sales and money in: unusually high discounts, items sold below cost, orders
+  far larger than a customer's usual, possible duplicate invoices, customers
+  over their credit limit, invoices well past due, payments never applied,
+  refunds larger than the payment or issued right after it, several credit
+  memos for one customer, documents voided after being issued, dates far from
+  when a record was entered, an order whose total differs a lot from its
+  quote, invoices with no sales tax for a customer who normally pays it, and
+  filled orders that were never invoiced.
+- Purchasing and money out: bills adding up to more than their purchase order,
+  a bill paid more than it is worth, large payments to a brand-new vendor,
+  purchase prices well above the usual cost, one vendor's orders split across
+  a day, late or stalled purchase orders, repeated expenses, and unusually
+  high expense lines. It also flags a vendor bill that looks like a copy of an
+  earlier one (same vendor, vendor invoice number and total).
+- Inventory: more stock reserved than is on hand, a stock balance that does not
+  match its movements, large write-offs, many adjustments in a short time,
+  large stock count differences, stock reserved for a cancelled order, slabs
+  that have not moved for months, bin transfers waiting too long, a received
+  slab count that differs from the order, and a spike in stock loss at one
+  location.
+- Fabrication: jobs that have not moved for a while, jobs past their promised
+  install date, late scheduled activities, a template redone many times, and
+  more than one job on an order.
+- Ledger and finance: a journal entry whose debits and credits don't match,
+  entries posted into a closed period, unusually large cash transfers, and
+  changes to the chart of accounts. Separately, it flags a record approved by
+  its own owner.
+
+Each anomaly goes to the people who can act on it: usually the record's owner
+and the module's approvers, and administrators for the more serious or
+sensitive ones. You only see the anomalies sent to you, and Super Admins see
+all of them. The person whose action triggered an anomaly is never alerted
+about it. Low-importance ones, such as a chart of accounts change, appear on
+this page only, with no bell alert or email.
+
+Open an anomaly and choose what you decided: Mark reviewed, Confirm problem,
+or Dismiss, optionally with a note. Dismissed anomalies stay dismissed, and you
+can Reopen any of them later. Use the tabs at the top to switch between Open,
+Confirmed, Reviewed, Dismissed and All. Anomaly checks run only while the
+platform's automation scheduler is turned on. A workspace admin can also pause
+it for just this workspace with the Anomaly scanning switch at the top of the page,
+and use Run scan now beside it to check straight away instead of waiting for the
+next scheduled check (both need the Automation permissions). While it is off
+nothing is checked and no
+alerts are sent; switching it back on resumes at the next check and may raise
+anything from the last month that was missed.
+
 ## Dashboard widgets
 
 Configure → Dashboard Widgets controls which widgets each role can see on

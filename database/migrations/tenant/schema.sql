@@ -10066,3 +10066,52 @@ CREATE TABLE IF NOT EXISTS document_send_attempt (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_document_send_attempt_key
     ON document_send_attempt (record_id, workflow_key, idempotency_key) WHERE idempotency_key <> '';
+
+-- Anomaly detection: findings raised by the scheduled anomaly scan
+-- (anomaly/), who each one is addressed to, and how a reviewer resolved
+-- it. UNIQUE (rule_key, subject_key) is what makes a rescan idempotent: a
+-- condition that is still true never raises a second finding, and a
+-- dismissed one never reopens itself.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS anomaly (
+    anomaly_id                   SERIAL       PRIMARY KEY,
+    anomaly_uuid                 UUID         NOT NULL DEFAULT gen_random_uuid(),
+    anomaly_rule_key             VARCHAR(60)  NOT NULL,
+    anomaly_subject_key          VARCHAR(120) NOT NULL,
+    anomaly_severity             VARCHAR(10)  NOT NULL,
+    anomaly_resource             VARCHAR(40)  NOT NULL,
+    anomaly_record_uuid          UUID             NULL,
+    anomaly_title                VARCHAR(200) NOT NULL,
+    anomaly_detail               TEXT         NOT NULL DEFAULT '',
+    anomaly_involved_identity_id UUID             NULL,  -- control-plane identity of the person whose action tripped the rule; never alerted
+    anomaly_status               VARCHAR(10)  NOT NULL DEFAULT 'open',
+    anomaly_note                 TEXT         NOT NULL DEFAULT '',
+    anomaly_detected_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    anomaly_notified_at          TIMESTAMP        NULL,  -- NULL = alert still owed (retried next tick)
+    anomaly_status_changed_at    TIMESTAMP        NULL,
+    anomaly_status_changed_by    UUID             NULL,  -- control-plane identity id
+    CONSTRAINT uq_anomaly_uuid        UNIQUE (anomaly_uuid),
+    CONSTRAINT uq_anomaly_subject     UNIQUE (anomaly_rule_key, anomaly_subject_key),
+    CONSTRAINT chk_anomaly_severity   CHECK (anomaly_severity IN ('info', 'warning', 'critical')),
+    CONSTRAINT chk_anomaly_status     CHECK (anomaly_status IN ('open', 'reviewed', 'dismissed', 'confirmed'))
+);
+CREATE INDEX IF NOT EXISTS idx_anomaly_detected   ON anomaly (anomaly_detected_at DESC, anomaly_id DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_unnotified ON anomaly (anomaly_id) WHERE anomaly_notified_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS anomaly_recipient (
+    anomaly_id            INTEGER NOT NULL REFERENCES anomaly(anomaly_id) ON DELETE CASCADE,
+    recipient_identity_id UUID    NOT NULL,  -- control-plane identity id (no cross-DB FK)
+    PRIMARY KEY (anomaly_id, recipient_identity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_anomaly_recipient_identity ON anomaly_recipient (recipient_identity_id);
+
+-- ── Anomaly scan: the workspace-level on/off switch ──
+-- A system rule with no settings; its enabled flag is the whole control (the platform switch stays the master gate).
+-- Shipped enabled and stamped so it never reads as "enabling today". ON CONFLICT keeps an admin disable across re-applies.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('anomaly_scan', 'Anomaly detection', TRUE, TRUE, 'internal', '{}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'anomaly_scan'
+ON CONFLICT (rule_id) DO NOTHING;

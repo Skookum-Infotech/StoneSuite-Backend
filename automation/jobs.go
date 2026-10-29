@@ -35,5 +35,5 @@ type Deps struct {
 
 // DefaultJobs is every date-triggered job the tick endpoint runs.
 func DefaultJobs(d Deps) []Job {
-	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}, &ExpiryReminders{deps: d}, &ApprovalReminders{deps: d}, &DomainEventDrain{deps: d}, &ProposedActionSweep{}}
+	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}, &ExpiryReminders{deps: d}, &ApprovalReminders{deps: d}, &DomainEventDrain{deps: d}, &ProposedActionSweep{}, &AnomalyScan{deps: d}}
 }

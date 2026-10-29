@@ -108,6 +108,9 @@ func refreshTokenFailed(w http.ResponseWriter, r *http.Request, cp *tenancy.Cont
 		logSecurityEvent(r, "refresh_token_superseded", "token_hash_prefix", hash[:tokenHashLogPrefixLen])
 		fail(w, http.StatusUnauthorized, "Session ended. Please sign in again.")
 	case errors.Is(err, tenancy.ErrRefreshTokenNotFound):
+		// Unknown or expired — including a cookie replayed after logout, whose
+		// row is deleted. Logged so post-logout replays stay visible.
+		logSecurityEvent(r, "refresh_token_not_found", "token_hash_prefix", hash[:tokenHashLogPrefixLen])
 		clearAuthCookies(w)
 		fail(w, http.StatusUnauthorized, "Refresh token expired. Please sign in again.")
 	default:
@@ -140,14 +143,15 @@ func rotateRefreshToken(r *http.Request, cp *tenancy.ControlPlane, oldHash strin
 	return raw, rec.ExpiresAt, nil
 }
 
-// revokeSessionOnLogout revokes the presented refresh token immediately (no
-// rotation grace), clears the auth cookies and writes the response. A revoke
-// failure answers 500 success:false: the cookies are still cleared, but the
+// revokeSessionOnLogout deletes the presented refresh token's row, so a replay
+// of the cookie is an unknown token (401, no revoke-all of the identity's other
+// sessions) rather than a reuse. It clears the auth cookies and writes the
+// response. A delete failure answers 500 success:false: the cookies are still cleared, but the
 // client must not be told the server-side session ended when it did not.
 func revokeSessionOnLogout(w http.ResponseWriter, r *http.Request, cp *tenancy.ControlPlane) {
 	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
-		if err := cp.RevokeRefreshTokenNow(r.Context(), tenancy.HashRefreshToken(cookie.Value)); err != nil {
-			slog.Error("logout: revoke refresh token", "error", err)
+		if err := cp.DeleteRefreshToken(r.Context(), tenancy.HashRefreshToken(cookie.Value)); err != nil {
+			slog.Error("logout: delete refresh token", "error", err)
 			clearAuthCookies(w)
 			fail(w, http.StatusInternalServerError, "Failed to end session. Please try again.")
 			return

@@ -155,6 +155,18 @@ func (c *ControlPlane) RevokeRefreshTokenNow(ctx context.Context, tokenHash stri
 	return nil
 }
 
+// DeleteRefreshToken removes a single token row by its hash. Used on logout: a
+// later replay of the cookie then finds no row (ErrRefreshTokenNotFound)
+// instead of a revoked one, so it cannot trigger the reuse path that revokes
+// every session of the identity.
+func (c *ControlPlane) DeleteRefreshToken(ctx context.Context, tokenHash string) error {
+	_, err := c.pool.Exec(ctx, `DELETE FROM refresh_tokens WHERE token_hash = $1`, tokenHash)
+	if err != nil {
+		return fmt.Errorf("delete refresh token: %w", err)
+	}
+	return nil
+}
+
 // rotationLifetime is the lifetime to give a rotated token: the lifetime the
 // token it replaces was issued with (so a remember-me session stays a
 // remember-me session), or fallback when that is non-positive or longer than

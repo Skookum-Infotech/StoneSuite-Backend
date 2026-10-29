@@ -497,8 +497,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_records_record_number
 -- table per design. Forward-only; recovery is via Neon branch/restore.
 -- =====================================================================
 
-DROP TABLE IF EXISTS leads CASCADE;
-DROP TABLE IF EXISTS prospects CASCADE;
+-- (DROP TABLE leads/prospects removed: it ran on every boot and would wipe any
+-- same-named table. Fresh databases keep the unused empty tables.)
 
 
 -- -- 000013_employee --------------------------------------------------
@@ -8232,7 +8232,14 @@ ALTER TABLE customer_history ADD CONSTRAINT chk_customer_history_action
 
 -- One-time cleanup: remove now-unsupported per-status approver rows.
 -- CreateApprover (controllers/crm_admin.go) rejects new ones going forward.
-DELETE FROM crm_workflow_approver WHERE crm_status_id IS NOT NULL;
+-- Guarded so it runs once: the wildcard unique index below is created right
+-- after, so its absence means this cleanup has not yet run on this tenant.
+DO $$
+BEGIN
+    IF to_regclass('uq_crm_workflow_approver_wildcard') IS NULL THEN
+        DELETE FROM crm_workflow_approver WHERE crm_status_id IS NOT NULL;
+    END IF;
+END $$;
 
 -- Postgres does not treat two NULLs as equal for UNIQUE purposes, so the
 -- table's own uq_crm_workflow_approver (record_type_id, crm_status_id,
@@ -8623,6 +8630,9 @@ UPDATE lkp_crm_status AS cs
 -- definition live alongside its replacement.
 -- =====================================================================
 
+DO $$
+BEGIN
+IF to_regclass('import_rows_job_row_idx') IS NULL THEN
 DELETE FROM import_rows a USING import_rows b
 WHERE a.job_id = b.job_id
   AND a.row_index = b.row_index
@@ -8630,6 +8640,8 @@ WHERE a.job_id = b.job_id
   AND a.status <> 'committed'
   AND ( b.status = 'committed'
      OR (a.created_at, a.id) < (b.created_at, b.id) );
+END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS import_rows_job_row_idx ON import_rows (job_id, row_index);
 DROP INDEX IF EXISTS idx_import_rows_job;

@@ -4,6 +4,7 @@ package expense
 import (
 	"context"
 	"fmt"
+	"stonesuite-backend/historywrite"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -88,7 +89,7 @@ func insertLines(ctx context.Context, tx pgx.Tx, expInternalID int, lines []reso
 
 // writeHistory records one expense_history row inside the caller's transaction.
 func writeHistory(ctx context.Context, tx pgx.Tx, expInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO expense_history (expense_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1,$2,$3,$4,$5)`,
 		expInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

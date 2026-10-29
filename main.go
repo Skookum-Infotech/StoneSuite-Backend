@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -337,7 +338,7 @@ func main() {
 	if tok := config.AppConfig.MetricsToken; tok != "" {
 		inner := metricsHandler
 		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Authorization") != "Bearer "+tok {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+tok)) != 1 {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
@@ -2008,6 +2009,14 @@ func seedPlatformOwner(ctx context.Context, cp *tenancy.ControlPlane) {
 	printSetupToken(ctx, cp, identity.ID, email)
 }
 
+const (
+	// setupTokenPrintEnv opts a production boot in to printing the first-time
+	// platform setup token to the (shipped) logs.
+	setupTokenPrintEnv = "PLATFORM_SETUP_PRINT_TOKEN"
+	// setupTokenTTL is how long a platform setup token stays valid.
+	setupTokenTTL = 15 * time.Minute
+)
+
 // printSetupToken generates a fresh one-time setup token, stores its SHA-256
 // hash in the DB, and prints the raw token to stdout. Called on first boot and
 // on restart when the owner exists but hasn't been activated yet.
@@ -2021,9 +2030,18 @@ func printSetupToken(ctx context.Context, cp *tenancy.ControlPlane, identityID, 
 
 	sum := sha256.Sum256([]byte(rawToken))
 	tokenHash := hex.EncodeToString(sum[:])
-	expiry := time.Now().Add(15 * time.Minute)
+	expiry := time.Now().Add(setupTokenTTL)
 	if err := cp.SetIdentitySetupTokenHash(ctx, identityID, tokenHash, expiry); err != nil {
 		log.Printf("WARN: printSetupToken: store token hash: %v", err)
+		return
+	}
+
+	// Logs are shipped off-box in production, so a full live credential is
+	// never printed there unless the operator opts in for this boot.
+	if config.AppConfig.IsProduction() && os.Getenv(setupTokenPrintEnv) != "true" {
+		log.Printf("Platform setup pending for %s: a one-time token was issued but NOT printed (production). "+
+			"Set %s=true and restart to print a fresh token (valid %s); unset it afterwards.",
+			email, setupTokenPrintEnv, setupTokenTTL)
 		return
 	}
 

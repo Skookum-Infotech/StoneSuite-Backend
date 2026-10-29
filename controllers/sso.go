@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -179,7 +180,8 @@ func (h *SSOOps) CreateConfig(w http.ResponseWriter, r *http.Request) {
 	if in.Protocol == ssoProtocolSAML {
 		meta, err := saml.FetchIdPMetadata(r.Context(), in.MetadataURL)
 		if err != nil {
-			fail(w, http.StatusBadGateway, "Could not fetch or parse identity provider metadata: "+err.Error())
+			slog.Warn("idp metadata fetch failed", "error", err)
+			fail(w, http.StatusBadGateway, "Could not fetch or parse identity provider metadata. Check the URL is a public https address serving valid SAML metadata.")
 			return
 		}
 		in.IDPEntityID = meta.EntityID
@@ -258,7 +260,8 @@ func (h *SSOOps) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if in.Protocol == ssoProtocolSAML {
 		meta, err := saml.FetchIdPMetadata(r.Context(), in.MetadataURL)
 		if err != nil {
-			fail(w, http.StatusBadGateway, "Could not fetch or parse identity provider metadata: "+err.Error())
+			slog.Warn("idp metadata fetch failed", "error", err)
+			fail(w, http.StatusBadGateway, "Could not fetch or parse identity provider metadata. Check the URL is a public https address serving valid SAML metadata.")
 			return
 		}
 		in.IDPEntityID = meta.EntityID
@@ -342,7 +345,8 @@ func (h *SSOOps) RefreshMetadata(w http.ResponseWriter, r *http.Request) {
 
 	meta, err := saml.FetchIdPMetadata(r.Context(), cfg.MetadataURL)
 	if err != nil {
-		fail(w, http.StatusBadGateway, "Could not fetch or parse identity provider metadata: "+err.Error())
+		slog.Warn("idp metadata fetch failed", "error", err)
+		fail(w, http.StatusBadGateway, "Could not fetch or parse identity provider metadata. Check the URL is a public https address serving valid SAML metadata.")
 		return
 	}
 	encCert, ok := h.encryptSecret(w, meta.CertificatePEM)

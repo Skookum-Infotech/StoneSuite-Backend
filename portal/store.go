@@ -356,7 +356,7 @@ type TenantUser struct {
 // (ResolveSession fails closed on customer_deleted_at). It also keeps the row's
 // "Manage on customer record" link from pointing at a record that 404s. Same
 // customer_deleted_at IS NULL predicate every other portal query applies.
-func ListUsersForTenant(ctx context.Context, q Querier) ([]TenantUser, error) {
+func ListUsersForTenant(ctx context.Context, q Querier, ownerEmployeeID *int) ([]TenantUser, error) {
 	rows, err := q.Query(ctx, `
 		SELECT cpu.id, cpu.identity_id, cpu.customer_id, c.customer_uuid, c.customer_name,
 		       cpu.email, cpu.full_name, cpu.phone, cpu.status, cpu.created_at, cpu.suspended_at, cpu.revoked_at,
@@ -366,7 +366,8 @@ func ListUsersForTenant(ctx context.Context, q Querier) ([]TenantUser, error) {
 		JOIN customer c ON c.customer_id = cpu.customer_id
 		LEFT JOIN employee e ON e.employee_id = cpu.created_by
 		WHERE c.customer_deleted_at IS NULL
-		ORDER BY cpu.created_at DESC`)
+		  AND ($1::int IS NULL OR c.customer_crm_owner_user_id = $1)
+		ORDER BY cpu.created_at DESC`, ownerEmployeeID)
 	if err != nil {
 		return nil, fmt.Errorf("list tenant portal users: %w", err)
 	}
@@ -405,4 +406,22 @@ func UpdateProfile(ctx context.Context, q Querier, identityID, fullName, phone s
 		return ErrPortalUserNotFound
 	}
 	return nil
+}
+
+// CustomerOwnerEmployeeID returns the owning employee id of a live customer
+// (nil when unowned), or ErrPortalUserNotFound when the customer does not
+// exist. It backs the row-level scope check on portal-access management.
+func CustomerOwnerEmployeeID(ctx context.Context, q Querier, customerUUID string) (*int, error) {
+	var owner *int
+	err := q.QueryRow(ctx, `
+		SELECT customer_crm_owner_user_id FROM customer
+		WHERE customer_uuid = $1 AND customer_deleted_at IS NULL`, customerUUID,
+	).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrPortalUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("customer owner by uuid: %w", err)
+	}
+	return owner, nil
 }

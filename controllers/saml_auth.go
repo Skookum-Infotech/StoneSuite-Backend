@@ -52,7 +52,16 @@ func safeReturnTo(s string) bool {
 	if s == "" {
 		return true
 	}
-	return strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") && !strings.ContainsAny(s, "\\")
+	if !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") || strings.ContainsAny(s, "\\") {
+		return false
+	}
+	// Control characters (tab, CR, LF) are stripped by browsers, turning a leading "/", control char, "/evil.com" into "//evil.com".
+	for _, c := range s {
+		if c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // Metadata serves this SP's SAML metadata document for provider. Public, no

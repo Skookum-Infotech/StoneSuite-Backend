@@ -300,8 +300,8 @@ func (h *RecordEmailOps) DownloadAttachment(w http.ResponseWriter, r *http.Reque
 	}
 
 	actor := loadActor(ctx, pool, identityID)
-	_ = workflow.LogAudit(ctx, pool, actor.ID, "record_email.attachment_download", "record_email_attachment", att.ID,
-		map[string]any{"recordId": recordID, "fileName": att.FileName})
+	logAuditErr("workflow_audit", workflow.LogAudit(ctx, pool, actor.ID, "record_email.attachment_download", "record_email_attachment", att.ID,
+		map[string]any{"recordId": recordID, "fileName": att.FileName}))
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success":     true,

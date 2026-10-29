@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"stonesuite-backend/historywrite"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -245,7 +246,7 @@ func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]a
 
 // writeHistory records one item_receipt_history row inside the caller's transaction.
 func writeHistory(ctx context.Context, tx pgx.Tx, irInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO item_receipt_history (item_receipt_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1,$2,$3,$4,$5)`,
 		irInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

@@ -119,8 +119,8 @@ func (h *DocumentOps) deliver(ctx context.Context, pool *pgxpool.Pool, identityI
 		return "", services.EmailOutcome{}, &sendError{Status: http.StatusInternalServerError, Msg: "Failed to record send."}
 	}
 	h.recordSent(ctx, pool, p, sendID, sender, sendReq.Email)
-	_ = workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
-		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to})
+	logAuditErr("workflow_audit", workflow.LogAudit(ctx, pool, actorUserID, "document.sent", "document_send", sendID,
+		map[string]any{"recordId": p.recordID, "workflowKey": p.meta.WorkflowKey, "to": p.to}))
 
 	ownerAddr, ownerIdentityID, ownerName := ownerSendContact(ctx, pool, ownerUserID)
 	notifyOwnerOfSend(ctx, services.SendNotification, sendOwner{Email: ownerAddr, IdentityID: ownerIdentityID, Name: ownerName},

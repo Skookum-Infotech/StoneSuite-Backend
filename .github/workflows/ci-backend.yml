@@ -58,6 +58,16 @@ jobs:
       # (PRs #167 -> #170 -> #171 -> #178) flipped these independently; if only
       # one is set, every dev login is logged out on the next hard refresh with
       # no visible error. Guard that they stay set together.
+      - name: Guard every Fly config sets APP_ENV=production
+        run: |
+          for f in fly.toml fly.dev.toml fly.uat.toml fly.prod.toml; do
+            if ! grep -q '^ *APP_ENV *= *"production"' "$f"; then
+              echo "$f is missing APP_ENV = \"production\" in [env]. Without it"
+              echo "cookies lose Secure, SECRET_ENCRYPTION_KEY becomes optional"
+              echo "and debug logging is on (config.IsProduction)."
+              exit 1
+            fi
+          done
       - name: Guard dev cross-origin cookie config is self-consistent
         run: |
           if grep -q 'COOKIE_SAME_SITE_MODE *= *"none"' fly.dev.toml; then

@@ -38,7 +38,7 @@ func NewCFClient(accountID, apiToken string) *CFClient {
 	return &CFClient{
 		accountID: accountID,
 		apiToken:  apiToken,
-		http:      &http.Client{},
+		http:      &http.Client{Timeout: storageHTTPTimeout},
 	}
 }
 

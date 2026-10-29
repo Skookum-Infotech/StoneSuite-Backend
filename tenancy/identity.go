@@ -2,6 +2,8 @@ package tenancy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -74,12 +76,12 @@ func (c *ControlPlane) AnyIdentityForTenant(ctx context.Context, tenantID string
 	return scanIdentity(c.pool.QueryRow(ctx, q, tenantID))
 }
 
-// SetIdentityPasswordSetupToken stores a one-time token + expiry an onboarded
+// SetIdentityPasswordSetupToken stores the SHA-256 of a one-time token + expiry an onboarded
 // customer uses to set their initial password (reuses the password-reset cols).
 func (c *ControlPlane) SetIdentityPasswordSetupToken(ctx context.Context, identityID, token string, expiry time.Time) error {
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE identities SET password_reset_token = $2, password_reset_expiry = $3, updated_at = NOW() WHERE id = $1`,
-		identityID, token, expiry); err != nil {
+		identityID, HashToken(token), expiry); err != nil {
 		return fmt.Errorf("set password setup token: %w", err)
 	}
 	return nil
@@ -98,8 +100,18 @@ func (c *ControlPlane) SetIdentitySetupTokenHash(ctx context.Context, identityID
 
 // IdentityByPasswordToken loads an identity by its (unexpired) setup/reset token.
 func (c *ControlPlane) IdentityByPasswordToken(ctx context.Context, token string) (*Identity, error) {
-	q := "SELECT " + identityColumns + " FROM identities WHERE password_reset_token = $1 AND password_reset_expiry > NOW()"
-	return scanIdentity(c.pool.QueryRow(ctx, q, token))
+	// Tokens are stored as SHA-256(token). The raw value is also matched so a
+	// token issued before hashing was introduced stays usable until it expires.
+	q := "SELECT " + identityColumns + " FROM identities WHERE password_reset_token IN ($1, $2) AND password_reset_expiry > NOW()"
+	return scanIdentity(c.pool.QueryRow(ctx, q, HashToken(token), token))
+}
+
+// HashToken returns the hex SHA-256 of a one-time token, the form in which
+// password setup/reset tokens are persisted so a database read cannot be
+// replayed as a working link.
+func HashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // IdentityBySetupTokenHash loads an identity by SHA-256(raw_token) for the

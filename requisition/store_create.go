@@ -4,6 +4,7 @@ package requisition
 import (
 	"context"
 	"fmt"
+	"stonesuite-backend/historywrite"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -132,7 +133,7 @@ func insertLines(ctx context.Context, tx pgx.Tx, reqnInternalID int, lines []res
 
 // writeHistory records one requisition_history row inside the caller's transaction.
 func writeHistory(ctx context.Context, tx pgx.Tx, reqnInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
-	_, _ = tx.Exec(ctx, `
+	historywrite.Exec(ctx, tx, `
 		INSERT INTO requisition_history (requisition_id, from_status_id, to_status_id, action, actor_employee_id)
 		VALUES ($1,$2,$3,$4,$5)`,
 		reqnInternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID))

@@ -39,7 +39,7 @@ func NewInventoryTransferOps() *InventoryTransferOps { return &InventoryTransfer
 
 // List GET /api/tenant/inventory/transfers
 func (h *InventoryTransferOps) List(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -47,12 +47,12 @@ func (h *InventoryTransferOps) List(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
 		req.Limit = n
 	}
-	h.search(w, r, pool, req)
+	h.search(w, r, pool, identityID, scope, req)
 }
 
 // Search POST /api/tenant/inventory/transfers/search
 func (h *InventoryTransferOps) Search(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -63,11 +63,16 @@ func (h *InventoryTransferOps) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.search(w, r, pool, req)
+	h.search(w, r, pool, identityID, scope, req)
 }
 
-func (h *InventoryTransferOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, req query.Request) {
-	page, err := inventorytransfer.Search(r.Context(), pool, req)
+func (h *InventoryTransferOps) search(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, identityID string, scope authz.Scope, req query.Request) {
+	owner, ok := ownerEmployeeFilter(r.Context(), pool, scope, identityID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": []any{}, "hasMore": false})
+		return
+	}
+	page, err := inventorytransfer.SearchOwned(r.Context(), pool, owner, req)
 	if err != nil {
 		transferFail(w, err, "Failed to search transfers.")
 		return
@@ -84,11 +89,16 @@ func (h *InventoryTransferOps) search(w http.ResponseWriter, r *http.Request, po
 // left one warehouse and not reached the other, and so is counted in neither.
 // This read is how that quantity is recovered without a phantom warehouse row.
 func (h *InventoryTransferOps) InTransit(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, identityID, scope, ok := h.authScoped(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
-	records, err := inventorytransfer.InTransit(r.Context(), pool)
+	owner, ok := ownerEmployeeFilter(r.Context(), pool, scope, identityID)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "records": []any{}})
+		return
+	}
+	records, err := inventorytransfer.InTransit(r.Context(), pool, owner)
 	if err != nil {
 		transferFail(w, err, "Failed to load in-transit transfers.")
 		return
@@ -98,7 +108,7 @@ func (h *InventoryTransferOps) InTransit(w http.ResponseWriter, r *http.Request)
 
 // Get GET /api/tenant/inventory/transfers/{uuid}
 func (h *InventoryTransferOps) Get(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, _, ok := h.authByUUID(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}
@@ -222,7 +232,7 @@ func (h *InventoryTransferOps) leg(w http.ResponseWriter, r *http.Request,
 
 // History GET /api/tenant/inventory/transfers/{uuid}/history
 func (h *InventoryTransferOps) History(w http.ResponseWriter, r *http.Request) {
-	pool, _, ok := h.auth(w, r, authz.ActionRead)
+	pool, _, ok := h.authByUUID(w, r, authz.ActionRead)
 	if !ok {
 		return
 	}

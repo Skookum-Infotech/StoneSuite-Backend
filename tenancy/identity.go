@@ -121,11 +121,15 @@ func (c *ControlPlane) ActivatePlatformOwner(ctx context.Context, tenantID strin
 	return nil
 }
 
+// setIdentityPasswordSQL sets the password hash, clears the setup/reset token
+// and marks the email verified.
+const setIdentityPasswordSQL = `UPDATE identities SET password_hash = $2, password_reset_token = NULL,
+	password_reset_expiry = NULL, email_verified = TRUE, updated_at = NOW() WHERE id = $1`
+
 // SetIdentityPassword sets the password hash and clears the setup/reset token.
 func (c *ControlPlane) SetIdentityPassword(ctx context.Context, identityID, passwordHash string) error {
 	if _, err := c.pool.Exec(ctx,
-		`UPDATE identities SET password_hash = $2, password_reset_token = NULL, password_reset_expiry = NULL,
-		 email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
+		setIdentityPasswordSQL,
 		identityID, passwordHash); err != nil {
 		return fmt.Errorf("set identity password: %w", err)
 	}
@@ -147,6 +151,35 @@ func (c *ControlPlane) SetIdentityMFAEnabled(ctx context.Context, identityID str
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrIdentityNotFound
+	}
+	return nil
+}
+
+// SetIdentityPasswordRevokingSessions is SetIdentityPassword for a password
+// change or reset: in the same transaction it revokes every refresh token the
+// identity holds, so a session opened with the old password (or a stolen
+// refresh token) cannot outlive the change. keepTokenHash, when non-empty,
+// spares that one token of this identity — the session that just proved the
+// current password. Reset passes "": the person resetting is not signed in.
+func (c *ControlPlane) SetIdentityPasswordRevokingSessions(ctx context.Context, identityID, passwordHash, keepTokenHash string) error {
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("set identity password: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	if _, err := tx.Exec(ctx,
+		setIdentityPasswordSQL,
+		identityID, passwordHash); err != nil {
+		return fmt.Errorf("set identity password: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = NOW()
+		 WHERE identity_id = $1 AND revoked_at IS NULL AND token_hash <> $2`,
+		identityID, keepTokenHash); err != nil {
+		return fmt.Errorf("set identity password: revoke sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("set identity password: commit: %w", err)
 	}
 	return nil
 }

@@ -262,6 +262,9 @@ func ConvertFromPurchaseOrder(ctx context.Context, pool *pgxpool.Pool, poUUID st
 		return nil, fmt.Errorf("insert purchase order convert history: %w", err)
 	}
 
+	if err := auditTx(ctx, tx, auditConvert, newUUID, nil, nil); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit convert purchase order: %w", err)
 	}

@@ -129,6 +129,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInput, actorEmploy
 
 	writeHistory(ctx, tx, newID, "create", nil, &draftStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditCreate, newUUID, nil, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create cash transfer: %w", err)
 	}

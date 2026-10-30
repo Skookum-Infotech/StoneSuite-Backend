@@ -16,6 +16,9 @@ import (
 // quickPayMemo is the memo stamped on every payment created by QuickPay.
 const quickPayMemo = "Quick payment via invoice"
 
+// quickPayAuditAction is the invoice audit action for a QuickPay payment.
+const quickPayAuditAction = "payment"
+
 // QuickPay is the legacy-endpoint wrapper behind POST /invoices/{uuid}/payment
 // (spec AD-5). It creates a payment at status APPV (skipping PEND — this
 // single-call endpoint implies the money is already confirmed) and applies it
@@ -119,6 +122,9 @@ func QuickPay(ctx context.Context, pool *pgxpool.Pool, invoiceUUID string, amoun
 		return nil, fmt.Errorf("insert quickpay create history: %w", err)
 	}
 	if err := applyTx(ctx, tx, newUUID, invoiceUUID, amount, actorEmployeeID); err != nil {
+		return nil, err
+	}
+	if err := invoice.AuditTxAs(ctx, tx, quickPayAuditAction, invoiceUUID, actorEmployeeID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

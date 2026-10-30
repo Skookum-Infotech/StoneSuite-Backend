@@ -107,6 +107,9 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID, vendorBil
 	if err := applyTx(ctx, tx, vendorPaymentUUID, vendorBillUUID, amount, actorEmployeeID); err != nil {
 		return nil, err
 	}
+	if err := auditTx(ctx, tx, auditApply, vendorPaymentUUID, nil, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit apply: %w", err)
 	}
@@ -230,6 +233,9 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID, vendorB
 		return nil, fmt.Errorf("insert vendor payment unapply history: %w", err)
 	}
 
+	if err := auditTx(ctx, tx, auditUnapply, vendorPaymentUUID, nil, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit unapply: %w", err)
 	}

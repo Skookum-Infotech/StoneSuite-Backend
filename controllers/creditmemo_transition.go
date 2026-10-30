@@ -42,14 +42,12 @@ func (h *CreditMemoOps) Transition(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	cm, err := creditmemo.Transition(r.Context(), pool, id, req.ToStatusCode, empID)
+	cm, err := creditmemo.Transition(auditCtx(r, ""), pool, id, req.ToStatusCode, empID)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to transition credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "transition", id, before, cm)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }
 
@@ -92,14 +90,12 @@ func (h *CreditMemoOps) Apply(w http.ResponseWriter, r *http.Request) {
 	if !h.invoiceInScopeForUpdate(w, r, pool, identityID, req.InvoiceUUID) {
 		return
 	}
-	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	cm, err := creditmemo.ApplyIdempotent(r.Context(), pool, id, req.InvoiceUUID, req.Amount, empID, idemKey, idemHash)
+	cm, err := creditmemo.ApplyIdempotent(auditCtx(r, ""), pool, id, req.InvoiceUUID, req.Amount, empID, idemKey, idemHash)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to apply credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "apply", id, before, cm)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }
 
@@ -121,13 +117,11 @@ func (h *CreditMemoOps) Unapply(w http.ResponseWriter, r *http.Request) {
 	if !h.invoiceInScopeForUpdate(w, r, pool, identityID, req.InvoiceUUID) {
 		return
 	}
-	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	cm, err := creditmemo.Unapply(r.Context(), pool, id, req.InvoiceUUID, empID)
+	cm, err := creditmemo.Unapply(auditCtx(r, ""), pool, id, req.InvoiceUUID, empID)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to unapply credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "unapply", id, before, cm)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }

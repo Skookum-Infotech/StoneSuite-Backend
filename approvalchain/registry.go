@@ -21,6 +21,12 @@
 // config (crm_workflow_approver, controllers/crm_admin.go) untouched.
 package approvalchain
 
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5"
+)
+
 // Gate identifies one point in a module's status flow where sign-off from
 // the module's configured approvers is required before a record may leave
 // that status, and where Approve auto-advances the record to once approval
@@ -83,6 +89,10 @@ type ModuleConfig struct {
 	// registry's map key threaded through as a separate parameter. Only
 	// set alongside DisplayName.
 	Resource string
+	// AuditTx writes the module's audit row inside the Approve/Reject
+	// transaction (action is "approve" or "reject"). nil = no-op. An error
+	// aborts the approval.
+	AuditTx func(ctx context.Context, tx pgx.Tx, internalID int, uuid, action string) error
 }
 
 // HasGate reports whether statusCode is one of this module's configured

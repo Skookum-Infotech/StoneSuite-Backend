@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 const paymentSelect = `
@@ -20,8 +22,8 @@ const paymentSelect = `
 
 // loadPayments fetches a vendor bill's live settlement ledger by its
 // internal id.
-func loadPayments(ctx context.Context, pool *pgxpool.Pool, vbInternalID int) ([]BillPayment, error) {
-	rows, err := pool.Query(ctx, paymentSelect, vbInternalID)
+func loadPayments(ctx context.Context, q workflow.Querier, vbInternalID int) ([]BillPayment, error) {
+	rows, err := q.Query(ctx, paymentSelect, vbInternalID)
 	if err != nil {
 		return nil, fmt.Errorf("load vendor bill payments: %w", err)
 	}
@@ -69,6 +71,10 @@ func RecordPayment(ctx context.Context, pool *pgxpool.Pool, uuid string, in Reco
 	if err != nil {
 		return nil, err
 	}
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return nil, err
+	}
 	if in.IdempotencyKey != "" {
 		var seen bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM vendor_bill_payment WHERE vendor_bill_id = $1 AND idempotency_key = $2)`,
@@ -111,6 +117,9 @@ func RecordPayment(ctx context.Context, pool *pgxpool.Pool, uuid string, in Reco
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditRecordPayment, uuid, before, nil); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit record vendor bill payment: %w", err)
 	}
@@ -131,6 +140,10 @@ func RemovePayment(ctx context.Context, pool *pgxpool.Pool, billUUID, paymentUUI
 		return nil, err
 	}
 
+	before, err := getQ(ctx, tx, billUUID)
+	if err != nil {
+		return nil, err
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE vendor_bill_payment SET deleted_at = NOW()
 		WHERE vendor_bill_payment_uuid = $1 AND vendor_bill_id = $2 AND deleted_at IS NULL`,
@@ -146,6 +159,9 @@ func RemovePayment(ctx context.Context, pool *pgxpool.Pool, billUUID, paymentUUI
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditUnapplyPayment, billUUID, before, nil); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit remove vendor bill payment: %w", err)
 	}

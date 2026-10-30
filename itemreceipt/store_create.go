@@ -49,6 +49,39 @@ func resolveSlabBins(ctx context.Context, q workflow.Querier, lineNo int, slabs 
 	return nil
 }
 
+// resolveLineSlabs resolves one serialized line's slab rows: the On Order slabs it
+// ticks (taken as ordered) followed by any slabs the receiver typed in. It returns
+// the resolved slabs together with the inputs they came from, in the same order,
+// so resolveSlabBins can pair each slab with its bin; and the line's total area.
+func resolveLineSlabs(
+	ctx context.Context, q workflow.Querier,
+	lineNo, poItemInternalID int, info inventory.ItemUnitInfo, in []SlabInput,
+) ([]resolvedSlab, []SlabInput, float64, error) {
+	claimedIn, manualIn := splitOnOrderInputs(in)
+
+	var (
+		slabs         []resolvedSlab
+		claimedTotal  float64
+		manualTotal   float64
+		manualResolve []resolvedSlab
+		err           error
+	)
+	if len(claimedIn) > 0 {
+		if slabs, claimedTotal, err = resolveOnOrderSlabs(ctx, q, lineNo, poItemInternalID, info, claimedIn); err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	// With nothing ticked and nothing typed, computeSlabs is what tells the
+	// receiver this line needs slabs.
+	if len(manualIn) > 0 || len(claimedIn) == 0 {
+		if manualResolve, manualTotal, err = computeSlabs(lineNo, info, manualIn); err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	inputs := append(append([]SlabInput{}, claimedIn...), manualIn...)
+	return append(slabs, manualResolve...), inputs, roundArea(claimedTotal + manualTotal), nil
+}
+
 // requireExplicitWarehouse refuses a receipt that brings slabs in without the
 // caller naming where they go. Bulk lines may fall back to the tenant's default
 // warehouse; a slab's location is mandatory information, not a default.
@@ -116,10 +149,11 @@ func resolveLines(ctx context.Context, q workflow.Querier, poInternalID, warehou
 					return nil, ClientError{Msg: fmt.Sprintf(
 						"Line %d: a slab line has no rejected quantity — leave a refused slab out instead.", in.LineNumber)}
 				}
-				if slabs, qtyReceived, err = computeSlabs(in.LineNumber, info, in.Slabs); err != nil {
+				var inputs []SlabInput
+				if slabs, inputs, qtyReceived, err = resolveLineSlabs(ctx, q, in.LineNumber, po.internalID, info, in.Slabs); err != nil {
 					return nil, err
 				}
-				if err := resolveSlabBins(ctx, q, in.LineNumber, slabs, in.Slabs, warehouseID); err != nil {
+				if err := resolveSlabBins(ctx, q, in.LineNumber, slabs, inputs, warehouseID); err != nil {
 					return nil, err
 				}
 				qtyRejected = 0

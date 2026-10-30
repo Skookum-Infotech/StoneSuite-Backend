@@ -26,6 +26,9 @@ func moveUnitToBinTx(ctx context.Context, tx pgx.Tx, uuid string, in MoveUnitInp
 	if err != nil {
 		return err
 	}
+	if u.status == StatusOnOrder {
+		return ClientError{Msg: "This unit is still on order and has not arrived, so it cannot be moved to a bin."}
+	}
 	if u.status == StatusConsumed || u.status == StatusScrapped {
 		return ClientError{Msg: "A consumed or scrapped unit cannot be moved."}
 	}

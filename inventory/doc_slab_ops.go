@@ -22,6 +22,10 @@ const (
 	StatusConsumed  = "consumed"
 	StatusScrapped  = "scrapped"
 	StatusInTransit = "in_transit"
+	// StatusOnOrder is a slab minted when its purchase order was sent. It is not
+	// stock (no ledger row, nothing on hand) and has not physically arrived, so
+	// nothing that handles stone may touch it until a receipt brings it in.
+	StatusOnOrder = "on_order"
 )
 
 // ShipSlabForTransfer sends one slab out of its warehouse: status to
@@ -33,6 +37,8 @@ func ShipSlabForTransfer(ctx context.Context, tx pgx.Tx, u UnitRef,
 		return ClientError{Msg: fmt.Sprintf("Unit %s is not in the source location.", u.Serial)}
 	}
 	switch u.Status {
+	case StatusOnOrder:
+		return errStillOnOrder(u.Serial, "transferred")
 	case StatusInTransit:
 		return ClientError{Msg: fmt.Sprintf("Unit %s is already in transit on another transfer.", u.Serial)}
 	case StatusConsumed, StatusScrapped:
@@ -100,6 +106,8 @@ func AdjustSlabDown(ctx context.Context, tx pgx.Tx, u UnitRef,
 		return 0, err
 	}
 	switch u.Status {
+	case StatusOnOrder:
+		return 0, errStillOnOrder(u.Serial, "written off")
 	case StatusScrapped:
 		return 0, ClientError{Msg: fmt.Sprintf("Unit %s is already written off.", u.Serial)}
 	case StatusConsumed:
@@ -140,9 +148,23 @@ func AdjustSlabDown(ctx context.Context, tx pgx.Tx, u UnitRef,
 // no provenance.
 func AdjustSlabUp(ctx context.Context, tx pgx.Tx, u UnitRef,
 	reasonID *int, note string, src DocSource, actorEmployeeID int) (float64, error) {
+	if u.Status == StatusOnOrder {
+		return 0, errStillOnOrder(u.Serial, "adjusted into stock")
+	}
 	if u.Status != StatusScrapped {
 		return 0, ClientError{Msg: fmt.Sprintf(
 			"Unit %s is already in stock. Only a written-off unit can be adjusted back in; receive genuinely new stone instead.", u.Serial)}
+	}
+	// A slab scrapped while still on order (its purchase order was cancelled)
+	// never had stock, so there is nothing to put back: adjusting it in would
+	// mint stone out of thin air.
+	arrived, err := slabEverReceived(ctx, tx, u.ID)
+	if err != nil {
+		return 0, err
+	}
+	if !arrived {
+		return 0, ClientError{Msg: fmt.Sprintf(
+			"Unit %s never arrived (its purchase order was cancelled or closed), so it cannot be adjusted into stock.", u.Serial)}
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_slab SET slab_status = $2, slab_updated_at = NOW(), slab_updated_by = $3

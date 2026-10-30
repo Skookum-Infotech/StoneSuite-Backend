@@ -120,6 +120,27 @@ func (h *ItemReceiptOps) NextSlabSequence(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "prefix": seq.Prefix, "next": seq.Next})
 }
 
+// OnOrderSlabs GET /api/tenant/purchase-orders/{uuid}/on-order-slabs
+//
+// Lists the slabs this order put on order when it was sent and that have not
+// arrived yet, so the receiving screen can show each with a tick box. Like
+// NextSlabSequence it hangs off the order and is gated by the order's own
+// permission and IDOR guard.
+func (h *ItemReceiptOps) OnOrderSlabs(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+	poOps := NewPurchaseOrderOps()
+	pool, _, _, ok := poOps.authPOByUUID(w, r, uuid, authz.ActionRead)
+	if !ok {
+		return
+	}
+	slabs, err := itemreceipt.OnOrderSlabs(r.Context(), pool, uuid)
+	if err != nil {
+		irFail(w, err, "Failed to list the slabs on order.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "slabs": slabs})
+}
+
 // Void POST /api/tenant/item-receipts/{uuid}/void  body {"voidReason":"..."}
 func (h *ItemReceiptOps) Void(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")

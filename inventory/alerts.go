@@ -43,12 +43,7 @@ func StockAlertCandidates(ctx context.Context, pool *pgxpool.Pool) ([]StockLevel
 		FROM inventory_stock s
 		JOIN inventory_item ii ON ii.inventory_item_id = s.inventory_item_id
 		JOIN company_location w ON w.company_location_id = s.warehouse_id
-		LEFT JOIN (
-			SELECT inventory_item_id, warehouse_id, SUM(allocated_quantity - fulfilled_quantity) AS allocated
-			FROM inventory_allocation
-			WHERE allocation_status IN ('reserved','partially_fulfilled')
-			GROUP BY inventory_item_id, warehouse_id
-		) alloc ON alloc.inventory_item_id = s.inventory_item_id AND alloc.warehouse_id = s.warehouse_id
+		LEFT JOIN (` + openAllocationsSQL + `) alloc ON alloc.inventory_item_id = s.inventory_item_id AND alloc.warehouse_id = s.warehouse_id
 		WHERE ii.inventory_item_deleted_at IS NULL
 		  AND ii.inventory_item_is_active
 		  AND (

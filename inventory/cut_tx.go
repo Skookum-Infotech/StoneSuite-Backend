@@ -41,6 +41,8 @@ func cutUnitTx(ctx context.Context, tx pgx.Tx, uuid string, in CutInput, destina
 		return CutTxResult{}, err
 	}
 	switch p.status {
+	case StatusOnOrder:
+		return CutTxResult{}, ClientError{Msg: "This unit is still on order and has not arrived, so it cannot be cut."}
 	case "consumed":
 		return CutTxResult{}, ClientError{Msg: "This unit has already been consumed."}
 	case "scrapped":

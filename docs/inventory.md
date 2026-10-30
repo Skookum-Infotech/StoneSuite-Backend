@@ -63,9 +63,12 @@ already exists keeps its own price.
 
 A Unit is an individual physical slab or piece tracked on its own. Every unit
 is listed under Inventory → Inventory in the sidebar. You don't add units
-there: a slab enters inventory when it is received against a purchase order —
-see Item Receipts in the Purchasing guide — and it takes the serial number
-assigned during that receipt. Its detail page records the item it belongs to,
+there: a slab appears in inventory as **On Order** when the purchase order for
+it is sent, with its serial number, and becomes available stock when it is
+received against that order — see Item Receipts in the Purchasing guide. A slab
+on order is not counted as on hand and cannot be moved, cut, bundled, counted or
+transferred; it is written off if its purchase order is cancelled or closed
+first. Its detail page records the item it belongs to,
 the receipt it arrived on, its location, dimensions, attributes, and its
 lineage (where it came from).
 

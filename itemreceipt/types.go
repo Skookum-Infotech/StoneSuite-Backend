@@ -33,15 +33,21 @@ type LineInput struct {
 // area are deliberately absent: the serial is assigned by the server when the
 // receipt posts (PO number + running suffix) and the area is computed from the
 // millimetres into the item's own unit -- neither is ever taken from a client.
+//
+// OnOrderSlabID, when set, says this row is a slab the purchase order already put
+// on order (its uuid, from GET /purchase-orders/{uuid}/on-order-slabs) arriving:
+// the slab keeps its serial and the size it was ordered at, so only ThicknessMM
+// (used when the slab has none yet) and BinID are read from the row.
 type SlabInput struct {
-	LengthMM     float64 `json:"lengthMm"`
-	WidthMM      float64 `json:"widthMm"`
-	ThicknessMM  float64 `json:"thicknessMm"`
-	BinID        string  `json:"binId"` // bin uuid; blank = not binned yet
-	BlockID      string  `json:"blockId"`
-	Lot          string  `json:"lot"`
-	Grade        string  `json:"grade"`
-	SupplierCode string  `json:"supplierCode"`
+	OnOrderSlabID string  `json:"onOrderSlabId"`
+	LengthMM      float64 `json:"lengthMm"`
+	WidthMM       float64 `json:"widthMm"`
+	ThicknessMM   float64 `json:"thicknessMm"`
+	BinID         string  `json:"binId"` // bin uuid; blank = not binned yet
+	BlockID       string  `json:"blockId"`
+	Lot           string  `json:"lot"`
+	Grade         string  `json:"grade"`
+	SupplierCode  string  `json:"supplierCode"`
 }
 
 // itemReceiptFields is the header payload shared by create and update
@@ -135,19 +141,22 @@ type Line struct {
 // empty until the receipt posts and the slab exists in inventory; UnitStatus is
 // then the slab's LIVE status (it may have been reserved or cut since).
 type LineSlab struct {
-	Serial       string  `json:"serial,omitempty"`
-	LengthMM     float64 `json:"lengthMm"`
-	WidthMM      float64 `json:"widthMm"`
-	ThicknessMM  float64 `json:"thicknessMm"`
-	Area         float64 `json:"area"`
-	BinID        *string `json:"binId,omitempty"`
-	BinPath      string  `json:"binPath,omitempty"`
-	BlockID      string  `json:"blockId,omitempty"`
-	Lot          string  `json:"lot,omitempty"`
-	Grade        string  `json:"grade,omitempty"`
-	SupplierCode string  `json:"supplierCode,omitempty"`
-	UnitID       *string `json:"unitId,omitempty"`
-	UnitStatus   string  `json:"unitStatus,omitempty"`
+	// OnOrderSlabID is the uuid of the On Order slab this row stands for; nil on a
+	// slab the order did not list.
+	OnOrderSlabID *string `json:"onOrderSlabId,omitempty"`
+	Serial        string  `json:"serial,omitempty"`
+	LengthMM      float64 `json:"lengthMm"`
+	WidthMM       float64 `json:"widthMm"`
+	ThicknessMM   float64 `json:"thicknessMm"`
+	Area          float64 `json:"area"`
+	BinID         *string `json:"binId,omitempty"`
+	BinPath       string  `json:"binPath,omitempty"`
+	BlockID       string  `json:"blockId,omitempty"`
+	Lot           string  `json:"lot,omitempty"`
+	Grade         string  `json:"grade,omitempty"`
+	SupplierCode  string  `json:"supplierCode,omitempty"`
+	UnitID        *string `json:"unitId,omitempty"`
+	UnitStatus    string  `json:"unitStatus,omitempty"`
 }
 
 // SlabSequence is the preview of how the next slabs received against a

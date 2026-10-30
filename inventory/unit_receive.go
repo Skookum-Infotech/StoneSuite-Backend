@@ -93,8 +93,9 @@ type ReceiveUnitParams struct {
 
 // ReceivedUnit identifies the unit ReceiveUnitTx created.
 type ReceivedUnit struct {
-	ID   int
-	UUID string
+	ID     int
+	UUID   string
+	Serial string
 	// Area is what the unit contributed to stock, in the item's own unit.
 	Area float64
 }
@@ -146,6 +147,7 @@ func ReceiveUnitTx(ctx context.Context, tx pgx.Tx, p ReceiveUnitParams, actorEmp
 		return nil, mapUnitWriteErr(err, "insert")
 	}
 	rec.Area = area
+	rec.Serial = p.Serial
 
 	if err := SlabLedgerAndStock(ctx, tx, rec.ID, p.Item.ItemID, p.WarehouseID,
 		EventReceived, area, nil, actorEmployeeID); err != nil {

@@ -6193,9 +6193,13 @@ END $$;
 -- so a cycle count of that yard would report it missing and write it off.
 DO $$
 BEGIN
+    -- 'on_order' is a slab minted when its purchase order was sent (see "ON-ORDER
+    -- SLABS" at the end of this file). It has to be in THIS list, not only in a
+    -- later re-add: this block runs on every boot, and a narrower list would
+    -- refuse to re-create the constraint as soon as one such slab exists.
     ALTER TABLE inventory_slab DROP CONSTRAINT IF EXISTS chk_slab_status;
     ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_status
-        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit'));
+        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit','on_order'));
 END $$;
 
 -- ---------------------------------------------------------------------
@@ -8761,6 +8765,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_consumed
     ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id, warehouse_id)
     WHERE event = 'consumed' AND source_line_id IS NOT NULL;
 
+-- A square unit is what makes an item a slab: an item in sq ft or sq m is
+-- tracked slab by slab, and its stock is always counted. The item form and the
+-- item API now derive tracking from the unit; this brings items saved before
+-- that into line, and is a no-op once they are.
+UPDATE inventory_item ii
+   SET inventory_item_tracking = 'serialized', inventory_item_track_stock = TRUE
+  FROM lkp_unit u
+ WHERE u.unit_id = ii.inventory_item_unit_id
+   AND u.unit_category = 'area'
+   AND (ii.inventory_item_tracking <> 'serialized' OR NOT ii.inventory_item_track_stock);
+
 -- =====================================================================
 -- One-time upgrade: fold lkp_warehouse into company_location.
 --
@@ -10093,3 +10108,49 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id, enabled_at)
 SELECT id, NOW() FROM automation_rules WHERE rule_key = 'anomaly_scan'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- =====================================================================
+-- ON-ORDER SLABS -- a slab exists from the moment its purchase order is sent.
+--
+-- Sending a purchase order creates one inventory_slab per ordered slab with the
+-- status 'on_order'. It is NOT stock: no inventory_slab_ledger row is written
+-- and inventory_stock is untouched until the slab arrives. Posting an item
+-- receipt that ticks the slab flips it to 'available' and writes the one
+-- 'received' ledger row (uq_slab_ledger_received keeps that once-only).
+--
+-- chk_slab_status itself is widened with 'on_order' in the in_transit block
+-- further up, which re-creates it on every boot; chk_slab_dims is relaxed here.
+-- =====================================================================
+
+-- A PO line's slab thickness, in the line's own dim_unit (like dim_length /
+-- dim_width). Optional: an On Order slab falls back to the item's thickness.
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL
+    CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+
+-- Which PO line an On Order slab was minted for (NULL on every other slab).
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS purchase_order_item_id INTEGER NULL
+    REFERENCES purchase_order_item(purchase_order_item_id);
+CREATE INDEX IF NOT EXISTS idx_slab_po_item ON inventory_slab (purchase_order_item_id)
+    WHERE purchase_order_item_id IS NOT NULL;
+
+-- The On Order slab a receipt row stands for. NULL on a row that describes a
+-- slab the order did not list (the receiver typed it in).
+ALTER TABLE item_receipt_line_unit ADD COLUMN IF NOT EXISTS expected_slab_id INTEGER NULL
+    REFERENCES inventory_slab(inventory_slab_id);
+CREATE INDEX IF NOT EXISTS idx_irlu_expected_slab ON item_receipt_line_unit (expected_slab_id)
+    WHERE expected_slab_id IS NOT NULL;
+
+DO $$
+BEGIN
+    -- (chk_slab_status gains 'on_order' where it is re-created above, in the
+    -- in_transit block -- that block runs every boot, so it must not be narrower.)
+
+    -- An On Order slab may not have a known thickness yet (the PO line and the
+    -- item can both leave it blank); the receipt that brings it in requires it.
+    -- The same slab written off before it arrived (its order was cancelled) is
+    -- still without one, so 'scrapped' is allowed to carry 0 too.
+    ALTER TABLE inventory_slab DROP CONSTRAINT IF EXISTS chk_slab_dims;
+    ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_dims
+        CHECK (slab_length_mm > 0 AND slab_width_mm > 0
+               AND (slab_thickness_mm > 0 OR slab_status IN ('on_order', 'scrapped')));
+END $$;

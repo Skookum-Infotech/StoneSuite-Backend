@@ -44,8 +44,13 @@ type LineInput struct {
 	// quantity sent is then ignored.
 	Length *float64 `json:"length"`
 	Width  *float64 `json:"width"`
-	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
-	// ft, m). Blank takes the item's unit, then inches.
+	// Thickness is the thickness of one slab, in the same unit as length and
+	// width. Optional and descriptive: it never enters the quantity. It is what
+	// the slabs minted when the order is sent are cut to; blank falls back to the
+	// item's own thickness.
+	Thickness *float64 `json:"thickness"`
+	// DimensionUnit is the one unit length, width and thickness are measured in
+	// (mm, cm, in, ft, m). Blank takes the item's unit, then inches.
 	DimensionUnit string `json:"dimensionUnit"`
 }
 
@@ -127,7 +132,11 @@ type Line struct {
 	// entered that way; ExpectedSlabs is the matching slab count.
 	Length        *float64 `json:"length,omitempty"`
 	Width         *float64 `json:"width,omitempty"`
+	Thickness     *float64 `json:"thickness,omitempty"`
 	DimensionUnit string   `json:"dimensionUnit,omitempty"`
+	// SlabsOnOrder is how many of this line's slabs are still On Order in
+	// Inventory -- minted when the order was sent, not yet arrived on a receipt.
+	SlabsOnOrder int `json:"slabsOnOrder,omitempty"`
 }
 
 // PurchaseOrder is the full API response for a purchase order header (+

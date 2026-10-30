@@ -18,6 +18,9 @@ type lineUnitRow struct {
 	binID                          *int
 	blockID, lot, grade            string
 	supplierCode                   string
+	// expectedSlabID is the On Order slab this row ticks (internal id); nil on a
+	// slab the receiver typed in.
+	expectedSlabID *int
 }
 
 // pendingLineUnits loads a line's slab rows that have not been turned into
@@ -25,7 +28,8 @@ type lineUnitRow struct {
 func pendingLineUnits(ctx context.Context, tx pgx.Tx, lineID int) ([]lineUnitRow, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT item_receipt_line_unit_id, slab_length_mm, slab_width_mm, slab_thickness_mm, slab_area,
-		       inventory_bin_id, slab_block_id, slab_lot, slab_grade, slab_supplier_code
+		       inventory_bin_id, slab_block_id, slab_lot, slab_grade, slab_supplier_code,
+		       expected_slab_id
 		FROM item_receipt_line_unit
 		WHERE item_receipt_line_id = $1 AND inventory_slab_id IS NULL
 		ORDER BY unit_seq`, lineID)
@@ -37,7 +41,7 @@ func pendingLineUnits(ctx context.Context, tx pgx.Tx, lineID int) ([]lineUnitRow
 	for rows.Next() {
 		var r lineUnitRow
 		if err := rows.Scan(&r.id, &r.lengthMM, &r.widthMM, &r.thicknessMM, &r.area,
-			&r.binID, &r.blockID, &r.lot, &r.grade, &r.supplierCode); err != nil {
+			&r.binID, &r.blockID, &r.lot, &r.grade, &r.supplierCode, &r.expectedSlabID); err != nil {
 			return nil, fmt.Errorf("scan receipt slab for posting: %w", err)
 		}
 		out = append(out, r)
@@ -75,37 +79,61 @@ func (sp *slabPost) receiveLine(ctx context.Context, tx pgx.Tx, l postLine) erro
 	if err != nil {
 		return fromInventoryErr(err)
 	}
-	if sp.next == 0 {
-		if sp.prefix, err = serialPrefix(sp.poNumber); err != nil {
-			return err
-		}
-		if sp.next, err = nextSlabNumber(ctx, tx, sp.prefix); err != nil {
-			return err
-		}
-	}
 
 	for _, r := range rows {
-		serial := slabSerial(sp.prefix, sp.next)
-		sp.next++
-		vendorID := sp.vendorID
-		rec, err := inventory.ReceiveUnitTx(ctx, tx, inventory.ReceiveUnitParams{
-			NeedsInspection: true,
-			Serial:          serial,
-			VendorID:        &vendorID,
-			SupplierCode:    r.supplierCode,
-			Item:            item,
-			WarehouseID:     sp.warehouseID,
-			BinID:           r.binID,
-			BlockID:         r.blockID,
-			Lot:             r.lot,
-			LengthMM:        r.lengthMM,
-			WidthMM:         r.widthMM,
-			ThicknessMM:     r.thicknessMM,
-			Grade:           r.grade,
-			ReceivedAt:      sp.receiptDate,
-		}, sp.actor)
-		if err != nil {
-			return fromInventoryErr(err)
+		var (
+			rec    *inventory.ReceivedUnit
+			serial string
+		)
+		if r.expectedSlabID != nil {
+			// A slab the order already put on order: it keeps its serial and size
+			// and is flipped to available, not created again.
+			rec, err = inventory.ReceiveOnOrderUnitTx(ctx, tx, inventory.OnOrderArrival{
+				SlabID:              *r.expectedSlabID,
+				PurchaseOrderItemID: l.poItemID,
+				WarehouseID:         sp.warehouseID,
+				BinID:               r.binID,
+				ThicknessMM:         r.thicknessMM,
+				ReceivedAt:          sp.receiptDate,
+				NeedsInspection:     true,
+			}, sp.actor)
+			if err != nil {
+				return fromInventoryErr(err)
+			}
+			serial = rec.Serial
+		} else {
+			// Minted lazily: a line made only of ticked slabs needs no serial.
+			if sp.next == 0 {
+				if sp.prefix, err = serialPrefix(sp.poNumber); err != nil {
+					return err
+				}
+				if sp.next, err = nextSlabNumber(ctx, tx, sp.prefix); err != nil {
+					return err
+				}
+			}
+			serial = slabSerial(sp.prefix, sp.next)
+			sp.next++
+			vendorID := sp.vendorID
+			rec, err = inventory.ReceiveUnitTx(ctx, tx, inventory.ReceiveUnitParams{
+				NeedsInspection: true,
+				Serial:          serial,
+				VendorID:        &vendorID,
+				SupplierCode:    r.supplierCode,
+				Item:            item,
+				WarehouseID:     sp.warehouseID,
+				BinID:           r.binID,
+				Status:          inventory.StatusOnArrival(r.binID),
+				BlockID:         r.blockID,
+				Lot:             r.lot,
+				LengthMM:        r.lengthMM,
+				WidthMM:         r.widthMM,
+				ThicknessMM:     r.thicknessMM,
+				Grade:           r.grade,
+				ReceivedAt:      sp.receiptDate,
+			}, sp.actor)
+			if err != nil {
+				return fromInventoryErr(err)
+			}
 		}
 		// The line's quantity was fixed from this area when the receipt was
 		// saved; if the item's unit has changed since, posting would leave the

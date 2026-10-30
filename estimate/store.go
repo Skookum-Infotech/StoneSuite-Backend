@@ -334,7 +334,7 @@ const estimateSelect = `
 	       est.estimate_custom_fields,
 	       est.estimate_subtotal, est.estimate_discount_total, est.estimate_tax_total,
 	       est.estimate_shipping_charge, est.estimate_adjustment, est.estimate_grand_total,
-	       est.estimate_created_at, est.estimate_updated_at,
+	       est.estimate_created_at, est.estimate_updated_at, est.estimate_record_version,
 	       est.estimate_status, est.estimate_customer_id
 	FROM estimate est
 	JOIN lkp_record_status rs ON rs.record_status_id = est.estimate_status
@@ -376,7 +376,7 @@ func scanEstimate(row pgx.Row) (*Estimate, estimateMeta, error) {
 		&customRaw,
 		&e.Subtotal, &e.DiscountTotal, &e.TaxTotal,
 		&e.ShippingCharge, &e.Adjustment, &e.GrandTotal,
-		&e.CreatedAt, &e.UpdatedAt,
+		&e.CreatedAt, &e.UpdatedAt, &e.RecordVersion,
 		&meta.statusID, &meta.customerID,
 	); err != nil {
 		return nil, estimateMeta{}, err

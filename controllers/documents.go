@@ -84,6 +84,8 @@ type DocumentOps struct {
 	// threads routes a customer's reply to a record's Communication tab; nil
 	// leaves sends unchanged (see WithRecordEmail).
 	threads recordThreads
+	// sendNotify is injectable for tests; nil means services.SendNotificationWithResult.
+	sendNotify sendNotifyFunc
 }
 
 // NewDocumentOps constructs the handler group. sendDisabled and r2 may both
@@ -259,7 +261,11 @@ func (h *DocumentOps) Send(w http.ResponseWriter, r *http.Request) {
 		writeSendError(w, serr)
 		return
 	}
-	sendID, outcome, serr := h.deliver(r.Context(), pool, identityID, ownerUserID, p)
+	idemKey, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	sendID, outcome, serr := h.deliverKeyed(r.Context(), pool, identityID, ownerUserID, p, idemKey)
 	if serr != nil {
 		fail(w, serr.Status, serr.Msg)
 		return

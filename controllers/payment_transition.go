@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/payment"
 )
 
@@ -50,15 +51,30 @@ func (h *PaymentOps) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req payApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.InvoiceUUID == "" || req.Amount <= 0 {
+	raw, ok := readJSONBody(w, r, &req)
+	if !ok {
+		return
+	}
+	if req.InvoiceUUID == "" || !(req.Amount > 0) {
 		fail(w, http.StatusBadRequest, "invoiceUuid and a positive amount are required.")
+		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
 		return
 	}
 	if !h.invoiceInScopeForUpdate(w, r, pool, identityID, req.InvoiceUUID) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	p, err := payment.Apply(r.Context(), pool, id, req.InvoiceUUID, req.Amount, empID)
+	var applyKey, applyHash string
+	if key != "" {
+		applyKey = callerIdempotencyKey(identityID, key)
+		// The hash covers the payment id too: the body alone names only the
+		// invoice and amount, so one key must not replay across payments.
+		applyHash = idempotency.HashRequest([]byte(id + "\n" + string(raw)))
+	}
+	p, err := payment.ApplyIdempotent(r.Context(), pool, id, req.InvoiceUUID, req.Amount, empID, applyKey, applyHash)
 	if err != nil {
 		paymentFail(w, err, "Failed to apply payment.")
 		return

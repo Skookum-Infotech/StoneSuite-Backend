@@ -162,9 +162,31 @@ type sourceOrder struct {
 // against, and enforces that it is open for receiving. The vendor is taken
 // from here and never from the caller, so a receipt cannot name a different
 // counterparty than the order it settles.
-func resolveSourceOrder(ctx context.Context, q workflow.Querier, poUUID string) (*sourceOrder, error) {
-	var s sourceOrder
+//
+// The order row is locked first, in its own statement: FOR SHARE when the
+// receipt is only being recorded, so the order's SoftDelete (FOR UPDATE plus a
+// reference count) cannot slip between this read and the receipt's insert;
+// FOR UPDATE when the same transaction goes on to post, because posting takes
+// that exclusive lock anyway and a share-then-upgrade can deadlock two
+// concurrent receipts. The status is read after the lock so it is current.
+func resolveSourceOrder(ctx context.Context, q workflow.Querier, poUUID string, forPost bool) (*sourceOrder, error) {
+	lockClause := "FOR SHARE"
+	if forPost {
+		lockClause = "FOR UPDATE"
+	}
+	var lockedID int
 	err := q.QueryRow(ctx, `
+		SELECT purchase_order_id FROM purchase_order
+		WHERE purchase_order_uuid = $1 AND purchase_order_deleted_at IS NULL `+lockClause, poUUID,
+	).Scan(&lockedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ClientError{Msg: "Unknown purchase order."}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock source purchase order: %w", err)
+	}
+	var s sourceOrder
+	err = q.QueryRow(ctx, `
 		SELECT po.purchase_order_id, rs.record_status_code,
 		       po.purchase_order_vendor_id, po.purchase_order_vendor_name
 		FROM purchase_order po

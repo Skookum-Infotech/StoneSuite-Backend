@@ -11,6 +11,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/expense"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
@@ -124,29 +125,6 @@ func (h *ExpenseOps) authExpByUUID(w http.ResponseWriter, r *http.Request, uuid 
 	return pool, identityID, exp, true
 }
 
-// expFail maps a store error to an HTTP response.
-func expFail(w http.ResponseWriter, err error, serverMsg string) {
-	switch {
-	case errors.Is(err, expense.ErrNotFound):
-		fail(w, http.StatusNotFound, "Expense claim not found.")
-	case errors.Is(err, expense.ErrInvalidTransition),
-		errors.Is(err, expense.ErrApprovalRequired),
-		errors.Is(err, expense.ErrApprovalNotRequired):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, expense.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	case expense.IsClientError(err):
-		fail(w, http.StatusBadRequest, err.Error())
-	default:
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 // ---- list / search / create --------------------------------------------------
 
 // List GET /api/tenant/expenses
@@ -222,9 +200,17 @@ func (h *ExpenseOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in expense.CreateExpenseInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	exp, err := expense.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
@@ -265,8 +251,7 @@ func (h *ExpenseOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in expense.UpdateExpenseInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	after, err := expense.Update(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))

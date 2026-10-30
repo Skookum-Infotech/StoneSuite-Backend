@@ -18,6 +18,7 @@ import (
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/middleware"
+	"stonesuite-backend/safego"
 )
 
 // sseEvent is one SSE frame queued from the background dispatch goroutine to
@@ -168,9 +169,16 @@ func (h *AIOps) AskStream(w http.ResponseWriter, r *http.Request) {
 	// before events drained, delivering "done" ahead of buffered tokens.)
 	var finalOutcome outcome
 	go func() {
-		res, route, err := runAskDispatch(ctx, h, pa, store, body.Question, sink)
-		finalOutcome = outcome{res: res, route: route, err: err}
-		close(events)
+		// close(events) is deferred so a panic still ends the stream (the
+		// select loop below would otherwise wait forever); the panic itself
+		// surfaces as the outcome's error.
+		defer close(events)
+		if panicErr := safego.Do(ctx, "ai.askStream", func() {
+			res, route, err := runAskDispatch(ctx, h, pa, store, body.Question, sink)
+			finalOutcome = outcome{res: res, route: route, err: err}
+		}); panicErr != nil {
+			finalOutcome = outcome{err: panicErr}
+		}
 	}()
 
 	heartbeat := time.NewTicker(streamHeartbeatInterval)

@@ -58,6 +58,9 @@ func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if key != "" {
+		key = callerIdempotencyKey(identityID, key)
+	}
 	empID := resolveEmployeeID(r, identityID)
 	inv, err := payment.QuickPay(r.Context(), pool, id, req.Amount, key, empID)
 	if err != nil {

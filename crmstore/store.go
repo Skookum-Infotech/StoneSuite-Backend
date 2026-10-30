@@ -76,8 +76,10 @@ type Store interface {
 	// KeyForRecord returns the CRM workflow key (lead|prospect|customer) of a
 	// record, for RBAC resolution by record id.
 	KeyForRecord(ctx context.Context, pool *pgxpool.Pool, id string) (string, error)
-	// ListRecords lists records for key, filtered by RBAC scope.
-	ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) ([]workflow.Record, error)
+	// ListRecords lists records for key, filtered by RBAC scope, newest
+	// first, at most limit of them (limit <= 0 means all — internal callers
+	// only; see workflow.MaxListRecords).
+	ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, limit int) ([]workflow.Record, error)
 	// CountRecords returns how many records of key exist for the caller's
 	// scope — same RBAC narrowing as ListRecords, without fetching rows. Used
 	// by the AI assistant's analytical (count) question path.

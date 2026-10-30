@@ -6193,9 +6193,15 @@ END $$;
 -- so a cycle count of that yard would report it missing and write it off.
 DO $$
 BEGIN
+    -- 'on_order' is a slab minted when its purchase order was sent (see "ON-ORDER
+    -- SLABS" at the end of this file). It has to be in THIS list, not only in a
+    -- later re-add: this block runs on every boot, and a narrower list would
+    -- refuse to re-create the constraint as soon as one such slab exists.
+    -- 'received' is a slab that arrived on an item receipt without a bin (see
+    -- "RECEIVED SLABS" at the end of this file) -- same reason, same list.
     ALTER TABLE inventory_slab DROP CONSTRAINT IF EXISTS chk_slab_status;
     ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_status
-        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit'));
+        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit','on_order','received'));
 END $$;
 
 -- ---------------------------------------------------------------------
@@ -8761,6 +8767,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_ledger_src_line_consumed
     ON inventory_ledger (COALESCE(source_record_type, 0), source_line_id, warehouse_id)
     WHERE event = 'consumed' AND source_line_id IS NOT NULL;
 
+-- A square unit is what makes an item a slab: an item in sq ft or sq m is
+-- tracked slab by slab, and its stock is always counted. The item form and the
+-- item API now derive tracking from the unit; this brings items saved before
+-- that into line, and is a no-op once they are.
+UPDATE inventory_item ii
+   SET inventory_item_tracking = 'serialized', inventory_item_track_stock = TRUE
+  FROM lkp_unit u
+ WHERE u.unit_id = ii.inventory_item_unit_id
+   AND u.unit_category = 'area'
+   AND (ii.inventory_item_tracking <> 'serialized' OR NOT ii.inventory_item_track_stock);
+
 -- =====================================================================
 -- One-time upgrade: fold lkp_warehouse into company_location.
 --
@@ -10045,6 +10062,28 @@ CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_identity_status ON ai_proposed
 CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_expires_at ON ai_proposed_action (expires_at);
 
 -- =====================================================================
+-- DOCUMENT SEND ATTEMPTS (idempotent customer emails)
+-- =====================================================================
+-- One row per attempt to email a document, written BEFORE the email is queued
+-- so a retry (same Idempotency-Key) reuses the attempt instead of re-sending.
+-- Pending/failed attempts live here, not in document_sends: document_sends
+-- means "the document was sent" (send history, AR automation). On success the
+-- attempt is finalized into document_sends with the attempt's own id.
+CREATE TABLE IF NOT EXISTS document_send_attempt (
+    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    record_id               UUID        NOT NULL,
+    workflow_key            TEXT        NOT NULL,
+    idempotency_key         TEXT        NOT NULL DEFAULT '',
+    request_fingerprint     TEXT        NOT NULL DEFAULT '',
+    status                  TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed')),
+    sent_by_user_id         UUID        REFERENCES users(id) ON DELETE SET NULL,
+    notify_notification_ids TEXT[]      NOT NULL DEFAULT '{}',
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_document_send_attempt_key
+    ON document_send_attempt (record_id, workflow_key, idempotency_key) WHERE idempotency_key <> '';
+
 -- Anomaly detection: findings raised by the scheduled anomaly scan
 -- (anomaly/), who each one is addressed to, and how a reviewer resolved
 -- it. UNIQUE (rule_key, subject_key) is what makes a rescan idempotent: a
@@ -10093,3 +10132,150 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id, enabled_at)
 SELECT id, NOW() FROM automation_rules WHERE rule_key = 'anomaly_scan'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- =====================================================================
+-- ON-ORDER SLABS -- a slab exists from the moment its purchase order is sent.
+--
+-- Sending a purchase order creates one inventory_slab per ordered slab with the
+-- status 'on_order'. It is NOT stock: no inventory_slab_ledger row is written
+-- and inventory_stock is untouched until the slab arrives. Posting an item
+-- receipt that ticks the slab flips it to 'available' and writes the one
+-- 'received' ledger row (uq_slab_ledger_received keeps that once-only).
+--
+-- chk_slab_status itself is widened with 'on_order' in the in_transit block
+-- further up, which re-creates it on every boot; chk_slab_dims is relaxed here.
+-- =====================================================================
+
+-- A PO line's slab thickness, in the line's own dim_unit (like dim_length /
+-- dim_width). Optional: an On Order slab falls back to the item's thickness.
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL
+    CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+
+-- Which PO line an On Order slab was minted for (NULL on every other slab).
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS purchase_order_item_id INTEGER NULL
+    REFERENCES purchase_order_item(purchase_order_item_id);
+CREATE INDEX IF NOT EXISTS idx_slab_po_item ON inventory_slab (purchase_order_item_id)
+    WHERE purchase_order_item_id IS NOT NULL;
+
+-- The On Order slab a receipt row stands for. NULL on a row that describes a
+-- slab the order did not list (the receiver typed it in).
+ALTER TABLE item_receipt_line_unit ADD COLUMN IF NOT EXISTS expected_slab_id INTEGER NULL
+    REFERENCES inventory_slab(inventory_slab_id);
+CREATE INDEX IF NOT EXISTS idx_irlu_expected_slab ON item_receipt_line_unit (expected_slab_id)
+    WHERE expected_slab_id IS NOT NULL;
+
+DO $$
+BEGIN
+    -- (chk_slab_status gains 'on_order' where it is re-created above, in the
+    -- in_transit block -- that block runs every boot, so it must not be narrower.)
+
+    -- An On Order slab may not have a known thickness yet (the PO line and the
+    -- item can both leave it blank); the receipt that brings it in requires it.
+    -- The same slab written off before it arrived (its order was cancelled) is
+    -- still without one, so 'scrapped' is allowed to carry 0 too.
+    ALTER TABLE inventory_slab DROP CONSTRAINT IF EXISTS chk_slab_dims;
+    ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_dims
+        CHECK (slab_length_mm > 0 AND slab_width_mm > 0
+               AND (slab_thickness_mm > 0 OR slab_status IN ('on_order', 'scrapped')));
+END $$;
+
+-- =====================================================================
+-- RECEIVED SLABS + CUSTOMER RESERVATIONS
+--
+-- 'received' is a slab that arrived on a posted item receipt WITHOUT a bin: it
+-- is in stock (its 'received' ledger row is written like any other) but not put
+-- away yet. It becomes 'available' when it is placed in a bin (a bin transfer).
+-- chk_slab_status gains 'received' in the in_transit block further up, which
+-- re-creates it on every boot, so nothing is repeated here.
+--
+-- A slab can also be reserved for a customer straight from Inventory, with no
+-- sales order or fabrication job: status 'reserved' plus the customer below.
+-- A reservation a fabrication job holds has no customer here -- it lives in
+-- fabrication_job_slab. The columns mean nothing unless slab_status = 'reserved'.
+-- =====================================================================
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_customer_id INTEGER NULL
+    REFERENCES customer(customer_id);
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMP NULL;
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_by INTEGER NULL
+    REFERENCES employee(employee_id);
+CREATE INDEX IF NOT EXISTS idx_slab_reserved_customer ON inventory_slab (reserved_customer_id)
+    WHERE reserved_customer_id IS NOT NULL;
+
+-- -- request_idempotency ----------------------------------------------------
+-- Generic replay ledger for create endpoints that accept an Idempotency-Key
+-- header (package idempotency). A double-clicked Save or a client retry after
+-- a timeout carries the same key, finds the row its first attempt committed,
+-- and gets that document back instead of creating a second one. The row is
+-- written in the same transaction as the document, so it exists iff the
+-- document does. request_hash is SHA-256 of the request body: the same key
+-- with a different body is a client bug and is refused, never replayed.
+-- result_ref is the created document's external id. Rows older than a week
+-- are pruned; retries happen within seconds.
+CREATE TABLE IF NOT EXISTS request_idempotency (
+    id           BIGSERIAL    PRIMARY KEY,
+    scope        TEXT         NOT NULL,
+    idem_key     TEXT         NOT NULL,
+    request_hash TEXT         NOT NULL,
+    result_ref   TEXT         NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_request_idempotency UNIQUE (scope, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_request_idempotency_created_at ON request_idempotency (created_at);
+
+-- -- write-safety uniqueness backstops ---------------------------------------
+-- DB-level guards behind the application checks. Each is created only when the
+-- existing data has no duplicates; otherwise a WARNING is raised and the index
+-- is skipped so a boot never breaks on legacy rows. Re-runs are no-ops (the
+-- pg_indexes guard). Like the other *_number keys, deleted rows stay in the
+-- key: a soft-deleted job's number is never reissued.
+DO $$
+DECLARE
+    dup_count BIGINT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = current_schema() AND indexname = 'uq_fabrication_job_number') THEN
+        SELECT COUNT(*) INTO dup_count FROM (
+            SELECT fabrication_job_number FROM fabrication_job
+            WHERE fabrication_job_number IS NOT NULL
+            GROUP BY fabrication_job_number HAVING COUNT(*) > 1
+        ) d;
+        IF dup_count = 0 THEN
+            -- Subtransaction: a duplicate committed between the count and the
+            -- build becomes a warning, never a failed boot.
+            BEGIN
+                CREATE UNIQUE INDEX uq_fabrication_job_number
+                    ON fabrication_job (fabrication_job_number) WHERE fabrication_job_number IS NOT NULL;
+            EXCEPTION WHEN unique_violation THEN
+                RAISE WARNING 'skipping uq_fabrication_job_number: duplicate fabrication_job_number committed concurrently';
+            END;
+        ELSE
+            RAISE WARNING 'skipping uq_fabrication_job_number: % duplicate fabrication_job_number value(s) exist', dup_count;
+        END IF;
+    END IF;
+END $$;
+
+DO $$
+DECLARE
+    dup_count BIGINT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = current_schema() AND indexname = 'uq_je_reverses') THEN
+        SELECT COUNT(*) INTO dup_count FROM (
+            SELECT reverses_journal_entry_id FROM journal_entry
+            WHERE reverses_journal_entry_id IS NOT NULL
+            GROUP BY reverses_journal_entry_id HAVING COUNT(*) > 1
+        ) d;
+        IF dup_count = 0 THEN
+            -- Subtransaction: a duplicate committed between the count and the
+            -- build becomes a warning, never a failed boot.
+            BEGIN
+                CREATE UNIQUE INDEX uq_je_reverses
+                    ON journal_entry (reverses_journal_entry_id) WHERE reverses_journal_entry_id IS NOT NULL;
+            EXCEPTION WHEN unique_violation THEN
+                RAISE WARNING 'skipping uq_je_reverses: second reversal of a journal entry committed concurrently';
+            END;
+        ELSE
+            RAISE WARNING 'skipping uq_je_reverses: % journal entry(ies) are reversed more than once', dup_count;
+        END IF;
+    END IF;
+END $$;

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/vendorpayment"
 )
 
@@ -80,15 +81,30 @@ func (h *VendorPaymentOps) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req vendorPayApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VendorBillUUID == "" || req.Amount <= 0 {
+	raw, ok := readJSONBody(w, r, &req)
+	if !ok {
+		return
+	}
+	if req.VendorBillUUID == "" || !(req.Amount > 0) {
 		fail(w, http.StatusBadRequest, "vendorBillUuid and a positive amount are required.")
+		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
 		return
 	}
 	if !h.vendorBillInScopeForUpdate(w, r, pool, identityID, req.VendorBillUUID) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Apply(r.Context(), pool, id, req.VendorBillUUID, req.Amount, empID)
+	var applyKey, applyHash string
+	if key != "" {
+		applyKey = callerIdempotencyKey(identityID, key)
+		// The hash covers the payment id too: the body alone names only the
+		// bill and amount, so one key must not replay across payments.
+		applyHash = idempotency.HashRequest([]byte(id + "\n" + string(raw)))
+	}
+	vp, err := vendorpayment.ApplyIdempotent(r.Context(), pool, id, req.VendorBillUUID, req.Amount, empID, applyKey, applyHash)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to apply vendor payment.")
 		return

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/companyprofile"
+	"stonesuite-backend/safego"
 	"stonesuite-backend/tenancy"
 )
 
@@ -135,7 +136,17 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) (Summary, error) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			res, busy, err := r.runTenant(ctx, &t, now)
+			var (
+				res  Result
+				busy bool
+				err  error
+			)
+			// One tenant's panic is that tenant's failure, not the whole tick's.
+			if panicErr := safego.Do(ctx, "automation.runTenant", func() {
+				res, busy, err = r.runTenant(ctx, &t, now)
+			}); panicErr != nil {
+				err = panicErr
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			sum.add(res)

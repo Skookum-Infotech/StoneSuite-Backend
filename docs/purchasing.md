@@ -56,6 +56,21 @@ it, and a Vendor Bill converted from an order carries them only when it bills
 the line's full ordered quantity — a partial bill keeps just the billed
 quantity.
 
+A purchase order line also has a **Thickness** column, in the same unit as
+Length and Width. It is optional and does not change the quantity; it is the
+thickness the line's slabs are put on order with (see below). Picking an item
+fills it in from the item's own thickness when the item has one.
+
+**Sending the order puts its slabs on order.** When a purchase order is sent to
+the vendor, every slab line that states a Length and Width gets one slab per
+ordered slab in Inventory, each with a serial number made from the purchase
+order number plus a running number (for example PORD-000012-001), the size
+ordered, and the status **On Order**. A slab on order is not stock: it is not
+counted as on hand and cannot be moved, cut, bundled, counted or transferred
+until it arrives. A line with no size, or whose item is not a slab item, puts
+nothing on order. If the order is cancelled or closed before its slabs arrive,
+the ones still on order are written off.
+
 ## Item Receipts
 
 An Item Receipt records goods physically received against a purchase order,
@@ -66,7 +81,19 @@ one shipment, which is why Partial exists alongside Received — a purchase
 order's own status reflects whether it's been fully or only partly
 received.
 
-Slab items are received slab by slab. For a purchase order line whose item is
+Slabs that are already on order are received by ticking them. When you receive
+against a sent purchase order, each slab line that put slabs on order lists
+them under the item with a checkbox — serial number, size, and thickness. Tick
+the slabs that arrived and choose the receiving location; each ticked slab has
+its own optional bin (or set one bin for all the ticked ones at once). Saving the
+receipt turns exactly those slabs from On Order into stock at that location: a
+slab with a bin is **Available**, and a slab with no bin yet is **Received** —
+in stock but not put away — until it is moved into a bin. Slabs you do not tick
+stay on order for a later receipt. A slab whose line and item both left the thickness blank asks for
+it when you tick it. The received quantity is worked out from the ticked slabs'
+areas, so you don't type it.
+
+Slab items with nothing on order are received slab by slab. For a purchase order line whose item is
 tracked as individual slabs, the Item Receipt asks for a receiving location
 and one row per physical slab — its length, width, and thickness in
 millimetres, and optionally the bin it goes to. The received quantity for that

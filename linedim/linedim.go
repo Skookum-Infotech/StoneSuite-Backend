@@ -220,6 +220,50 @@ func Area(length, width float64, slabs int, unit string, divisor float64) float6
 	return math.Round(length*width*float64(slabs)*cm2PerSquareUnit[unit]/divisor*quantityScale) / quantityScale
 }
 
+// MaxThicknessCM is the thickest slab a line accepts (1 m), measured after
+// conversion to centimetres so it means the same in any unit. A slab is never
+// close to it; it only keeps a typo from reaching DECIMAL(10,2).
+const MaxThicknessCM = 100.0
+
+// mmPerCM converts centimetres to millimetres.
+const mmPerCM = 10.0
+
+// ResolveThickness validates a slab thickness entered in `unit` (blank means
+// DefaultUnit) on a line measured in `areaUnit`. It returns the thickness
+// rounded to the two decimals the column keeps, the normalised unit, and a
+// client-error message ("" when fine) worded to follow "Line N: ".
+//
+// Thickness is descriptive, like length and width: it does not enter the line's
+// quantity. It is only allowed on an area-unit line, where the slab it
+// describes can exist.
+func ResolveThickness(value float64, unit, areaUnit string) (float64, string, string) {
+	u, ok := NormalizeUnit(unit)
+	if !ok {
+		return 0, "", fmt.Sprintf("the dimension unit must be one of %s.", strings.Join(Units, ", "))
+	}
+	if _, ok := divisorFor(areaUnit); !ok {
+		return 0, "", "thickness can only be used on a line measured in SQFT or SQM."
+	}
+	t := round2(value)
+	if !(t > 0) {
+		return 0, "", "thickness must be greater than zero."
+	}
+	if t*cmPerUnit[u] > MaxThicknessCM {
+		return 0, "", "thickness cannot exceed 1 m."
+	}
+	return t, u, ""
+}
+
+// ToMM converts a length measured in `unit` to millimetres, rounded to the two
+// decimals a slab dimension keeps. It reports false for an unknown unit.
+func ToMM(value float64, unit string) (float64, bool) {
+	u, ok := NormalizeUnit(unit)
+	if !ok {
+		return 0, false
+	}
+	return round2(value * cmPerUnit[u] * mmPerCM), true
+}
+
 // divisorFor returns the cm^2-per-unit divisor for an area unit code.
 func divisorFor(areaUnit string) (float64, bool) {
 	switch strings.ToUpper(strings.TrimSpace(areaUnit)) {

@@ -99,19 +99,21 @@ func (h *CustomerPortalAdminOps) PortalInvite(w http.ResponseWriter, r *http.Req
 		return
 	}
 	expiry := time.Now().Add(customerInviteExpiry)
+	// Only the hash is stored; the raw token travels in the email link alone.
+	tokenHash := tenancy.HashToken(token)
 
 	if !identityExists {
 		_, err = pool.Exec(r.Context(), `
 			INSERT INTO customer_identities (customer_id, email, full_name, status, invite_token, invite_token_expiry)
 			VALUES ($1, $2, $3, 'invited', $4, $5)`,
-			custInternalID, req.Email, req.FullName, token, expiry)
+			custInternalID, req.Email, req.FullName, tokenHash, expiry)
 	} else {
 		_, err = pool.Exec(r.Context(), `
 			UPDATE customer_identities SET
 				email = $1, full_name = $2, status = 'invited',
 				invite_token = $3, invite_token_expiry = $4, updated_at = NOW()
 			WHERE customer_id = $5`,
-			req.Email, req.FullName, token, expiry, custInternalID)
+			req.Email, req.FullName, tokenHash, expiry, custInternalID)
 	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to create invitation.")

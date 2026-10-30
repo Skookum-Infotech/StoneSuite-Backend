@@ -47,7 +47,7 @@ func TestValidateLines(t *testing.T) {
 		},
 		{
 			// 0.1 + 0.1 + 0.1 == 0.30000000000000004 in IEEE-754 float64, not
-			// 0.3 exactly. Without round2's cent-level rounding before the
+			// 0.3 exactly. Without integer-cent summing before the
 			// debit/credit comparison, this legitimately balanced entry would
 			// be rejected as unbalanced by a raw float64 != comparison.
 			name: "balanced despite float64 summation drift is accepted",

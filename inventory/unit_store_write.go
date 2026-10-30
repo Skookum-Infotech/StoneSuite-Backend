@@ -193,12 +193,14 @@ func ScrapUnit(ctx context.Context, pool *pgxpool.Pool, uuid string, reasonID *i
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE inventory_slab SET slab_status = 'scrapped', slab_updated_at = NOW(), slab_updated_by = $2
+		UPDATE inventory_slab SET slab_status = 'scrapped', slab_updated_at = NOW(), slab_updated_by = $2,
+		       reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL
 		WHERE inventory_slab_id = $1`, u.id, nullableInt(actorEmployeeID)); err != nil {
 		return fmt.Errorf("mark unit scrapped: %w", err)
 	}
-	// Only available/reserved stone is still counted; consumed already left.
-	if u.status == "available" || u.status == "reserved" {
+	// Only stone in the yard is still counted (available, received, reserved);
+	// consumed already left.
+	if u.status == StatusAvailable || u.status == StatusReceived || u.status == StatusReserved {
 		if err := SlabLedgerAndStock(ctx, tx, u.id, u.itemID, u.warehouseID,
 			EventScrapped, -u.area, nil, actorEmployeeID); err != nil {
 			return err

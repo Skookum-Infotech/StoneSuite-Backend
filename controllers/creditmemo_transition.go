@@ -6,6 +6,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/creditmemo"
+	"stonesuite-backend/idempotency"
 )
 
 type cmTransitionRequest struct {
@@ -69,16 +70,31 @@ func (h *CreditMemoOps) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req cmApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.InvoiceUUID == "" || req.Amount <= 0 {
+	raw, ok := readJSONBody(w, r, &req)
+	if !ok {
+		return
+	}
+	if req.InvoiceUUID == "" || req.Amount <= 0 {
 		fail(w, http.StatusBadRequest, "invoiceUuid and a positive amount are required.")
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var idemKey, idemHash string
+	if key != "" {
+		idemKey = callerIdempotencyKey(identityID, key)
+		// The memo id is part of the fingerprint: the same key and body aimed
+		// at a different memo is a different request, not a retry.
+		idemHash = idempotency.HashRequest([]byte(id + "\n" + string(raw)))
 	}
 	if !h.invoiceInScopeForUpdate(w, r, pool, identityID, req.InvoiceUUID) {
 		return
 	}
 	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	cm, err := creditmemo.Apply(r.Context(), pool, id, req.InvoiceUUID, req.Amount, empID)
+	cm, err := creditmemo.ApplyIdempotent(r.Context(), pool, id, req.InvoiceUUID, req.Amount, empID, idemKey, idemHash)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to apply credit memo.")
 		return

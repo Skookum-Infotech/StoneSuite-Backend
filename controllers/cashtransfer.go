@@ -10,6 +10,8 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/cashtransfer"
+	"stonesuite-backend/dberr"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/query"
@@ -93,6 +95,12 @@ func ctFail(w http.ResponseWriter, err error, serverMsg string) {
 	case errors.Is(err, cashtransfer.ErrNoAccountingPeriod):
 		fail(w, http.StatusConflict,
 			"No accounting period covers this date. Generate the fiscal year first.")
+	case errors.Is(err, cashtransfer.ErrVersionConflict):
+		fail(w, http.StatusConflict, "This cash transfer was changed by someone else. Reload and try again.")
+	case errors.Is(err, idempotency.ErrKeyReuse):
+		fail(w, http.StatusConflict, "Idempotency-Key was already used with a different request")
+	case errors.Is(err, idempotency.ErrInProgress):
+		fail(w, http.StatusConflict, "A request with this Idempotency-Key is still in progress")
 	case errors.Is(err, cashtransfer.ErrVersionMismatch):
 		fail(w, http.StatusConflict, "This cash transfer was changed by someone else. Reload and try again.")
 	default:
@@ -106,6 +114,10 @@ func ctFail(w http.ResponseWriter, err error, serverMsg string) {
 			fail(w, http.StatusBadRequest, ife.Error())
 			return
 		}
+		if status, msg, ok := dberr.Map(err); ok {
+			fail(w, status, msg)
+			return
+		}
 		fail(w, http.StatusInternalServerError, serverMsg)
 	}
 }
@@ -116,9 +128,17 @@ func (h *CashTransferOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in cashtransfer.CreateInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	empID := resolveEmployeeID(r, identityID)
 	ct, err := cashtransfer.Create(r.Context(), pool, in, empID)
@@ -150,8 +170,7 @@ func (h *CashTransferOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in cashtransfer.UpdateInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	before, _ := cashtransfer.Get(r.Context(), pool, id)

@@ -29,11 +29,11 @@ func redirectTransport(t *testing.T, srv *httptest.Server) http.RoundTripper {
 	})
 }
 
-// redirectDefaultClient points http.DefaultClient (which Client uses) at srv
-// for the duration of the test.
-func redirectDefaultClient(t *testing.T, srv *httptest.Server) {
+// redirectClient returns an HTTP client (with the production timeout shape)
+// that sends every request to srv, for injecting into a test Client.
+func redirectClient(t *testing.T, srv *httptest.Server) *http.Client {
 	t.Helper()
-	prev := http.DefaultClient.Transport
-	http.DefaultClient.Transport = redirectTransport(t, srv)
-	t.Cleanup(func() { http.DefaultClient.Transport = prev })
+	hc := newHTTPClient(0)
+	hc.Transport = redirectTransport(t, srv)
+	return hc
 }

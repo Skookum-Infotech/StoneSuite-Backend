@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-620 endpoints across 7 surfaces, read from `main.go`.
+626 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 520 |
+| staff token + tenant | 526 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 519 endpoints
+## `tenant` — 525 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -755,6 +755,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Get` |
 | `PATCH` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Update` |
 | `GET` | `/api/tenant/inventory/items/{uuid}/history` | staff token + tenant | `inv.History` |
+| `GET` | `/api/tenant/inventory/items/{uuid}/stock` | staff token + tenant | `inv.StockForItem` |
 | `GET` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.ListKits` |
 | `POST` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.CreateKit` |
 | `POST` | `/api/tenant/inventory/kits/search` | staff token + tenant | `inv.SearchKits` |
@@ -768,6 +769,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PATCH` | `/api/tenant/inventory/lookups/{kind}/{id}` | staff token + tenant | `invLookup.Update` |
 | `GET` | `/api/tenant/inventory/slabs/{uuid}` | staff token + tenant | `invUnit.Get` |
 | `POST` | `/api/tenant/inventory/slabs/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
+| `PATCH` | `/api/tenant/inventory/stock/reorder-point` | staff token + tenant | `inv.SetReorderPoint` |
+| `POST` | `/api/tenant/inventory/stock/totals` | staff token + tenant | `inv.StockTotals` |
 | `GET` | `/api/tenant/inventory/transfers` | staff token + tenant | `invTrf.List` |
 | `POST` | `/api/tenant/inventory/transfers` | staff token + tenant | `invTrf.Create` |
 | `GET` | `/api/tenant/inventory/transfers/in-transit` | staff token + tenant | `invTrf.InTransit` |
@@ -788,6 +791,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/inventory/units/{uuid}/cut` | staff token + tenant | `invUnit.Cut` |
 | `GET` | `/api/tenant/inventory/units/{uuid}/history` | staff token + tenant | `invUnit.History` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/inspection` | staff token + tenant | `invUnit.Inspect` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/release` | staff token + tenant | `invUnit.ReleaseReservation` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/reserve` | staff token + tenant | `invUnit.Reserve` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
 | `GET` | `/api/tenant/inventory/warehouses` | staff token + tenant | `invWh.List` |
 | `GET` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Get` |
@@ -892,6 +897,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/purchase-orders/{uuid}/audit` | staff token + tenant | `poOps.Audit` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/convert-to-bill` | staff token + tenant | `poOps.ConvertToBill` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/next-slab-serial` | staff token + tenant | `irOps.NextSlabSequence` |
+| `GET` | `/api/tenant/purchase-orders/{uuid}/on-order-slabs` | staff token + tenant | `irOps.OnOrderSlabs` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/receipts` | staff token + tenant | `irOps.ForPurchaseOrder` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/reject` | staff token + tenant | `poOps.Reject` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/resend` | staff token + tenant | `poOps.ResendToVendor` |

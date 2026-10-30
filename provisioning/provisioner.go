@@ -144,7 +144,7 @@ func (p *Provisioner) reapStale(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := p.queue.RequeueStale(ctx, []string{JobTypeTenantProvision}, staleAfter)
+			n, err := p.queue.RequeueStale(ctx, []string{JobTypeTenantProvision, JobTypeTenantR2Bucket}, staleAfter)
 			if err != nil {
 				log.Printf("provisioning: requeue stale jobs: %v", err)
 			} else if n > 0 {
@@ -154,14 +154,19 @@ func (p *Provisioner) reapStale(ctx context.Context) {
 	}
 }
 
-// processNext claims and runs at most one pending provisioning job.
+// processNext claims and runs at most one pending provisioning or R2-bucket job.
 func (p *Provisioner) processNext(ctx context.Context) {
-	job, err := p.queue.ClaimNext(ctx, []string{JobTypeTenantProvision})
+	job, err := p.queue.ClaimNext(ctx, []string{JobTypeTenantProvision, JobTypeTenantR2Bucket})
 	if errors.Is(err, jobqueue.ErrNoJob) {
 		return
 	}
 	if err != nil {
 		log.Printf("provisioning: claim job: %v", err)
+		return
+	}
+
+	if job.JobType == JobTypeTenantR2Bucket {
+		p.runR2BucketJob(ctx, job)
 		return
 	}
 
@@ -285,21 +290,8 @@ func (p *Provisioner) provision(ctx context.Context, jobID string, j Job) error 
 	// back to the shared global R2_BUCKET at upload time.
 	_ = p.queue.UpdateProgress(ctx, jobID, map[string]string{"step": "r2_bucket"})
 	if p.cf.IsConfigured() {
-		bucket := storage.BucketName(j.Slug)
-		if err := p.cf.CreateBucket(ctx, bucket); err != nil {
-			log.Printf("provisioning: create r2 bucket for %s: %v (non-fatal, using shared bucket)", j.Slug, err)
-		} else {
-			origins := p.corsOrigins
-			if len(origins) == 0 {
-				origins = []string{"http://localhost:5173"}
-			}
-			if err := p.cf.SetBucketCORS(ctx, bucket, origins); err != nil {
-				log.Printf("provisioning: set cors on r2 bucket %s: %v (non-fatal)", bucket, err)
-			}
-			if err := p.cp.SetTenantR2Bucket(ctx, j.TenantID, bucket); err != nil {
-				return fmt.Errorf("store r2 bucket name: %w", err)
-			}
-			log.Printf("provisioning: r2 bucket %s created for tenant %s", bucket, j.Slug)
+		if err := p.ensureR2Bucket(ctx, j.TenantID, j.Slug); err != nil {
+			p.enqueueR2BucketRetry(ctx, j.TenantID, j.Slug, err)
 		}
 	}
 

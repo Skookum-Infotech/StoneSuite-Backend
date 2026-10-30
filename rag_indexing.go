@@ -78,11 +78,12 @@ func ragDrainBackoff(consecutiveFailures int) time.Duration {
 type IndexCoordinator struct {
 	mu     sync.Mutex
 	nudges map[string]chan struct{}
+	wakes  map[string]chan struct{} // per-tenant drain-worker wake signals
 }
 
 // NewIndexCoordinator builds an empty IndexCoordinator.
 func NewIndexCoordinator() *IndexCoordinator {
-	return &IndexCoordinator{nudges: make(map[string]chan struct{})}
+	return &IndexCoordinator{nudges: make(map[string]chan struct{}), wakes: make(map[string]chan struct{})}
 }
 
 // register returns tenantID's nudge channel, creating it (buffered so a
@@ -106,6 +107,7 @@ func (c *IndexCoordinator) register(tenantID string) <-chan struct{} {
 func (c *IndexCoordinator) CatchUp(tenantID string) {
 	c.mu.Lock()
 	ch, ok := c.nudges[tenantID]
+	wake := c.wakes[tenantID]
 	c.mu.Unlock()
 	if !ok {
 		return
@@ -114,6 +116,7 @@ func (c *IndexCoordinator) CatchUp(tenantID string) {
 	case ch <- struct{}{}:
 	default:
 	}
+	sendSignal(wake)
 }
 
 // CatchUpAll nudges every registered tenant's maintenance loop — called after
@@ -144,22 +147,43 @@ func newDocEmbedder() *ollama.Embedder {
 
 // startRAGIndexing starts one index-drain loop and one maintenance loop per
 // servable tenant, then rescans the tenant list every ragMaintenanceInterval
-// so a tenant provisioned after boot gets indexed without waiting for a
-// restart. Exits when ctx is cancelled; per-tenant loops share ctx.
+// (and whenever rescan fires) so a tenant provisioned after boot, or one that
+// finished its boot migration, gets indexed without waiting for a restart.
+// Tenants the gate reports as migrating are skipped until a later scan. Each
+// tenant's loops run under their own child context, cancelled (and the tenant
+// unregistered from coordinator) once the tenant is gone or no longer
+// servable. Exits when ctx is cancelled.
 // aiCache and coordinator are each a single shared instance (not one per
 // tenant, not package-level globals) so every tenant's loop sees the same
 // 30s-TTL toggle cache and the same catch-up nudge registry the platform and
 // tenant AI-settings handlers can also reach.
-func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, aiCache *aisettings.Cache, coordinator *IndexCoordinator) {
-	started := map[string]bool{}
+func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, aiCache *aisettings.Cache, coordinator *IndexCoordinator, gate *tenancy.MigrationGate, rescan <-chan struct{}) {
+	started := map[string]context.CancelFunc{}
+	defer func() {
+		for _, cancel := range started {
+			cancel()
+		}
+	}()
 	scan := func() {
 		tenants, err := cp.ListTenants(ctx)
 		if err != nil {
 			slog.Error("rag-index: failed to list tenants", "err", err)
 			return
 		}
+		live := make(map[string]bool, len(tenants))
+		for i := range tenants {
+			if tenants[i].Servable() {
+				live[tenants[i].ID] = true
+			}
+		}
+		for _, id := range staleStarted(started, live) {
+			started[id]()
+			delete(started, id)
+			coordinator.unregister(id)
+			slog.Info("rag-index: stopped loops for tenant no longer servable", "tenant_id", id)
+		}
 		for _, t := range tenants {
-			if started[t.ID] || !t.Servable() {
+			if _, ok := started[t.ID]; ok || !t.Servable() || gate.Migrating(t.ID) {
 				continue
 			}
 			pool, err := router.PoolFor(ctx, &t)
@@ -170,10 +194,12 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 			store := crmstore.For(t.DesignVersion)
 			q := index.NewQueue(pool)
 			w := index.NewWorker(q, newRAGLoaderRouter(crmstore.NewRAGRecordLoader(store, pool), pool), newDocEmbedder(), ai.NewRagStore(pool))
-			started[t.ID] = true
+			tenantCtx, cancel := context.WithCancel(ctx)
+			started[t.ID] = cancel
 			nudge := coordinator.register(t.ID)
-			go runTenantIndexWorker(ctx, t.Slug, t.ID, w, q, aiCache, cp.Pool(), pool)
-			go runTenantMaintenance(ctx, t.Slug, t.ID, store, cp.Pool(), pool, q, aiCache, nudge)
+			wake := coordinator.registerWake(t.ID)
+			go runTenantIndexWorker(tenantCtx, t.Slug, t.ID, w, q, aiCache, cp.Pool(), pool, wake)
+			go runTenantMaintenance(tenantCtx, t.Slug, t.ID, store, cp.Pool(), pool, q, aiCache, nudge)
 		}
 	}
 
@@ -186,53 +212,77 @@ func startRAGIndexing(ctx context.Context, cp *tenancy.ControlPlane, router *ten
 			return
 		case <-ticker.C:
 			scan()
+		case <-rescan:
+			scan()
 		}
 	}
 }
 
 // runTenantIndexWorker drains one tenant's rag_index_queue on a timer until
 // ctx is cancelled, publishing queue-depth metrics after every drain attempt.
-// The timer runs at ragDrainInterval while the embedder is healthy and while
-// AI is unavailable for this tenant (platform or tenant switch off — the
-// drain is simply skipped, not backed off, so it resumes at full cadence the
-// moment either switch flips back on); it backs off exponentially
-// (ragDrainBackoff) across consecutive rag.ErrUnavailable failures and resets
-// to ragDrainInterval on the next successful drain.
-func runTenantIndexWorker(ctx context.Context, slug, tenantID string, w *index.Worker, q *index.Queue, aiCache *aisettings.Cache, cpPool, pool *pgxpool.Pool) {
+// The next wait comes from ragDrainNextInterval: ragDrainInterval while there
+// is work, a progressive idle backoff after ragDrainIdleThreshold consecutive
+// empty drains, and the exponential embedder backoff across consecutive
+// rag.ErrUnavailable failures (which wins when active). A wake signal resets
+// to ragDrainInterval and drains immediately. While AI is unavailable for this
+// tenant the drain is skipped at the normal cadence, so it resumes at full
+// speed the moment either switch flips back on.
+func runTenantIndexWorker(ctx context.Context, slug, tenantID string, w *index.Worker, q *index.Queue, aiCache *aisettings.Cache, cpPool, pool *pgxpool.Pool, wake <-chan struct{}) {
 	consecutiveFailures := 0
+	consecutiveEmpty := 0
 	timer := time.NewTimer(ragDrainInterval)
 	defer timer.Stop()
+
+	tick := func() {
+		status, err := aiCache.Status(ctx, cpPool, pool, tenantID)
+		if err != nil {
+			slog.Error("rag-index: ai status check failed", "tenant", slug, "err", err)
+		} else if !status.Available {
+			timer.Reset(ragDrainInterval)
+			return
+		}
+
+		handled, drainErr := w.DrainOnce(ctx)
+		switch {
+		case drainErr != nil && errors.Is(drainErr, ragcore.ErrUnavailable):
+			consecutiveFailures++
+			consecutiveEmpty = 0
+			slog.Warn("rag-index: embedder unavailable, backing off", "tenant", slug, "consecutive_failures", consecutiveFailures)
+		case drainErr != nil:
+			slog.Error("rag-index: drain error", "tenant", slug, "err", drainErr)
+			consecutiveFailures = 0
+			consecutiveEmpty = 0
+		case handled == 0:
+			consecutiveFailures = 0
+			consecutiveEmpty++
+		default:
+			consecutiveFailures = 0
+			consecutiveEmpty = 0
+		}
+
+		if pending, age, statErr := q.Stats(ctx); statErr != nil {
+			slog.Error("rag-index: stats error", "tenant", slug, "err", statErr)
+		} else {
+			metrics.SetRAGIndexQueueStats(slug, pending, age)
+		}
+		timer.Reset(ragDrainNextInterval(consecutiveFailures, consecutiveEmpty))
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			status, err := aiCache.Status(ctx, cpPool, pool, tenantID)
-			if err != nil {
-				slog.Error("rag-index: ai status check failed", "tenant", slug, "err", err)
-			} else if !status.Available {
-				timer.Reset(ragDrainInterval)
-				continue
+			tick()
+		case <-wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
-
-			_, drainErr := w.DrainOnce(ctx)
-			switch {
-			case drainErr != nil && errors.Is(drainErr, ragcore.ErrUnavailable):
-				consecutiveFailures++
-				slog.Warn("rag-index: embedder unavailable, backing off", "tenant", slug, "consecutive_failures", consecutiveFailures)
-			case drainErr != nil:
-				slog.Error("rag-index: drain error", "tenant", slug, "err", drainErr)
-				consecutiveFailures = 0
-			default:
-				consecutiveFailures = 0
-			}
-
-			if pending, age, statErr := q.Stats(ctx); statErr != nil {
-				slog.Error("rag-index: stats error", "tenant", slug, "err", statErr)
-			} else {
-				metrics.SetRAGIndexQueueStats(slug, pending, age)
-			}
-			timer.Reset(ragDrainBackoff(consecutiveFailures))
+			consecutiveEmpty = 0
+			tick()
 		}
 	}
 }

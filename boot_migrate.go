@@ -107,11 +107,13 @@ func runMigrations(ctx context.Context, gate *tenancy.MigrationGate, stale []ten
 		go func(t tenancy.Tenant) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			defer gate.Done(t.ID)
 			if err := migrate(ctx, t); err != nil {
+				gate.Done(t.ID)
 				slog.Error("boot migration failed", "tenant", t.Slug, "error", err)
 				return
 			}
+			// Release the gate before signalling so the rescan sees the tenant.
+			gate.Done(t.ID)
 			if onMigrated != nil {
 				onMigrated(t.ID)
 			}

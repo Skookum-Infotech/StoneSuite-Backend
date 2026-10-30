@@ -112,3 +112,40 @@ func TestTenantByID_NotFoundDropsLastKnown(t *testing.T) {
 	_, err = c.TenantByID(ctx, "t1")
 	assert.ErrorIs(t, err, errCPDown)
 }
+
+// TestTenantByID_InvalidationDuringLoadIsNotResurrected guards against an
+// in-flight load re-inserting a pre-invalidation row into the stale fallback.
+func TestTenantByID_InvalidationDuringLoadIsNotResurrected(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	calls := 0
+	cp := &ControlPlane{
+		tenants:   newTenantCache(),
+		lastKnown: newLastKnownCache(),
+		load: func(ctx context.Context, id string) (*Tenant, error) {
+			calls++
+			if calls == 1 {
+				close(started)
+				<-release
+				return &Tenant{ID: id}, nil
+			}
+			return nil, errCPDown
+		},
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = cp.TenantByID(context.Background(), "t1")
+	}()
+	<-started
+	cp.forgetTenant("t1")
+	close(release)
+	<-done
+	// The primary TTL cache may hold the in-flight result; only the stale
+	// fallback is under test, so force a reload.
+	cp.tenants.Delete("t1")
+
+	_, err := cp.TenantByID(context.Background(), "t1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCPDown)
+}

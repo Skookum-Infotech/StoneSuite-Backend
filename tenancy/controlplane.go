@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -39,6 +40,11 @@ type ControlPlane struct {
 	// lastKnown holds the last successfully loaded row per tenant for
 	// tenantMaxStaleness, served only when the control plane is unreachable.
 	lastKnown *cache.TTLCache[string, lastKnownTenant]
+	// lastMu guards lastGen and makes "check generation, then Set lastKnown"
+	// atomic against forgetTenant, so an in-flight load that read a row before
+	// an invalidation cannot re-insert it afterwards.
+	lastMu  sync.Mutex
+	lastGen uint64
 	// load fetches a tenant row; nil means loadTenantByID. Injectable for tests.
 	load func(ctx context.Context, id string) (*Tenant, error)
 }
@@ -67,7 +73,10 @@ func (c *ControlPlane) forgetTenant(id string) {
 		c.tenants.Delete(id)
 	}
 	if c.lastKnown != nil {
+		c.lastMu.Lock()
+		c.lastGen++
 		c.lastKnown.Delete(id)
+		c.lastMu.Unlock()
 	}
 }
 
@@ -144,11 +153,18 @@ func (c *ControlPlane) TenantByID(ctx context.Context, id string) (*Tenant, erro
 		return load(ctx, id)
 	}
 	t, err := c.tenants.GetOrLoad(id, func() (*Tenant, error) {
+		c.lastMu.Lock()
+		gen := c.lastGen
+		c.lastMu.Unlock()
 		t, err := load(ctx, id)
 		switch {
 		case err == nil:
 			if c.lastKnown != nil {
-				c.lastKnown.Set(id, lastKnownTenant{tenant: t.clone(), loadedAt: time.Now()})
+				c.lastMu.Lock()
+				if c.lastGen == gen {
+					c.lastKnown.Set(id, lastKnownTenant{tenant: t.clone(), loadedAt: time.Now()})
+				}
+				c.lastMu.Unlock()
 			}
 		case errors.Is(err, ErrTenantNotFound):
 			if c.lastKnown != nil {

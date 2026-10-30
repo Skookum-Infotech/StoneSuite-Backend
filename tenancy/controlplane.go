@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,6 +19,9 @@ const (
 	tenantCacheTTL = 30 * time.Second
 	// tenantCacheMax caps the per-process tenant cache.
 	tenantCacheMax = 2000
+	// tenantMaxStaleness bounds how old a last-known tenant row may be when it
+	// is served because the control plane is unreachable.
+	tenantMaxStaleness = 10 * time.Minute
 )
 
 // ErrTenantNotFound is returned when no tenant matches the lookup.
@@ -32,6 +37,27 @@ var ErrPlatformOwnerProtected = errors.New("the platform owner tenant cannot be 
 type ControlPlane struct {
 	pool    *pgxpool.Pool
 	tenants *cache.TTLCache[string, *Tenant] // TenantByID read-through cache
+	// lastKnown holds the last successfully loaded row per tenant for
+	// tenantMaxStaleness, served only when the control plane is unreachable.
+	lastKnown *cache.TTLCache[string, lastKnownTenant]
+	// lastMu guards lastGen and makes "check generation, then Set lastKnown"
+	// atomic against forgetTenant, so an in-flight load that read a row before
+	// an invalidation cannot re-insert it afterwards.
+	lastMu  sync.Mutex
+	lastGen uint64
+	// load fetches a tenant row; nil means loadTenantByID. Injectable for tests.
+	load func(ctx context.Context, id string) (*Tenant, error)
+}
+
+// lastKnownTenant is a tenant row plus when it was loaded, for staleness logs.
+type lastKnownTenant struct {
+	tenant   *Tenant
+	loadedAt time.Time
+}
+
+// newLastKnownCache builds the stale-fallback cache for TenantByID.
+func newLastKnownCache() *cache.TTLCache[string, lastKnownTenant] {
+	return cache.NewWithMax[string, lastKnownTenant](tenantMaxStaleness, tenantCacheMax)
 }
 
 // newTenantCache builds the TenantByID cache.
@@ -45,6 +71,12 @@ func newTenantCache() *cache.TTLCache[string, *Tenant] {
 func (c *ControlPlane) forgetTenant(id string) {
 	if c.tenants != nil {
 		c.tenants.Delete(id)
+	}
+	if c.lastKnown != nil {
+		c.lastMu.Lock()
+		c.lastGen++
+		c.lastKnown.Delete(id)
+		c.lastMu.Unlock()
 	}
 }
 
@@ -68,7 +100,7 @@ func NewControlPlane(ctx context.Context, dsn string) (*ControlPlane, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping control-plane db: %w", err)
 	}
-	return &ControlPlane{pool: pool, tenants: newTenantCache()}, nil
+	return &ControlPlane{pool: pool, tenants: newTenantCache(), lastKnown: newLastKnownCache()}, nil
 }
 
 // Pool exposes the underlying control-plane pool for control-plane queries
@@ -87,7 +119,7 @@ const tenantColumns = `
 	COALESCE(db_name, ''), COALESCE(db_connection_ref, ''), region,
 	schema_version, migration_status, COALESCE(design_version, 'v2'),
 	deleted_at, hard_delete_after, created_at, updated_at,
-	COALESCE(metadata::text, '{}'), COALESCE(r2_bucket, '')`
+	COALESCE(metadata::text, '{}'), COALESCE(r2_bucket, ''), schema_hash`
 
 func scanTenant(row pgx.Row) (*Tenant, error) {
 	var t Tenant
@@ -96,7 +128,7 @@ func scanTenant(row pgx.Row) (*Tenant, error) {
 		&t.DBName, &t.DBConnectionRef, &t.Region,
 		&t.SchemaVersion, &t.MigrationStatus, &t.DesignVersion,
 		&t.DeletedAt, &t.HardDeleteAfter, &t.CreatedAt, &t.UpdatedAt,
-		&t.Metadata, &t.R2Bucket,
+		&t.Metadata, &t.R2Bucket, &t.SchemaHash,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrTenantNotFound
@@ -109,16 +141,61 @@ func scanTenant(row pgx.Row) (*Tenant, error) {
 
 // TenantByID loads a tenant by its UUID, served from a short-TTL cache with
 // concurrent misses collapsed into one query. Callers get their own copy.
-// Not-found and other errors are never cached.
+// Not-found and other errors are never cached. When the load fails for a reason
+// other than not-found or the caller's own cancellation (control plane down or
+// slow), the last known row is served if seen within tenantMaxStaleness.
 func (c *ControlPlane) TenantByID(ctx context.Context, id string) (*Tenant, error) {
-	if c.tenants == nil {
-		return c.loadTenantByID(ctx, id)
+	load := c.load
+	if load == nil {
+		load = c.loadTenantByID
 	}
-	t, err := c.tenants.GetOrLoad(id, func() (*Tenant, error) { return c.loadTenantByID(ctx, id) })
+	if c.tenants == nil {
+		return load(ctx, id)
+	}
+	t, err := c.tenants.GetOrLoad(id, func() (*Tenant, error) {
+		c.lastMu.Lock()
+		gen := c.lastGen
+		c.lastMu.Unlock()
+		t, err := load(ctx, id)
+		switch {
+		case err == nil:
+			if c.lastKnown != nil {
+				c.lastMu.Lock()
+				if c.lastGen == gen {
+					c.lastKnown.Set(id, lastKnownTenant{tenant: t.clone(), loadedAt: time.Now()})
+				}
+				c.lastMu.Unlock()
+			}
+		case errors.Is(err, ErrTenantNotFound):
+			if c.lastKnown != nil {
+				c.lastKnown.Delete(id)
+			}
+		}
+		return t, err
+	})
 	if err != nil {
+		if stale, ok := c.staleTenant(ctx, id, err); ok {
+			return stale, nil
+		}
 		return nil, err
 	}
 	return t.clone(), nil
+}
+
+// staleTenant returns a clone of the last known row for id when err is a
+// control-plane failure (not not-found, not the caller's cancellation).
+func (c *ControlPlane) staleTenant(ctx context.Context, id string, err error) (*Tenant, bool) {
+	if c.lastKnown == nil || errors.Is(err, ErrTenantNotFound) ||
+		ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return nil, false
+	}
+	last, ok := c.lastKnown.Get(id)
+	if !ok {
+		return nil, false
+	}
+	slog.WarnContext(ctx, "tenancy: control plane unavailable, serving last known tenant",
+		"tenant_id", id, "err", err, "age", time.Since(last.loadedAt))
+	return last.tenant.clone(), true
 }
 
 func (c *ControlPlane) loadTenantByID(ctx context.Context, id string) (*Tenant, error) {

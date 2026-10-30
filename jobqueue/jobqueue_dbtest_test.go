@@ -238,3 +238,41 @@ func TestQueue_RequeueStaleIsScopedToJobType(t *testing.T) {
 			"reaper must never touch a provision job no matter how stale it looks", provisionJob.Status)
 	}
 }
+
+// TestQueue_FailedJobHonoursRunAfter proves a retry-pending job is not
+// claimable until its run_after passes, and that fresh jobs still claim.
+func TestQueue_FailedJobHonoursRunAfter(t *testing.T) {
+	q, tenantID := newTestQueue(t)
+	ctx := context.Background()
+
+	id, err := q.Enqueue(ctx, "import", tenantID, map[string]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"import"}); err != nil {
+		t.Fatalf("fresh job must be claimable: %v", err)
+	}
+	if err := q.MarkFailed(ctx, id, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := q.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != StatusPending {
+		t.Fatalf("Status = %q, want pending (attempts < max)", job.Status)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"import"}); err != ErrNoJob {
+		t.Fatalf("err = %v, want ErrNoJob while run_after is in the future", err)
+	}
+	if _, err := q.pool.Exec(ctx, `UPDATE async_jobs SET run_after = NOW() - INTERVAL '1 second' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := q.ClaimNext(ctx, []string{"import"})
+	if err != nil {
+		t.Fatalf("job must be claimable once run_after passes: %v", err)
+	}
+	if claimed.ID != id {
+		t.Fatalf("claimed %s, want %s", claimed.ID, id)
+	}
+}

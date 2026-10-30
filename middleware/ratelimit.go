@@ -179,6 +179,7 @@ func (rl *RateLimiter) PerIP(next http.Handler) http.Handler {
 		ip := ClientIP(r)
 		if !rl.allow(ip) {
 			slog.Warn("auth rate limit exceeded",
+				slog.String("security_event", "rate_limited"),
 				slog.String("request_id", RequestIDFromContext(r.Context())),
 				slog.String("ip", ip),
 				slog.String("path", r.URL.Path),

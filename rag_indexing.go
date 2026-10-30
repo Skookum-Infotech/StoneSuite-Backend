@@ -406,7 +406,7 @@ func reconcileTenantIndex(ctx context.Context, slug string, store crmstore.Store
 	moduleType := map[string]string{} // source id -> module record type; absent = CRM
 	complete := true
 	for _, key := range crmstore.CRMWorkflowKeys() {
-		recs, err := store.ListRecords(ctx, pool, key, "all", "")
+		recs, err := store.ListRecords(ctx, pool, key, "all", "", 0)
 		if err != nil {
 			slog.Error("rag-reconcile: list records failed", "tenant", slug, "key", key, "err", err)
 			complete = false

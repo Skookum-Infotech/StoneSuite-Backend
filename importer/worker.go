@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,20 @@ const (
 	// staleAfter+1m regardless of when in the cycle a worker crashes.
 	reapInterval = 1 * time.Minute
 )
+
+// maxImportRows caps how many rows one tabular file may stage. The file-size
+// limit alone allows hundreds of thousands of rows, each a DB upsert plus a
+// progress write, all held in memory on a small machine.
+const maxImportRows = 50000
+
+// utf8BOM is the byte-order mark Excel writes at the start of a "CSV UTF-8"
+// export. Left in place it becomes part of the first header's name, so a
+// column mapping for that header silently never matches.
+const utf8BOM = "\uFEFF"
+
+// errImportRejected marks a failure that retrying cannot fix (the file itself
+// is unacceptable): the job goes straight to dead instead of being retried.
+var errImportRejected = errors.New("import rejected")
 
 // Worker claims and runs import jobs from the shared control-plane job
 // queue — its own worker pool, claiming only JobTypeImport, so an import
@@ -170,6 +185,10 @@ func (w *Worker) processNext(ctx context.Context) {
 	}
 	if err := runErr; err != nil {
 		log.Printf("importer: job %s failed: %v", job.ID, err)
+		if errors.Is(err, errImportRejected) {
+			_ = w.queue.MarkDead(ctx, job.ID, err.Error())
+			return
+		}
 		_ = w.queue.MarkFailed(ctx, job.ID, err.Error())
 		return
 	}
@@ -195,6 +214,10 @@ func (w *Worker) runImport(ctx context.Context, jobID, tenantID string, payload 
 	raw, err := w.r2.WithBucket(tenant.R2Bucket).Get(ctx, payload.StorageKey)
 	if err != nil {
 		return fmt.Errorf("fetch uploaded file: %w", err)
+	}
+
+	if strings.EqualFold(filepath.Ext(payload.FileName), ".csv") {
+		raw = bytes.TrimPrefix(raw, []byte(utf8BOM))
 	}
 
 	p, ok := parse.ForExt(filepath.Ext(payload.FileName))
@@ -239,6 +262,9 @@ func (w *Worker) runImport(ctx context.Context, jobID, tenantID string, payload 
 // stageTabular maps and stages one row per parsed table row (CSV/XLSX).
 func (w *Worker) stageTabular(ctx context.Context, rows *Store, jobID string, tableRows []map[string]string, mapping map[string]string, defs []workflow.FieldDefinition) error {
 	total := len(tableRows)
+	if total > maxImportRows {
+		return fmt.Errorf("%w: the file has %d rows; the limit is %d per import", errImportRejected, total, maxImportRows)
+	}
 	_ = w.queue.UpdateProgress(ctx, jobID, map[string]any{"step": "staging", "staged": 0, "total": total})
 	for i, tr := range tableRows {
 		mapped := ApplyColumnMapping(tr, mapping, defs)

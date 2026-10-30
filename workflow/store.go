@@ -457,21 +457,33 @@ func GetRecord(ctx context.Context, q Querier, id string) (*Record, error) {
 	return scanRecord(q.QueryRow(ctx, `SELECT `+recordColumns+` FROM workflow_records WHERE id = $1`, id))
 }
 
-// ListRecords returns records for a workflow, filtered by the caller's scope.
+// MaxListRecords is the most rows an unpaged list endpoint returns. Those
+// endpoints predate server-side paging (the search endpoints have it); without
+// a ceiling one large tenant's list loads every row into a small machine's
+// memory. A response holding exactly this many rows may be truncated.
+const MaxListRecords = 5000
+
+// ListRecords returns records for a workflow, filtered by the caller's scope,
+// newest first, at most limit of them (limit <= 0 means all).
 //   - "all": every record in the workflow
 //   - anything else: only records the caller owns (fail-closed default)
-func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string) ([]Record, error) {
+func ListRecords(ctx context.Context, q Querier, workflowID, scope, callerUserID string, limit int) ([]Record, error) {
 	var (
 		rows pgx.Rows
 		err  error
 		base = `SELECT ` + recordColumns + ` FROM workflow_records WHERE workflow_id = $1`
 	)
+	// NULL means no limit to Postgres.
+	var lim any
+	if limit > 0 {
+		lim = limit
+	}
 	switch scope {
 	case "all":
-		rows, err = q.Query(ctx, base+` ORDER BY created_at DESC`, workflowID)
+		rows, err = q.Query(ctx, base+` ORDER BY created_at DESC LIMIT $2`, workflowID, lim)
 	default: // own (most restrictive)
 		rows, err = q.Query(ctx, base+`
-			AND owner_user_id = $2 ORDER BY created_at DESC`, workflowID, nullIfEmpty(callerUserID))
+			AND owner_user_id = $2 ORDER BY created_at DESC LIMIT $3`, workflowID, nullIfEmpty(callerUserID), lim)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list records: %w", err)

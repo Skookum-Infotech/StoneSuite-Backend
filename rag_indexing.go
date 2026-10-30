@@ -24,6 +24,7 @@ import (
 	"stonesuite-backend/docs"
 	"stonesuite-backend/globalsearch"
 	"stonesuite-backend/metrics"
+	"stonesuite-backend/safego"
 	"stonesuite-backend/tenancy"
 )
 
@@ -215,7 +216,14 @@ func runTenantIndexWorker(ctx context.Context, slug, tenantID string, w *index.W
 				continue
 			}
 
-			_, drainErr := w.DrainOnce(ctx)
+			// A panic in one drain (a bad record, a loader bug) is reported and
+			// treated as a drain error; it must not kill the process.
+			var drainErr error
+			if panicErr := safego.Do(ctx, "rag.drain", func() {
+				_, drainErr = w.DrainOnce(ctx)
+			}); panicErr != nil {
+				drainErr = panicErr
+			}
 			switch {
 			case drainErr != nil && errors.Is(drainErr, ragcore.ErrUnavailable):
 				consecutiveFailures++
@@ -318,11 +326,23 @@ func runTenantMaintenance(ctx context.Context, slug, tenantID string, store crms
 		return status.Available
 	}
 
+	// tick runs one maintenance pass with panics contained: a panic keeps the
+	// previous availability and the loop carries on to the next tick.
+	tick := func(prevAvailable bool, prune bool) bool {
+		next := prevAvailable
+		_ = safego.Do(ctx, "rag.maintenance", func() { // reported inside Do
+			next = run(prevAvailable)
+			if prune {
+				pruneIdleConversations(ctx, slug, pool)
+			}
+		})
+		return next
+	}
+
 	// Boot: treat "was available" as true so a first-run available tenant
 	// gets a plain reconcile, not a forced catch-up — matches the prior
 	// behavior of unconditionally reconciling once at startup.
-	available := run(true)
-	pruneIdleConversations(ctx, slug, pool)
+	available := tick(true, true)
 
 	ticker := time.NewTicker(ragMaintenanceInterval)
 	defer ticker.Stop()
@@ -331,14 +351,13 @@ func runTenantMaintenance(ctx context.Context, slug, tenantID string, store crms
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			available = run(available)
-			pruneIdleConversations(ctx, slug, pool)
+			available = tick(available, true)
 		case <-nudge:
 			// Force a catch-up regardless of the previous state — an
 			// explicit nudge (platform re-enabled, or this tenant's own
 			// switch flipped on) should always revive+reconcile, not just
 			// on a genuine edge.
-			available = run(false)
+			available = tick(false, false)
 		}
 	}
 }

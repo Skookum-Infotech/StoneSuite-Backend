@@ -10,6 +10,7 @@ import (
 	ragcore "github.com/Skookum-Infotech/go-rag/rag"
 
 	"stonesuite-backend/middleware"
+	"stonesuite-backend/safego"
 	"stonesuite-backend/tenancy"
 )
 
@@ -111,7 +112,12 @@ func (h *AIOps) Warm(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), warmBoundedTimeout)
 		go func() {
 			defer cancel()
-			success := h.runWarmUp(ctx, tenant.ID)
+			// finish must run even on a panic, or the warmer stays "started"
+			// and every later warm-up request is silently skipped.
+			success := false
+			_ = safego.Do(ctx, "ai.warmUp", func() { // reported inside Do
+				success = h.runWarmUp(ctx, tenant.ID)
+			})
 			h.warmer.finish(success)
 		}()
 	}

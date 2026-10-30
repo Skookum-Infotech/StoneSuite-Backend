@@ -2,13 +2,13 @@ package controllers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/inventoryadjustment"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -70,24 +70,6 @@ func (h *InventoryAdjustmentOps) authByUUID(w http.ResponseWriter, r *http.Reque
 		return nil, "", false
 	}
 	return pool, identityID, true
-}
-
-// adjustmentFail maps a store error to its status code.
-func adjustmentFail(w http.ResponseWriter, err error, fallback string) {
-	var invalid *query.InvalidFilterError
-	switch {
-	case errors.Is(err, inventoryadjustment.ErrNotFound):
-		fail(w, http.StatusNotFound, "Adjustment not found.")
-	case errors.As(err, &invalid):
-		// A bad filter key is the caller's mistake, never a 500.
-		fail(w, http.StatusBadRequest, invalid.Error())
-	case errors.Is(err, inventoryadjustment.ErrNotEditable):
-		fail(w, http.StatusConflict, "This adjustment can no longer be edited.")
-	case inventoryadjustment.IsClientError(err):
-		fail(w, http.StatusBadRequest, err.Error())
-	default:
-		fail(w, http.StatusInternalServerError, fallback)
-	}
 }
 
 // List GET /api/tenant/inventory/adjustments
@@ -157,9 +139,17 @@ func (h *InventoryAdjustmentOps) Create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in inventoryadjustment.Input
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	a, err := inventoryadjustment.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
@@ -176,8 +166,7 @@ func (h *InventoryAdjustmentOps) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in inventoryadjustment.Input
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	if err := inventoryadjustment.Update(r.Context(), pool, r.PathValue("uuid"), in, resolveEmployeeID(r, identityID)); err != nil {

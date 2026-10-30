@@ -4,7 +4,6 @@ package controllers
 // split out to keep inventory_transfers.go under the file-size cap.
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,7 +11,6 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/inventorytransfer"
 	"stonesuite-backend/middleware"
-	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
 
@@ -53,22 +51,6 @@ func (h *InventoryTransferOps) authByUUID(w http.ResponseWriter, r *http.Request
 		return nil, "", false
 	}
 	return pool, identityID, true
-}
-
-func transferFail(w http.ResponseWriter, err error, fallback string) {
-	var invalid *query.InvalidFilterError
-	switch {
-	case errors.Is(err, inventorytransfer.ErrNotFound):
-		fail(w, http.StatusNotFound, "Transfer not found.")
-	case errors.As(err, &invalid):
-		fail(w, http.StatusBadRequest, invalid.Error())
-	case errors.Is(err, inventorytransfer.ErrNotEditable):
-		fail(w, http.StatusConflict, "This transfer can no longer be edited.")
-	case inventorytransfer.IsClientError(err):
-		fail(w, http.StatusBadRequest, err.Error())
-	default:
-		fail(w, http.StatusInternalServerError, fallback)
-	}
 }
 
 // mayApprove checks the separate approve grant, reporting the denial itself.

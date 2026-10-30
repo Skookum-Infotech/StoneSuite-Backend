@@ -60,7 +60,8 @@ type salesOrderSnapshot struct {
 }
 
 // loadSalesOrderSnapshot loads a live sales order's header snapshot by
-// external uuid inside tx.
+// external uuid inside tx. FOR SHARE serializes against salesorder.SoftDelete's
+// FOR UPDATE, so a delete can't slip between its reference count and commit.
 func loadSalesOrderSnapshot(ctx context.Context, tx pgx.Tx, salesOrderUUID string) (*salesOrderSnapshot, error) {
 	var s salesOrderSnapshot
 	var customRaw []byte
@@ -82,7 +83,8 @@ func loadSalesOrderSnapshot(ctx context.Context, tx pgx.Tx, salesOrderUUID strin
 		       sales_order_custom_fields, rs.record_status_code
 		FROM sales_order
 		JOIN lkp_record_status rs ON rs.record_status_id = sales_order_status
-		WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL`, salesOrderUUID).Scan(
+		WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL
+		FOR SHARE OF sales_order`, salesOrderUUID).Scan(
 		&s.internalID, &s.customerInternalID,
 		&s.poNumber, &s.refNumber,
 		&s.memo, &s.notes, &s.internalNotes, &s.terms,

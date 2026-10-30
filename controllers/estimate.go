@@ -11,6 +11,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/estimate"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
@@ -99,33 +100,6 @@ func (h *EstimateOps) authEstimateByUUID(w http.ResponseWriter, r *http.Request,
 	return pool, identityID, est, true
 }
 
-// estimateFail maps a store error to an HTTP response.
-func estimateFail(w http.ResponseWriter, err error, serverMsg string) {
-	if status, ok := approvalRejectStatus(err); ok {
-		fail(w, status, err.Error())
-		return
-	}
-	switch {
-	case errors.Is(err, estimate.ErrNotFound):
-		fail(w, http.StatusNotFound, "Estimate not found.")
-	case errors.Is(err, estimate.ErrInvalidTransition),
-		errors.Is(err, estimate.ErrApprovalRequired),
-		errors.Is(err, estimate.ErrApprovalNotRequired):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, estimate.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	case estimate.IsClientError(err):
-		fail(w, http.StatusBadRequest, err.Error())
-	default:
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 // ---- list / search / create --------------------------------------------------
 
 // List GET /api/tenant/estimates
@@ -179,9 +153,17 @@ func (h *EstimateOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in estimate.CreateEstimateInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	est, err := estimate.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
@@ -221,8 +203,7 @@ func (h *EstimateOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in estimate.UpdateEstimateInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	after, err := estimate.Update(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))

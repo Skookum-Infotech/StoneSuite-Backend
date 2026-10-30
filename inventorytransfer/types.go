@@ -48,6 +48,9 @@ type Transfer struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// RecordVersion increments on every edit; clients echo it back as
+	// expectedVersion to detect a concurrent save.
+	RecordVersion int `json:"recordVersion"`
 }
 
 // Line is one item moving. InventoryUnitID set means a specific slab; unset
@@ -81,6 +84,15 @@ type Input struct {
 	InternalNotes   string      `json:"internalNotes"`
 	OwnerID         *int        `json:"ownerId,omitempty"`
 	Lines           []LineInput `json:"lines"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the transfer the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, an
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // LineInput is one line on the way in.

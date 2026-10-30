@@ -47,6 +47,12 @@ type requisitionFields struct {
 // CreateRequisitionInput is the create-request payload.
 type CreateRequisitionInput struct {
 	requisitionFields
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the requisition the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateRequisitionInput is the update-request payload (a requisition has no
@@ -54,6 +60,9 @@ type CreateRequisitionInput struct {
 // vendor may be changed freely while still in DRFT).
 type UpdateRequisitionInput struct {
 	requisitionFields
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // VendorRef is the light suggested-vendor reference on a Requisition response.
@@ -121,7 +130,10 @@ type Requisition struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	Items     []Line    `json:"items,omitempty"`
+	// RecordVersion increments on every write; clients echo it back as
+	// expectedVersion on update for optimistic locking.
+	RecordVersion int    `json:"recordVersion"`
+	Items         []Line `json:"items,omitempty"`
 }
 
 // ConvertInput is the convert-to-purchase-order request payload. VendorUUID

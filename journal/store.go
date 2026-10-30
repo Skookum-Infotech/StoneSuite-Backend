@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -43,8 +42,6 @@ var ErrPeriodClosed = errors.New("accounting period is closed for this date")
 // different: generate the next fiscal year, not reopen a period.
 var ErrNoAccountingPeriod = errors.New("no accounting period exists for this date")
 
-func round2(x float64) float64 { return math.Round(x*100) / 100 }
-
 func nullableInt(v int) any {
 	if v == 0 {
 		return nil
@@ -59,7 +56,6 @@ func validateLines(lines []LineInput) error {
 	if len(lines) < 2 {
 		return ErrInvalidLine
 	}
-	var totalDebit, totalCredit float64
 	for _, l := range lines {
 		if l.Debit < 0 || l.Credit < 0 {
 			return ErrInvalidLine
@@ -67,10 +63,12 @@ func validateLines(lines []LineInput) error {
 		if (l.Debit > 0) == (l.Credit > 0) {
 			return ErrInvalidLine // both zero, or both positive
 		}
-		totalDebit += l.Debit
-		totalCredit += l.Credit
 	}
-	if round2(totalDebit) != round2(totalCredit) {
+	totalDebit, totalCredit, err := centSums(lines)
+	if err != nil {
+		return err
+	}
+	if totalDebit != totalCredit {
 		return ErrUnbalancedEntry
 	}
 	return nil

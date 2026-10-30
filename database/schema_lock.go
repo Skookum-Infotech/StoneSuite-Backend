@@ -47,6 +47,12 @@ func applySchemaUnderLock(ctx context.Context, pool *pgxpool.Pool, lockKey int64
 	if err != nil {
 		return fmt.Errorf("begin %s schema tx: %w", label, err)
 	}
+	if err := liftSessionTimeouts(ctx, tx); err != nil {
+		if rerr := tx.Rollback(ctx); rerr != nil {
+			slog.Error("rollback schema tx failed", "schema", label, "error", rerr)
+		}
+		return err
+	}
 	if _, err := tx.Exec(ctx, schemaSQL); err != nil {
 		if rerr := tx.Rollback(ctx); rerr != nil {
 			slog.Error("rollback schema tx failed", "schema", label, "error", rerr)

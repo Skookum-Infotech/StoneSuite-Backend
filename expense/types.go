@@ -32,11 +32,19 @@ type expenseFields struct {
 // (AD-2: self-service, mirrors requisition's owner-is-requester pattern).
 type CreateExpenseInput struct {
 	expenseFields
+	// IdempotencyKey is the caller-namespaced Idempotency-Key header, set by the
+	// controller; empty means no replay protection. Never read from the body.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the request body for key-reuse detection.
+	RequestHash string `json:"-"`
 }
 
 // UpdateExpenseInput is the update-request payload (DRFT only).
 type UpdateExpenseInput struct {
 	expenseFields
+	// ExpectedVersion, when set, must match the stored record version or the
+	// update fails with ErrVersionConflict.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // Line is one expense entry in the API response.
@@ -77,6 +85,8 @@ type Expense struct {
 	CustomFields map[string]any `json:"customFields,omitempty"`
 
 	Total float64 `json:"total"`
+
+	RecordVersion int `json:"recordVersion"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

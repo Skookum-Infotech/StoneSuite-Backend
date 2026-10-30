@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
@@ -56,11 +57,8 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 		if !dimIn.IsZero() {
 			dimIn.Slabs = in.ExpectedSlabs
 		}
-		if in.Quantity <= 0 && !dimIn.HasArea() {
+		if !(in.Quantity > 0) && !dimIn.HasArea() { // negated form also rejects NaN
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
-		}
-		if in.UnitPrice < 0 {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: unit price cannot be negative.", in.LineNumber)}
 		}
 
 		rl := resolvedLine{
@@ -134,6 +132,10 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			}
 		}
 
+		if err := validateLineAmounts(in.LineNumber, rl.quantity, rl.unitPrice, rl.discountPercent); err != nil {
+			return nil, err
+		}
+
 		if rl.taxRateID != nil {
 			pct, err := taxPercentForRate(ctx, q, *rl.taxRateID)
 			if err != nil {
@@ -148,6 +150,9 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			Quantity: rl.quantity, UnitPrice: rl.unitPrice,
 			DiscountPercent: rl.discountPercent, TaxPercent: rl.taxPercent,
 		})
+		if err := validateTotals(fmt.Sprintf("total of line %d", in.LineNumber), rl.money.Total); err != nil {
+			return nil, err
+		}
 		out = append(out, rl)
 	}
 	return out, nil
@@ -221,6 +226,18 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePurchaseOrderInput
 	if strings.TrimSpace(in.VendorUUID) == "" {
 		return nil, ClientError{Msg: "A vendor is required."}
 	}
+	// A retry whose first attempt already committed gets that order back
+	// before any validation: the vendor may have changed since, and a replay
+	// must answer like the original, not re-judge it.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
 	}
@@ -231,9 +248,27 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePurchaseOrderInput
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
+
 	draft, err := CreateDraftTx(ctx, tx, in, actorEmployeeID)
 	if err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, draft.ID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

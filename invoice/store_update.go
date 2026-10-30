@@ -47,6 +47,18 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	if err != nil {
 		return nil, err
 	}
+	effectiveDate := in.InvoiceDate
+	if effectiveDate == "" {
+		effectiveDate = existing.InvoiceDate
+	}
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, effectiveDate, in.DueDate); err != nil {
+		return nil, err
+	}
+	// Early, unlocked check so a stale form fails before the line lookups;
+	// re-checked under the row lock below, which is the one that counts.
+	if err := checkExpectedVersion(in.ExpectedVersion, existing.RecordVersion); err != nil {
+		return nil, err
+	}
 
 	billing := existing.Billing
 	if !isZeroAddress(in.Billing) {
@@ -73,6 +85,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	// BalanceDue here is provisional: RecomputeBalance below rewrites it (and the
 	// status) from the live payment and credit-memo ledgers.
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment, existing.AmountPaid)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The invoice total cannot be negative."}
+	}
 
 	custom := in.CustomFields
 	if custom == nil {
@@ -96,6 +111,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	}
 	if terminalStatuses[locked.StatusCode] {
 		return nil, ClientError{Msg: "Cannot edit a " + locked.StatusCode + " invoice."}
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, locked.RecordVersion); err != nil {
+		return nil, err
 	}
 	// An invoice total can't be reduced below what has already been settled by
 	// cash or credit; that would force a negative balance_due.
@@ -209,12 +227,27 @@ func actorOrSystem(actorEmployeeID int) int {
 // payment.SoftDelete and creditmemo.SoftDelete each enforce on their own side
 // (spec AD-11 / credit memo AD-16: every visible application row's parent must
 // always be resolvable).
+//
+// The count and the delete run in one transaction holding the invoice's row
+// lock. Payment and credit-memo apply take that same lock (LockForUpdate)
+// before inserting an application, so an apply can no longer commit between
+// the count and the delete and leave a deleted invoice with live money on it.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID int) error {
-	internalID, _, err := internalIDByUUID(ctx, pool, id)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete invoice: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	locked, err := LockForUpdate(ctx, tx, id)
+	var ce ClientError
+	if errors.As(err, &ce) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-	liveApplications, liveCredits, err := liveSettlementCounts(ctx, pool, internalID)
+	liveApplications, liveCredits, err := liveSettlementCounts(ctx, tx, locked.InternalID)
 	if err != nil {
 		return err
 	}
@@ -226,16 +259,15 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	}
 
 	deletedBy := actorOrSystem(actorEmployeeID)
-	tag, err := pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		UPDATE invoice
 		SET invoice_deleted_at = NOW(), invoice_deleted_by = $1
-		WHERE invoice_uuid = $2 AND invoice_deleted_at IS NULL`,
-		deletedBy, id)
-	if err != nil {
+		WHERE invoice_id = $2`,
+		deletedBy, locked.InternalID); err != nil {
 		return fmt.Errorf("delete invoice: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete invoice: %w", err)
 	}
 	return nil
 }

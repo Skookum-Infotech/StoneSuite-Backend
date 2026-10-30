@@ -10062,6 +10062,28 @@ CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_identity_status ON ai_proposed
 CREATE INDEX IF NOT EXISTS idx_ai_proposed_action_expires_at ON ai_proposed_action (expires_at);
 
 -- =====================================================================
+-- DOCUMENT SEND ATTEMPTS (idempotent customer emails)
+-- =====================================================================
+-- One row per attempt to email a document, written BEFORE the email is queued
+-- so a retry (same Idempotency-Key) reuses the attempt instead of re-sending.
+-- Pending/failed attempts live here, not in document_sends: document_sends
+-- means "the document was sent" (send history, AR automation). On success the
+-- attempt is finalized into document_sends with the attempt's own id.
+CREATE TABLE IF NOT EXISTS document_send_attempt (
+    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    record_id               UUID        NOT NULL,
+    workflow_key            TEXT        NOT NULL,
+    idempotency_key         TEXT        NOT NULL DEFAULT '',
+    request_fingerprint     TEXT        NOT NULL DEFAULT '',
+    status                  TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed')),
+    sent_by_user_id         UUID        REFERENCES users(id) ON DELETE SET NULL,
+    notify_notification_ids TEXT[]      NOT NULL DEFAULT '{}',
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_document_send_attempt_key
+    ON document_send_attempt (record_id, workflow_key, idempotency_key) WHERE idempotency_key <> '';
+
 -- Anomaly detection: findings raised by the scheduled anomaly scan
 -- (anomaly/), who each one is addressed to, and how a reviewer resolved
 -- it. UNIQUE (rule_key, subject_key) is what makes a rescan idempotent: a
@@ -10178,3 +10200,82 @@ ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_by INTEGER NULL
     REFERENCES employee(employee_id);
 CREATE INDEX IF NOT EXISTS idx_slab_reserved_customer ON inventory_slab (reserved_customer_id)
     WHERE reserved_customer_id IS NOT NULL;
+
+-- -- request_idempotency ----------------------------------------------------
+-- Generic replay ledger for create endpoints that accept an Idempotency-Key
+-- header (package idempotency). A double-clicked Save or a client retry after
+-- a timeout carries the same key, finds the row its first attempt committed,
+-- and gets that document back instead of creating a second one. The row is
+-- written in the same transaction as the document, so it exists iff the
+-- document does. request_hash is SHA-256 of the request body: the same key
+-- with a different body is a client bug and is refused, never replayed.
+-- result_ref is the created document's external id. Rows older than a week
+-- are pruned; retries happen within seconds.
+CREATE TABLE IF NOT EXISTS request_idempotency (
+    id           BIGSERIAL    PRIMARY KEY,
+    scope        TEXT         NOT NULL,
+    idem_key     TEXT         NOT NULL,
+    request_hash TEXT         NOT NULL,
+    result_ref   TEXT         NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_request_idempotency UNIQUE (scope, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_request_idempotency_created_at ON request_idempotency (created_at);
+
+-- -- write-safety uniqueness backstops ---------------------------------------
+-- DB-level guards behind the application checks. Each is created only when the
+-- existing data has no duplicates; otherwise a WARNING is raised and the index
+-- is skipped so a boot never breaks on legacy rows. Re-runs are no-ops (the
+-- pg_indexes guard). Like the other *_number keys, deleted rows stay in the
+-- key: a soft-deleted job's number is never reissued.
+DO $$
+DECLARE
+    dup_count BIGINT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = current_schema() AND indexname = 'uq_fabrication_job_number') THEN
+        SELECT COUNT(*) INTO dup_count FROM (
+            SELECT fabrication_job_number FROM fabrication_job
+            WHERE fabrication_job_number IS NOT NULL
+            GROUP BY fabrication_job_number HAVING COUNT(*) > 1
+        ) d;
+        IF dup_count = 0 THEN
+            -- Subtransaction: a duplicate committed between the count and the
+            -- build becomes a warning, never a failed boot.
+            BEGIN
+                CREATE UNIQUE INDEX uq_fabrication_job_number
+                    ON fabrication_job (fabrication_job_number) WHERE fabrication_job_number IS NOT NULL;
+            EXCEPTION WHEN unique_violation THEN
+                RAISE WARNING 'skipping uq_fabrication_job_number: duplicate fabrication_job_number committed concurrently';
+            END;
+        ELSE
+            RAISE WARNING 'skipping uq_fabrication_job_number: % duplicate fabrication_job_number value(s) exist', dup_count;
+        END IF;
+    END IF;
+END $$;
+
+DO $$
+DECLARE
+    dup_count BIGINT;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE schemaname = current_schema() AND indexname = 'uq_je_reverses') THEN
+        SELECT COUNT(*) INTO dup_count FROM (
+            SELECT reverses_journal_entry_id FROM journal_entry
+            WHERE reverses_journal_entry_id IS NOT NULL
+            GROUP BY reverses_journal_entry_id HAVING COUNT(*) > 1
+        ) d;
+        IF dup_count = 0 THEN
+            -- Subtransaction: a duplicate committed between the count and the
+            -- build becomes a warning, never a failed boot.
+            BEGIN
+                CREATE UNIQUE INDEX uq_je_reverses
+                    ON journal_entry (reverses_journal_entry_id) WHERE reverses_journal_entry_id IS NOT NULL;
+            EXCEPTION WHEN unique_violation THEN
+                RAISE WARNING 'skipping uq_je_reverses: second reversal of a journal entry committed concurrently';
+            END;
+        ELSE
+            RAISE WARNING 'skipping uq_je_reverses: % journal entry(ies) are reversed more than once', dup_count;
+        END IF;
+    END IF;
+END $$;

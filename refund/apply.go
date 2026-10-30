@@ -158,8 +158,8 @@ func recomputeCreditMemoRefunded(ctx context.Context, tx pgx.Tx, creditMemoInter
 // refund be APPV (AD-5) and, for a credit-memo source, that the credit memo
 // itself be APPV or APPL (an unapproved or voided memo authorizes nothing).
 func Apply(ctx context.Context, pool *pgxpool.Pool, refundUUID, paymentUUID, creditMemoUUID string, amount float64, actorEmployeeID int) (*Refund, error) {
-	if amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", amount); err != nil {
+		return nil, err
 	}
 	if (paymentUUID == "") == (creditMemoUUID == "") {
 		return nil, ClientError{Msg: "exactly one of paymentUuid or creditMemoUuid is required."}

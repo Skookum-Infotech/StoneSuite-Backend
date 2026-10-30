@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/idempotency"
 )
 
 // Create inserts a new vendor bill (header + lines) inside one transaction:
@@ -22,8 +24,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	if strings.TrimSpace(in.VendorUUID) == "" {
 		return nil, ClientError{Msg: "A vendor is required."}
 	}
-	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
-		return nil, ClientError{Msg: "salesTaxPercent must be between 0 and 100."}
+	// A retry whose first attempt already committed gets that bill back before
+	// any validation: a replay must answer like the original, not re-judge it.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
+	if err := validateWriteInput(in.Items, in.SalesTaxPercent, in.Adjustment, in.BillDate, in.DueDate); err != nil {
+		return nil, err
 	}
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
@@ -34,6 +47,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 		return nil, fmt.Errorf("begin create vendor bill: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	vendorInternalID, vendorName, err := vendorSnapshot(ctx, tx, in.VendorUUID)
 	if err != nil {
@@ -63,6 +89,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.Adjustment, 0)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The vendor bill total cannot be negative."}
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, vbilRecordTypeCode)
 	if err != nil {
@@ -126,6 +155,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 
 	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

@@ -14,15 +14,13 @@ import (
 // split to preserve, unlike creditmemo.Update: a vendor credit has no lines,
 // so the whole record is Draft-only (spec §8).
 func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorCreditInput, actorEmployeeID int) (*VendorCredit, error) {
-	internalID, statusCode, err := internalIDByUUID(ctx, pool, id)
-	if err != nil {
+	if _, _, err := internalIDByUUID(ctx, pool, id); err != nil {
 		return nil, err
 	}
-	if statusCode != draftStatusCode {
-		return nil, ClientError{Msg: "Cannot edit a " + statusCode + " vendor credit; only Draft credits can be edited."}
-	}
-	if in.Amount != nil && *in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be greater than zero."}
+	if in.Amount != nil {
+		if err := validateAmount("amount", *in.Amount); err != nil {
+			return nil, err
+		}
 	}
 
 	// The column is NOT NULL DEFAULT '{}'. A nil Go map encodes as SQL NULL, so
@@ -35,20 +33,32 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorC
 		return nil, err
 	}
 
-	// Load the live applied_total so unapplied_amount is derived, not assumed.
-	// It is always 0 at DRFT per the transition map, but read it defensively.
-	var appliedTotal float64
-	if err := pool.QueryRow(ctx,
-		`SELECT vendor_credit_applied_total FROM vendor_credit WHERE vendor_credit_id = $1`, internalID,
-	).Scan(&appliedTotal); err != nil {
-		return nil, fmt.Errorf("load vendor credit applied total: %w", err)
-	}
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update vendor credit: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the credit (the same first lock Apply takes) before the version and
+	// status checks, so both judge the state this write will land on.
+	lc, err := lockVendorCreditForUpdate(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	internalID := lc.internalID
+	var currentVersion int
+	var appliedTotal float64
+	if err := tx.QueryRow(ctx, `
+		SELECT vendor_credit_record_version, vendor_credit_applied_total FROM vendor_credit WHERE vendor_credit_id = $1`,
+		internalID).Scan(&currentVersion, &appliedTotal); err != nil {
+		return nil, fmt.Errorf("read vendor credit version: %w", err)
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, currentVersion); err != nil {
+		return nil, err
+	}
+	if lc.statusCode != draftStatusCode {
+		return nil, ClientError{Msg: "Cannot edit a " + lc.statusCode + " vendor credit; only Draft credits can be edited."}
+	}
 
 	cv := []colVal{
 		{"vendor_credit_reference_number", in.ReferenceNumber, ""},
@@ -105,30 +115,37 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorC
 // Blocked while any live vendor_credit_application references it, so every
 // visible ledger row's parent credit stays resolvable.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID int) error {
-	internalID, _, err := internalIDByUUID(ctx, pool, id)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete vendor credit: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the credit (the lock Apply takes first) so a concurrent apply
+	// cannot commit between the live-application count and the delete.
+	lc, err := lockVendorCreditForUpdate(ctx, tx, id)
 	if err != nil {
 		return err
 	}
 	var liveApplications int
-	if err := pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT COUNT(*) FROM vendor_credit_application WHERE vendor_credit_id = $1 AND application_deleted_at IS NULL`,
-		internalID).Scan(&liveApplications); err != nil {
+		lc.internalID).Scan(&liveApplications); err != nil {
 		return fmt.Errorf("count live vendor credit applications: %w", err)
 	}
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete a vendor credit with live applications; reverse them first."}
 	}
 
-	tag, err := pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		UPDATE vendor_credit
 		SET vendor_credit_deleted_at = NOW(), vendor_credit_deleted_by = $1
-		WHERE vendor_credit_uuid = $2 AND vendor_credit_deleted_at IS NULL`,
-		actorOrSystem(actorEmployeeID), id)
-	if err != nil {
+		WHERE vendor_credit_id = $2`,
+		actorOrSystem(actorEmployeeID), lc.internalID); err != nil {
 		return fmt.Errorf("delete vendor credit: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete vendor credit: %w", err)
 	}
 	return nil
 }

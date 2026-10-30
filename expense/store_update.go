@@ -26,19 +26,24 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateExpen
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID int
+	var internalID, version int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT exp.expense_id, rs.record_status_code
+		SELECT exp.expense_id, rs.record_status_code, exp.expense_record_version
 		FROM expense exp JOIN lkp_record_status rs ON rs.record_status_id = exp.expense_status
 		WHERE exp.expense_uuid = $1 AND exp.expense_deleted_at IS NULL
 		FOR UPDATE OF exp`, uuid,
-	).Scan(&internalID, &statusCode)
+	).Scan(&internalID, &statusCode, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load expense for update: %w", err)
+	}
+	// Version before status: a stale client learns "reload" rather than a
+	// misleading status message about a record someone else already moved.
+	if err := checkExpectedVersion(in.ExpectedVersion, version); err != nil {
+		return nil, err
 	}
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft expense claim can be edited. Recall it to draft first."}
@@ -95,28 +100,42 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateExpen
 
 // SoftDelete marks a live expense claim deleted. Only a DRFT claim may be
 // deleted -- once submitted it's visible to an approver and keeps its trail
-// (recall it to draft first, then delete).
+// (recall it to draft first, then delete). The row is locked FOR UPDATE and
+// the status read under that lock, so a concurrent submit cannot slip between
+// the gate and the delete.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	tag, err := pool.Exec(ctx, `
-		UPDATE expense exp
-		SET expense_deleted_at = NOW(), expense_deleted_by = $2
-		FROM lkp_record_status rs
-		WHERE exp.expense_uuid = $1 AND exp.expense_deleted_at IS NULL
-		  AND rs.record_status_id = exp.expense_status
-		  AND rs.record_status_code = 'DRFT'`,
-		uuid, actorOrSystem(actorEmployeeID))
+	tx, err := pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin delete expense: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var statusCode string
+	err = tx.QueryRow(ctx, `
+		SELECT rs.record_status_code
+		FROM expense exp JOIN lkp_record_status rs ON rs.record_status_id = exp.expense_status
+		WHERE exp.expense_uuid = $1 AND exp.expense_deleted_at IS NULL
+		FOR UPDATE OF exp`, uuid,
+	).Scan(&statusCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock expense for delete: %w", err)
+	}
+	if statusCode != draftStatusCode {
+		return ClientError{Msg: "Only a draft expense claim can be deleted."}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE expense
+		SET expense_deleted_at = NOW(), expense_deleted_by = $2
+		WHERE expense_uuid = $1 AND expense_deleted_at IS NULL`,
+		uuid, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete expense: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish "not found" from "found but not deletable" for the 400/404 split.
-		var exists bool
-		if qerr := pool.QueryRow(ctx, `
-			SELECT EXISTS(SELECT 1 FROM expense
-				WHERE expense_uuid = $1 AND expense_deleted_at IS NULL)`, uuid).Scan(&exists); qerr == nil && exists {
-			return ClientError{Msg: "Only a draft expense claim can be deleted."}
-		}
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete expense: %w", err)
 	}
 	return nil
 }

@@ -335,16 +335,17 @@ func (h *CRMOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	records, err := st.ListRecords(r.Context(), pool, key, string(scope), identityID)
+	records, err := st.ListRecords(r.Context(), pool, key, string(scope), identityID, workflow.MaxListRecords)
 	if err != nil {
 		log.Printf("crm: ListRecords(%s, scope=%s): %v", key, scope, err)
 		crmFail(w, err, "Failed to list records.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"success": true,
-		"scope":   scope,
-		"records": records,
+		"success":   true,
+		"scope":     scope,
+		"records":   records,
+		"truncated": len(records) == workflow.MaxListRecords,
 	})
 }
 

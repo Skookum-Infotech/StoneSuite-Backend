@@ -53,7 +53,7 @@ func (s *workflowStore) KeyForRecord(ctx context.Context, pool *pgxpool.Pool, id
 	return def.Workflow.Key, nil
 }
 
-func (s *workflowStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) ([]workflow.Record, error) {
+func (s *workflowStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, limit int) ([]workflow.Record, error) {
 	wf, err := workflow.GetWorkflowByKey(ctx, pool, key)
 	if errors.Is(err, workflow.ErrWorkflowNotFound) {
 		return nil, ClientError{Msg: "Workflow not found."}
@@ -62,7 +62,7 @@ func (s *workflowStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key
 		return nil, err
 	}
 	callerUserID := s.scopeFilter(ctx, pool, scope, actorIdentityID)
-	return workflow.ListRecords(ctx, pool, wf.ID, scope, callerUserID)
+	return workflow.ListRecords(ctx, pool, wf.ID, scope, callerUserID, limit)
 }
 
 // CountRecords returns how many records of key exist under scope, without

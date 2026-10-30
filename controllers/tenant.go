@@ -666,18 +666,24 @@ func (h *TenantOps) tenantJobs(w http.ResponseWriter, r *http.Request, admin mid
 }
 
 // inviteView is the JSON shape returned for invites (token is the "invite key").
+// Tokens are stored hashed, so token/inviteLink are only present on the
+// create/resend response that minted them; a listed invite has neither, and
+// a fresh link comes from resending it.
 func inviteView(inv tenancy.Invite) map[string]any {
-	return map[string]any{
+	view := map[string]any{
 		"id":           inv.ID,
 		"contactEmail": inv.ContactEmail,
-		"token":        inv.Token,
 		"status":       inv.Status,
 		"expiresAt":    inv.ExpiresAt,
 		"acceptedAt":   inv.AcceptedAt,
 		"createdAt":    inv.CreatedAt,
 		"expired":      inv.Status == "pending" && time.Now().After(inv.ExpiresAt),
-		"inviteLink":   applyLink(inv.Token),
 	}
+	if inv.Token != "" {
+		view["token"] = inv.Token
+		view["inviteLink"] = applyLink(inv.Token)
+	}
+	return view
 }
 
 type resendInviteRequest struct {
@@ -799,6 +805,7 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 
 	identity, err := h.CP.IdentityByEmail(r.Context(), req.Email)
 	if errors.Is(err, tenancy.ErrIdentityNotFound) {
+		burnPasswordCheck(req.Password) // same latency as a wrong password
 		logSecurityEvent(r, "login_failed", "email", req.Email, "reason", "unknown_identity")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
@@ -808,14 +815,20 @@ func (h *TenantOps) TenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if identity.PasswordHash == "" {
+		burnPasswordCheck(req.Password)
 		fail(w, http.StatusUnauthorized, "This account uses single sign-on.")
 		return
 	}
+	if refuseIfLoginLocked(w, r, h.CP, identity.ID, "login_failed") {
+		return
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(identity.PasswordHash), []byte(req.Password)); err != nil {
+		noteLoginFailure(r, h.CP, identity.ID)
 		logSecurityEvent(r, "login_failed", "email", req.Email, "identity", identity.ID, "reason", "bad_password")
 		fail(w, http.StatusUnauthorized, "Invalid email or password.")
 		return
 	}
+	noteLoginSuccess(r, h.CP, identity.ID)
 
 	h.completeLogin(w, r, identity, loginAttempt{email: req.Email, rememberMe: req.RememberMe})
 }
@@ -908,14 +921,9 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 		return
 	}
 
-	accessDur := config.AppConfig.JWTExpiresIn
-	if at.rememberMe {
-		accessDur = config.AppConfig.JWTRememberMeExpiresIn
-	}
-	d, err := time.ParseDuration(accessDur)
-	if err != nil {
-		d = time.Hour
-	}
+	// Remember-me lengthens the refresh token only: the access token cannot be
+	// revoked, so it is always short-lived (see accessTokenLifetime).
+	d := accessTokenLifetime()
 	accessibleResources := resolveAccessibleResources(r.Context(), pool, identity.ID, "")
 	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", accessibleResources, d)
 	if err != nil {
@@ -931,7 +939,7 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 	}
 
 	// Issue refresh token (DB-backed, rotated on every use).
-	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID)
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID, at.rememberMe)
 	if err != nil {
 		// Non-fatal: session still works without a refresh token; user will
 		// just need to re-login when the access token expires.
@@ -1029,7 +1037,7 @@ func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, ident
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return true
 	}
-	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID)
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID, false)
 	if err != nil {
 		log.Printf("warn: failed to issue portal refresh token for identity %s: %v", identity.ID, err)
 		refreshRaw = ""
@@ -1123,10 +1131,14 @@ func (h *TenantOps) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(hash)); err != nil {
+	// Every other session ends with the old password; the caller's own
+	// refresh token is kept, so changing a password does not sign them out.
+	if err := h.CP.SetIdentityPasswordRevokingSessions(r.Context(), identity.ID, string(hash), presentedRefreshTokenHash(r)); err != nil {
+		slog.Error("change password", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to update password.")
 		return
 	}
+	logSecurityEvent(r, "password_changed", "identity", identity.ID, "other_sessions_revoked", true)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -1232,10 +1244,7 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Mint a new access token.
-	d, err := time.ParseDuration(config.AppConfig.JWTExpiresIn)
-	if err != nil {
-		d = time.Hour
-	}
+	d := accessTokenLifetime()
 	// activeRoleID preserves whatever role the caller had selected (see the
 	// request body parsing above) instead of always dropping it -- silent
 	// refreshes happen often enough (any 401 against a cross-origin client
@@ -1249,13 +1258,13 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rotate: issue the replacement first, then revoke the old token. If issuing
-	// fails the old token stays valid, so answer 500 and let the client retry
-	// rather than ending a session that is still good.
-	refreshRaw, refreshExpiry, err := rotateRefreshToken(r.Context(), h.CP, hash, identity.ID)
+	// Rotate: issue the replacement and revoke the old token atomically. The
+	// rotation re-checks the token under a row lock, so a reuse, a superseded
+	// replay or an expiry found there is answered like one found by the claim;
+	// any other failure leaves the old token valid and answers 500.
+	refreshRaw, refreshExpiry, err := rotateRefreshToken(r, h.CP, hash)
 	if err != nil {
-		slog.Error("refresh rotation: issue new refresh token", "error", err)
-		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+		refreshTokenFailed(w, r, h.CP, err, hash, "refresh_token_reused")
 		return
 	}
 
@@ -1285,25 +1294,6 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		"activeRoleId": activeRoleID,
 		"grants":       grants,
 	})
-}
-
-// issueRefreshToken generates a random raw token, hashes it, persists it, and
-// returns the raw value (for the cookie) plus the expiry time.
-func issueRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, identityID string) (string, time.Time, error) {
-	raw, err := randomToken()
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("generate refresh token: %w", err)
-	}
-	rd, err := time.ParseDuration(config.AppConfig.RefreshTokenExpiresIn)
-	if err != nil {
-		rd = 24 * time.Hour
-	}
-	expiry := time.Now().Add(rd)
-	hash := tenancy.HashRefreshToken(raw)
-	if err := cp.CreateRefreshToken(ctx, identityID, hash, expiry); err != nil {
-		return "", time.Time{}, err
-	}
-	return raw, expiry, nil
 }
 
 // clearAuthCookies sets MaxAge=-1 on all session cookies to force browser deletion.
@@ -1448,11 +1438,19 @@ func (h *TenantOps) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	// SetIdentityPassword NULLs the token — single-use enforced at the DB level.
-	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(hash)); err != nil {
+	// ConsumePasswordToken sets the password only while the token is still
+	// unspent, so two concurrent submissions of one link can't both succeed,
+	// and ends every session: whoever forced a reset may be holding one.
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(hash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This reset link is invalid or has expired.")
+			return
+		}
+		slog.Error("reset password", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to update password.")
 		return
 	}
+	logSecurityEvent(r, "password_reset", "identity", identity.ID, "sessions_revoked", true)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -1676,7 +1674,11 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
 		return
 	}
-	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(pwHash)); err != nil {
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(pwHash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusUnauthorized, "Invalid or expired setup token.")
+			return
+		}
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
@@ -44,11 +45,8 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 		}
 		seenLine[in.LineNumber] = true
 		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
-		if in.Quantity <= 0 && !dimIn.HasArea() {
+		if !(in.Quantity > 0) && !dimIn.HasArea() { // negated form also rejects NaN
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
-		}
-		if in.EstimatedUnitPrice < 0 {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: estimated unit price cannot be negative.", in.LineNumber)}
 		}
 
 		rl := resolvedLine{
@@ -99,7 +97,13 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput) ([
 			rl.quantity = sized.Quantity
 		}
 
+		if err := validateLineAmounts(in.LineNumber, rl.quantity, rl.unitPrice); err != nil {
+			return nil, err
+		}
 		rl.money = ComputeLine(CalcLineInput{Quantity: rl.quantity, EstimatedUnitPrice: rl.unitPrice})
+		if err := validateTotals(fmt.Sprintf("amount of line %d", in.LineNumber), rl.money.EstimatedAmount); err != nil {
+			return nil, err
+		}
 		out = append(out, rl)
 	}
 	return out, nil
@@ -143,6 +147,21 @@ func writeHistory(ctx context.Context, tx pgx.Tx, reqnInternalID int, action str
 // and prices every line (AD-3, AD-9), computes header totals, assigns the
 // REQN number (AD-10), and starts the requisition at DRFT.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRequisitionInput, actorEmployeeID int) (*Requisition, error) {
+	if err := validateWriteInput(len(in.Items), in.SalesTaxPercent, in.NeededByDate); err != nil {
+		return nil, err
+	}
+	// A retry whose first attempt already committed gets that requisition
+	// back before any further validation: a replay must answer like the
+	// original, not re-judge it.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
 	}
@@ -152,6 +171,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRequisitionInput, 
 		return nil, fmt.Errorf("begin create requisition: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	var vendorInternalID any
 	var vendorName string
@@ -172,6 +204,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRequisitionInput, 
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.SalesTaxPercent)
+	if err := validateTotals("requisition total", header.EstimatedTotal); err != nil {
+		return nil, err
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, reqnRecordTypeCode)
 	if err != nil {
@@ -230,6 +265,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateRequisitionInput, 
 
 	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

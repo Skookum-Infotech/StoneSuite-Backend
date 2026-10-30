@@ -335,7 +335,7 @@ const quoteSelect = `
 	       qt.quote_custom_fields,
 	       qt.quote_subtotal, qt.quote_discount_total, qt.quote_tax_total,
 	       qt.quote_shipping_charge, qt.quote_adjustment, qt.quote_grand_total,
-	       qt.quote_created_at, qt.quote_updated_at,
+	       qt.quote_created_at, qt.quote_updated_at, qt.quote_record_version,
 	       qt.quote_status, qt.quote_customer_id
 	FROM quote qt
 	JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
@@ -380,7 +380,7 @@ func scanQuote(row pgx.Row) (*Quote, quoteMeta, error) {
 		&customRaw,
 		&e.Subtotal, &e.DiscountTotal, &e.TaxTotal,
 		&e.ShippingCharge, &e.Adjustment, &e.GrandTotal,
-		&e.CreatedAt, &e.UpdatedAt,
+		&e.CreatedAt, &e.UpdatedAt, &e.RecordVersion,
 		&meta.statusID, &meta.customerID,
 	); err != nil {
 		return nil, quoteMeta{}, err

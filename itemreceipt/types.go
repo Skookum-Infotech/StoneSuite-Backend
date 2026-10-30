@@ -80,12 +80,22 @@ type CreateItemReceiptInput struct {
 	Post              bool   `json:"post"`
 	OverReceiptReason string `json:"overReceiptReason"`
 	itemReceiptFields
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the receipt the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateItemReceiptInput mirrors CreateItemReceiptInput minus the purchase
 // order (a receipt's source order is fixed after creation).
 type UpdateItemReceiptInput struct {
 	itemReceiptFields
+
+	// ExpectedVersion, when set, is the recordVersion the client loaded; a
+	// mismatch refuses the save with ErrVersionConflict. Omitted = no check.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // PostInput is the /post request payload. OverReceiptReason is required when
@@ -199,9 +209,10 @@ type ItemReceipt struct {
 
 	CustomFields map[string]any `json:"customFields,omitempty"`
 
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Items     []Line    `json:"items,omitempty"`
+	RecordVersion int       `json:"recordVersion"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+	Items         []Line    `json:"items,omitempty"`
 }
 
 // Page is one page of a keyset-paginated item receipt search. List rows omit

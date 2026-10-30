@@ -434,7 +434,7 @@ func (s *relationalStore) getRecord(ctx context.Context, q workflow.Querier, id 
 	return rec, nil
 }
 
-func (s *relationalStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string) ([]workflow.Record, error) {
+func (s *relationalStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, key, scope, actorIdentityID string, limit int) ([]workflow.Record, error) {
 	code, ok := crmKeyToCode[key]
 	if !ok {
 		return nil, ClientError{Msg: "Unknown CRM workflow: " + key}
@@ -452,6 +452,10 @@ func (s *relationalStore) ListRecords(ctx context.Context, pool *pgxpool.Pool, k
 		args = append(args, empID)
 	}
 	q += ` ORDER BY c.customer_created_at DESC`
+	if limit > 0 {
+		args = append(args, limit)
+		q += fmt.Sprintf(` LIMIT $%d`, len(args))
+	}
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list customer records: %w", err)

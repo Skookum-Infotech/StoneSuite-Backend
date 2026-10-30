@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/invoice"
 )
 
@@ -118,14 +119,36 @@ func recomputeMemo(ctx context.Context, tx pgx.Tx, lm lockedMemo, action string,
 // the memo is not approved or the invoice isn't in a payable status, and (400)
 // on a customer mismatch.
 func Apply(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID string, amount float64, actorEmployeeID int) (*CreditMemo, error) {
-	if amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	return ApplyIdempotent(ctx, pool, memoUUID, invoiceUUID, amount, actorEmployeeID, "", "")
+}
+
+// ApplyIdempotent is Apply made replay-safe: with a non-empty idempotencyKey a
+// retry of an apply that already committed returns the memo as the first
+// attempt left it instead of adding the amount again. requestHash fingerprints
+// the request body; the same key with a different body is idempotency.ErrKeyReuse.
+// An empty key behaves exactly like Apply.
+func ApplyIdempotent(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID string, amount float64, actorEmployeeID int, idempotencyKey, requestHash string) (*CreditMemo, error) {
+	if !(amount > 0 && amount <= maxMoneyAmount) { // negated form also rejects NaN
+		return nil, ClientError{Msg: "amount must be positive and within range."}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin apply: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the apply's transaction: a concurrent duplicate blocks here
+	// until this one commits, then replays it instead of applying twice.
+	if idempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeApply, idempotencyKey, requestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	lm, err := lockCreditMemoForUpdate(ctx, tx, memoUUID) // lock order: credit_memo first
 	if err != nil {
@@ -196,6 +219,12 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID string
 	}
 	if err := invoice.RecomputeBalance(ctx, tx, li, "credit", actorEmployeeID); err != nil {
 		return nil, err
+	}
+
+	if idempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeApply, idempotencyKey, memoUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

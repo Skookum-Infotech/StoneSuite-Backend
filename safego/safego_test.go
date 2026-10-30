@@ -23,7 +23,7 @@ func TestDo(t *testing.T) {
 		{name: "error panic", fn: func() { panic(errors.New("bad input")) }, wantPanic: true},
 		{name: "nil map write", fn: func() {
 			var m map[string]int
-			m["x"] = 1
+			m["x"] = 1 //nolint:staticcheck // SA5000: the nil-map write is the runtime panic under test
 		}, wantPanic: true},
 	}
 	for _, tt := range tests {

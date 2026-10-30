@@ -4,7 +4,6 @@ package controllers
 // split from the handlers to keep both files under the size cap.
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,7 +11,6 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/inventorycount"
 	"stonesuite-backend/middleware"
-	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
 
@@ -53,22 +51,6 @@ func (h *InventoryCountOps) authByUUID(w http.ResponseWriter, r *http.Request, a
 		return nil, "", false
 	}
 	return pool, identityID, true
-}
-
-func countFail(w http.ResponseWriter, err error, fallback string) {
-	var invalid *query.InvalidFilterError
-	switch {
-	case errors.Is(err, inventorycount.ErrNotFound):
-		fail(w, http.StatusNotFound, "Count not found.")
-	case errors.As(err, &invalid):
-		fail(w, http.StatusBadRequest, invalid.Error())
-	case errors.Is(err, inventorycount.ErrNotEditable):
-		fail(w, http.StatusConflict, "This count can no longer be edited.")
-	case inventorycount.IsClientError(err):
-		fail(w, http.StatusBadRequest, err.Error())
-	default:
-		fail(w, http.StatusInternalServerError, fallback)
-	}
 }
 
 // mayApprove checks the separate approve grant, reporting the denial itself.

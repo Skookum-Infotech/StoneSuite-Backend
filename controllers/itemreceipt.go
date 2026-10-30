@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/itemreceipt"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -102,32 +103,6 @@ func (h *ItemReceiptOps) authIRByUUID(w http.ResponseWriter, r *http.Request, uu
 	return pool, identityID, ir, true
 }
 
-// irFail maps a store error to an HTTP response.
-func irFail(w http.ResponseWriter, err error, serverMsg string) {
-	switch {
-	case errors.Is(err, itemreceipt.ErrNotFound):
-		fail(w, http.StatusNotFound, "Item receipt not found.")
-	case errors.Is(err, itemreceipt.ErrInvalidTransition),
-		errors.Is(err, itemreceipt.ErrAlreadyPosted),
-		errors.Is(err, itemreceipt.ErrPONotReceivable),
-		errors.Is(err, itemreceipt.ErrMovementAlreadyApplied):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, itemreceipt.ErrOverReceipt):
-		// 403, not 400: the request is well-formed and the quantities are real.
-		// The caller simply is not permitted to accept an over-delivery.
-		fail(w, http.StatusForbidden, err.Error())
-	case itemreceipt.IsClientError(err):
-		fail(w, http.StatusBadRequest, err.Error())
-	default:
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 // ---- list / search / create --------------------------------------------------
 
 // List GET /api/tenant/item-receipts
@@ -184,9 +159,17 @@ func (h *ItemReceiptOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in itemreceipt.CreateItemReceiptInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	if in.Post {
 		h.createAndPost(w, r, pool, identityID, in)
@@ -220,8 +203,7 @@ func (h *ItemReceiptOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in itemreceipt.UpdateItemReceiptInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	after, err := itemreceipt.Update(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))

@@ -70,6 +70,12 @@ type CreateVendorCreditInput struct {
 	OwnerEmployeeID *int           `json:"ownerEmployeeId,omitempty"`
 	Amount          float64        `json:"amount"`
 	CustomFields    map[string]any `json:"customFields"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the vendor credit the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateVendorCreditInput is the request payload for PATCH
@@ -86,6 +92,9 @@ type UpdateVendorCreditInput struct {
 	OwnerEmployeeID *int           `json:"ownerEmployeeId,omitempty"`
 	Amount          *float64       `json:"amount,omitempty"`
 	CustomFields    map[string]any `json:"customFields"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // Page is one page of vendor credits plus keyset-pagination state.

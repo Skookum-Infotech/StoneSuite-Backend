@@ -11,6 +11,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/bintransfer"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/query"
@@ -100,38 +101,6 @@ func (h *BinTransferOps) authBinTransferByUUID(w http.ResponseWriter, r *http.Re
 	return pool, identityID, scope, true
 }
 
-// binTransferFail maps a store error to an HTTP response. Unexpected errors are
-// a generic 500: the detail goes to the logs, never to the client.
-func binTransferFail(w http.ResponseWriter, err error, serverMsg string) {
-	if status, ok := approvalRejectStatus(err); ok {
-		fail(w, status, err.Error())
-		return
-	}
-	switch {
-	case errors.Is(err, bintransfer.ErrNotFound):
-		fail(w, http.StatusNotFound, "Bin transfer not found.")
-	case errors.Is(err, bintransfer.ErrInvalidTransition),
-		errors.Is(err, bintransfer.ErrApprovalRequired),
-		errors.Is(err, bintransfer.ErrApprovalNotRequired),
-		errors.Is(err, bintransfer.ErrNotEditable):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, bintransfer.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	default:
-		var ce bintransfer.ClientError
-		if errors.As(err, &ce) {
-			fail(w, http.StatusBadRequest, ce.Error())
-			return
-		}
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 // List GET /api/tenant/inventory/bin-transfers
 func (h *BinTransferOps) List(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, scope, ok := h.authBinTransfer(w, r, authz.ActionRead)
@@ -182,9 +151,17 @@ func (h *BinTransferOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in bintransfer.Input
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	bt, err := bintransfer.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
@@ -228,8 +205,7 @@ func (h *BinTransferOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in bintransfer.Input
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	before, _ := bintransfer.Get(r.Context(), pool, uuid)

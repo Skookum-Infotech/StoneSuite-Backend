@@ -29,7 +29,9 @@ func (h *VendorBillOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	in.IdempotencyKey = key
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+	}
 	after, err := vendorbill.RecordPayment(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		vbFail(w, err, "Failed to record payment.")

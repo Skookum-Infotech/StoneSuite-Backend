@@ -159,7 +159,7 @@ func main() {
 	indexCoordinator := NewIndexCoordinator()
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		var err error
-		cp, err = tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
+		cp, err = tenancy.NewControlPlaneWithTimeouts(context.Background(), config.AppConfig.ControlPlaneDBURL, dbSessionTimeouts())
 		if err != nil {
 			log.Fatalf("CRITICAL ERROR: Failed to initialize control plane: %v", err)
 		}
@@ -195,7 +195,7 @@ func main() {
 		} else {
 			log.Println("Tenant DSN encryption: disabled (plaintext DSNs — development only).")
 		}
-		tenantRouter = tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
+		tenantRouter = tenancy.NewRouterWithTimeouts(dsnResolver, dbSessionTimeouts()) // nil resolver -> PlainDSNResolver
 		resolver = tenancy.NewResolver(cp, tenantRouter)
 
 		// Durable job queue (async_jobs table): backs tenant provisioning and
@@ -203,7 +203,7 @@ func main() {
 		jobQueue = jobqueue.New(cp.Pool())
 
 		// Cloudflare client — shared by provisioner and admin repair endpoints.
-		cfClient := storage.NewCFClient(config.AppConfig.CloudflareAccountID, config.AppConfig.CloudflareAPIToken)
+		cfClient := storage.NewCFClient(config.AppConfig.CloudflareAccountID, config.AppConfig.CloudflareAPIToken, config.AppConfig.R2HTTPTimeout)
 		if cfClient.IsConfigured() {
 			log.Println("R2 per-tenant buckets: Cloudflare API configured.")
 		}
@@ -1788,7 +1788,14 @@ func main() {
 	// correlation id and logs every response; Recover turns any handler panic
 	// into a clean 500 (logged with stack) instead of crashing the VM. Recover
 	// is inside RequestLogger so panics are still logged as a 500 request line.
-	globalHandler := middleware.RequestLogger(middleware.Recover(corsHandler))
+	// Deadline cancels the request context after REQUEST_TIMEOUT so abandoned
+	// work stops and releases its DB connection. Exempt: routes that bound
+	// their own duration -- the AI answer stream (rolling write deadline plus
+	// streamMaxDuration) and the automation tick (per-tenant timeouts).
+	deadlineExemptPrefixes := []string{"/api/internal/automation/"}
+	deadlineExemptSuffixes := []string{"/ask/stream"}
+	globalHandler := middleware.RequestLogger(middleware.Recover(
+		middleware.Deadline(config.AppConfig.RequestTimeout, deadlineExemptPrefixes, deadlineExemptSuffixes, corsHandler)))
 
 	// 5. Start Server
 	port := config.AppConfig.Port
@@ -2086,4 +2093,13 @@ func ensureOwnerWorkspace(ctx context.Context, cp *tenancy.ControlPlane, p *prov
 		Email:      identity.Email,
 		FullName:   identity.FullName,
 	})
+}
+
+// dbSessionTimeouts maps the DB_* timeout settings onto every pool's connections.
+func dbSessionTimeouts() tenancy.SessionTimeouts {
+	return tenancy.SessionTimeouts{
+		Statement: config.AppConfig.DBStatementTimeout,
+		Lock:      config.AppConfig.DBLockTimeout,
+		IdleInTx:  config.AppConfig.DBIdleInTxTimeout,
+	}
 }

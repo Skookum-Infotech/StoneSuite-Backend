@@ -69,7 +69,7 @@ func (c *Client) Head(ctx context.Context, key string) (ObjectInfo, error) {
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return ObjectInfo{}, fmt.Errorf("execute r2 head: %w", err)
 	}
@@ -95,7 +95,7 @@ func (c *Client) GetLimited(ctx context.Context, key string, maxBytes int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute r2 get: %w", err)
 	}

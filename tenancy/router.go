@@ -32,6 +32,7 @@ func PlainDSNResolver(_ context.Context, t *Tenant) (string, error) {
 type Router struct {
 	resolve  DSNResolver
 	maxConns int32
+	timeouts SessionTimeouts
 	mu       sync.RWMutex
 	pools    map[string]*pgxpool.Pool // keyed by tenant ID
 }
@@ -46,6 +47,14 @@ func NewRouter(resolve DSNResolver) *Router {
 		maxConns: 5,
 		pools:    make(map[string]*pgxpool.Pool),
 	}
+}
+
+// NewRouterWithTimeouts is NewRouter with session limits set on every
+// connection of every tenant pool it opens.
+func NewRouterWithTimeouts(resolve DSNResolver, timeouts SessionTimeouts) *Router {
+	r := NewRouter(resolve)
+	r.timeouts = timeouts
+	return r
 }
 
 // PoolFor returns the connection pool for a tenant, opening it if needed.
@@ -81,11 +90,14 @@ func (r *Router) PoolFor(ctx context.Context, t *Tenant) (*pgxpool.Pool, error) 
 	// queries. Tolerant: a tenant whose migrations haven't run yet (extension
 	// not installed) must not lose its whole pool over this — only its RAG
 	// queries fail, and self-heals once the migration + a fresh connection land.
+	timeouts := r.timeouts
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		if err := pgxvec.RegisterTypes(ctx, conn); err != nil {
 			slog.Warn("pgvector type registration failed", "tenant", t.Slug, "err", err)
 		}
-		return nil
+		// Unlike pgvector this is fatal for the connection: handing out a
+		// connection without its limits would silently drop the protection.
+		return timeouts.apply(ctx, conn)
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

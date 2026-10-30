@@ -26,6 +26,10 @@ const (
 	// stock (no ledger row, nothing on hand) and has not physically arrived, so
 	// nothing that handles stone may touch it until a receipt brings it in.
 	StatusOnOrder = "on_order"
+	// StatusReceived is a slab that arrived on a posted item receipt without a bin.
+	// It is in stock (its 'received' ledger row is written) but not put away; placing
+	// it in a bin makes it available. Nothing that allocates stone may use it yet.
+	StatusReceived = "received"
 )
 
 // ShipSlabForTransfer sends one slab out of its warehouse: status to
@@ -44,9 +48,9 @@ func ShipSlabForTransfer(ctx context.Context, tx pgx.Tx, u UnitRef,
 	case StatusConsumed, StatusScrapped:
 		return ClientError{Msg: fmt.Sprintf("Unit %s has been consumed or scrapped and cannot be transferred.", u.Serial)}
 	case StatusReserved:
-		// Committed to a fabrication job at THIS warehouse. Shipping it would
-		// leave the job holding a reservation on stone in another building.
-		return ClientError{Msg: fmt.Sprintf("Unit %s is reserved for a job. Release the reservation before transferring it.", u.Serial)}
+		// Committed to a fabrication job or a customer at THIS warehouse. Shipping
+		// it would leave the reservation on stone in another building.
+		return ClientError{Msg: fmt.Sprintf("Unit %s is reserved. Release the reservation before transferring it.", u.Serial)}
 	}
 	if err := checkNotSealedBundle(ctx, tx, u, "transferred"); err != nil {
 		return err
@@ -125,7 +129,8 @@ func AdjustSlabDown(ctx context.Context, tx pgx.Tx, u UnitRef,
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE inventory_slab SET slab_status = $2, slab_updated_at = NOW(), slab_updated_by = $3
+		UPDATE inventory_slab SET slab_status = $2, slab_updated_at = NOW(), slab_updated_by = $3,
+		       reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL
 		WHERE inventory_slab_id = $1`, u.ID, StatusScrapped, nullableInt(actorEmployeeID)); err != nil {
 		return 0, mapUnitWriteErr(err, "adjust")
 	}

@@ -122,6 +122,7 @@ func (sp *slabPost) receiveLine(ctx context.Context, tx pgx.Tx, l postLine) erro
 				Item:            item,
 				WarehouseID:     sp.warehouseID,
 				BinID:           r.binID,
+				Status:          inventory.StatusOnArrival(r.binID),
 				BlockID:         r.blockID,
 				Lot:             r.lot,
 				LengthMM:        r.lengthMM,

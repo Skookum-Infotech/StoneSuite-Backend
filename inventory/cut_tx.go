@@ -48,9 +48,10 @@ func cutUnitTx(ctx context.Context, tx pgx.Tx, uuid string, in CutInput, destina
 	case "scrapped":
 		return CutTxResult{}, ClientError{Msg: "A scrapped unit cannot be cut."}
 	case "reserved":
-		// The slab is committed to a fabrication job, which has its own consume
-		// path. Cutting it here would deduct the same stone twice.
-		return CutTxResult{}, ClientError{Msg: "This unit is reserved for a job. Release the reservation before cutting it."}
+		// The slab is committed to a fabrication job (which has its own consume
+		// path, so cutting it here would deduct the same stone twice) or held for a
+		// customer, who would lose it.
+		return CutTxResult{}, ClientError{Msg: "This unit is reserved. Release the reservation before cutting it."}
 	case StatusInTransit:
 		// It is physically on a truck. Its area has already left the source
 		// warehouse's stock, so a cut here would consume it a second time.

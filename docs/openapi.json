@@ -15276,6 +15276,88 @@
         ]
       }
     },
+    "/api/tenant/inventory/units/{uuid}/release": {
+      "post": {
+        "operationId": "post_tenant_inventory_units_uuid_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnit.ReleaseReservation",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/inventory/units/{uuid}/reserve": {
+      "post": {
+        "operationId": "post_tenant_inventory_units_uuid_reserve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnit.Reserve",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/inventory/units/{uuid}/scrap": {
       "post": {
         "operationId": "post_tenant_inventory_units_uuid_scrap",

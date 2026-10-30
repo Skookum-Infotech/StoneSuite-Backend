@@ -68,12 +68,23 @@ it is sent, with its serial number, and becomes available stock when it is
 received against that order — see Item Receipts in the Purchasing guide. A slab
 on order is not counted as on hand and cannot be moved, cut, bundled, counted or
 transferred; it is written off if its purchase order is cancelled or closed
-first. Its detail page records the item it belongs to,
+first. A slab that arrives on an Item Receipt without a bin is **Received**: it
+counts as on hand but is not put away, so it cannot be cut or reserved until a
+Bin Transfer moves it into a bin, which makes it **Available**. Received slabs
+can still be inspected and scrapped. Its detail page records the item it belongs to,
 the receipt it arrived on, its location, dimensions, attributes, and its
 lineage (where it came from).
 
+An available slab can be reserved for a customer straight from Inventory: the
+**Reserve** button on its row (or **Reserve for customer** on its page) opens a
+searchable list of the customers who can be used on records. The slab becomes
+**Reserved**, shows the customer in the Allocated To column, and stays on hand but
+cannot be cut, transferred or allocated to a fabrication job until **Release**
+gives it back to Available. A slab a fabrication job is holding is released from
+the job, not from here.
+
 A slab is never partly used: it is either still whole, held for a fabrication
-job, cut, or scrapped. When a slab is cut, all of it leaves stock, the offcuts
+job or a customer, cut, or scrapped. When a slab is cut, all of it leaves stock, the offcuts
 you keep come back as new units, and whatever did not come back — the finished
 product and the saw kerf — counts as used. The Inventory list shows this for
 every unit in its Consumption column: a small bar and a line such as

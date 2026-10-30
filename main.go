@@ -1410,6 +1410,8 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/cut", tenantChain(invUnit.Cut))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/reserve", tenantChain(invUnit.Reserve))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/release", tenantChain(invUnit.ReleaseReservation))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/inspection", tenantChain(invUnit.Inspect))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
 

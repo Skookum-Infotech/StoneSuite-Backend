@@ -264,6 +264,52 @@ func (h *InventoryUnitOps) Cut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "result": res})
 }
 
+// Reserve POST /api/tenant/inventory/units/{uuid}/reserve — hold one available
+// slab for a customer, with no sales order or job. Update, like a cut or a scrap:
+// it takes the slab out of everyone else's reach.
+func (h *InventoryUnitOps) Reserve(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, ok := h.authByUUID(w, r, authz.ActionUpdate)
+	if !ok {
+		return
+	}
+	var body struct {
+		CustomerID string `json:"customerId"`
+		Note       string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		fail(w, http.StatusBadRequest, "Invalid request body.")
+		return
+	}
+	if err := inventory.ReserveUnitForCustomer(r.Context(), pool, r.PathValue("uuid"), body.CustomerID, body.Note, resolveEmployeeID(r, identityID)); err != nil {
+		inventoryFail(w, err, "Failed to reserve unit.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Unit reserved."})
+}
+
+// ReleaseReservation POST /api/tenant/inventory/units/{uuid}/release — give a
+// slab held for a customer back to available.
+func (h *InventoryUnitOps) ReleaseReservation(w http.ResponseWriter, r *http.Request) {
+	pool, identityID, ok := h.authByUUID(w, r, authz.ActionUpdate)
+	if !ok {
+		return
+	}
+	var body struct {
+		Note string `json:"note"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			fail(w, http.StatusBadRequest, "Invalid request body.")
+			return
+		}
+	}
+	if err := inventory.ReleaseUnitReservation(r.Context(), pool, r.PathValue("uuid"), body.Note, resolveEmployeeID(r, identityID)); err != nil {
+		inventoryFail(w, err, "Failed to release reservation.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Reservation released."})
+}
+
 // History GET /api/tenant/inventory/units/{uuid}/history — the operational
 // trail (bin moves, re-grades, cuts, scrap), distinct from the stock ledger.
 func (h *InventoryUnitOps) History(w http.ResponseWriter, r *http.Request) {

@@ -222,9 +222,10 @@ type OnOrderArrival struct {
 	NeedsInspection bool
 }
 
-// ReceiveOnOrderUnitTx flips one On Order slab to 'available' at the receiving
-// location and writes its one 'received' ledger row -- the moment it becomes
-// stock. The slab keeps the serial and size it was minted with.
+// ReceiveOnOrderUnitTx flips one On Order slab to 'available' (or 'received' when
+// it arrives without a bin) at the receiving location and writes its one
+// 'received' ledger row -- the moment it becomes stock. The slab keeps the serial
+// and size it was minted with.
 func ReceiveOnOrderUnitTx(ctx context.Context, tx pgx.Tx, a OnOrderArrival, actorEmployeeID int) (*ReceivedUnit, error) {
 	var (
 		rec         ReceivedUnit
@@ -275,7 +276,7 @@ func ReceiveOnOrderUnitTx(ctx context.Context, tx pgx.Tx, a OnOrderArrival, acto
 			slab_updated_at = NOW(), slab_updated_by = $7,
 			slab_record_version = slab_record_version + 1
 		WHERE inventory_slab_id = $1`,
-		a.SlabID, StatusAvailable, a.WarehouseID, a.BinID, thickness,
+		a.SlabID, StatusOnArrival(a.BinID), a.WarehouseID, a.BinID, thickness,
 		a.ReceivedAt, nullableInt(actorEmployeeID), a.NeedsInspection); err != nil {
 		return nil, mapUnitWriteErr(err, "receive on-order")
 	}
@@ -288,7 +289,7 @@ func ReceiveOnOrderUnitTx(ctx context.Context, tx pgx.Tx, a OnOrderArrival, acto
 	if oldLocation != a.WarehouseID {
 		note = "Received at a different location than the one it was ordered to."
 	}
-	if err := writeUnitHistory(ctx, tx, a.SlabID, "status_change", "status", StatusOnOrder, StatusAvailable,
+	if err := writeUnitHistory(ctx, tx, a.SlabID, "status_change", "status", StatusOnOrder, StatusOnArrival(a.BinID),
 		oldBin, a.BinID, nil, note, actorEmployeeID); err != nil {
 		return nil, err
 	}

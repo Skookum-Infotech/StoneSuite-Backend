@@ -103,9 +103,10 @@ func TestOnOrderReceipt_OnlyTickedSlabsBecomeAvailable(t *testing.T) {
 	line := ir.Items[0]
 	assert.InDelta(t, 2*tenByFiveFeetSqft, line.QtyReceived, 1e-9, "qty is the area of the ticked slabs")
 	require.Len(t, line.Slabs, 2)
+	wantStatus := []string{"received", "available"} // the first arrived with no bin, the second into one
 	for i, s := range line.Slabs {
 		assert.Equal(t, poNumber+"-00"+string(rune('1'+i)), s.Serial, "a ticked slab keeps the serial it was ordered with")
-		assert.Equal(t, "available", s.UnitStatus)
+		assert.Equal(t, wantStatus[i], s.UnitStatus)
 		require.NotNil(t, s.OnOrderSlabID)
 		assert.Equal(t, slabs[i], *s.OnOrderSlabID)
 		require.NotNil(t, s.UnitID)
@@ -116,7 +117,7 @@ func TestOnOrderReceipt_OnlyTickedSlabsBecomeAvailable(t *testing.T) {
 	assert.Equal(t, bin, *line.Slabs[1].BinID)
 
 	assert.Equal(t, map[string]string{
-		poNumber + "-001": "available",
+		poNumber + "-001": "received",
 		poNumber + "-002": "available",
 		poNumber + "-003": "on_order",
 	}, slabStatuses(t, pool, itemUUID), "the slab nobody ticked is still on order")
@@ -220,9 +221,9 @@ func TestOnOrderReceipt_TickedAndTypedSlabsShareOneReceipt(t *testing.T) {
 	assert.Equal(t, poNumber+"-003", ir.Items[0].Slabs[1].Serial, "the typed slab continues after the highest serial, on-order ones included")
 	assert.Nil(t, ir.Items[0].Slabs[1].OnOrderSlabID)
 	assert.Equal(t, map[string]string{
-		poNumber + "-001": "available",
+		poNumber + "-001": "received",
 		poNumber + "-002": "on_order",
-		poNumber + "-003": "available",
+		poNumber + "-003": "received",
 	}, slabStatuses(t, pool, itemUUID))
 }
 
@@ -252,9 +253,9 @@ func TestOnOrderReceipt_PendingReceiptHoldsTheTickUntilItIsPosted(t *testing.T) 
 
 	ir, err = Post(ctx, pool, ir.ID, PostInput{}, false, 1)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]string{poNumber + "-001": "available", poNumber + "-002": "on_order"},
+	assert.Equal(t, map[string]string{poNumber + "-001": "received", poNumber + "-002": "on_order"},
 		slabStatuses(t, pool, itemUUID))
-	assert.Equal(t, "available", ir.Items[0].Slabs[0].UnitStatus)
+	assert.Equal(t, "received", ir.Items[0].Slabs[0].UnitStatus)
 }
 
 func TestOnOrderReceipt_VoidScrapsWhatArrived(t *testing.T) {

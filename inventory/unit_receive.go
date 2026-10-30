@@ -89,6 +89,19 @@ type ReceiveUnitParams struct {
 
 	// ReceivedAt is "yyyy-mm-dd"; blank means today.
 	ReceivedAt string
+
+	// Status is the status the unit starts in. Blank means available; an item
+	// receipt passes StatusOnArrival(bin) so a slab that came in without a bin is
+	// 'received' until it is put away.
+	Status string
+}
+
+// initialStatus is the status the unit is inserted with.
+func (p ReceiveUnitParams) initialStatus() string {
+	if p.Status == "" {
+		return StatusAvailable
+	}
+	return p.Status
 }
 
 // ReceivedUnit identifies the unit ReceiveUnitTx created.
@@ -133,7 +146,7 @@ func ReceiveUnitTx(ctx context.Context, tx pgx.Tx, p ReceiveUnitParams, actorEmp
 			slab_length_mm, slab_width_mm, slab_thickness_mm, slab_area, slab_area_unit_id,
 			slab_form, slab_status, slab_grade, slab_finish, slab_finish_id, slab_created_by, inspection_status)
 		VALUES ($1,$2,$3,$4,$5, COALESCE(NULLIF($22,'')::date, CURRENT_DATE),$6, $7,$8,$9,$10, $11,$12,$13,
-			$14,$15,$16,$17,$18, 'full','available',$19,$20,$21,$6,CASE WHEN $23 THEN 'pending' ELSE 'legacy' END)
+			$14,$15,$16,$17,$18, 'full',$24,$19,$20,$21,$6,CASE WHEN $23 THEN 'pending' ELSE 'legacy' END)
 		RETURNING inventory_slab_id, inventory_slab_uuid`,
 		p.Serial, UnitKindSlab, p.VendorID, p.SupplierCode, p.Barcode,
 		nullableInt(actorEmployeeID),
@@ -141,7 +154,7 @@ func ReceiveUnitTx(ctx context.Context, tx pgx.Tx, p ReceiveUnitParams, actorEmp
 		p.BundleLabel, p.BlockID, p.Lot,
 		p.LengthMM, p.WidthMM, p.ThicknessMM, area, p.Item.UnitID,
 		p.Grade, p.Finish, nullableIntPtr(p.FinishID),
-		p.ReceivedAt, p.NeedsInspection,
+		p.ReceivedAt, p.NeedsInspection, p.initialStatus(),
 	).Scan(&rec.ID, &rec.UUID)
 	if err != nil {
 		return nil, mapUnitWriteErr(err, "insert")
@@ -164,8 +177,8 @@ func ReceiveUnitTx(ctx context.Context, tx pgx.Tx, p ReceiveUnitParams, actorEmp
 // stock: each is scrapped and its area leaves stock through a 'scrapped' ledger
 // row. It is what voiding a posted receipt does to its slabs.
 //
-// A unit is only reversible while it is exactly as it was received: available,
-// still in the receiving warehouse and not banded into a bundle. Anything else
+// A unit is only reversible while it is exactly as it was received: available
+// (or received, if it came in without a bin), still in the receiving warehouse and not banded into a bundle. Anything else
 // (reserved for a job, cut, consumed, scrapped, transferred) means the stone has
 // moved on, and silently writing it off would corrupt whatever now depends on
 // it. Every offending serial is named so the user can fix them in one pass; no
@@ -179,6 +192,7 @@ func ReverseReceivedUnitsTx(ctx context.Context, tx pgx.Tx, slabIDs []int, wareh
 		itemID int
 		area   float64
 		binID  *int
+		status string
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT inventory_slab_id, inventory_item_id, slab_serial, slab_status, warehouse_id,
@@ -207,13 +221,14 @@ func ReverseReceivedUnitsTx(ctx context.Context, tx pgx.Tx, slabIDs []int, wareh
 			return fmt.Errorf("scan received unit for reversal: %w", err)
 		}
 		switch {
-		case status != StatusAvailable:
+		case status != StatusAvailable && status != StatusReceived:
 			blockers = append(blockers, fmt.Sprintf("%s (%s)", serial, status))
 		case whID != warehouseID:
 			blockers = append(blockers, fmt.Sprintf("%s (moved to another location)", serial))
 		case bundleID != nil:
 			blockers = append(blockers, fmt.Sprintf("%s (in a bundle)", serial))
 		default:
+			h.status = status
 			toReverse = append(toReverse, h)
 		}
 	}
@@ -236,7 +251,7 @@ func ReverseReceivedUnitsTx(ctx context.Context, tx pgx.Tx, slabIDs []int, wareh
 			EventScrapped, -h.area, nil, actorEmployeeID); err != nil {
 			return err
 		}
-		if err := writeUnitHistory(ctx, tx, h.id, "scrap", "status", StatusAvailable, StatusScrapped,
+		if err := writeUnitHistory(ctx, tx, h.id, "scrap", "status", h.status, StatusScrapped,
 			h.binID, h.binID, nil, note, actorEmployeeID); err != nil {
 			return err
 		}

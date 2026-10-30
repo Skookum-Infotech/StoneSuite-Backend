@@ -45,7 +45,7 @@ type Unit struct {
 	AreaUnitCode string `json:"areaUnitCode,omitempty"`
 
 	Form   string `json:"form"`   // full | cut
-	Status string `json:"status"` // on_order|available|reserved|consumed|scrapped|in_transit
+	Status string `json:"status"` // on_order|received|available|reserved|consumed|scrapped|in_transit
 	// ParentUnitID/RootUnitID are the uuids; the serials sit beside them so the
 	// lineage can be shown by name, never as a raw id.
 	ParentUnitID *string `json:"parentUnitId,omitempty"`
@@ -74,6 +74,13 @@ type Unit struct {
 	// the order of origin afterwards). Nil for every other unit.
 	PurchaseOrderID     *string `json:"purchaseOrderId,omitempty"`
 	PurchaseOrderNumber string  `json:"purchaseOrderNumber,omitempty"`
+
+	// The customer this unit is held for when it was reserved straight from
+	// Inventory (status reserved, no fabrication job). Empty for a reservation a job
+	// holds -- that one is named by Usage.JobID.
+	ReservedCustomerID   *string    `json:"reservedCustomerId,omitempty"`
+	ReservedCustomerName string     `json:"reservedCustomerName,omitempty"`
+	CustomerReservedAt   *time.Time `json:"customerReservedAt,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

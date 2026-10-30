@@ -6197,9 +6197,11 @@ BEGIN
     -- SLABS" at the end of this file). It has to be in THIS list, not only in a
     -- later re-add: this block runs on every boot, and a narrower list would
     -- refuse to re-create the constraint as soon as one such slab exists.
+    -- 'received' is a slab that arrived on an item receipt without a bin (see
+    -- "RECEIVED SLABS" at the end of this file) -- same reason, same list.
     ALTER TABLE inventory_slab DROP CONSTRAINT IF EXISTS chk_slab_status;
     ALTER TABLE inventory_slab ADD CONSTRAINT chk_slab_status
-        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit','on_order'));
+        CHECK (slab_status IN ('available','reserved','consumed','scrapped','in_transit','on_order','received'));
 END $$;
 
 -- ---------------------------------------------------------------------
@@ -10154,3 +10156,25 @@ BEGIN
         CHECK (slab_length_mm > 0 AND slab_width_mm > 0
                AND (slab_thickness_mm > 0 OR slab_status IN ('on_order', 'scrapped')));
 END $$;
+
+-- =====================================================================
+-- RECEIVED SLABS + CUSTOMER RESERVATIONS
+--
+-- 'received' is a slab that arrived on a posted item receipt WITHOUT a bin: it
+-- is in stock (its 'received' ledger row is written like any other) but not put
+-- away yet. It becomes 'available' when it is placed in a bin (a bin transfer).
+-- chk_slab_status gains 'received' in the in_transit block further up, which
+-- re-creates it on every boot, so nothing is repeated here.
+--
+-- A slab can also be reserved for a customer straight from Inventory, with no
+-- sales order or fabrication job: status 'reserved' plus the customer below.
+-- A reservation a fabrication job holds has no customer here -- it lives in
+-- fabrication_job_slab. The columns mean nothing unless slab_status = 'reserved'.
+-- =====================================================================
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_customer_id INTEGER NULL
+    REFERENCES customer(customer_id);
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMP NULL;
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_by INTEGER NULL
+    REFERENCES employee(employee_id);
+CREATE INDEX IF NOT EXISTS idx_slab_reserved_customer ON inventory_slab (reserved_customer_id)
+    WHERE reserved_customer_id IS NOT NULL;

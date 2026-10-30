@@ -141,7 +141,7 @@ func snapshotLines(ctx context.Context, tx pgx.Tx, cur countRow) (int, error) {
 		  -- 'in_transit' is on a truck, and 'consumed'/'scrapped' have left stock,
 		  -- so counting any of them would report a shortage for stone that is
 		  -- exactly where the system says it is.
-		  AND s.slab_status IN ('available','reserved')
+		  AND s.slab_status IN ('available','received','reserved')
 		  AND ($3 = '' OR COALESCE(b.bin_path,'') = $3 OR COALESCE(b.bin_path,'') LIKE $3 || '/%')`,
 		cur.id, cur.warehouseID, cur.binPath)
 	if err != nil {

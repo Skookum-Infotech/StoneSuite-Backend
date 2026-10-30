@@ -84,10 +84,12 @@ received.
 Slabs that are already on order are received by ticking them. When you receive
 against a sent purchase order, each slab line that put slabs on order lists
 them under the item with a checkbox — serial number, size, and thickness. Tick
-the slabs that arrived and choose the receiving location (and, optionally, one
-bin for them); saving the receipt turns exactly those slabs from On Order into
-Available stock at that location. Slabs you do not tick stay on order for a
-later receipt. A slab whose line and item both left the thickness blank asks for
+the slabs that arrived and choose the receiving location; each ticked slab has
+its own optional bin (or set one bin for all the ticked ones at once). Saving the
+receipt turns exactly those slabs from On Order into stock at that location: a
+slab with a bin is **Available**, and a slab with no bin yet is **Received** —
+in stock but not put away — until it is moved into a bin. Slabs you do not tick
+stay on order for a later receipt. A slab whose line and item both left the thickness blank asks for
 it when you tick it. The received quantity is worked out from the ticked slabs'
 areas, so you don't type it.
 

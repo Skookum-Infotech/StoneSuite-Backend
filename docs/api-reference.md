@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-624 endpoints across 7 surfaces, read from `main.go`.
+626 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 524 |
+| staff token + tenant | 526 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 523 endpoints
+## `tenant` — 525 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -791,6 +791,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/inventory/units/{uuid}/cut` | staff token + tenant | `invUnit.Cut` |
 | `GET` | `/api/tenant/inventory/units/{uuid}/history` | staff token + tenant | `invUnit.History` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/inspection` | staff token + tenant | `invUnit.Inspect` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/release` | staff token + tenant | `invUnit.ReleaseReservation` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/reserve` | staff token + tenant | `invUnit.Reserve` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
 | `GET` | `/api/tenant/inventory/warehouses` | staff token + tenant | `invWh.List` |
 | `GET` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Get` |

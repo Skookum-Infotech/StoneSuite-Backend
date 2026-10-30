@@ -114,6 +114,7 @@ const itemSelect = `
 	       COALESCE(ii.inventory_item_tracking, ''),
 	       poi.expected_slabs,
 	       poi.dim_length, poi.dim_width, poi.dim_unit,
+	       poi.dim_thickness,
 	       COALESCE((
 	           SELECT COUNT(*)
 	           FROM item_receipt_line irl
@@ -124,6 +125,11 @@ const itemSelect = `
 	             AND irl.item_deleted_at IS NULL
 	             AND iru.inventory_slab_id IS NOT NULL
 	             AND rs.record_status_code <> 'VOID'
+	       ), 0),
+	       COALESCE((
+	           SELECT COUNT(*) FROM inventory_slab s
+	           WHERE s.purchase_order_item_id = poi.purchase_order_item_id
+	             AND s.slab_status = 'on_order' AND s.slab_deleted_at IS NULL
 	       ), 0)
 	FROM purchase_order_item poi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = poi.inventory_item_id
@@ -137,7 +143,8 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.QtyReceived, &l.QtyBilled, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
-		&l.Tracking, &l.ExpectedSlabs, &l.Length, &l.Width, &l.DimensionUnit, &l.SlabsReceived,
+		&l.Tracking, &l.ExpectedSlabs, &l.Length, &l.Width, &l.DimensionUnit, &l.Thickness, &l.SlabsReceived,
+		&l.SlabsOnOrder,
 	)
 	return l, err
 }

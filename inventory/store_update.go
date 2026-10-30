@@ -69,6 +69,13 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 		}
 	}
 
+	if err := applyUnitTracking(ctx, tx, &in); err != nil {
+		return err
+	}
+	if err := refuseUnitChangeUnderSlabs(ctx, tx, itemID, before.Tracking, in.Tracking); err != nil {
+		return err
+	}
+
 	// An omitted trackStock leaves the item as it is: this is a whole-object
 	// write, so reading "absent" as "off" would silently switch tracking off for
 	// every client that predates the field. (A slab-tracked item was already

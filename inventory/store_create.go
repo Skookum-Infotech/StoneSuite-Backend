@@ -72,6 +72,9 @@ func CreateTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, actorEmployeeI
 
 // createInTx runs the name check, insert, history and kit writes on tx.
 func createInTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, custom map[string]any, actorEmployeeID int) (string, error) {
+	if err := applyUnitTracking(ctx, tx, &in); err != nil {
+		return "", err
+	}
 	if err := checkItemNameFree(ctx, tx, in.Name, ""); err != nil {
 		return "", err
 	}

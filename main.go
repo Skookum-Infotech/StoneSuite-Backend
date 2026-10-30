@@ -1171,6 +1171,9 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/items/{uuid}", tenantChain(inv.Update))
 		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
 		mux.Handle("GET /api/tenant/inventory/items/{uuid}/history", tenantChain(inv.History))
+		mux.Handle("GET /api/tenant/inventory/items/{uuid}/stock", tenantChain(inv.StockForItem))
+		mux.Handle("POST /api/tenant/inventory/stock/totals", tenantChain(inv.StockTotals))
+		mux.Handle("PATCH /api/tenant/inventory/stock/reorder-point", tenantChain(inv.SetReorderPoint))
 
 		// Kits: named groups of catalog items sold together ("Kitchen"). Same
 		// inventory_item grant as the items they hold.
@@ -1414,6 +1417,8 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/cut", tenantChain(invUnit.Cut))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/reserve", tenantChain(invUnit.Reserve))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/release", tenantChain(invUnit.ReleaseReservation))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/inspection", tenantChain(invUnit.Inspect))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
 
@@ -1523,6 +1528,8 @@ func main() {
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
 		// Preview of the serials the next received slabs will get -- same gate.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/next-slab-serial", tenantChain(irOps.NextSlabSequence))
+		// Slabs the order put on order when it was sent, still to arrive -- same gate.
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/on-order-slabs", tenantChain(irOps.OnOrderSlabs))
 
 		// Vendor Bill: dedicated v2 relational module (header + line items +
 		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror

@@ -31,7 +31,8 @@ type resolvedLine struct {
 	expectedSlabs   *int
 	length          *float64
 	width           *float64
-	dimUnit         string // the unit length and width are measured in; "" = not stated
+	thickness       *float64
+	dimUnit         string // the unit length, width and thickness are measured in; "" = not stated
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -120,6 +121,16 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 				rl.quantity = sized.Quantity
 			}
 		}
+		if in.Thickness != nil {
+			thickness, unit, thicknessMsg := linedim.ResolveThickness(*in.Thickness, dimIn.Unit, rl.unitCode)
+			if thicknessMsg != "" {
+				return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, thicknessMsg)}
+			}
+			rl.thickness = &thickness
+			if rl.dimUnit == "" {
+				rl.dimUnit = unit
+			}
+		}
 
 		if err := validateLineAmounts(in.LineNumber, rl.quantity, rl.unitPrice, rl.discountPercent); err != nil {
 			return nil, err
@@ -181,13 +192,13 @@ func insertLines(ctx context.Context, tx pgx.Tx, poInternalID int, lines []resol
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, expected_slabs, dim_length, dim_width, dim_unit
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19, $20,$21,$22)`,
+				item_created_by, expected_slabs, dim_length, dim_width, dim_unit, dim_thickness
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19, $20,$21,$22,$23)`,
 			poInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID), l.expectedSlabs, l.length, l.width, dimUnit,
+			nullableInt(actorEmployeeID), l.expectedSlabs, l.length, l.width, dimUnit, l.thickness,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

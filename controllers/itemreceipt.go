@@ -37,6 +37,7 @@ import (
 //	GET    /api/tenant/item-receipts/{uuid}/audit       — audit trail
 //	GET    /api/tenant/purchase-orders/{uuid}/receipts          — receipts for one order
 //	GET    /api/tenant/purchase-orders/{uuid}/next-slab-serial  — preview slab serial numbering
+//	GET    /api/tenant/purchase-orders/{uuid}/on-order-slabs    — slabs the order put on order, awaiting arrival
 type ItemReceiptOps struct{}
 
 // NewItemReceiptOps constructs the handler group.

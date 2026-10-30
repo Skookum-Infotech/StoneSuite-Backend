@@ -142,9 +142,11 @@ func TestSlabReceipt_PostCreatesSlabsAndStock(t *testing.T) {
 
 	assert.Equal(t, poNumber+"-001", line.Slabs[0].Serial)
 	assert.Equal(t, poNumber+"-002", line.Slabs[1].Serial)
+	// Put straight into a bin it is available; with no bin yet it is only received.
+	wantStatus := []string{"received", "available"}
 	for i, s := range line.Slabs {
 		assert.InDelta(t, tenByFiveFeetSqft, s.Area, 1e-9, "slab %d", i+1)
-		assert.Equal(t, "available", s.UnitStatus)
+		assert.Equal(t, wantStatus[i], s.UnitStatus)
 		require.NotNil(t, s.UnitID, "a posted slab links to its inventory unit")
 	}
 	assert.Nil(t, line.Slabs[0].BinID)
@@ -258,7 +260,7 @@ func TestSlabReceipt_VoidRefusedOnceASlabHasMovedOn(t *testing.T) {
 	got, err := Get(ctx, pool, ir.ID)
 	require.NoError(t, err)
 	assert.NotEqual(t, "VOID", got.StatusCode)
-	assert.Equal(t, "available", slabStatuses(t, pool, itemUUID)[poNumber+"-002"])
+	assert.Equal(t, "received", slabStatuses(t, pool, itemUUID)[poNumber+"-002"], "arrived without a bin")
 	assert.InDelta(t, 2*tenByFiveFeetSqft, poQtyReceived(t, pool, poUUID), 1e-9,
 		"the order still counts the receipt")
 }

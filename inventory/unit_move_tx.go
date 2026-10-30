@@ -26,6 +26,9 @@ func moveUnitToBinTx(ctx context.Context, tx pgx.Tx, uuid string, in MoveUnitInp
 	if err != nil {
 		return err
 	}
+	if u.status == StatusOnOrder {
+		return ClientError{Msg: "This unit is still on order and has not arrived, so it cannot be moved to a bin."}
+	}
 	if u.status == StatusConsumed || u.status == StatusScrapped {
 		return ClientError{Msg: "A consumed or scrapped unit cannot be moved."}
 	}
@@ -57,14 +60,26 @@ func moveUnitToBinTx(ctx context.Context, tx pgx.Tx, uuid string, in MoveUnitInp
 	if err := checkBinMoveNotFrozen(ctx, tx, u.warehouseID, u.binID, newBin); err != nil {
 		return err
 	}
+	// A slab that came in without a bin is put away by this move: it is available
+	// from the moment it sits in one.
+	status := u.status
+	if status == StatusReceived && newBin != nil {
+		status = StatusAvailable
+	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE inventory_slab SET inventory_bin_id = $2, slab_updated_at = NOW(), slab_updated_by = $3
-		WHERE inventory_slab_id = $1`, u.id, newBin, nullableInt(actorEmployeeID)); err != nil {
+		UPDATE inventory_slab SET inventory_bin_id = $2, slab_status = $4, slab_updated_at = NOW(), slab_updated_by = $3
+		WHERE inventory_slab_id = $1`, u.id, newBin, nullableInt(actorEmployeeID), status); err != nil {
 		return mapUnitWriteErr(err, "move")
 	}
 	if err := writeUnitMoveHistory(ctx, tx, u.id,
 		binLabel(u.binID), binLabel(newBin), u.binID, newBin, in.Note, binTransferID, actorEmployeeID); err != nil {
 		return err
+	}
+	if status != u.status {
+		if err := writeUnitHistory(ctx, tx, u.id, "status_change", "status", u.status, status,
+			u.binID, newBin, nil, "Put away in a bin.", actorEmployeeID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

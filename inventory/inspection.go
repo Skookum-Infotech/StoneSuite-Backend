@@ -51,7 +51,8 @@ func InspectUnit(ctx context.Context, pool *pgxpool.Pool, unitUUID string, in In
 	if inspection == in.Decision && reason == in.Reason {
 		return nil
 	}
-	if status != "available" || (inspection != "pending" && inspection != "legacy") {
+	// A slab is inspected where it landed: still waiting for a bin does not stop it.
+	if (status != StatusAvailable && status != StatusReceived) || (inspection != "pending" && inspection != "legacy") {
 		return ClientError{Msg: "Only an unallocated slab awaiting inspection can be inspected. Rejected slabs require supplier resolution."}
 	}
 	_, err = tx.Exec(ctx, `UPDATE inventory_slab SET inspection_status=$2,inspection_reason=$3,inspected_at=NOW(),inspected_by=$4 WHERE inventory_slab_uuid=$1`, unitUUID, in.Decision, in.Reason, nullableInt(actor))

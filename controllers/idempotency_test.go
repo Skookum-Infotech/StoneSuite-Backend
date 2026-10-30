@@ -30,3 +30,21 @@ func TestParseIdempotencyKey(t *testing.T) {
 		})
 	}
 }
+
+func TestCallerIdempotencyKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     string
+		sameKeys bool
+	}{
+		{"same caller same key", "user-1", "user-1", true},
+		{"different callers same key", "user-1", "user-2", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ka := callerIdempotencyKey(tc.a, "k1")
+			kb := callerIdempotencyKey(tc.b, "k1")
+			assert.Equal(t, tc.sameKeys, ka == kb)
+		})
+	}
+}

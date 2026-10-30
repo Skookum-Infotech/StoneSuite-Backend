@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
 
@@ -96,6 +97,21 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
 		return nil, ClientError{Msg: "salesTaxPercent must be between 0 and 100."}
 	}
+	// A retry whose first attempt already committed gets that invoice back
+	// before any validation: the customer may have changed since, and a
+	// replay must answer like the original, not re-judge it.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, in.InvoiceDate, in.DueDate); err != nil {
+		return nil, err
+	}
 	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
 	if err != nil {
 		return nil, err
@@ -132,6 +148,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 		lineMoney = append(lineMoney, rl.money)
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment, 0) // amountPaid starts at 0
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The invoice total cannot be negative."}
+	}
 
 	custom := in.CustomFields
 	if custom == nil {
@@ -160,6 +179,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 		return nil, fmt.Errorf("begin create invoice: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	var newID int
 	var newUUID string
@@ -212,6 +244,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInvoiceInput, acto
 
 	if _, err := assignNumber(ctx, tx, int64(newID)); err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	for i, rl := range resolved {

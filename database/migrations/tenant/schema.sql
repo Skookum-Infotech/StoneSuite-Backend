@@ -10115,3 +10115,24 @@ ON CONFLICT (rule_key) DO NOTHING;
 INSERT INTO automation_state (rule_id, enabled_at)
 SELECT id, NOW() FROM automation_rules WHERE rule_key = 'anomaly_scan'
 ON CONFLICT (rule_id) DO NOTHING;
+
+-- -- request_idempotency ----------------------------------------------------
+-- Generic replay ledger for create endpoints that accept an Idempotency-Key
+-- header (package idempotency). A double-clicked Save or a client retry after
+-- a timeout carries the same key, finds the row its first attempt committed,
+-- and gets that document back instead of creating a second one. The row is
+-- written in the same transaction as the document, so it exists iff the
+-- document does. request_hash is SHA-256 of the request body: the same key
+-- with a different body is a client bug and is refused, never replayed.
+-- result_ref is the created document's external id. Rows older than a week
+-- are pruned; retries happen within seconds.
+CREATE TABLE IF NOT EXISTS request_idempotency (
+    id           BIGSERIAL    PRIMARY KEY,
+    scope        TEXT         NOT NULL,
+    idem_key     TEXT         NOT NULL,
+    request_hash TEXT         NOT NULL,
+    result_ref   TEXT         NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_request_idempotency UNIQUE (scope, idem_key)
+);
+CREATE INDEX IF NOT EXISTS idx_request_idempotency_created_at ON request_idempotency (created_at);

@@ -3,7 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"stonesuite-backend/authz"
@@ -137,7 +137,7 @@ func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Reques
 			"attachment.upload", "record_attachment", id,
 			map[string]any{"recordId": recordID, "fileName": safe, "sizeBytes": size},
 		); logErr != nil {
-			log.Printf("audit log (attachment.upload) attachment=%s: %v", id, logErr)
+			slog.Error("audit log (attachment.upload)", "attachment", id, "error", logErr)
 		}
 	}
 

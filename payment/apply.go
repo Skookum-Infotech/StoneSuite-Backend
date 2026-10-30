@@ -85,8 +85,8 @@ func recomputePayment(ctx context.Context, tx pgx.Tx, internalID int, amount flo
 // if the payment is VOID or the invoice isn't in a payable status, and (400)
 // on a customer mismatch.
 func Apply(ctx context.Context, pool *pgxpool.Pool, paymentUUID, invoiceUUID string, amount float64, actorEmployeeID int) (*Payment, error) {
-	if amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", amount); err != nil {
+		return nil, err
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {

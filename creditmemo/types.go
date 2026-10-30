@@ -173,6 +173,12 @@ type CreateCreditMemoInput struct {
 	CustomFields      map[string]any        `json:"customFields"`
 	Lines             []CreditMemoLineInput `json:"lines"`
 	Applications      []ApplicationInput    `json:"applications"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the credit memo the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateCreditMemoInput is the request payload for PATCH
@@ -197,6 +203,9 @@ type UpdateCreditMemoInput struct {
 	InternalNotes   string                `json:"internalNotes"`
 	CustomFields    map[string]any        `json:"customFields"`
 	Lines           []CreditMemoLineInput `json:"lines,omitempty"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // Page is one page of credit memos plus keyset-pagination state.

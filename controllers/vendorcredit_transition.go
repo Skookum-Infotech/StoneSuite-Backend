@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/vendorcredit"
 )
 
@@ -64,8 +65,16 @@ func (h *VendorCreditOps) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req vcApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VendorBillUUID == "" || req.Amount <= 0 {
+	raw, ok := readJSONBody(w, r, &req)
+	if !ok {
+		return
+	}
+	if req.VendorBillUUID == "" || !(req.Amount > 0) {
 		fail(w, http.StatusBadRequest, "vendorBillUuid and a positive amount are required.")
+		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
 		return
 	}
 	if !h.vendorBillInScopeForUpdate(w, r, pool, identityID, req.VendorBillUUID) {
@@ -73,7 +82,14 @@ func (h *VendorCreditOps) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	before, _ := vendorcredit.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	vc, err := vendorcredit.Apply(r.Context(), pool, id, req.VendorBillUUID, req.Amount, empID)
+	var applyKey, applyHash string
+	if key != "" {
+		applyKey = callerIdempotencyKey(identityID, key)
+		// The hash covers the credit id too: the body alone names only the
+		// bill and amount, so one key must not replay across credits.
+		applyHash = idempotency.HashRequest([]byte(id + "\n" + string(raw)))
+	}
+	vc, err := vendorcredit.ApplyIdempotent(r.Context(), pool, id, req.VendorBillUUID, req.Amount, empID, applyKey, applyHash)
 	if err != nil {
 		vendorCreditFail(w, err, "Failed to apply vendor credit.")
 		return

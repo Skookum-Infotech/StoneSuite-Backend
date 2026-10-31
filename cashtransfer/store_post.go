@@ -88,7 +88,7 @@ func Post(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID 
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create journal entry: %w", err)
+		return nil, fmt.Errorf("create journal entry: %w", translatePeriodError(err))
 	}
 
 	if _, err := tx.Exec(ctx, `

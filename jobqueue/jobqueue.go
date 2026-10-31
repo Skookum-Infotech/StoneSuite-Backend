@@ -214,7 +214,9 @@ func (q *Queue) UpdateProgress(ctx context.Context, id string, progress any) err
 
 // RequeueStale resets jobs stuck in 'running' (e.g. due to a worker crash)
 // back to 'pending' if they haven't been updated within staleAfter, scoped to
-// jobTypes. Returns the number of jobs requeued.
+// jobTypes. A stale job that has already used max_attempts goes to 'dead'
+// instead: a job that keeps dying mid-run (e.g. one whose input crashes the
+// process) must not be requeued forever. Returns the number of jobs touched.
 //
 // jobTypes is required, not optional: ClaimNext is already scoped this way
 // (see its own job_type = ANY($1) — the whole reason two worker pools can
@@ -231,9 +233,12 @@ func (q *Queue) RequeueStale(ctx context.Context, jobTypes []string, staleAfter 
 	threshold := time.Now().Add(-staleAfter)
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
-		SET status = $2, updated_at = NOW()
+		SET status = CASE WHEN attempts >= max_attempts THEN $5 ELSE $2 END,
+		    last_error = CASE WHEN attempts >= max_attempts
+		                      THEN 'abandoned while running after max attempts' ELSE last_error END,
+		    updated_at = NOW()
 		WHERE status = $3 AND updated_at < $1 AND job_type = ANY($4)`,
-		threshold, StatusPending, StatusRunning, jobTypes)
+		threshold, StatusPending, StatusRunning, jobTypes, StatusDead)
 	if err != nil {
 		return 0, fmt.Errorf("requeue stale jobs: %w", err)
 	}

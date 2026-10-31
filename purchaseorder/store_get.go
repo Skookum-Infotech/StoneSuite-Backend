@@ -39,7 +39,7 @@ const poSelect = `
 	       po.purchase_order_shipping_charge, po.purchase_order_adjustment, po.purchase_order_grand_total,
 	       po.purchase_order_created_at, po.purchase_order_updated_at,
 	       po.purchase_order_status, po.purchase_order_vendor_id,
-	       COALESCE(cu.id::text,'')
+	       COALESCE(cu.id::text,''), po.purchase_order_record_version
 	FROM purchase_order po
 	JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 	JOIN vendor v ON v.vendor_id = po.purchase_order_vendor_id
@@ -78,7 +78,7 @@ func scanPurchaseOrder(row pgx.Row) (*PurchaseOrder, poMeta, error) {
 		&p.Subtotal, &p.DiscountTotal, &p.TaxTotal,
 		&p.ShippingCharge, &p.Adjustment, &p.GrandTotal,
 		&p.CreatedAt, &p.UpdatedAt,
-		&meta.statusID, &meta.vendorID, &p.CreatedByUserID,
+		&meta.statusID, &meta.vendorID, &p.CreatedByUserID, &p.RecordVersion,
 	); err != nil {
 		return nil, poMeta{}, err
 	}
@@ -114,6 +114,7 @@ const itemSelect = `
 	       COALESCE(ii.inventory_item_tracking, ''),
 	       poi.expected_slabs,
 	       poi.dim_length, poi.dim_width, poi.dim_unit,
+	       poi.dim_thickness,
 	       COALESCE((
 	           SELECT COUNT(*)
 	           FROM item_receipt_line irl
@@ -124,6 +125,11 @@ const itemSelect = `
 	             AND irl.item_deleted_at IS NULL
 	             AND iru.inventory_slab_id IS NOT NULL
 	             AND rs.record_status_code <> 'VOID'
+	       ), 0),
+	       COALESCE((
+	           SELECT COUNT(*) FROM inventory_slab s
+	           WHERE s.purchase_order_item_id = poi.purchase_order_item_id
+	             AND s.slab_status = 'on_order' AND s.slab_deleted_at IS NULL
 	       ), 0)
 	FROM purchase_order_item poi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = poi.inventory_item_id
@@ -137,7 +143,8 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.QtyReceived, &l.QtyBilled, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
-		&l.Tracking, &l.ExpectedSlabs, &l.Length, &l.Width, &l.DimensionUnit, &l.SlabsReceived,
+		&l.Tracking, &l.ExpectedSlabs, &l.Length, &l.Width, &l.DimensionUnit, &l.Thickness, &l.SlabsReceived,
+		&l.SlabsOnOrder,
 	)
 	return l, err
 }

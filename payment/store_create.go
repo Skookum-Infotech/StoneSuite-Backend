@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
 
@@ -41,18 +42,33 @@ func resolveMethod(ctx context.Context, pool *pgxpool.Pool, methodID int) error 
 
 // Create inserts a new payment header inside one transaction (resolves the
 // customer + method, validates custom fields, inserts the row, assigns the
-// payment number, writes the 'create' history row), then — once that
-// transaction has committed — applies each inline application sequentially
-// by calling Apply. Applications are NOT part of the header's transaction: a
-// later application failing does not roll back the header or earlier
-// successful applications (mirrors the QuickPay trade-off, spec AD-5/§8).
+// payment number, writes the 'create' history row) and applies each inline
+// application in that same transaction via applyTx, so a failing application
+// leaves no payment behind and a retry cannot create a second one. A
+// non-empty IdempotencyKey makes a retried create return the first payment.
 // New payments start at PEND.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, actorEmployeeID int) (*Payment, error) {
 	if in.CustomerUUID == "" {
 		return nil, ClientError{Msg: "customerUuid is required."}
 	}
-	if in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", in.Amount); err != nil {
+		return nil, err
+	}
+	for _, app := range in.Applications {
+		if err := validateAmount("application amount", app.Amount); err != nil {
+			return nil, err
+		}
+	}
+	// A retry whose first attempt already committed gets that payment back
+	// before any database-dependent check: a replay must answer like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
 	}
 	msg, err := workflow.CustomerNotUsableByUUID(ctx, pool, in.CustomerUUID)
 	if err != nil {
@@ -120,6 +136,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
+
 	var newID int
 	var newUUID string
 	err = tx.QueryRow(ctx, `
@@ -154,15 +183,21 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 		return nil, fmt.Errorf("insert payment create history: %w", err)
 	}
 
+	// Same lock order as Apply: this payment (just inserted), then each invoice.
+	for _, app := range in.Applications {
+		if err := applyTx(ctx, tx, newUUID, app.InvoiceUUID, app.Amount, actorEmployeeID); err != nil {
+			return nil, fmt.Errorf("apply inline application to invoice %s: %w", app.InvoiceUUID, err)
+		}
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create payment: %w", err)
 	}
 	notifyCreated(ctx, pool, newUUID, newID, actorEmployeeID)
-
-	for _, app := range in.Applications {
-		if _, err := Apply(ctx, pool, newUUID, app.InvoiceUUID, app.Amount, actorEmployeeID); err != nil {
-			return nil, fmt.Errorf("apply inline application to invoice %s: %w", app.InvoiceUUID, err)
-		}
-	}
 	return Get(ctx, pool, newUUID)
 }

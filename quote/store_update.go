@@ -15,27 +15,37 @@ import (
 // terminal status (RJCT/EXPR/CANC) — a rejected, expired, or cancelled
 // quote is immutable.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateQuoteInput, actorEmployeeID int) (*Quote, error) {
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, effectiveDate(in.QuoteDate), in.ValidUntil); err != nil {
+		return nil, err
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update quote: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID, custInternalID int
+	// Lock the header first, then judge status and version against what the
+	// lock guarantees stays true until commit.
+	var internalID, custInternalID, recordVersion int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT qt.quote_id, qt.quote_customer_id, rs.record_status_code
+		SELECT qt.quote_id, qt.quote_customer_id, rs.record_status_code, qt.quote_record_version
 		FROM quote qt JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
-		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL`, uuid,
-	).Scan(&internalID, &custInternalID, &statusCode)
+		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL
+		FOR UPDATE OF qt`, uuid,
+	).Scan(&internalID, &custInternalID, &statusCode, &recordVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load quote for update: %w", err)
 	}
-	if statusCode == "RJCT" || statusCode == "EXPR" || statusCode == "CANC" {
-		return nil, ClientError{Msg: "A rejected, expired, or cancelled quote cannot be edited."}
+	if statusCode == "RJCT" || statusCode == "EXPR" || statusCode == "CANC" || statusCode == convertedStatusCode {
+		return nil, ClientError{Msg: "A rejected, expired, cancelled, or converted quote cannot be edited."}
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, recordVersion); err != nil {
+		return nil, err
 	}
 
 	_, custName, defBilling, defShipping, err := customerSnapshotByInternalID(ctx, tx, custInternalID)
@@ -59,6 +69,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateQuote
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The quote total cannot be negative."}
+	}
 
 	// quote_custom_fields is NOT NULL DEFAULT '{}'; a nil map encodes as SQL
 	// NULL and violates the constraint.
@@ -124,18 +137,55 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateQuote
 	return Get(ctx, pool, uuid)
 }
 
-// SoftDelete marks a live quote deleted.
+// SoftDelete marks a live quote deleted. It runs in one transaction holding
+// the quote's row lock and refuses a converted quote (status CONV, or a live
+// sales order made from it via quote_conversion): deleting the source would
+// orphan that order's lineage.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	tag, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete quote: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var internalID int
+	var statusCode string
+	err = tx.QueryRow(ctx, `
+		SELECT qt.quote_id, rs.record_status_code
+		FROM quote qt JOIN lkp_record_status rs ON rs.record_status_id = qt.quote_status
+		WHERE qt.quote_uuid = $1 AND qt.quote_deleted_at IS NULL
+		FOR UPDATE OF qt`, uuid,
+	).Scan(&internalID, &statusCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock quote for delete: %w", err)
+	}
+	converted := statusCode == convertedStatusCode
+	if !converted {
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM quote_conversion qc
+				JOIN sales_order so ON so.sales_order_id = qc.sales_order_id
+				WHERE qc.quote_id = $1 AND so.sales_order_deleted_at IS NULL)`,
+			internalID).Scan(&converted); err != nil {
+			return fmt.Errorf("check quote conversion: %w", err)
+		}
+	}
+	if converted {
+		return ClientError{Msg: ErrConverted.Error()}
+	}
+
+	if _, err := tx.Exec(ctx, `
 		UPDATE quote
 		SET quote_deleted_at = NOW(), quote_deleted_by = $2
-		WHERE quote_uuid = $1 AND quote_deleted_at IS NULL`,
-		uuid, actorOrSystem(actorEmployeeID))
-	if err != nil {
+		WHERE quote_id = $1`,
+		internalID, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete quote: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete quote: %w", err)
 	}
 	return nil
 }

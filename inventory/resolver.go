@@ -38,6 +38,7 @@ var systemFields = map[string]resolved{
 	// typed columns over custom_fields JSONB: as TypeNumber it supports
 	// gt/gte/lt/lte/between, which a JSONB ->> text extraction cannot express.
 	"tracking":             {"inventory_item_tracking", query.TypeString},
+	"track_stock":          {"inventory_item_track_stock", query.TypeBool}, // false for a service or labour line, which is never counted
 	"material_id":          {"inventory_item_material_id", query.TypeNumber},
 	"color_id":             {"inventory_item_color_id", query.TypeNumber},
 	"finish_id":            {"inventory_item_finish_id", query.TypeNumber},

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 const cfAPIBase = "https://api.cloudflare.com/client/v4"
@@ -31,14 +32,14 @@ type CFClient struct {
 
 // NewCFClient builds a Cloudflare management API client. Returns nil when
 // accountID or apiToken is blank — callers treat nil as "not configured."
-func NewCFClient(accountID, apiToken string) *CFClient {
+func NewCFClient(accountID, apiToken string, timeout time.Duration) *CFClient {
 	if accountID == "" || apiToken == "" {
 		return nil
 	}
 	return &CFClient{
 		accountID: accountID,
 		apiToken:  apiToken,
-		http:      &http.Client{},
+		http:      newHTTPClient(timeout),
 	}
 }
 

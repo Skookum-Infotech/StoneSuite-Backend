@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/safego"
 )
 
 // PerGroupCap is the default number of results returned per module group (the
@@ -77,26 +78,29 @@ func Search(ctx context.Context, pool *pgxpool.Pool, identityID, term string, mo
 		wg.Add(1)
 		go func(p Provider) {
 			defer wg.Done()
-
-			decision, err := authz.Check(ctx, pool, identityID, p.Resource, authz.ActionRead)
-			if err != nil || !decision.Allowed {
-				return // no permission => omit the group (not a security event; see globalsearch/search.go doc)
-			}
-			results, hasMore, err := p.Search(ctx, pool, decision.Scope, identityID, term, groupCap)
-			if err != nil {
-				slog.Warn("global search provider failed", "module", p.Key, "error", err)
-				return
-			}
-			// Stamp routing centrally so each SearchFunc stays unconcerned with
-			// where the frontend renders its detail page (mirrors
-			// controllers/dashboard_recent.go's fetchAllRecent).
-			for i := range results {
-				results[i].Domain = p.Domain
-				results[i].Module = p.Module
-			}
-			mu.Lock()
-			out.Groups[p.Key] = Group{Results: results, HasMore: hasMore}
-			mu.Unlock()
+			// A panicking provider is omitted like an erroring one instead of
+			// crashing the process (middleware.Recover can't see this goroutine).
+			_ = safego.Do(ctx, "globalsearch.provider", func() { // reported inside Do
+				decision, err := authz.Check(ctx, pool, identityID, p.Resource, authz.ActionRead)
+				if err != nil || !decision.Allowed {
+					return // no permission => omit the group (not a security event; see globalsearch/search.go doc)
+				}
+				results, hasMore, err := p.Search(ctx, pool, decision.Scope, identityID, term, groupCap)
+				if err != nil {
+					slog.Warn("global search provider failed", "module", p.Key, "error", err)
+					return
+				}
+				// Stamp routing centrally so each SearchFunc stays unconcerned with
+				// where the frontend renders its detail page (mirrors
+				// controllers/dashboard_recent.go's fetchAllRecent).
+				for i := range results {
+					results[i].Domain = p.Domain
+					results[i].Module = p.Module
+				}
+				mu.Lock()
+				out.Groups[p.Key] = Group{Results: results, HasMore: hasMore}
+				mu.Unlock()
+			})
 		}(p)
 	}
 	wg.Wait()

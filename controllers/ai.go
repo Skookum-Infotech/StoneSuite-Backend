@@ -194,7 +194,7 @@ func (h *AIOps) Reindex(w http.ResponseWriter, r *http.Request) {
 	q := index.NewQueue(pool)
 	enqueued := 0
 	for _, key := range crmstore.CRMWorkflowKeys() {
-		recs, err := store.ListRecords(r.Context(), pool, key, "all", "")
+		recs, err := store.ListRecords(r.Context(), pool, key, "all", "", 0)
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Failed to list records for reindex.")
 			return

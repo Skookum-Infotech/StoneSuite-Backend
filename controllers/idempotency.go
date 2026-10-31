@@ -29,3 +29,10 @@ func idempotencyKeyFromRequest(w http.ResponseWriter, r *http.Request) (string, 
 	}
 	return key, true
 }
+
+// callerIdempotencyKey namespaces a client key by the caller's identity so the
+// tenant-wide request_idempotency ledger never replays (or confirms the
+// existence of) another user's record — keys are client-chosen and guessable.
+func callerIdempotencyKey(identityID, key string) string {
+	return identityID + ":" + key
+}

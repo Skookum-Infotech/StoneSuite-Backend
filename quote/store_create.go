@@ -10,153 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"stonesuite-backend/kitref"
-	"stonesuite-backend/linedim"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
-
-// resolvedLine is a line after catalog/free-text resolution, ready to price
-// and insert.
-type resolvedLine struct {
-	lineNumber      int
-	inventoryItemID *int // internal FK, nil for free-text
-	sku, name, desc string
-	unitID          *int
-	unitCode        string
-	quantity        float64
-	unitPrice       float64
-	discountPercent float64
-	taxRateID       *int
-	taxPercent      float64
-	money           LineMoney
-	kit             kitref.Ref // the kit the line was added from; zero for none
-	dims            linedim.Dims
-}
-
-// resolveLines validates and resolves every input line against the catalog
-// (or free text), computing each line's stored money (spec §8). headerTax is
-// the header's default tax percent, used when a line has no tax rate.
-func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, headerTax float64) ([]resolvedLine, error) {
-	if len(items) == 0 {
-		return nil, ClientError{Msg: "At least one line item is required."}
-	}
-	out := make([]resolvedLine, 0, len(items))
-	seenLine := map[int]bool{}
-	for _, in := range items {
-		if in.LineNumber <= 0 {
-			return nil, ClientError{Msg: "Each line item needs a positive line number."}
-		}
-		if seenLine[in.LineNumber] {
-			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
-		}
-		seenLine[in.LineNumber] = true
-		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
-		if in.Quantity <= 0 && !dimIn.HasArea() {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
-		}
-		if in.UnitPrice < 0 {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: unit price cannot be negative.", in.LineNumber)}
-		}
-
-		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
-		if kitMsg != "" {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
-		}
-
-		rl := resolvedLine{
-			lineNumber:      in.LineNumber,
-			quantity:        in.Quantity,
-			unitPrice:       in.UnitPrice,
-			discountPercent: in.DiscountPercent,
-			taxRateID:       in.TaxRateID,
-			kit:             kit,
-		}
-
-		if in.InventoryItemUUID != "" {
-			item, err := resolveInventoryItem(ctx, q, in.InventoryItemUUID)
-			if err != nil {
-				return nil, err
-			}
-			id := item.internalID
-			rl.inventoryItemID = &id
-			rl.sku, rl.name, rl.desc = item.sku, item.name, item.desc
-			// Keep a caller-supplied description over the catalog default.
-			if d := strings.TrimSpace(in.Description); d != "" {
-				rl.desc = d
-			}
-			rl.unitID, rl.unitCode = item.unitID, item.unitCode
-			if dimIn.Unit == "" {
-				dimIn.Unit = item.dimensionUnit
-			}
-			if rl.unitPrice == 0 {
-				rl.unitPrice = item.unitPrice
-			}
-			if rl.taxRateID == nil {
-				rl.taxRateID = item.taxRateID
-			}
-		} else if strings.TrimSpace(in.Description) == "" {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: either an inventory item or a description is required.", in.LineNumber)}
-		} else {
-			rl.desc = in.Description
-		}
-
-		// Length x width x slabs, when given, IS the quantity: derived here so a
-		// stale client can never store one that disagrees with its dimensions.
-		sized, dimMsg := linedim.Resolve(dimIn, rl.unitCode)
-		if dimMsg != "" {
-			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
-		}
-		rl.dims = sized.Dims
-		if sized.Derived {
-			rl.quantity = sized.Quantity
-		}
-
-		if rl.taxRateID != nil {
-			pct, err := taxPercentForRate(ctx, q, *rl.taxRateID)
-			if err != nil {
-				return nil, err
-			}
-			rl.taxPercent = pct
-		} else {
-			rl.taxPercent = headerTax
-		}
-
-		rl.money = ComputeLine(CalcLineInput{
-			Quantity: rl.quantity, UnitPrice: rl.unitPrice,
-			DiscountPercent: rl.discountPercent, TaxPercent: rl.taxPercent,
-		})
-		out = append(out, rl)
-	}
-	return out, nil
-}
-
-// insertLines bulk-inserts resolved lines as quote_item rows.
-func insertLines(ctx context.Context, tx pgx.Tx, quoteInternalID int, lines []resolvedLine, actorEmployeeID int) error {
-	for _, l := range lines {
-		kitUUID, kitName := l.kit.Args()
-		_, err := tx.Exec(ctx, `
-			INSERT INTO quote_item (
-				quote_id, line_number, inventory_item_id,
-				item_name, sku, description, unit_id, unit_code,
-				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
-				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20, $21,$22,$23,$24)`,
-			quoteInternalID, l.lineNumber, l.inventoryItemID,
-			l.name, l.sku, l.desc, l.unitID, l.unitCode,
-			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
-			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID), kitUUID, kitName, l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(),
-		)
-		if err != nil {
-			if isForeignKeyViolation(err) {
-				return ClientError{Msg: fmt.Sprintf("Line %d: an invalid unit or tax rate was referenced.", l.lineNumber)}
-			}
-			return fmt.Errorf("insert quote item: %w", err)
-		}
-	}
-	return nil
-}
 
 // writeHistory records one quote_history row inside the caller's transaction.
 func writeHistory(ctx context.Context, tx pgx.Tx, quoteInternalID int, action string, fromStatusID, toStatusID *int, actorEmployeeID int) {
@@ -174,12 +30,40 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 	if strings.TrimSpace(in.CustomerUUID) == "" {
 		return nil, ClientError{Msg: "A customer is required."}
 	}
+	// A retry whose first attempt already committed gets that quote back
+	// before any validation: the customer may have changed since, and a
+	// replay must answer like the original, not re-judge it.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, effectiveDate(in.QuoteDate), in.ValidUntil); err != nil {
+		return nil, err
+	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin create quote: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	msg, err := workflow.CustomerNotUsableByUUID(ctx, tx, in.CustomerUUID)
 	if err != nil {
@@ -204,7 +88,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 	var estimateInternalID *int
 	if in.EstimateUUID != nil && *in.EstimateUUID != "" {
 		var eid int
-		err := tx.QueryRow(ctx, `SELECT estimate_id FROM estimate WHERE estimate_uuid = $1 AND estimate_deleted_at IS NULL`, *in.EstimateUUID).Scan(&eid)
+		err := tx.QueryRow(ctx, `SELECT estimate_id FROM estimate WHERE estimate_uuid = $1 AND estimate_deleted_at IS NULL FOR SHARE`, *in.EstimateUUID).Scan(&eid)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, ClientError{Msg: "Referenced estimate not found."}
@@ -223,6 +107,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The quote total cannot be negative."}
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, quotRecordTypeCode)
 	if err != nil {
@@ -287,6 +174,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateQuoteInput, actorE
 
 	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := insertLines(ctx, tx, internalID, lines, actorEmployeeID); err != nil {

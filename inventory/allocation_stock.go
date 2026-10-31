@@ -42,7 +42,7 @@ func stockPosition(ctx context.Context, tx pgx.Tx, ids []int) (onHand, held map[
 	rows, err := tx.Query(ctx, `
 		SELECT stock.inventory_item_id, GREATEST(COALESCE(SUM(stock.quantity_on_hand), 0) - COALESCE((
  SELECT SUM(s.slab_area) FROM inventory_slab s WHERE s.inventory_item_id=stock.inventory_item_id
- AND s.inspection_status IN ('pending','rejected') AND s.slab_status IN ('available','reserved') AND s.slab_deleted_at IS NULL
+ AND s.inspection_status IN ('pending','rejected') AND s.slab_status IN ('available','received','reserved') AND s.slab_deleted_at IS NULL
  ),0),0)
  FROM inventory_stock stock WHERE stock.inventory_item_id = ANY($1) GROUP BY stock.inventory_item_id`, ids)
 	if err != nil {

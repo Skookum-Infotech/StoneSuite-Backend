@@ -366,14 +366,15 @@ func (h *WorkflowOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	callerUserID := h.callerScope(r, pool, identityID, scope)
-	records, err := workflow.ListRecords(r.Context(), pool, r.PathValue("id"), string(scope), callerUserID)
+	records, err := workflow.ListRecords(r.Context(), pool, r.PathValue("id"), string(scope), callerUserID, workflow.MaxListRecords)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to list records.")
 		return
 	}
 	approverUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
 	_ = workflow.AttachApprovalOverlays(r.Context(), pool, records, approverUserID)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "scope": scope, "records": records})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "scope": scope, "records": records,
+		"truncated": len(records) == workflow.MaxListRecords})
 }
 
 // SearchRecords POST /api/tenant/workflows/{id}/records/search — scope-filtered,

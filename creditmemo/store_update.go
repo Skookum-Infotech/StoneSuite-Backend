@@ -49,6 +49,16 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 		return nil, ClientError{Msg: "Cannot edit a " + statusCode + " credit memo."}
 	}
 
+	var amountIn, adjustmentIn float64
+	if in.Amount != nil {
+		amountIn = *in.Amount
+	}
+	if in.Adjustment != nil {
+		adjustmentIn = *in.Adjustment
+	}
+	if err := validateWriteInput(len(in.Lines), amountIn, adjustmentIn, in.CreditMemoDate); err != nil {
+		return nil, err
+	}
 	if err := validateUpdateMoney(in.Amount, in.Lines); err != nil {
 		return nil, err
 	}
@@ -69,11 +79,18 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 
 	// Load current money inputs so a partial PATCH keeps the untouched ones.
 	var curTaxPercent, curAdjustment, curApplied, curSubtotal float64
+	var curVersion int
 	if err := pool.QueryRow(ctx, `
-		SELECT credit_memo_sales_tax_percent, credit_memo_adjustment, credit_memo_applied_total, credit_memo_subtotal
+		SELECT credit_memo_sales_tax_percent, credit_memo_adjustment, credit_memo_applied_total, credit_memo_subtotal,
+		       credit_memo_record_version
 		FROM credit_memo WHERE credit_memo_id = $1`, internalID,
-	).Scan(&curTaxPercent, &curAdjustment, &curApplied, &curSubtotal); err != nil {
+	).Scan(&curTaxPercent, &curAdjustment, &curApplied, &curSubtotal, &curVersion); err != nil {
 		return nil, fmt.Errorf("load credit memo money: %w", err)
+	}
+	// Early, unlocked check so a stale form fails before the line lookups;
+	// re-checked under the row lock below, which is the one that counts.
+	if err := checkExpectedVersion(in.ExpectedVersion, curVersion); err != nil {
+		return nil, err
 	}
 	taxPercent := curTaxPercent
 	if in.SalesTaxPercent != nil {
@@ -127,6 +144,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 		}
 	}
 	money := ComputeHeader(lineMoney, adjustment, curApplied)
+	if money.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The credit memo total cannot be negative."}
+	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -137,12 +157,37 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 	// Lock order is credit_memo < payment: take the memo, then the payment it was
 	// issued from, so a raise is checked against what is really left of it.
 	var sourcePaymentID *int
-	var oldGrandTotal float64
+	var oldGrandTotal, lockedApplied float64
+	var lockedStatus string
+	var lockedVersion int
 	if err := tx.QueryRow(ctx, `
-		SELECT credit_memo_source_payment_id, credit_memo_grand_total
-		FROM credit_memo WHERE credit_memo_id = $1 FOR UPDATE`, internalID,
-	).Scan(&sourcePaymentID, &oldGrandTotal); err != nil {
+		SELECT cm.credit_memo_source_payment_id, cm.credit_memo_grand_total, cm.credit_memo_applied_total,
+		       cm.credit_memo_record_version, rs.record_status_code
+		FROM credit_memo cm
+		JOIN lkp_record_status rs ON rs.record_status_id = cm.credit_memo_status
+		WHERE cm.credit_memo_id = $1 AND cm.credit_memo_deleted_at IS NULL FOR UPDATE OF cm`, internalID,
+	).Scan(&sourcePaymentID, &oldGrandTotal, &lockedApplied, &lockedVersion, &lockedStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, fmt.Errorf("lock credit memo for update: %w", err)
+	}
+	// The status read before the lock may be stale: re-judge both gates on the
+	// locked row so a racing issue/apply/void can't be edited over.
+	if terminalStatuses[lockedStatus] {
+		return nil, ClientError{Msg: "Cannot edit a " + lockedStatus + " credit memo."}
+	}
+	if wantsMoneyChange && !editableMoneyStatuses[lockedStatus] {
+		return nil, ClientError{Msg: "Lines and amounts can only be changed while a credit memo is Draft; void it and issue a new one."}
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, lockedVersion); err != nil {
+		return nil, err
+	}
+	// The money above was computed from the unlocked read. If the row moved
+	// since (version bump or applied total), recomputing from stale inputs
+	// would overwrite the newer state.
+	if lockedVersion != curVersion || lockedApplied != curApplied {
+		return nil, ErrVersionConflict
 	}
 	if sourcePaymentID != nil {
 		room, err := lockLinkedPayment(ctx, tx, *sourcePaymentID)
@@ -241,69 +286,4 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 	}
 	resubmitted.Notify(ctx, pool, id, actorEmployeeID)
 	return Get(ctx, pool, id)
-}
-
-// SoftDelete marks a credit memo deleted (paired deleted_at/deleted_by).
-// Blocked while any live credit_memo_application references it — unapply (or
-// void, which cascades) first, so every visible ledger row's parent memo stays
-// resolvable (spec AD-16).
-func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmployeeID int) error {
-	internalID, _, err := internalIDByUUID(ctx, pool, id)
-	if err != nil {
-		return err
-	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin delete credit memo: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	// Lock order is credit_memo < payment. A memo issued from a payment gives its
-	// money back to that payment when it goes, so the payment is locked and its
-	// rollup recomputed in the same transaction.
-	var sourcePaymentID *int
-	if err := tx.QueryRow(ctx, `
-		SELECT credit_memo_source_payment_id FROM credit_memo
-		WHERE credit_memo_id = $1 AND credit_memo_deleted_at IS NULL FOR UPDATE`, internalID,
-	).Scan(&sourcePaymentID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("lock credit memo for delete: %w", err)
-	}
-	var liveApplications int
-	if err := tx.QueryRow(ctx,
-		`SELECT COUNT(*) FROM credit_memo_application WHERE credit_memo_id = $1 AND application_deleted_at IS NULL`,
-		internalID).Scan(&liveApplications); err != nil {
-		return fmt.Errorf("count live credit applications: %w", err)
-	}
-	if liveApplications > 0 {
-		return ClientError{Msg: "Cannot delete a credit memo with live applications; unapply them first."}
-	}
-	if sourcePaymentID != nil {
-		if _, err := lockLinkedPayment(ctx, tx, *sourcePaymentID); err != nil {
-			return err
-		}
-	}
-
-	tag, err := tx.Exec(ctx, `
-		UPDATE credit_memo
-		SET credit_memo_deleted_at = NOW(), credit_memo_deleted_by = $1
-		WHERE credit_memo_id = $2 AND credit_memo_deleted_at IS NULL`,
-		actorOrSystem(actorEmployeeID), internalID)
-	if err != nil {
-		return fmt.Errorf("delete credit memo: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	if sourcePaymentID != nil {
-		if err := recomputePaymentCredited(ctx, tx, *sourcePaymentID, actorEmployeeID); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit delete credit memo: %w", err)
-	}
-	return nil
 }

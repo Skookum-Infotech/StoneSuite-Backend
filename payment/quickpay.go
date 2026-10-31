@@ -27,8 +27,8 @@ const quickPayMemo = "Quick payment via invoice"
 // inserted and the current invoice is returned. Returns the updated invoice,
 // matching the pre-existing response shape callers of this endpoint expect.
 func QuickPay(ctx context.Context, pool *pgxpool.Pool, invoiceUUID string, amount float64, idempotencyKey string, actorEmployeeID int) (*invoice.Invoice, error) {
-	if amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", amount); err != nil {
+		return nil, err
 	}
 	var customerUUID string
 	err := pool.QueryRow(ctx, `

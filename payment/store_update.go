@@ -25,10 +25,12 @@ func internalIDByUUID(ctx context.Context, pool *pgxpool.Pool, id string) (int, 
 }
 
 // Update edits non-monetary fields only (spec AD-10: amount is immutable
-// post-creation — void + recreate to correct it).
+// post-creation — void + recreate to correct it). The payment row is locked
+// FOR UPDATE before anything is judged, so the void check, the live-application
+// check behind the currency rule and the ExpectedVersion check all see the
+// state the write will land on.
 func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePaymentInput, actorEmployeeID int) (*Payment, error) {
-	internalID, err := internalIDByUUID(ctx, pool, id)
-	if err != nil {
+	if _, err := internalIDByUUID(ctx, pool, id); err != nil {
 		return nil, err
 	}
 	if err := resolveMethod(ctx, pool, in.MethodID); err != nil {
@@ -47,10 +49,40 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePayment
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	lp, err := lockPaymentForUpdate(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	var currentVersion int
+	if err := tx.QueryRow(ctx,
+		`SELECT payment_record_version FROM payment WHERE payment_id = $1`, lp.internalID).Scan(&currentVersion); err != nil {
+		return nil, fmt.Errorf("read payment version: %w", err)
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, currentVersion); err != nil {
+		return nil, err
+	}
+	if lp.statusCode == voidStatusCode {
+		return nil, ClientError{Msg: "Cannot edit a voided payment."}
+	}
+	// An omitted currencyId keeps the stored currency (COALESCE below), so only
+	// an explicit different id counts as a change.
+	if in.CurrencyID != nil && !sameCurrency(lp.currencyID, in.CurrencyID) {
+		var liveApplications int
+		if err := tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM payment_application WHERE payment_id = $1 AND application_deleted_at IS NULL`,
+			lp.internalID).Scan(&liveApplications); err != nil {
+			return nil, fmt.Errorf("count live applications: %w", err)
+		}
+		if liveApplications > 0 {
+			return nil, ClientError{Msg: "Cannot change the currency of a payment that has applications; unapply it first."}
+		}
+	}
+	internalID := lp.internalID
+
 	if _, err := tx.Exec(ctx, `
 		UPDATE payment SET
 			payment_method = $1, payment_reference_number = $2, payment_date = COALESCE($3, payment_date),
-			payment_currency = $4, payment_owner_id = COALESCE($5, payment_owner_id),
+			payment_currency = COALESCE($4, payment_currency), payment_owner_id = COALESCE($5, payment_owner_id),
 			payment_memo = $6, payment_internal_notes = $7, payment_custom_fields = $8,
 			payment_updated_at = NOW(), payment_updated_by = $9, payment_record_version = payment_record_version + 1
 		WHERE payment_id = $10`,
@@ -69,6 +101,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePayment
 	}
 	resubmitted.Notify(ctx, pool, id, actorEmployeeID)
 	return Get(ctx, pool, id)
+}
+
+// sameCurrency reports whether two optional currency ids are equal.
+func sameCurrency(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // SoftDelete marks a payment deleted (paired deleted_at/deleted_by). Blocked

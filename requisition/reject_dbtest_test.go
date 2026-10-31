@@ -39,7 +39,7 @@ func pendingRequisition(t *testing.T, pool *pgxpool.Pool) *Requisition {
 	t.Helper()
 	ctx := context.Background()
 	_, itemUUID := seedVendorAndItem(t, pool)
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {

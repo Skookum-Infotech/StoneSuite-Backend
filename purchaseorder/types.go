@@ -44,8 +44,13 @@ type LineInput struct {
 	// quantity sent is then ignored.
 	Length *float64 `json:"length"`
 	Width  *float64 `json:"width"`
-	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
-	// ft, m). Blank takes the item's unit, then inches.
+	// Thickness is the thickness of one slab, in the same unit as length and
+	// width. Optional and descriptive: it never enters the quantity. It is what
+	// the slabs minted when the order is sent are cut to; blank falls back to the
+	// item's own thickness.
+	Thickness *float64 `json:"thickness"`
+	// DimensionUnit is the one unit length, width and thickness are measured in
+	// (mm, cm, in, ft, m). Blank takes the item's unit, then inches.
 	DimensionUnit string `json:"dimensionUnit"`
 }
 
@@ -74,12 +79,21 @@ type purchaseOrderFields struct {
 type CreatePurchaseOrderInput struct {
 	VendorUUID string `json:"vendorUuid"`
 	purchaseOrderFields
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the purchase order the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdatePurchaseOrderInput mirrors CreatePurchaseOrderInput minus the vendor
 // (a purchase order's vendor is fixed after creation — AD-2).
 type UpdatePurchaseOrderInput struct {
 	purchaseOrderFields
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // VendorRef is the light vendor reference on a PurchaseOrder response.
@@ -127,7 +141,11 @@ type Line struct {
 	// entered that way; ExpectedSlabs is the matching slab count.
 	Length        *float64 `json:"length,omitempty"`
 	Width         *float64 `json:"width,omitempty"`
+	Thickness     *float64 `json:"thickness,omitempty"`
 	DimensionUnit string   `json:"dimensionUnit,omitempty"`
+	// SlabsOnOrder is how many of this line's slabs are still On Order in
+	// Inventory -- minted when the order was sent, not yet arrived on a receipt.
+	SlabsOnOrder int `json:"slabsOnOrder,omitempty"`
 }
 
 // PurchaseOrder is the full API response for a purchase order header (+
@@ -168,7 +186,10 @@ type PurchaseOrder struct {
 	GrandTotal     float64   `json:"grandTotal"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
-	Items          []Line    `json:"items,omitempty"`
+	// RecordVersion increments on every write; clients echo it back as
+	// expectedVersion on update for optimistic locking.
+	RecordVersion int    `json:"recordVersion"`
+	Items         []Line `json:"items,omitempty"`
 	// ReceivedPercent is how far through receiving the order is (0-100, see
 	// ReceivedPercent in receipt_progress.go). Only the list endpoint fills it,
 	// since list rows carry no lines; absent on Get, where the lines are the

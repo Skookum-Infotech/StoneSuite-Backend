@@ -14,6 +14,7 @@ import (
 	"stonesuite-backend/database"
 	"stonesuite-backend/jobqueue"
 	"stonesuite-backend/onboardingseed"
+	"stonesuite-backend/safego"
 	"stonesuite-backend/secret"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
@@ -180,7 +181,14 @@ func (p *Provisioner) processNext(ctx context.Context) {
 	runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	if err := p.provision(runCtx, job.ID, j); err != nil {
+	// Provisioning steps are idempotent, so a panic is handled like any other
+	// failure (retried up to max_attempts) instead of killing the process.
+	if panicErr := safego.Do(runCtx, "provisioning.provision", func() {
+		err = p.provision(runCtx, job.ID, j)
+	}); panicErr != nil {
+		err = panicErr
+	}
+	if err != nil {
 		log.Printf("provisioning tenant %s (%s) failed: %v", j.Slug, j.TenantID, err)
 		_ = p.cp.SetTenantMigrationStatus(context.Background(), j.TenantID, tenancy.MigrationFailed)
 		if ferr := p.queue.MarkFailed(ctx, job.ID, err.Error()); ferr != nil {

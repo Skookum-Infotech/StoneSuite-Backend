@@ -9,10 +9,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
-	"stonesuite-backend/payment"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
@@ -80,50 +80,23 @@ func (h *InvoiceOps) authInvoiceByUUID(w http.ResponseWriter, r *http.Request, u
 	return pool, identityID, scope, true
 }
 
-func invoiceFail(w http.ResponseWriter, err error, serverMsg string) {
-	if status, ok := approvalRejectStatus(err); ok {
-		fail(w, status, err.Error())
-		return
-	}
-	switch {
-	case errors.Is(err, invoice.ErrNotFound):
-		fail(w, http.StatusNotFound, "Invoice not found.")
-	case errors.Is(err, invoice.ErrInvalidTransition),
-		errors.Is(err, invoice.ErrVoidWithSettlement),
-		errors.Is(err, invoice.ErrApprovalRequired),
-		errors.Is(err, invoice.ErrApprovalNotRequired):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, invoice.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	default:
-		var ce invoice.ClientError
-		if errors.As(err, &ce) {
-			fail(w, http.StatusBadRequest, ce.Error())
-			return
-		}
-		var pce payment.ClientError
-		if errors.As(err, &pce) {
-			fail(w, http.StatusBadRequest, pce.Error())
-			return
-		}
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 func (h *InvoiceOps) Create(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authInvoice(w, r, authz.ActionCreate)
 	if !ok {
 		return
 	}
 	var in invoice.CreateInvoiceInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	empID := resolveEmployeeID(r, identityID)
 	inv, err := invoice.Create(r.Context(), pool, in, empID)
@@ -194,8 +167,7 @@ func (h *InvoiceOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in invoice.UpdateInvoiceInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	before, _ := invoice.Get(r.Context(), pool, id)

@@ -1,5 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true,
+    "context7@claude-plugins-official": false
+  },
+  "permissions": {
+    "deny": [
+      "Read(./docs/openapi.json)",
+      "Read(./docs/StoneSuite.postman_collection.json)",
+      "Read(./docs/api-reference.md)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

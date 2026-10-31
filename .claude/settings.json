@@ -1,5 +1,9 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true,
+    "context7@claude-plugins-official": false
+  },
   "permissions": {
     "deny": [
       "Read(./docs/openapi.json)",

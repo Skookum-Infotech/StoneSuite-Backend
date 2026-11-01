@@ -49,7 +49,7 @@ func TestExport_NumberStartingWithFormulaIsEscaped(t *testing.T) {
 	for _, tr := range formulaTriggers {
 		t.Run(tr.name, func(t *testing.T) {
 			d := seedDoc(t, pool, vID, docSeed{key: "vendor_bill", status: "APPV", date: "2026-10-02", total: 1, balance: 1, owner: a.employee})
-			num := tr.char + `HYPERLINK("http://evil","x")`
+			num := tr.char + `HYPERLINK("a")` // number columns are varchar(20)
 			_, err := pool.Exec(context.Background(), `UPDATE vendor_bill SET vendor_bill_number = $1 WHERE vendor_bill_id = $2`, num, d.id)
 			require.NoError(t, err)
 

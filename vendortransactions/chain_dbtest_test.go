@@ -42,7 +42,7 @@ func TestChain_BillsHiddenWithoutGrant(t *testing.T) {
 	assert.Empty(t, ch.Bills.Items)
 	assert.Equal(t, 1, ch.Bills.Hidden)
 	assert.True(t, ch.BillsHidden)
-	assert.Equal(t, ChainNotReceived, ch.Status, "no receipts linked, bills hidden: never above received")
+	assert.Equal(t, ChainReceived, ch.Status, "PO is RCVD and the bill is hidden: status stops at received, never billed or paid")
 }
 
 func TestChain_OtherVendorsPOIsNotFound(t *testing.T) {

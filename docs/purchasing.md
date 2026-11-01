@@ -14,6 +14,32 @@ purchase order, or other purchasing document, so put a vendor On Hold or
 make them Inactive when you want to stop new purchasing activity with them
 without deleting their record.
 
+A vendor's Transactions tab lists the requisitions, purchase orders, item
+receipts, vendor bills, vendor payments and vendor credits for that vendor,
+newest first, with a summary above the list. You see only the kinds of record
+you have permission to read, and if your access to a kind is limited to your
+own records you see only those you own, so the figures can be partial. The
+list can be narrowed by type, status, date range, document number, or to open
+items only. Long lists load a page at a time.
+
+What counts as open: a requisition that is still a draft, awaiting approval or
+approved; a purchase order that is not closed or cancelled; an item receipt
+that is pending or partially received; a vendor bill that is approved,
+partially paid or overdue and still has a balance; a vendor payment that is
+not void and still has an unapplied amount; and an approved vendor credit with
+an unapplied amount. Voided, cancelled, closed and fully settled documents are
+never open. A vendor bill is overdue when it is open and either past its due
+date or marked overdue.
+
+The summary shows the open balance on vendor bills, the overdue amount,
+credits not yet applied (unapplied vendor payments plus unapplied vendor
+credits), what you paid the vendor in the last 12 months (approved, scheduled
+or sent vendor payments plus payments recorded directly on a bill), and the
+date of the latest activity. Amounts are added up as entered, without
+converting between currencies, so a vendor you deal with in more than one
+currency shows a mixed total. A figure is left blank when you cannot read the
+records behind it.
+
 ## Requisitions
 
 A Requisition is an internal request to purchase something, created from

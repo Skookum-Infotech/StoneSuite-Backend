@@ -84,14 +84,21 @@ func (h *CustomerTransactionsOps) authCustomer(w http.ResponseWriter, r *http.Re
 // tenantToday returns the tenant-local calendar date, from the company profile
 // timezone with the configured fallback when it is unset or unreadable.
 func (h *CustomerTransactionsOps) tenantToday(ctx context.Context, pool *pgxpool.Pool) time.Time {
+	return tenantToday(ctx, pool, h.fallbackTZ)
+}
+
+// tenantToday returns the tenant-local calendar date for a tenant pool, from the
+// company profile timezone with fallback (nil means UTC) when it is unset or
+// unreadable.
+func tenantToday(ctx context.Context, pool *pgxpool.Pool, fallback *time.Location) time.Time {
 	tz := ""
 	prof, err := companyprofile.Get(ctx, pool)
 	if err != nil {
-		slog.Warn("customer transactions: company profile unavailable, using fallback timezone", "error", err)
+		slog.Warn("transactions: company profile unavailable, using fallback timezone", "error", err)
 	} else if prof != nil {
 		tz = prof.Timezone
 	}
-	return automation.TenantToday(time.Now(), tz, h.fallbackTZ)
+	return automation.TenantToday(time.Now(), tz, fallback)
 }
 
 // writeCustomerTxError maps a package error to its HTTP response and reports

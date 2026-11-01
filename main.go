@@ -1489,6 +1489,13 @@ func main() {
 		mux.Handle("DELETE /api/tenant/vendors/{uuid}", tenantChain(vnd.Delete))
 		mux.Handle("POST /api/tenant/vendors/{uuid}/transition", tenantChain(vnd.Transition))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/audit", tenantChain(vnd.Audit))
+		var vndTxTZ *time.Location
+		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
+			vndTxTZ, _ = time.LoadLocation(tz)
+		}
+		vndTx := controllers.NewVendorTransactionsOps(vndTxTZ)
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions", tenantChain(vndTx.List))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/summary", tenantChain(vndTx.Summary))
 
 		// Requisition: dedicated v2 relational module (header + line items +
 		// approval), the internal request-to-buy raised before a vendor or

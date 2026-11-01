@@ -126,28 +126,39 @@ func List(ctx context.Context, pool *pgxpool.Pool, p Params) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	sc, err := loadScope(ctx, pool, p.IdentityID, p.VendorUUID)
+	rows, denied, err := queryRows(ctx, pool, p, f)
 	if err != nil {
 		return Page{}, err
 	}
-	page := Page{Rows: []Row{}, Limit: f.limit}
-	queried := narrowTo(sc.sources, p.Type)
-	if len(queried) == 0 {
-		page.Denied = p.Type != ""
-		return page, nil
-	}
-
-	rows, err := fetchPage(ctx, pool, queried, f, sc, p.Today)
-	if err != nil {
-		return Page{}, err
-	}
+	page := Page{Rows: []Row{}, Limit: f.limit, Denied: denied}
 	if len(rows) > f.limit {
 		rows = rows[:f.limit]
 		last := rows[len(rows)-1]
 		page.NextCursor = cursor{createdAt: last.CreatedAt, id: last.ID}.encode()
 	}
-	page.Rows = rows
+	if len(rows) > 0 {
+		page.Rows = rows
+	}
 	return page, nil
+}
+
+// queryRows is the single scope+filter path shared by List and the export: it
+// loads the caller's scope and runs the page query for f, returning up to
+// f.limit+1 rows. denied is true when a named type is not readable.
+func queryRows(ctx context.Context, pool *pgxpool.Pool, p Params, f pageFilter) ([]Row, bool, error) {
+	sc, err := loadScope(ctx, pool, p.IdentityID, p.VendorUUID)
+	if err != nil {
+		return nil, false, err
+	}
+	queried := narrowTo(sc.sources, p.Type)
+	if len(queried) == 0 {
+		return nil, p.Type != "", nil
+	}
+	rows, err := fetchPage(ctx, pool, queried, f, sc, p.Today)
+	if err != nil {
+		return nil, false, err
+	}
+	return rows, false, nil
 }
 
 // fetchPage runs the page query, returning up to limit+1 rows.

@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"stonesuite-backend/authz"
 )
 
 // TestRegistry_ExpectedKeys guards against a module silently missing
@@ -31,6 +34,21 @@ func TestRegistry_ExpectedKeys(t *testing.T) {
 	for _, key := range want {
 		assert.True(t, got[key], "expected provider %q to be registered", key)
 	}
+}
+
+// TestRegistry_VendorProvider pins the vendor provider's routing and RBAC
+// gate. Search gates each provider on authz.Check(Resource, read), so a caller
+// without vendor:read gets no vendor group only while Resource stays ResourceVendor.
+func TestRegistry_VendorProvider(t *testing.T) {
+	p, ok := registry["vendor"]
+	require.True(t, ok, "vendor provider must be registered")
+	assert.Equal(t, "purchases", p.Domain)
+	assert.Equal(t, "vendor", p.Module)
+	assert.Equal(t, authz.ResourceVendor, p.Resource)
+	assert.NotNil(t, p.Search)
+
+	_, hasAI := aiRegistry["vendor"]
+	assert.True(t, hasAI, "vendor must have AI hooks")
 }
 
 // TestRegistry_NoEmptyFields catches a copy-paste registration mistake (e.g. a

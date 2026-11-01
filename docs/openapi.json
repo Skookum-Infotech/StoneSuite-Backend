@@ -5724,6 +5724,88 @@
         ]
       }
     },
+    "/api/tenant/crm/customer/records/{id}/transactions": {
+      "get": {
+        "operationId": "get_tenant_crm_customer_records_id_transactions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "custTxOps.List",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/crm/customer/records/{id}/transactions/summary": {
+      "get": {
+        "operationId": "get_tenant_crm_customer_records_id_transactions_summary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "custTxOps.Summary",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/crm/lookups": {
       "get": {
         "operationId": "get_tenant_crm_lookups",

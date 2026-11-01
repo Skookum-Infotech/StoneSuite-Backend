@@ -93,7 +93,7 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	ops := NewVendorTransactionsOps(nil)
+	ops := NewVendorTransactionsOps(nil, nil)
 	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
 	ctx := context.Background()
 

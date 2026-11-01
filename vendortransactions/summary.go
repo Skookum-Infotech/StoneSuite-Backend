@@ -18,7 +18,7 @@ type Summary struct {
 	OverdueBillCount *int       `json:"overdueBillCount"`
 	UnappliedCredits *float64   `json:"unappliedCredits"` // vendor payment + vendor credit balances
 	Paid12m          *float64   `json:"paid12m"`
-	LastActivityAt   *time.Time `json:"lastActivityAt"` // latest update across readable types
+	LastActivityAt   *time.Time `json:"lastActivityAt"`   // latest update across readable types
 	ScheduledOutflow *float64   `json:"scheduledOutflow"` // sum of SCHD vendor payments
 	ScheduledCount   *int       `json:"scheduledCount"`
 }

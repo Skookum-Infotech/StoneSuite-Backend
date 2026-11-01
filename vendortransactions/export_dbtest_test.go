@@ -72,4 +72,4 @@ func TestExport_NumberStartingWithFormulaIsEscaped(t *testing.T) {
 }
 
 // formulaTriggerChars is every character that must never begin an exported text cell.
-const formulaTriggerChars = "=+-@	"
+const formulaTriggerChars = "=+-@	\r"

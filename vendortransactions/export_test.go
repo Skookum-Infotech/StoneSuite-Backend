@@ -3,6 +3,7 @@ package vendortransactions
 import (
 	"bytes"
 	"encoding/csv"
+	"math"
 	"strconv"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 
 // formulaTriggers are the characters a spreadsheet treats as a formula start.
 var formulaTriggers = []struct{ name, char string }{
-	{"equals", "="}, {"plus", "+"}, {"minus", "-"}, {"at", "@"}, {"tab", "	"}, {"carriage return", ""},
+	{"equals", "="}, {"plus", "+"}, {"minus", "-"}, {"at", "@"}, {"tab", "\t"}, {"carriage return", "\r"},
 }
 
 func TestCSVSafe(t *testing.T) {
@@ -21,8 +22,8 @@ func TestCSVSafe(t *testing.T) {
 		{"plus", "+1", "'+1"},
 		{"minus", "-1", "'-1"},
 		{"at", "@SUM(A1)", "'@SUM(A1)"},
-		{"tab", "	x", "'	x"},
-		{"carriage return", "x", "'x"},
+		{"tab", "\tx", "'\tx"},
+		{"carriage return", "\rx", "'\rx"},
 		// Documents current behaviour: only the first byte is inspected, so a
 		// leading space shields the formula in most spreadsheets and is not escaped.
 		{"leading space then equals", " =1+1", " =1+1"},
@@ -57,7 +58,7 @@ func TestWriteCSV_EscapesEveryTriggerInNumberAndStatus(t *testing.T) {
 // it as a number, not a formula, and an apostrophe would turn it into text.
 func TestWriteCSV_NumericCellsNotEscaped(t *testing.T) {
 	var buf bytes.Buffer
-	amt, bal := -12.5, -0.0
+	amt, bal := -12.5, math.Copysign(0, -1)
 	require.NoError(t, WriteCSV(&buf, []Row{{Number: "N-1", Amount: &amt, Balance: &bal}}))
 	recs, err := csv.NewReader(&buf).ReadAll()
 	require.NoError(t, err)

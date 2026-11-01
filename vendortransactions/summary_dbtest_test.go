@@ -102,7 +102,7 @@ func TestSummary_PaidTwelveMonthsCountsOnlySentPaymentsInWindow(t *testing.T) {
 	seedDoc(t, pool, vID, docSeed{key: "vendor_payment", status: "SENT", date: "2025-01-01", total: 900, balance: 0}) // outside window
 	seedDoc(t, pool, vID, docSeed{key: "vendor_payment", status: "VOID", date: "2026-09-02", total: 800, balance: 0})
 	seedDoc(t, pool, vID, docSeed{key: "vendor_payment", status: "DRFT", date: "2026-09-02", total: 600, balance: 600}) // not yet committed
-	seedDoc(t, pool, vID, docSeed{key: "vendor_payment", status: "APPV", date: "2026-09-03", total: 700, balance: 0})  // approved counts
+	seedDoc(t, pool, vID, docSeed{key: "vendor_payment", status: "APPV", date: "2026-09-03", total: 700, balance: 0})   // approved counts
 
 	ov, err := GetOverview(context.Background(), pool, a.identityID, vUUID, dbToday)
 	require.NoError(t, err)

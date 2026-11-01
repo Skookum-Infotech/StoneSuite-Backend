@@ -64,7 +64,8 @@ func seedTxVendorBill(t *testing.T, pool *pgxpool.Pool, vendorID int) {
 }
 
 // callVendorTx drives a handler through the real tenant resolver as the caller.
-func callVendorTx(t *testing.T, cp *tenancy.ControlPlane, handler http.HandlerFunc,
+// The resolver is shared across calls because each owns tenant connection pools.
+func callVendorTx(t *testing.T, resolver *tenancy.Resolver, handler http.HandlerFunc,
 	tenantID, identityID, userID, vendorUUID, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/tenant/vendors/"+vendorUUID+"/transactions"+query, nil)
@@ -72,7 +73,7 @@ func callVendorTx(t *testing.T, cp *tenancy.ControlPlane, handler http.HandlerFu
 	payload := middleware.UserContextPayload{ID: identityID, TenantID: tenantID, UserID: userID}
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
 	rec := httptest.NewRecorder()
-	tenancy.NewResolver(cp, tenancy.NewRouter(nil)).Middleware(handler).ServeHTTP(rec, req)
+	resolver.Middleware(handler).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -93,6 +94,7 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	ops := NewVendorTransactionsOps(nil)
+	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
 	ctx := context.Background()
 
 	grant := func(res authz.Resource, scope authz.Scope) authz.Grant {
@@ -126,7 +128,7 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 	t.Run("own-scoped vendor reader on a vendor they do not own is 404 on both routes", func(t *testing.T) {
 		id, user, _ := newCaller("own", grant(authz.ResourceVendor, authz.ScopeOwn), grant(authz.ResourceVendorBill, authz.ScopeAll))
 		for name, h := range map[string]http.HandlerFunc{"list": ops.List, "summary": ops.Summary} {
-			rec := callVendorTx(t, cp, h, tenant.ID, id, user, vendorUUID, "")
+			rec := callVendorTx(t, resolver, h, tenant.ID, id, user, vendorUUID, "")
 			assert.Equal(t, http.StatusNotFound, rec.Code, name)
 			assert.NotContains(t, rec.Body.String(), `"rows":[{`, name)
 		}
@@ -135,7 +137,7 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 	t.Run("unknown uuid is 404", func(t *testing.T) {
 		id, user, _ := newCaller("unk", grant(authz.ResourceVendor, authz.ScopeAll))
 		for name, h := range map[string]http.HandlerFunc{"list": ops.List, "summary": ops.Summary} {
-			rec := callVendorTx(t, cp, h, tenant.ID, id, user, missing, "")
+			rec := callVendorTx(t, resolver, h, tenant.ID, id, user, missing, "")
 			assert.Equal(t, http.StatusNotFound, rec.Code, name)
 		}
 	})
@@ -146,19 +148,19 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 		id, user, _ := newCaller("xt", grant(authz.ResourceVendor, authz.ScopeAll), grant(authz.ResourceVendorBill, authz.ScopeAll))
 		var foreign string
 		require.NoError(t, pool.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&foreign))
-		rec := callVendorTx(t, cp, ops.List, tenant.ID, id, user, foreign, "")
+		rec := callVendorTx(t, resolver, ops.List, tenant.ID, id, user, foreign, "")
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
 	t.Run("no vendor read is 403", func(t *testing.T) {
 		id, user, _ := newCaller("novendor", grant(authz.ResourceVendorBill, authz.ScopeAll))
-		rec := callVendorTx(t, cp, ops.List, tenant.ID, id, user, vendorUUID, "")
+		rec := callVendorTx(t, resolver, ops.List, tenant.ID, id, user, vendorUUID, "")
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
 
 	t.Run("vendor read without bill read lists no bills", func(t *testing.T) {
 		id, user, _ := newCaller("nobill", grant(authz.ResourceVendor, authz.ScopeAll))
-		rec := callVendorTx(t, cp, ops.List, tenant.ID, id, user, vendorUUID, "")
+		rec := callVendorTx(t, resolver, ops.List, tenant.ID, id, user, vendorUUID, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var resp vendorTxListResp
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -169,21 +171,21 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 	t.Run("bad filters are 400", func(t *testing.T) {
 		id, user, _ := newCaller("bad", grant(authz.ResourceVendor, authz.ScopeAll))
 		for _, q := range []string{"?from=nope", "?type=expense", "?cursor=garbage", "?limit=-1"} {
-			rec := callVendorTx(t, cp, ops.List, tenant.ID, id, user, vendorUUID, q)
+			rec := callVendorTx(t, resolver, ops.List, tenant.ID, id, user, vendorUUID, q)
 			assert.Equal(t, http.StatusBadRequest, rec.Code, q)
 		}
 	})
 
 	t.Run("reader with grants sees the bill and the summary agrees", func(t *testing.T) {
 		id, user, _ := newCaller("ok", grant(authz.ResourceVendor, authz.ScopeAll), grant(authz.ResourceVendorBill, authz.ScopeAll))
-		rec := callVendorTx(t, cp, ops.List, tenant.ID, id, user, vendorUUID, "?type=vendor_bill")
+		rec := callVendorTx(t, resolver, ops.List, tenant.ID, id, user, vendorUUID, "?type=vendor_bill")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var resp vendorTxListResp
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		assert.Len(t, resp.Rows, 1)
 		assert.Empty(t, resp.NextCursor)
 
-		rec = callVendorTx(t, cp, ops.Summary, tenant.ID, id, user, vendorUUID, "")
+		rec = callVendorTx(t, resolver, ops.Summary, tenant.ID, id, user, vendorUUID, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var sum struct {
 			Summary struct {

@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-630 endpoints across 7 surfaces, read from `main.go`.
+634 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 530 |
+| staff token + tenant | 534 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 529 endpoints
+## `tenant` — 533 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -1106,6 +1106,10 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PATCH` | `/api/tenant/vendors/{uuid}` | staff token + tenant | `vnd.Update` |
 | `GET` | `/api/tenant/vendors/{uuid}/audit` | staff token + tenant | `vnd.Audit` |
 | `GET` | `/api/tenant/vendors/{uuid}/transactions` | staff token + tenant | `vndTx.List` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/aging` | staff token + tenant | `vndTx.Aging` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/chain` | staff token + tenant | `vndTx.Chain` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/export.csv` | staff token + tenant | `vndTx.Export` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/scheduled` | staff token + tenant | `vndTx.Scheduled` |
 | `GET` | `/api/tenant/vendors/{uuid}/transactions/summary` | staff token + tenant | `vndTx.Summary` |
 | `POST` | `/api/tenant/vendors/{uuid}/transition` | staff token + tenant | `vnd.Transition` |
 

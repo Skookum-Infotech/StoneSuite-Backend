@@ -1493,9 +1493,14 @@ func main() {
 		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
 			vndTxTZ, _ = time.LoadLocation(tz)
 		}
-		vndTx := controllers.NewVendorTransactionsOps(vndTxTZ)
+		vndTx := controllers.NewVendorTransactionsOps(vndTxTZ, middleware.NewUserRateLimiter(
+			float64(time.Second)/float64(controllers.VendorTxExportRefill), controllers.VendorTxExportBurst))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions", tenantChain(vndTx.List))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/summary", tenantChain(vndTx.Summary))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/aging", tenantChain(vndTx.Aging))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/scheduled", tenantChain(vndTx.Scheduled))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/chain", tenantChain(vndTx.Chain))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/export.csv", tenantChain(vndTx.Export))
 
 		// Requisition: dedicated v2 relational module (header + line items +
 		// approval), the internal request-to-buy raised before a vendor or

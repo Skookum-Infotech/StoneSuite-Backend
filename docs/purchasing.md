@@ -40,6 +40,35 @@ converting between currencies, so a vendor you deal with in more than one
 currency shows a mixed total. A figure is left blank when you cannot read the
 records behind it.
 
+### Purchase order progress, aging, scheduled payments and export
+
+On a vendor's Transactions tab you can open a purchase order's progress view
+to follow it from order to payment. It shows the item receipts, vendor bills
+and vendor payments linked to that order and where it stands: Not Received,
+Partially Received, Received, Billed, or Paid. You only see the linked
+documents you have permission to read, and the view tells you how many others
+exist without showing their details. If some bills are hidden from you, the
+progress stops at Received instead of showing Billed or Paid.
+
+The aging bar splits the vendor's open bill balance by how long it is past due:
+Current (not yet due), 1-30 days, 31-60 days, and 61 days or more. The four
+parts add up to the open balance in the summary. It appears only if you can
+read vendor bills.
+
+The summary also shows vendor payments with the status Scheduled: their total
+amount and how many there are. A short list beneath shows the next scheduled
+payments with their number, scheduled date and amount. Scheduled means the
+payment is set up for a future date; it does not promise when the payment
+will actually be sent. You need permission to read vendor payments to see
+these figures.
+
+Use Export CSV to download the Transactions list as a spreadsheet file. The
+export follows the filters you have applied and includes only the records you
+may see. It is limited to 10,000 rows; if your filters match more, narrow them
+(for example by date range or type) and export again. Exports are also
+limited in how often you can run them, so wait a moment if you are asked to
+try again.
+
 ## Requisitions
 
 A Requisition is an internal request to purchase something, created from

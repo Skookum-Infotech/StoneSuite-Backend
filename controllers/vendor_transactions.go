@@ -10,6 +10,7 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/dateonly"
+	"stonesuite-backend/middleware"
 	"stonesuite-backend/vendortransactions"
 )
 
@@ -24,12 +25,22 @@ const vendorTxResource = "vendor-transactions"
 type VendorTransactionsOps struct {
 	vendor     *VendorOps
 	fallbackTZ *time.Location
+	// exportLimiter caps CSV exports per identity; nil disables the cap.
+	exportLimiter *middleware.UserRateLimiter
 }
 
+// Export rate: one export per VendorTxExportRefill sustained, bursts of
+// VendorTxExportBurst, per identity.
+const (
+	VendorTxExportRefill = 10 * time.Second
+	VendorTxExportBurst  = 3
+)
+
 // NewVendorTransactionsOps constructs the handler group; fallback is the
-// timezone used for tenants that have not set one (nil means UTC).
-func NewVendorTransactionsOps(fallback *time.Location) *VendorTransactionsOps {
-	return &VendorTransactionsOps{vendor: NewVendorOps(), fallbackTZ: fallback}
+// timezone used for tenants that have not set one (nil means UTC), and
+// exportLimiter is the per-identity CSV export limiter (nil means unlimited).
+func NewVendorTransactionsOps(fallback *time.Location, exportLimiter *middleware.UserRateLimiter) *VendorTransactionsOps {
+	return &VendorTransactionsOps{vendor: NewVendorOps(), fallbackTZ: fallback, exportLimiter: exportLimiter}
 }
 
 // writeVendorTxError maps a package error to its HTTP response and reports

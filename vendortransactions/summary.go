@@ -18,7 +18,9 @@ type Summary struct {
 	OverdueBillCount *int       `json:"overdueBillCount"`
 	UnappliedCredits *float64   `json:"unappliedCredits"` // vendor payment + vendor credit balances
 	Paid12m          *float64   `json:"paid12m"`
-	LastActivityAt   *time.Time `json:"lastActivityAt"` // latest update across readable types
+	LastActivityAt   *time.Time `json:"lastActivityAt"`   // latest update across readable types
+	ScheduledOutflow *float64   `json:"scheduledOutflow"` // sum of SCHD vendor payments
+	ScheduledCount   *int       `json:"scheduledCount"`
 }
 
 // StatusCount is how many of a type's records sit in one status.
@@ -71,6 +73,9 @@ func GetOverview(ctx context.Context, pool *pgxpool.Pool, identityID, vendorUUID
 		return Overview{}, err
 	}
 	if err := fetchBillPayments(ctx, pool, sc, today, &out.Summary); err != nil {
+		return Overview{}, err
+	}
+	if err := fetchScheduled(ctx, pool, sc, today, &out.Summary); err != nil {
 		return Overview{}, err
 	}
 	return out, nil

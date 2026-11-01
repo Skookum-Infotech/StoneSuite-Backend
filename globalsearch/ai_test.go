@@ -51,6 +51,17 @@ func TestAIByLookups(t *testing.T) {
 	assert.False(t, ok, "CRM types are loaded by the CRM store, not a module hook")
 }
 
+func TestAIVendorHooks(t *testing.T) {
+	p, ok := AIByRecordType("vendor")
+	require.True(t, ok)
+	assert.Equal(t, "vendor", p.Key)
+	assert.Equal(t, "purchases", p.Domain)
+	assert.Equal(t, "vendor", p.Module)
+	assert.NotNil(t, p.AI.Load)
+	assert.NotNil(t, p.AI.ListLive)
+	assert.NotNil(t, p.AI.Count)
+}
+
 func TestSummarizeLines(t *testing.T) {
 	line := func(n string) aiLine { return aiLine{Name: n, Quantity: 2, UnitPrice: 10, Total: 20} }
 	six := []aiLine{line("a"), line("b"), line("c"), line("d"), line("e"), line("f")}

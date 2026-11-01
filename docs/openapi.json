@@ -23368,6 +23368,170 @@
         ]
       }
     },
+    "/api/tenant/vendors/{uuid}/transactions/aging": {
+      "get": {
+        "operationId": "get_tenant_vendors_uuid_transactions_aging",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vndTx.Aging",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/vendors/{uuid}/transactions/chain": {
+      "get": {
+        "operationId": "get_tenant_vendors_uuid_transactions_chain",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vndTx.Chain",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/vendors/{uuid}/transactions/export.csv": {
+      "get": {
+        "operationId": "get_tenant_vendors_uuid_transactions_export_csv",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vndTx.Export",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/vendors/{uuid}/transactions/scheduled": {
+      "get": {
+        "operationId": "get_tenant_vendors_uuid_transactions_scheduled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "vndTx.Scheduled",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/vendors/{uuid}/transactions/summary": {
       "get": {
         "operationId": "get_tenant_vendors_uuid_transactions_summary",

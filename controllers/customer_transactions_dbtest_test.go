@@ -31,11 +31,21 @@ func seedTxCRMRecord(t *testing.T, pool *pgxpool.Pool, typeCode, ownerUserID str
 	)
 	var owner any
 	if ownerUserID != "" {
-		owner = ownerUserID
+		// customer_crm_owner_user_id references employee(employee_id): resolve
+		// (or create) the employee row that belongs to the owning users.id.
+		var empID int
+		require.NoError(t, pool.QueryRow(ctx, `
+			INSERT INTO employee (employee_user_id, employee_first_name, employee_last_name, employee_email, employee_created_by)
+			VALUES ($1::uuid, 'CustTx', 'Owner', $2, 1)
+			ON CONFLICT (employee_user_id) WHERE employee_user_id IS NOT NULL DO UPDATE SET employee_user_id = EXCLUDED.employee_user_id
+			RETURNING employee_id`,
+			ownerUserID, fmt.Sprintf("owner-%d@custtx.test", time.Now().UnixNano())).Scan(&empID))
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM employee WHERE employee_id = $1`, empID) })
+		owner = empID
 	}
 	require.NoError(t, pool.QueryRow(ctx, `
 		INSERT INTO customer (record_type, customer_name, customer_created_by, customer_crm_owner_user_id)
-		SELECT record_type_id, $2, 1, $3::uuid FROM lkp_record_type WHERE record_type_code = $1
+		SELECT record_type_id, $2, 1, $3::int FROM lkp_record_type WHERE record_type_code = $1
 		RETURNING customer_uuid::text, customer_id`,
 		typeCode, fmt.Sprintf("CustTx %s %d", typeCode, time.Now().UnixNano()), owner).Scan(&uuid, &id))
 	t.Cleanup(func() {
@@ -57,7 +67,7 @@ func seedTxInvoice(t *testing.T, pool *pgxpool.Pool, customerID int) {
 		           JOIN lkp_record_type rt ON rt.record_type_id = s.record_status_record_type
 		          WHERE rt.record_type_code = 'INVC' AND s.record_status_code = 'SENT'),
 		        $1, $2, CURRENT_DATE, 100, 100) RETURNING invoice_id`,
-		customerID, fmt.Sprintf("CTX%d", time.Now().UnixNano())).Scan(&id))
+		customerID, fmt.Sprintf("CTX%d", time.Now().UnixNano()%1000000000000)).Scan(&id))
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM invoice WHERE invoice_id = $1`, id) })
 }
 

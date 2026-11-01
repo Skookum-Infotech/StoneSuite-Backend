@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-626 endpoints across 7 surfaces, read from `main.go`.
+628 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 526 |
+| staff token + tenant | 528 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 525 endpoints
+## `tenant` — 527 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -490,6 +490,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `DELETE` | `/api/tenant/crm/customer/records/{id}/notes/{noteId}` | staff token + tenant | `customerNoteStaff.Delete` |
 | `PATCH` | `/api/tenant/crm/customer/records/{id}/notes/{noteId}` | staff token + tenant | `customerNoteStaff.UpdateStatus` |
 | `POST` | `/api/tenant/crm/customer/records/{id}/portal-invite` | staff token + tenant | `customerPortalAdmin.PortalInvite` |
+| `GET` | `/api/tenant/crm/customer/records/{id}/transactions` | staff token + tenant | `custTxOps.List` |
+| `GET` | `/api/tenant/crm/customer/records/{id}/transactions/summary` | staff token + tenant | `custTxOps.Summary` |
 | `GET` | `/api/tenant/crm/lookups` | staff token + tenant | `crmLookups.GetLookups` |
 | `GET` | `/api/tenant/crm/statuses` | staff token + tenant | `crm.AllStatuses` |
 | `GET` | `/api/tenant/crm/{workflowKey}/approvals/pending` | staff token + tenant | `crm.PendingApprovals` |

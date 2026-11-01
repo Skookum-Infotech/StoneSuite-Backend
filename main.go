@@ -1160,6 +1160,13 @@ func main() {
 		// {workflowKey}) since notes only ever attach to customer records.
 		customerPortalAdmin := controllers.NewCustomerPortalAdminOps()
 		mux.Handle("POST /api/tenant/crm/customer/records/{id}/portal-invite", tenantChain(customerPortalAdmin.PortalInvite))
+		var custTxTZ *time.Location
+		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
+			custTxTZ, _ = time.LoadLocation(tz)
+		}
+		custTxOps := controllers.NewCustomerTransactionsOps(custTxTZ)
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/transactions", tenantChain(custTxOps.List))
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/transactions/summary", tenantChain(custTxOps.Summary))
 		customerNoteStaff := controllers.NewCustomerNoteOps()
 		mux.Handle("GET /api/tenant/crm/customer/records/{id}/notes", tenantChain(customerNoteStaff.List))
 		mux.Handle("PATCH /api/tenant/crm/customer/records/{id}/notes/{noteId}", tenantChain(customerNoteStaff.UpdateStatus))

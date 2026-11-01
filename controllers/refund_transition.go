@@ -31,14 +31,12 @@ func (h *RefundOps) Transition(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := refund.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	rf, err := refund.Transition(r.Context(), pool, id, req.ToStatusCode, empID)
+	rf, err := refund.Transition(auditCtx(r, ""), pool, id, req.ToStatusCode, empID)
 	if err != nil {
 		refundFail(w, err, "Failed to transition refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "transition", id, before, rf)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})
 }
 
@@ -76,14 +74,12 @@ func (h *RefundOps) Apply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	before, _ := refund.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	rf, err := refund.Apply(r.Context(), pool, id, req.PaymentUUID, req.CreditMemoUUID, req.Amount, empID)
+	rf, err := refund.Apply(auditCtx(r, ""), pool, id, req.PaymentUUID, req.CreditMemoUUID, req.Amount, empID)
 	if err != nil {
 		refundFail(w, err, "Failed to apply refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "apply", id, before, rf)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})
 }
 
@@ -112,13 +108,11 @@ func (h *RefundOps) Unapply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	before, _ := refund.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	rf, err := refund.Unapply(r.Context(), pool, id, req.PaymentUUID, req.CreditMemoUUID, empID)
+	rf, err := refund.Unapply(auditCtx(r, ""), pool, id, req.PaymentUUID, req.CreditMemoUUID, empID)
 	if err != nil {
 		refundFail(w, err, "Failed to unapply refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "unapply", id, before, rf)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})
 }

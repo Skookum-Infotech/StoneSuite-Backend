@@ -69,6 +69,16 @@ func (c *ControlPlane) SetTenantSchemaVersion(ctx context.Context, id string, ve
 	return nil
 }
 
+// SetTenantSchemaHash records the hash of the tenant schema last applied to the tenant DB.
+func (c *ControlPlane) SetTenantSchemaHash(ctx context.Context, id, hash string) error {
+	defer c.forgetTenant(id)
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE tenants SET schema_hash = $2, updated_at = NOW() WHERE id = $1`, id, hash); err != nil {
+		return fmt.Errorf("set tenant schema hash: %w", err)
+	}
+	return nil
+}
+
 // SetTenantDesignVersion switches a tenant's CRM data design (DesignV1/DesignV2).
 // Both schemas coexist in the tenant database, so this is a behavior flag flip
 // with no data migration.

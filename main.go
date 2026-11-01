@@ -127,6 +127,11 @@ func main() {
 	// routed to that tenant's isolated database. Until then, legacy routes work
 	// unchanged so existing functionality is not disrupted during the migration.
 	var resolver *tenancy.Resolver
+	// migrationGate 503s requests for tenants still migrating at boot; bootStale
+	// is that set; ragRescan is signalled (non-blocking) as each tenant finishes.
+	migrationGate := tenancy.NewMigrationGate()
+	var bootStale []tenancy.Tenant
+	ragRescan := make(chan struct{}, 1)
 	var tenantOps *controllers.TenantOps
 	var userOps *controllers.UserOps
 	var portalAuthOps *controllers.PortalAuthOps
@@ -200,7 +205,7 @@ func main() {
 			log.Println("Tenant DSN encryption: disabled (plaintext DSNs — development only).")
 		}
 		tenantRouter = tenancy.NewRouterWithTimeouts(dsnResolver, dbSessionTimeouts()) // nil resolver -> PlainDSNResolver
-		resolver = tenancy.NewResolver(cp, tenantRouter)
+		resolver = tenancy.NewResolver(cp, tenantRouter).WithMigrationGate(migrationGate)
 
 		// Durable job queue (async_jobs table): backs tenant provisioning and
 		// future long-running work (e.g. workflow transition actions).
@@ -235,12 +240,17 @@ func main() {
 			// workspace (workflows/roles) like any tenant.
 			ensureOwnerWorkspace(context.Background(), cp, provisioner)
 
-			// Fan-out migrations: apply schema.sql to all already-provisioned
-			// tenant DBs. Idempotent (CREATE IF NOT EXISTS / ON CONFLICT DO
-			// NOTHING) so it's safe — and necessary — to re-run on every boot;
-			// run synchronously so RAG workers below never start against a
-			// tenant DB that hasn't picked up new tables yet (e.g. rag_index_queue).
-			migrateAllTenants(context.Background(), cp, tenantRouter)
+			// Boot migrations: tenants whose schema hash is stale (or whose
+			// migration_status is stuck) are gated with a 503 and migrated in the
+			// background after the HTTP server starts listening, so cold start
+			// never waits on tenant DBs. RAG workers started below tolerate a
+			// tenant that has not yet picked up new tables (e.g. rag_index_queue);
+			// they are re-scanned via ragRescan as each tenant finishes.
+			var serr error
+			bootStale, serr = staleTenants(context.Background(), cp, migrationGate)
+			if serr != nil {
+				log.Printf("boot-migrate: %v", serr)
+			}
 
 			// Ollama embedder box lifecycle: started here (in parallel with the
 			// rest of boot, since a cold model load takes ~10s) so it's tied to
@@ -286,7 +296,7 @@ func main() {
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
 			workflow.RegisterAuditObserver(ragAuditObserver)
-			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
+			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator, migrationGate, (<-chan struct{})(ragRescan))
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -1150,6 +1160,13 @@ func main() {
 		// {workflowKey}) since notes only ever attach to customer records.
 		customerPortalAdmin := controllers.NewCustomerPortalAdminOps()
 		mux.Handle("POST /api/tenant/crm/customer/records/{id}/portal-invite", tenantChain(customerPortalAdmin.PortalInvite))
+		var custTxTZ *time.Location
+		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
+			custTxTZ, _ = time.LoadLocation(tz)
+		}
+		custTxOps := controllers.NewCustomerTransactionsOps(custTxTZ)
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/transactions", tenantChain(custTxOps.List))
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/transactions/summary", tenantChain(custTxOps.Summary))
 		customerNoteStaff := controllers.NewCustomerNoteOps()
 		mux.Handle("GET /api/tenant/crm/customer/records/{id}/notes", tenantChain(customerNoteStaff.List))
 		mux.Handle("PATCH /api/tenant/crm/customer/records/{id}/notes/{noteId}", tenantChain(customerNoteStaff.UpdateStatus))
@@ -1855,6 +1872,12 @@ func main() {
 		}
 	}()
 
+	// Migrate stale tenants in the background now that the listener is up.
+	var bootMigrate *bootMigrations
+	if cp != nil && tenantRouter != nil && len(bootStale) > 0 {
+		bootMigrate = runBootMigrations(shutdownCtx, cp, tenantRouter, migrationGate, bootStale, func(string) { signalRescan(ragRescan) })
+	}
+
 	// Block until SIGTERM or Ctrl-C is received.
 	<-shutdownCtx.Done()
 	stopSignal() // release signal resources
@@ -1872,6 +1895,9 @@ func main() {
 	var workers []namedStopper
 	if provisioner != nil {
 		workers = append(workers, namedStopper{"provisioner", provisioner})
+	}
+	if bootMigrate != nil {
+		workers = append(workers, namedStopper{"boot-migrate", bootMigrate})
 	}
 	if importWorker != nil {
 		workers = append(workers, namedStopper{"import", importWorker})
@@ -1906,70 +1932,6 @@ func main() {
 		cp.Close()
 	}
 	log.Println("Server stopped.")
-}
-
-// tenantMigrateTimeout bounds one tenant's boot-time schema apply.
-const tenantMigrateTimeout = 2 * time.Minute
-
-// migrateAllTenants runs ApplyTenantMigrations on every provisioned tenant DB.
-// Called synchronously on startup, before RAG workers start, so schema.sql
-// (idempotent via CREATE IF NOT EXISTS / ON CONFLICT DO NOTHING) is applied
-// to existing tenant DBs on every boot without manual intervention. There is
-// no version gate: schema.sql is the single canonical source of truth and is
-// always safe to re-run.
-//
-// Eligibility is status==active && db_name set, not Servable() — a tenant
-// whose migration_status is stuck short of "ok" (e.g. an interrupted first
-// run) still has a real database and must be attempted here, since this is
-// the only code path that can ever promote migration_status back to "ok".
-// Gating on Servable() would make that state permanent: unservable because
-// migration_status isn't "ok", but never retried because it's unservable.
-func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
-	tenants, err := cp.ListTenants(ctx)
-	if err != nil {
-		log.Printf("migrate-all: failed to list tenants: %v", err)
-		return
-	}
-	for _, t := range tenants {
-		if t.Status != tenancy.StatusActive || t.DBName == "" {
-			continue
-		}
-		migrateTenant(ctx, cp, router, t)
-	}
-}
-
-// migrateTenant migrates one tenant under its own tenantMigrateTimeout, so a
-// slow or lock-blocked tenant fails on its own instead of hanging boot.
-func migrateTenant(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, t tenancy.Tenant) {
-	ctx, cancel := context.WithTimeout(ctx, tenantMigrateTimeout)
-	defer cancel()
-	pool, err := router.PoolFor(ctx, &t)
-	if err != nil {
-		log.Printf("migrate-all: tenant %s: pool error: %v", t.Slug, err)
-		return
-	}
-	ver, err := database.ApplyTenantMigrations(ctx, pool)
-	if err != nil {
-		log.Printf("migrate-all: tenant %s: migration failed: %v", t.Slug, err)
-		return
-	}
-	if err := cp.SetTenantSchemaVersion(ctx, t.ID, ver); err != nil {
-		log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
-	} else {
-		log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
-	}
-	if t.MigrationStatus != tenancy.MigrationOK {
-		if err := cp.SetTenantMigrationStatus(ctx, t.ID, tenancy.MigrationOK); err != nil {
-			log.Printf("migrate-all: tenant %s: failed to recover migration_status to ok: %v", t.Slug, err)
-		} else {
-			log.Printf("migrate-all: tenant %s: migration_status recovered to ok", t.Slug)
-		}
-	}
-	if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
-		log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
-	} else if len(empty) > 0 {
-		log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
-	}
 }
 
 // seedPlatformOwner creates the platform-owner tenant and admin identity on

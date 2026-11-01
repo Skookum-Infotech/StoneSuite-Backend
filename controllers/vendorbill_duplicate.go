@@ -58,12 +58,3 @@ func canReadVB(r *http.Request, pool *pgxpool.Pool, identityID, uuid string) boo
 	ok, err := recordInScope(r.Context(), pool, d.Scope, identityID, bill.OwnerUserID)
 	return err == nil && ok
 }
-
-// vbCreateExtraMeta returns the audit extraMeta for a create that overrode the
-// duplicate guard, or nil otherwise.
-func vbCreateExtraMeta(b *vendorbill.VendorBill) map[string]any {
-	if b == nil || !b.DuplicateOverride {
-		return nil
-	}
-	return map[string]any{"duplicate_override": true, "existing_uuid": b.DuplicateOfUUID}
-}

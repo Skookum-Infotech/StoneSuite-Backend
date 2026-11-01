@@ -21,6 +21,9 @@ import (
 // mail an unapproved order. Same grant as "Send to Vendor": purchase_order:
 // transition, plus the ownership-scope check.
 //
+// An optional Idempotency-Key header makes a client retry of the same resend
+// reuse the first attempt instead of emailing the vendor twice.
+//
 // The send is recorded either way; emailSent/emailError say whether the email
 // itself went, exactly as on the transition response.
 func (h *PurchaseOrderOps) ResendToVendor(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +61,11 @@ func (h *PurchaseOrderOps) ResendToVendor(w http.ResponseWriter, r *http.Request
 		fail(w, serr.Status, serr.Msg)
 		return
 	}
-	sendID, outcome, serr := h.docs.deliver(r.Context(), pool, identityID, po.OwnerUserID, p)
+	idemKey, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	sendID, outcome, serr := h.docs.deliverKeyed(r.Context(), pool, identityID, po.OwnerUserID, p, idemKey)
 	if serr != nil {
 		slog.WarnContext(r.Context(), "purchase order resend to vendor: email failed",
 			"record", uuid, "status", serr.Status, "error", serr.Msg)

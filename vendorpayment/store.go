@@ -110,8 +110,8 @@ const applicationSelect = `
 	WHERE vpa.vendor_payment_id = $1 AND vpa.application_deleted_at IS NULL
 	ORDER BY vpa.application_created_at ASC`
 
-func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Application, error) {
-	rows, err := pool.Query(ctx, applicationSelect, internalID)
+func loadApplications(ctx context.Context, q workflow.Querier, internalID int) ([]Application, error) {
+	rows, err := q.Query(ctx, applicationSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load vendor payment applications: %w", err)
 	}
@@ -136,8 +136,8 @@ const refundSelect = `
 	WHERE vpr.vendor_payment_id = $1 AND vpr.refund_deleted_at IS NULL
 	ORDER BY vpr.refund_created_at ASC`
 
-func loadRefunds(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Refund, error) {
-	rows, err := pool.Query(ctx, refundSelect, internalID)
+func loadRefunds(ctx context.Context, q workflow.Querier, internalID int) ([]Refund, error) {
+	rows, err := q.Query(ctx, refundSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load vendor payment refunds: %w", err)
 	}
@@ -156,7 +156,13 @@ func loadRefunds(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Ref
 // Get loads a single live vendor payment (header + applications + refunds) by
 // its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*VendorPayment, error) {
-	p, meta, err := scanVendorPayment(pool.QueryRow(ctx, headerSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*VendorPayment, error) {
+	p, meta, err := scanVendorPayment(q.QueryRow(ctx, headerSelect+`
 		WHERE vp.vendor_payment_uuid = $1 AND vp.vendor_payment_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -164,25 +170,25 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*VendorPayment, er
 	if err != nil {
 		return nil, fmt.Errorf("get vendor payment: %w", err)
 	}
-	apps, err := loadApplications(ctx, pool, meta.internalID)
+	apps, err := loadApplications(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}
 	p.Applications = apps
-	refunds, err := loadRefunds(ctx, pool, meta.internalID)
+	refunds, err := loadRefunds(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}
 	p.Refunds = refunds
-	if err := fillNextStatusCodes(ctx, pool, p); err != nil {
+	if err := fillNextStatusCodes(ctx, q, p); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func typeIDByCode(ctx context.Context, pool *pgxpool.Pool, code string) (int, error) {
+func typeIDByCode(ctx context.Context, q workflow.Querier, code string) (int, error) {
 	var id int
-	if err := pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1`, code).Scan(&id); err != nil {
 		return 0, fmt.Errorf("resolve record type %s: %w", code, err)
 	}

@@ -4,6 +4,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -155,5 +156,28 @@ func TestPurchaseOrderResendToVendor_DB(t *testing.T) {
 		sends, err := workflow.ListDocumentSends(ctx, env.pool, env.orderID)
 		require.NoError(t, err)
 		assert.Len(t, sends, 2)
+	})
+	t.Run("a retry with the same Idempotency-Key records one send", func(t *testing.T) {
+		before, err := workflow.ListDocumentSends(ctx, env.pool, env.orderID)
+		require.NoError(t, err)
+
+		var sendIDs []string
+		for i := 0; i < 2; i++ {
+			req := env.request()
+			req.Header.Set(idempotencyKeyHeader, "po-resend-retry-1")
+			rr := httptest.NewRecorder()
+			env.handler.ServeHTTP(rr, req)
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+			var body struct {
+				SendID string `json:"sendId"`
+			}
+			require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+			sendIDs = append(sendIDs, body.SendID)
+		}
+
+		assert.Equal(t, sendIDs[0], sendIDs[1], "the retry must replay the first send")
+		after, err := workflow.ListDocumentSends(ctx, env.pool, env.orderID)
+		require.NoError(t, err)
+		assert.Len(t, after, len(before)+1, "two calls with one key must add exactly one send")
 	})
 }

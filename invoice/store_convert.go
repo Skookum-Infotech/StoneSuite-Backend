@@ -362,6 +362,9 @@ func ConvertFromSalesOrder(ctx context.Context, pool *pgxpool.Pool, salesOrderUU
 		return nil, false, fmt.Errorf("insert sales order convert history: %w", err)
 	}
 
+	if err := auditTx(ctx, tx, auditConvert, newUUID, nil, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("commit convert sales order: %w", err)
 	}

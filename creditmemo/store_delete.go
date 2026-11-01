@@ -52,6 +52,10 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 		}
 	}
 
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE credit_memo
 		SET credit_memo_deleted_at = NOW(), credit_memo_deleted_by = $1
@@ -67,6 +71,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 		if err := recomputePaymentCredited(ctx, tx, *sourcePaymentID, actorEmployeeID); err != nil {
 			return err
 		}
+	}
+	if err := auditTx(ctx, tx, auditDelete, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete credit memo: %w", err)

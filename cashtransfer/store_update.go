@@ -86,6 +86,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 	if curStatusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft cash transfer can be edited."}
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE cash_transfer SET
@@ -104,6 +110,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 	}
 	writeHistory(ctx, tx, internalID, "update", &curStatusID, &curStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditUpdate, uuid, before, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update cash transfer: %w", err)
 	}
@@ -137,6 +146,10 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	if curStatusCode != draftStatusCode {
 		return ClientError{Msg: "Only a draft cash transfer can be deleted."}
 	}
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE cash_transfer SET
@@ -148,6 +161,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	}
 	writeHistory(ctx, tx, internalID, "delete", &curStatusID, nil, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditDelete, uuid, before, actorEmployeeID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete cash transfer: %w", err)
 	}

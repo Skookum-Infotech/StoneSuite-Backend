@@ -175,6 +175,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 		}
 	}
 
+	if err := auditTx(ctx, tx, auditCreate, newUUID, nil, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor payment: %w", err)
 	}

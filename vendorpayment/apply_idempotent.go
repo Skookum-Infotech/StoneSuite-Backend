@@ -41,6 +41,9 @@ func ApplyIdempotent(ctx context.Context, pool *pgxpool.Pool, vendorPaymentUUID,
 	if err := idempotency.Complete(ctx, tx, idempotencyScopeApply, key, vendorPaymentUUID); err != nil {
 		return nil, err
 	}
+	if err := auditTx(ctx, tx, auditApply, vendorPaymentUUID, nil, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit apply: %w", err)
 	}

@@ -153,6 +153,9 @@ func Reject(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid stri
 	if err := writeGenericHistory(ctx, tx, rec, internalID, "reject", &curStatusID, &toStatusID, actorEmployeeID); err != nil {
 		return RejectOutcome{}, err
 	}
+	if err := runAuditTx(ctx, tx, cfg, internalID, uuid, auditActionReject); err != nil {
+		return RejectOutcome{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RejectOutcome{}, fmt.Errorf("commit reject %s: %w", rec.Table, err)
 	}

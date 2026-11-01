@@ -174,6 +174,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 
 	writeHistory(ctx, tx, internalID, "create", nil, &draftStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditCreate, newUUID, nil, duplicateExtra(dupUUID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create vendor bill: %w", err)
 	}

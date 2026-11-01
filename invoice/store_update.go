@@ -115,6 +115,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 	if err := checkExpectedVersion(in.ExpectedVersion, locked.RecordVersion); err != nil {
 		return nil, err
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 	// An invoice total can't be reduced below what has already been settled by
 	// cash or credit; that would force a negative balance_due.
 	if locked.settled() > header.GrandTotal+0.005 {
@@ -199,6 +205,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateInvoice
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditUpdate, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update invoice: %w", err)
 	}
@@ -258,6 +267,10 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 		return ClientError{Msg: "Cannot delete an invoice with live credit memo applications; unapply them first."}
 	}
 
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	deletedBy := actorOrSystem(actorEmployeeID)
 	if _, err := tx.Exec(ctx, `
 		UPDATE invoice
@@ -265,6 +278,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 		WHERE invoice_id = $2`,
 		deletedBy, locked.InternalID); err != nil {
 		return fmt.Errorf("delete invoice: %w", err)
+	}
+	if err := auditTx(ctx, tx, auditDelete, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete invoice: %w", err)

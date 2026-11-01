@@ -84,8 +84,8 @@ const applicationSelect = `
 	WHERE pa.payment_id = $1 AND pa.application_deleted_at IS NULL
 	ORDER BY pa.application_created_at ASC`
 
-func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Application, error) {
-	rows, err := pool.Query(ctx, applicationSelect, internalID)
+func loadApplications(ctx context.Context, q workflow.Querier, internalID int) ([]Application, error) {
+	rows, err := q.Query(ctx, applicationSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load payment applications: %w", err)
 	}
@@ -103,7 +103,13 @@ func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) (
 
 // Get loads a single live payment (header + applications) by its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Payment, error) {
-	p, meta, err := scanPayment(pool.QueryRow(ctx, headerSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*Payment, error) {
+	p, meta, err := scanPayment(q.QueryRow(ctx, headerSelect+`
 		WHERE p.payment_uuid = $1 AND p.payment_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -111,7 +117,7 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Payment, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get payment: %w", err)
 	}
-	apps, err := loadApplications(ctx, pool, meta.internalID)
+	apps, err := loadApplications(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}

@@ -63,6 +63,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateRefundI
 	if lr.statusCode == voidStatusCode {
 		return nil, ClientError{Msg: "Cannot edit a voided refund."}
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 	internalID := lr.internalID
 
 	if _, err := tx.Exec(ctx, `
@@ -82,6 +88,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateRefundI
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditUpdate, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update refund: %w", err)
 	}
@@ -114,11 +123,18 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete a refund with live applications; unapply or void it first."}
 	}
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	deletedBy := actorOrSystem(actorEmployeeID)
 	if _, err := tx.Exec(ctx, `
 		UPDATE refund SET refund_deleted_at = NOW(), refund_deleted_by = $1
 		WHERE refund_id = $2`, deletedBy, lr.internalID); err != nil {
 		return fmt.Errorf("delete refund: %w", err)
+	}
+	if err := auditTx(ctx, tx, auditDelete, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete refund: %w", err)

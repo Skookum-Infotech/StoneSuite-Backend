@@ -40,7 +40,7 @@ func moduleConfig() approvalchain.ModuleConfig {
 // payment auto-advances to the gate's target status (APPV) in the same
 // call, same as every other module built on this engine.
 func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*VendorPayment, error) {
-	_, err := approvalchain.Approve(ctx, pool, moduleConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
+	_, err := approvalchain.Approve(ctx, pool, approvalConfig(approverEmployeeID), uuid, approverEmployeeID, callerIsSuperAdmin)
 	switch {
 	case errors.Is(err, approvalchain.ErrNotFound):
 		return nil, ErrNotFound
@@ -72,7 +72,7 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 // Approve it is a veto, not a vote: no quorum is needed. The reason /
 // already-rejected errors pass through unchanged for the controller to map.
 func Reject(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int, callerIsSuperAdmin bool, reason string) (*VendorPayment, error) {
-	_, err := approvalchain.Reject(ctx, pool, moduleConfig(), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
+	_, err := approvalchain.Reject(ctx, pool, approvalConfig(actorEmployeeID), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
 	switch {
 	case errors.Is(err, approvalchain.ErrNotFound):
 		return nil, ErrNotFound

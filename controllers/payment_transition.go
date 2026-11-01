@@ -25,12 +25,11 @@ func (h *PaymentOps) Transition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	p, err := payment.Transition(r.Context(), pool, id, req.ToStatusCode, empID)
+	p, err := payment.Transition(auditCtx(r, ""), pool, id, req.ToStatusCode, empID)
 	if err != nil {
 		paymentFail(w, err, "Failed to transition payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "transition", id, nil, p)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }
 
@@ -74,12 +73,11 @@ func (h *PaymentOps) Apply(w http.ResponseWriter, r *http.Request) {
 		// invoice and amount, so one key must not replay across payments.
 		applyHash = idempotency.HashRequest([]byte(id + "\n" + string(raw)))
 	}
-	p, err := payment.ApplyIdempotent(r.Context(), pool, id, req.InvoiceUUID, req.Amount, empID, applyKey, applyHash)
+	p, err := payment.ApplyIdempotent(auditCtx(r, ""), pool, id, req.InvoiceUUID, req.Amount, empID, applyKey, applyHash)
 	if err != nil {
 		paymentFail(w, err, "Failed to apply payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "apply", id, nil, p)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }
 
@@ -102,11 +100,10 @@ func (h *PaymentOps) Unapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	p, err := payment.Unapply(r.Context(), pool, id, req.InvoiceUUID, empID)
+	p, err := payment.Unapply(auditCtx(r, ""), pool, id, req.InvoiceUUID, empID)
 	if err != nil {
 		paymentFail(w, err, "Failed to unapply payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "unapply", id, nil, p)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }

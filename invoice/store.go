@@ -134,8 +134,8 @@ const lineSelect = `
 	WHERE ii.invoice_id = $1 AND ii.item_deleted_at IS NULL
 	ORDER BY ii.line_number ASC`
 
-func loadLines(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Line, error) {
-	rows, err := pool.Query(ctx, lineSelect, internalID)
+func loadLines(ctx context.Context, q workflow.Querier, internalID int) ([]Line, error) {
+	rows, err := q.Query(ctx, lineSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load invoice lines: %w", err)
 	}
@@ -165,7 +165,13 @@ func loadLines(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Line,
 
 // Get loads a single live invoice (header + lines) by its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Invoice, error) {
-	inv, meta, err := scanInvoice(pool.QueryRow(ctx, headerSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*Invoice, error) {
+	inv, meta, err := scanInvoice(q.QueryRow(ctx, headerSelect+`
 		WHERE i.invoice_uuid = $1 AND i.invoice_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -173,21 +179,21 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Invoice, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get invoice: %w", err)
 	}
-	lines, err := loadLines(ctx, pool, meta.internalID)
+	lines, err := loadLines(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}
 	inv.Items = lines
-	if err := fillNextStatusCodes(ctx, pool, inv); err != nil {
+	if err := fillNextStatusCodes(ctx, q, inv); err != nil {
 		return nil, err
 	}
 	return inv, nil
 }
 
 // typeIDByCode resolves an lkp_record_type row by its code.
-func typeIDByCode(ctx context.Context, pool *pgxpool.Pool, code string) (int, error) {
+func typeIDByCode(ctx context.Context, q workflow.Querier, code string) (int, error) {
 	var id int
-	if err := pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT record_type_id FROM lkp_record_type WHERE record_type_code = $1`, code).Scan(&id); err != nil {
 		return 0, fmt.Errorf("resolve record type %s: %w", code, err)
 	}

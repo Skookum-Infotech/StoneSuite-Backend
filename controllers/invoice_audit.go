@@ -2,43 +2,11 @@ package controllers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"stonesuite-backend/authz"
-	"stonesuite-backend/invoice"
-	"stonesuite-backend/workflow"
 )
-
-func invoiceSnapshot(i *invoice.Invoice) map[string]any {
-	if i == nil {
-		return nil
-	}
-	return map[string]any{
-		"id":           i.ID,
-		"number":       i.Number,
-		"statusCode":   i.StatusCode,
-		"customerId":   i.Customer.ID,
-		"ownerUserId":  i.OwnerUserID,
-		"grandTotal":   i.GrandTotal,
-		"amountPaid":   i.AmountPaid,
-		"balanceDue":   i.BalanceDue,
-		"itemCount":    len(i.Items),
-		"customFields": i.CustomFields,
-	}
-}
-
-func auditInvoice(r *http.Request, pool *pgxpool.Pool, actorEmployeeID int, action, invoiceID string, oldInvoice, newInvoice *invoice.Invoice) {
-	ctx := r.Context()
-	if err := workflow.LogAuditFull(ctx, pool, "", action, string(authz.ResourceInvoice), invoiceID, "invoice",
-		invoiceSnapshot(oldInvoice), invoiceSnapshot(newInvoice), map[string]any{"employee_id": actorEmployeeID},
-		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
-		log.Printf("invoice: audit %s %s: %v", action, invoiceID, err)
-	}
-}
 
 type invAuditEntry struct {
 	Action     string         `json:"action"`

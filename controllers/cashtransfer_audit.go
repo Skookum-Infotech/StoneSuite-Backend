@@ -2,44 +2,11 @@ package controllers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"stonesuite-backend/authz"
-	"stonesuite-backend/cashtransfer"
-	"stonesuite-backend/workflow"
 )
-
-// ctSnapshot flattens a CashTransfer into the map recorded in audit_logs.
-func ctSnapshot(ct *cashtransfer.CashTransfer) map[string]any {
-	if ct == nil {
-		return nil
-	}
-	return map[string]any{
-		"id":            ct.ID,
-		"number":        ct.Number,
-		"statusCode":    ct.StatusCode,
-		"fromAccountId": ct.FromAccount.ID,
-		"toAccountId":   ct.ToAccount.ID,
-		"amount":        ct.Amount,
-		"ownerUserId":   ct.OwnerUserID,
-		"customFields":  ct.CustomFields,
-	}
-}
-
-// auditCT records a create/update/delete/transition/post/reverse event for a
-// cash transfer.
-func auditCT(r *http.Request, pool *pgxpool.Pool, actorEmployeeID int, action, ctID string, oldCT, newCT *cashtransfer.CashTransfer) {
-	ctx := r.Context()
-	if err := workflow.LogAuditFull(ctx, pool, "", action, string(authz.ResourceCashTransfer), ctID, "cash_transfer",
-		ctSnapshot(oldCT), ctSnapshot(newCT), map[string]any{"employee_id": actorEmployeeID},
-		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
-		log.Printf("cashtransfer: audit %s %s: %v", action, ctID, err)
-	}
-}
 
 // ctAuditEntry is a single row of a cash transfer's audit trail.
 type ctAuditEntry struct {

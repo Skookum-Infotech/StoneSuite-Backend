@@ -200,12 +200,11 @@ func (h *CreditMemoOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	cm, err := creditmemo.Create(r.Context(), pool, in, empID)
+	cm, err := creditmemo.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to create credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "create", cm.ID, nil, cm)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "creditMemo": cm})
 }
 
@@ -249,7 +248,7 @@ func (h *CreditMemoOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	cm, err := creditmemo.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	cm, err := creditmemo.Approve(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, creditmemo.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -257,7 +256,6 @@ func (h *CreditMemoOps) Approve(w http.ResponseWriter, r *http.Request) {
 		creditMemoFail(w, err, "Failed to approve credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "approve", uuid, nil, cm)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }
 
@@ -271,14 +269,12 @@ func (h *CreditMemoOps) Update(w http.ResponseWriter, r *http.Request) {
 	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := creditmemo.Update(r.Context(), pool, id, in, empID)
+	after, err := creditmemo.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		creditMemoFail(w, err, "Failed to update credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": after})
 }
 
@@ -288,13 +284,11 @@ func (h *CreditMemoOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := creditmemo.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := creditmemo.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := creditmemo.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		creditMemoFail(w, err, "Failed to delete credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Credit memo deleted."})
 }
 
@@ -366,7 +360,7 @@ func (h *CreditMemoOps) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rec, err := creditmemo.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	rec, err := creditmemo.Reject(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin, req.Reason)
 	if err != nil {
 		if errors.Is(err, creditmemo.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -374,6 +368,5 @@ func (h *CreditMemoOps) Reject(w http.ResponseWriter, r *http.Request) {
 		creditMemoFail(w, err, "Failed to reject credit memo.")
 		return
 	}
-	auditCreditMemo(r, pool, empID, "reject", uuid, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": rec})
 }

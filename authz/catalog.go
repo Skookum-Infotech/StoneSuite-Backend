@@ -73,6 +73,17 @@ const (
 	ResourceVendorCredit  Resource = "vendor_credit"
 	ResourceExpense       Resource = "expense"
 
+	// ResourceReplenishment covers the Reorder page (package replenishment):
+	// viewing the items that will run short. There is no per-row owner on a
+	// reorder row itself — like inventory_item, it's tenant-wide reference
+	// data — so a grant at anything narrower than "all" is treated as no grant
+	// at all (controllers.ReplenishmentOps.authorize). A row's open purchase
+	// orders do have an owner scope elsewhere in the app; List separately
+	// checks the caller's own purchase_order:read scope and omits them when it
+	// is narrower than "all". Update gates turning a row into draft purchase
+	// orders, which still separately needs purchase_order:create.
+	ResourceReplenishment Resource = "replenishment"
+
 	// ResourcePortalAccess governs granting and withdrawing customer-portal
 	// logins. Deliberately separate from ResourceCustomer: creating a portal
 	// login mints an external credential into the workspace, which is a
@@ -449,6 +460,9 @@ var catalog = []Permission{
 	{ResourceAudit, ActionRead},
 
 	{ResourceImport, ActionRead},
+
+	{ResourceReplenishment, ActionRead},
+	{ResourceReplenishment, ActionUpdate},
 }
 
 // Catalog returns a copy of the permission catalog (safe for callers to mutate).

@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-634 endpoints across 7 surfaces, read from `main.go`.
+636 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 534 |
+| staff token + tenant | 536 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 533 endpoints
+## `tenant` — 535 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -959,6 +959,13 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/refunds/{uuid}/reject` | staff token + tenant | `rfndOps.Reject` |
 | `POST` | `/api/tenant/refunds/{uuid}/transition` | staff token + tenant | `rfndOps.Transition` |
 | `POST` | `/api/tenant/refunds/{uuid}/unapply` | staff token + tenant | `rfndOps.Unapply` |
+
+### replenishment
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/replenishment` | staff token + tenant | `replenishmentOps.List` |
+| `POST` | `/api/tenant/replenishment/draft` | staff token + tenant | `replenishmentOps.Draft` |
 
 ### requisitions
 

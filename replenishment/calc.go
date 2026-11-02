@@ -118,6 +118,13 @@ func (l lineRemaining) remaining() float64 {
 	}
 	switch {
 	case l.expected != nil:
+		// A line that has partly arrived keeps only the matching share of its
+		// expected slabs outstanding (2 of 5 slabs' worth received leaves 3).
+		// Slabs received against an unsized line are not linked back to it, so
+		// the received area is the only trace of how much has come in.
+		if l.quantity > stockEpsilon && l.received > stockEpsilon {
+			return math.Ceil(float64(*l.expected)*left/l.quantity - stockEpsilon)
+		}
 		return float64(*l.expected)
 	case l.sized:
 		return 1

@@ -629,6 +629,10 @@ func main() {
 		mux.Handle("POST /api/tenant/anomalies/scan", tenantChain(anomalyOps.ScanNow))
 		mux.Handle("PATCH /api/tenant/anomalies/{uuid}", tenantChain(anomalyOps.UpdateStatus))
 
+		var replenishmentOps controllers.ReplenishmentOps
+		mux.Handle("GET /api/tenant/replenishment", tenantChain(replenishmentOps.List))
+		mux.Handle("POST /api/tenant/replenishment/draft", tenantChain(replenishmentOps.Draft))
+
 		// Executors are registered before the ops are built. The docextract create
 		// executors are inert until DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED lets
 		// document extraction create proposals; later features add their own here.

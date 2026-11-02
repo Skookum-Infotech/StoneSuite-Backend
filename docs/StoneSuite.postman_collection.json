@@ -97,7 +97,7 @@
                 "inbound"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:1105"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:1109"
           }
         },
         {
@@ -129,7 +129,7 @@
                 "{attachmentId}"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:1109"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:1113"
           }
         },
         {
@@ -572,7 +572,7 @@
                 "discover"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:783"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:787"
           }
         },
         {
@@ -601,7 +601,7 @@
                 "exchange"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:786"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:790"
           }
         },
         {
@@ -631,7 +631,7 @@
                 "acs"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:785"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:789"
           }
         },
         {
@@ -651,7 +651,7 @@
                 "initiate"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:784"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:788"
           }
         },
         {
@@ -685,7 +685,7 @@
                 "logout"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:787"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:791"
           }
         },
         {
@@ -705,7 +705,7 @@
                 "logout-response"
               ]
             },
-            "description": "Requires: none\nRegistered at main.go:788"
+            "description": "Requires: none\nRegistered at main.go:792"
           }
         },
         {
@@ -725,7 +725,7 @@
                 "metadata"
               ]
             },
-            "description": "Requires: none\nRegistered at main.go:781"
+            "description": "Requires: none\nRegistered at main.go:785"
           }
         },
         {
@@ -745,7 +745,7 @@
                 "sp-info"
               ]
             },
-            "description": "Requires: none\nRegistered at main.go:782"
+            "description": "Requires: none\nRegistered at main.go:786"
           }
         },
         {
@@ -908,7 +908,7 @@
                 "accept"
               ]
             },
-            "description": "Requires: none\nRegistered at main.go:761"
+            "description": "Requires: none\nRegistered at main.go:765"
           }
         },
         {
@@ -927,7 +927,7 @@
                 "{token}"
               ]
             },
-            "description": "Requires: none\nRegistered at main.go:762"
+            "description": "Requires: none\nRegistered at main.go:766"
           }
         }
       ]
@@ -1385,7 +1385,7 @@
                 "feedback"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:946"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:950"
           }
         },
         {
@@ -1417,7 +1417,7 @@
                 "feedback"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:945"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:949"
           }
         },
         {
@@ -1450,7 +1450,7 @@
                 "mark-seen"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:948"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:952"
           }
         },
         {
@@ -1475,7 +1475,7 @@
                 "unread-count"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:947"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:951"
           }
         },
         {
@@ -1500,7 +1500,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:949"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:953"
           }
         },
         {
@@ -1534,7 +1534,7 @@
                 "attachments"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:952"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:956"
           }
         },
         {
@@ -1569,7 +1569,7 @@
                 "presign"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:951"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:955"
           }
         },
         {
@@ -1597,7 +1597,7 @@
                 "download"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:953"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:957"
           }
         },
         {
@@ -1631,7 +1631,7 @@
                 "comments"
               ]
             },
-            "description": "Requires: portal token + tenant\nRegistered at main.go:950"
+            "description": "Requires: portal token + tenant\nRegistered at main.go:954"
           }
         },
         {
@@ -2146,7 +2146,7 @@
                 "accept-invite"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:685"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:689"
           }
         },
         {
@@ -2175,7 +2175,7 @@
                 "login"
               ]
             },
-            "description": "Requires: none (rate-limited)\nRegistered at main.go:684"
+            "description": "Requires: none (rate-limited)\nRegistered at main.go:688"
           }
         },
         {
@@ -2199,7 +2199,7 @@
                 "notes"
               ]
             },
-            "description": "Requires: customer token\nRegistered at main.go:698"
+            "description": "Requires: customer token\nRegistered at main.go:702"
           }
         },
         {
@@ -2231,7 +2231,7 @@
                 "notes"
               ]
             },
-            "description": "Requires: customer token\nRegistered at main.go:697"
+            "description": "Requires: customer token\nRegistered at main.go:701"
           }
         }
       ]
@@ -2298,7 +2298,7 @@
                 "reindex-help"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:1759"
+            "description": "Requires: staff token\nRegistered at main.go:1763"
           }
         },
         {
@@ -2323,7 +2323,7 @@
                 "settings"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:1770"
+            "description": "Requires: staff token\nRegistered at main.go:1774"
           }
         },
         {
@@ -2356,7 +2356,7 @@
                 "settings"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:1771"
+            "description": "Requires: staff token\nRegistered at main.go:1775"
           }
         },
         {
@@ -2436,7 +2436,7 @@
                 "feedback"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:959"
+            "description": "Requires: staff token\nRegistered at main.go:963"
           }
         },
         {
@@ -2461,7 +2461,7 @@
                 "stats"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:960"
+            "description": "Requires: staff token\nRegistered at main.go:964"
           }
         },
         {
@@ -2486,7 +2486,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:961"
+            "description": "Requires: staff token\nRegistered at main.go:965"
           }
         },
         {
@@ -2519,7 +2519,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:962"
+            "description": "Requires: staff token\nRegistered at main.go:966"
           }
         },
         {
@@ -2547,7 +2547,7 @@
                 "download"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:964"
+            "description": "Requires: staff token\nRegistered at main.go:968"
           }
         },
         {
@@ -2581,7 +2581,7 @@
                 "comments"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:963"
+            "description": "Requires: staff token\nRegistered at main.go:967"
           }
         },
         {
@@ -2771,7 +2771,7 @@
                 "actions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:641"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:645"
           }
         },
         {
@@ -2796,7 +2796,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:642"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:646"
           }
         },
         {
@@ -2830,7 +2830,7 @@
                 "cancel"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:644"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:648"
           }
         },
         {
@@ -2864,7 +2864,7 @@
                 "confirm"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:643"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:647"
           }
         },
         {
@@ -2889,7 +2889,7 @@
                 "design-version"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1176"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1180"
           }
         },
         {
@@ -2922,7 +2922,7 @@
                 "design-version"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1177"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1181"
           }
         },
         {
@@ -2955,7 +2955,7 @@
                 "ask"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1755"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1759"
           }
         },
         {
@@ -2989,7 +2989,7 @@
                 "stream"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1756"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1760"
           }
         },
         {
@@ -3014,7 +3014,7 @@
                 "conversations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1778"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1782"
           }
         },
         {
@@ -3047,7 +3047,7 @@
                 "conversations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1777"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1781"
           }
         },
         {
@@ -3073,7 +3073,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1780"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1784"
           }
         },
         {
@@ -3099,7 +3099,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1779"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1783"
           }
         },
         {
@@ -3132,7 +3132,7 @@
                 "reindex"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1757"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1761"
           }
         },
         {
@@ -3165,7 +3165,7 @@
                 "settings"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1769"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1773"
           }
         },
         {
@@ -3190,7 +3190,7 @@
                 "status"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1768"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1772"
           }
         },
         {
@@ -3223,7 +3223,7 @@
                 "warm"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1758"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1762"
           }
         },
         {
@@ -3337,7 +3337,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:792"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:796"
           }
         },
         {
@@ -3370,7 +3370,7 @@
                 "switch-role"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:709"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:713"
           }
         },
         {
@@ -3513,7 +3513,7 @@
                 "company-locations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:825"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:829"
           }
         },
         {
@@ -3545,7 +3545,7 @@
                 "company-locations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:826"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:830"
           }
         },
         {
@@ -3570,7 +3570,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:828"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:832"
           }
         },
         {
@@ -3603,7 +3603,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:827"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:831"
           }
         },
         {
@@ -3637,7 +3637,7 @@
                 "default"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:829"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:833"
           }
         },
         {
@@ -3661,7 +3661,7 @@
                 "company-profile"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:818"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:822"
           }
         },
         {
@@ -3693,7 +3693,7 @@
                 "company-profile"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:819"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:823"
           }
         },
         {
@@ -3718,7 +3718,7 @@
                 "logo"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:821"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:825"
           }
         },
         {
@@ -3751,7 +3751,7 @@
                 "logo"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:820"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:824"
           }
         },
         {
@@ -3776,7 +3776,7 @@
                 "approvers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1178"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1182"
           }
         },
         {
@@ -3809,7 +3809,7 @@
                 "approvers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1179"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1183"
           }
         },
         {
@@ -3835,7 +3835,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1180"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1184"
           }
         },
         {
@@ -3868,7 +3868,7 @@
                 "fabrication-approval-policy"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:833"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:837"
           }
         },
         {
@@ -3892,7 +3892,7 @@
                 "credit-memos"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1680"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1684"
           }
         },
         {
@@ -3924,7 +3924,7 @@
                 "credit-memos"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1682"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1686"
           }
         },
         {
@@ -3957,7 +3957,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1681"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1685"
           }
         },
         {
@@ -3982,7 +3982,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1685"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1689"
           }
         },
         {
@@ -4007,7 +4007,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1683"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1687"
           }
         },
         {
@@ -4040,7 +4040,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1684"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1688"
           }
         },
         {
@@ -4074,7 +4074,7 @@
                 "apply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1689"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1693"
           }
         },
         {
@@ -4108,7 +4108,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1687"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1691"
           }
         },
         {
@@ -4134,7 +4134,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1691"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1695"
           }
         },
         {
@@ -4160,7 +4160,7 @@
                 "refunds"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1693"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1697"
           }
         },
         {
@@ -4194,7 +4194,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1688"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1692"
           }
         },
         {
@@ -4228,7 +4228,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1686"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1690"
           }
         },
         {
@@ -4262,7 +4262,7 @@
                 "unapply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1690"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1694"
           }
         },
         {
@@ -4290,7 +4290,7 @@
                 "notes"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1171"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1175"
           }
         },
         {
@@ -4319,7 +4319,7 @@
                 "{noteId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1173"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1177"
           }
         },
         {
@@ -4356,7 +4356,7 @@
                 "{noteId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1172"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1176"
           }
         },
         {
@@ -4392,7 +4392,7 @@
                 "portal-invite"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1162"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1166"
           }
         },
         {
@@ -4420,7 +4420,7 @@
                 "transactions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1168"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1172"
           }
         },
         {
@@ -4449,7 +4449,7 @@
                 "summary"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1169"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1173"
           }
         },
         {
@@ -4474,7 +4474,7 @@
                 "lookups"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1126"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1130"
           }
         },
         {
@@ -4499,7 +4499,7 @@
                 "statuses"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1128"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1132"
           }
         },
         {
@@ -4526,7 +4526,7 @@
                 "pending"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1146"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1150"
           }
         },
         {
@@ -4552,7 +4552,7 @@
                 "records"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1131"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1135"
           }
         },
         {
@@ -4586,7 +4586,7 @@
                 "records"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1133"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1137"
           }
         },
         {
@@ -4621,7 +4621,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1132"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1136"
           }
         },
         {
@@ -4648,7 +4648,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1139"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1143"
           }
         },
         {
@@ -4675,7 +4675,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1137"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1141"
           }
         },
         {
@@ -4710,7 +4710,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1138"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1142"
           }
         },
         {
@@ -4738,7 +4738,7 @@
                 "activities"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1152"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1156"
           }
         },
         {
@@ -4774,7 +4774,7 @@
                 "activities"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1153"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1157"
           }
         },
         {
@@ -4803,7 +4803,7 @@
                 "{activityId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1155"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1159"
           }
         },
         {
@@ -4840,7 +4840,7 @@
                 "{activityId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1154"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1158"
           }
         },
         {
@@ -4876,7 +4876,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1144"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1148"
           }
         },
         {
@@ -4904,7 +4904,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1148"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1152"
           }
         },
         {
@@ -4940,7 +4940,7 @@
                 "convert"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1142"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1146"
           }
         },
         {
@@ -4976,7 +4976,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1145"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1149"
           }
         },
         {
@@ -5012,7 +5012,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1141"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1145"
           }
         },
         {
@@ -5040,7 +5040,7 @@
                 "transitions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1140"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1144"
           }
         },
         {
@@ -5066,7 +5066,7 @@
                 "statuses"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1129"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1133"
           }
         },
         {
@@ -5092,7 +5092,7 @@
                 "portal-users"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:647"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:651"
           }
         },
         {
@@ -5126,7 +5126,7 @@
                 "portal-users"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:648"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:652"
           }
         },
         {
@@ -5153,7 +5153,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:649"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:653"
           }
         },
         {
@@ -5189,7 +5189,7 @@
                 "resend"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:650"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:654"
           }
         },
         {
@@ -5225,7 +5225,7 @@
                 "resume"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:652"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:656"
           }
         },
         {
@@ -5261,7 +5261,7 @@
                 "suspend"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:651"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:655"
           }
         },
         {
@@ -5288,7 +5288,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:732"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:736"
           }
         },
         {
@@ -5315,7 +5315,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:731"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:735"
           }
         },
         {
@@ -5342,7 +5342,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:728"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:732"
           }
         },
         {
@@ -5369,7 +5369,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:724"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:728"
           }
         },
         {
@@ -5396,7 +5396,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:730"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:734"
           }
         },
         {
@@ -5422,7 +5422,7 @@
                 "me"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:716"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:720"
           }
         },
         {
@@ -5449,7 +5449,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:723"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:727"
           }
         },
         {
@@ -5476,7 +5476,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:729"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:733"
           }
         },
         {
@@ -5503,7 +5503,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:725"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:729"
           }
         },
         {
@@ -5529,7 +5529,7 @@
                 "roles"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:717"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:721"
           }
         },
         {
@@ -5556,7 +5556,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:726"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:730"
           }
         },
         {
@@ -5583,7 +5583,7 @@
                 "data"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:727"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:731"
           }
         },
         {
@@ -5607,7 +5607,7 @@
                 "document-extractions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:899"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:903"
           }
         },
         {
@@ -5639,7 +5639,7 @@
                 "document-extractions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:898"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:902"
           }
         },
         {
@@ -5664,7 +5664,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:900"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:904"
           }
         },
         {
@@ -5698,7 +5698,7 @@
                 "complete"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:905"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:909"
           }
         },
         {
@@ -5732,7 +5732,7 @@
                 "discard"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:904"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:908"
           }
         },
         {
@@ -5766,7 +5766,7 @@
                 "notify"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:903"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:907"
           }
         },
         {
@@ -5800,7 +5800,7 @@
                 "presign"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:901"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:905"
           }
         },
         {
@@ -5836,7 +5836,7 @@
                 "propose"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:906"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:910"
           }
         },
         {
@@ -5870,7 +5870,7 @@
                 "start"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:902"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:906"
           }
         },
         {
@@ -5894,7 +5894,7 @@
                 "estimates"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1452"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1456"
           }
         },
         {
@@ -5926,7 +5926,7 @@
                 "estimates"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1454"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1458"
           }
         },
         {
@@ -5959,7 +5959,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1453"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1457"
           }
         },
         {
@@ -5984,7 +5984,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1457"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1461"
           }
         },
         {
@@ -6009,7 +6009,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1455"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1459"
           }
         },
         {
@@ -6042,7 +6042,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1456"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1460"
           }
         },
         {
@@ -6076,7 +6076,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1459"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1463"
           }
         },
         {
@@ -6102,7 +6102,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1462"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1466"
           }
         },
         {
@@ -6136,7 +6136,7 @@
                 "convert"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1461"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1465"
           }
         },
         {
@@ -6170,7 +6170,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1460"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1464"
           }
         },
         {
@@ -6204,7 +6204,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1458"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1462"
           }
         },
         {
@@ -6228,7 +6228,7 @@
                 "expenses"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1629"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1633"
           }
         },
         {
@@ -6260,7 +6260,7 @@
                 "expenses"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1631"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1635"
           }
         },
         {
@@ -6285,7 +6285,7 @@
                 "categories"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1632"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1636"
           }
         },
         {
@@ -6318,7 +6318,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1630"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1634"
           }
         },
         {
@@ -6343,7 +6343,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1635"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1639"
           }
         },
         {
@@ -6368,7 +6368,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1633"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1637"
           }
         },
         {
@@ -6401,7 +6401,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1634"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1638"
           }
         },
         {
@@ -6435,7 +6435,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1637"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1641"
           }
         },
         {
@@ -6461,7 +6461,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1639"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1643"
           }
         },
         {
@@ -6495,7 +6495,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1638"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1642"
           }
         },
         {
@@ -6529,7 +6529,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1636"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1640"
           }
         },
         {
@@ -6553,7 +6553,7 @@
                 "fabrication-jobs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1392"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1396"
           }
         },
         {
@@ -6585,7 +6585,7 @@
                 "fabrication-jobs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1394"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1398"
           }
         },
         {
@@ -6618,7 +6618,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1393"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1397"
           }
         },
         {
@@ -6643,7 +6643,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1409"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1413"
           }
         },
         {
@@ -6668,7 +6668,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1396"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1400"
           }
         },
         {
@@ -6701,7 +6701,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1408"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1412"
           }
         },
         {
@@ -6735,7 +6735,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1413"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1417"
           }
         },
         {
@@ -6770,7 +6770,7 @@
                 "status"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1410"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1414"
           }
         },
         {
@@ -6804,7 +6804,7 @@
                 "hold"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1411"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1415"
           }
         },
         {
@@ -6838,7 +6838,7 @@
                 "material-allocations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1400"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1404"
           }
         },
         {
@@ -6872,7 +6872,7 @@
                 "material-releases"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1404"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1408"
           }
         },
         {
@@ -6898,7 +6898,7 @@
                 "materials"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1417"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1421"
           }
         },
         {
@@ -6932,7 +6932,7 @@
                 "pieces"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1421"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1425"
           }
         },
         {
@@ -6959,7 +6959,7 @@
                 "{pieceUuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1423"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1427"
           }
         },
         {
@@ -6994,7 +6994,7 @@
                 "{pieceUuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1422"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1426"
           }
         },
         {
@@ -7020,7 +7020,7 @@
                 "procurement-action"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1403"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1407"
           }
         },
         {
@@ -7054,7 +7054,7 @@
                 "resume"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1412"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1416"
           }
         },
         {
@@ -7080,7 +7080,7 @@
                 "shortage-purchase-orders"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1402"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1406"
           }
         },
         {
@@ -7114,7 +7114,7 @@
                 "shortage-purchase-orders"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1401"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1405"
           }
         },
         {
@@ -7140,7 +7140,7 @@
                 "slabs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1416"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1420"
           }
         },
         {
@@ -7174,7 +7174,7 @@
                 "slabs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1418"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1422"
           }
         },
         {
@@ -7201,7 +7201,7 @@
                 "{slabUuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1419"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1423"
           }
         },
         {
@@ -7237,7 +7237,7 @@
                 "disposition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1420"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1424"
           }
         },
         {
@@ -7263,7 +7263,7 @@
                 "steps"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1414"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1418"
           }
         },
         {
@@ -7298,7 +7298,7 @@
                 "{stepCode}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1415"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1419"
           }
         },
         {
@@ -7324,7 +7324,7 @@
                 "templates"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1397"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1401"
           }
         },
         {
@@ -7358,7 +7358,7 @@
                 "templates"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1398"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1402"
           }
         },
         {
@@ -7394,7 +7394,7 @@
                 "customer-approval"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1407"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1411"
           }
         },
         {
@@ -7430,7 +7430,7 @@
                 "decision"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1406"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1410"
           }
         },
         {
@@ -7456,7 +7456,7 @@
                 "wip-options"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1405"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1409"
           }
         },
         {
@@ -7490,7 +7490,7 @@
                 "wip-transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1399"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1403"
           }
         },
         {
@@ -7514,7 +7514,7 @@
                 "feedback"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:936"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:940"
           }
         },
         {
@@ -7546,7 +7546,7 @@
                 "feedback"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:935"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:939"
           }
         },
         {
@@ -7579,7 +7579,7 @@
                 "mark-seen"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:938"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:942"
           }
         },
         {
@@ -7604,7 +7604,7 @@
                 "unread-count"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:937"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:941"
           }
         },
         {
@@ -7629,7 +7629,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:939"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:943"
           }
         },
         {
@@ -7663,7 +7663,7 @@
                 "attachments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:942"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:946"
           }
         },
         {
@@ -7698,7 +7698,7 @@
                 "presign"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:941"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:945"
           }
         },
         {
@@ -7726,7 +7726,7 @@
                 "download"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:943"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:947"
           }
         },
         {
@@ -7760,7 +7760,7 @@
                 "comments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:940"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:944"
           }
         },
         {
@@ -7785,7 +7785,7 @@
                 "account-defaults"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1321"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1325"
           }
         },
         {
@@ -7819,7 +7819,7 @@
                 "{slotKey}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1322"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1326"
           }
         },
         {
@@ -7844,7 +7844,7 @@
                 "accounting-calendar"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1348"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1352"
           }
         },
         {
@@ -7878,7 +7878,7 @@
                 "setup"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1349"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1353"
           }
         },
         {
@@ -7903,7 +7903,7 @@
                 "accounting-periods"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1352"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1356"
           }
         },
         {
@@ -7937,7 +7937,7 @@
                 "close"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1354"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1358"
           }
         },
         {
@@ -7963,7 +7963,7 @@
                 "current"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1353"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1357"
           }
         },
         {
@@ -7997,7 +7997,7 @@
                 "lock-ap"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1356"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1360"
           }
         },
         {
@@ -8031,7 +8031,7 @@
                 "lock-ar"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1358"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1362"
           }
         },
         {
@@ -8065,7 +8065,7 @@
                 "lock-gl"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1360"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1364"
           }
         },
         {
@@ -8099,7 +8099,7 @@
                 "reopen"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1355"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1359"
           }
         },
         {
@@ -8133,7 +8133,7 @@
                 "unlock-ap"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1357"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1361"
           }
         },
         {
@@ -8167,7 +8167,7 @@
                 "unlock-ar"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1359"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1363"
           }
         },
         {
@@ -8201,7 +8201,7 @@
                 "unlock-gl"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1361"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1365"
           }
         },
         {
@@ -8227,7 +8227,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1362"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1366"
           }
         },
         {
@@ -8254,7 +8254,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1363"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1367"
           }
         },
         {
@@ -8279,7 +8279,7 @@
                 "accounts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1307"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1311"
           }
         },
         {
@@ -8312,7 +8312,7 @@
                 "accounts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1316"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1320"
           }
         },
         {
@@ -8346,7 +8346,7 @@
                 "bulk"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1315"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1319"
           }
         },
         {
@@ -8372,7 +8372,7 @@
                 "categories"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1310"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1314"
           }
         },
         {
@@ -8406,7 +8406,7 @@
                 "categories"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1311"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1315"
           }
         },
         {
@@ -8441,7 +8441,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1312"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1316"
           }
         },
         {
@@ -8475,7 +8475,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1308"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1312"
           }
         },
         {
@@ -8509,7 +8509,7 @@
                 "subcategories"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1313"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1317"
           }
         },
         {
@@ -8544,7 +8544,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1314"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1318"
           }
         },
         {
@@ -8570,7 +8570,7 @@
                 "tree"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1309"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1313"
           }
         },
         {
@@ -8596,7 +8596,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1319"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1323"
           }
         },
         {
@@ -8622,7 +8622,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1317"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1321"
           }
         },
         {
@@ -8656,7 +8656,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1318"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1322"
           }
         },
         {
@@ -8683,7 +8683,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1320"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1324"
           }
         },
         {
@@ -8708,7 +8708,7 @@
                 "cash-transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1331"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1335"
           }
         },
         {
@@ -8741,7 +8741,7 @@
                 "cash-transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1333"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1337"
           }
         },
         {
@@ -8775,7 +8775,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1332"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1336"
           }
         },
         {
@@ -8801,7 +8801,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1336"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1340"
           }
         },
         {
@@ -8827,7 +8827,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1334"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1338"
           }
         },
         {
@@ -8861,7 +8861,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1335"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1339"
           }
         },
         {
@@ -8888,7 +8888,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1340"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1344"
           }
         },
         {
@@ -8923,7 +8923,7 @@
                 "post"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1338"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1342"
           }
         },
         {
@@ -8958,7 +8958,7 @@
                 "reverse"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1339"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1343"
           }
         },
         {
@@ -8993,7 +8993,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1337"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1341"
           }
         },
         {
@@ -9018,7 +9018,7 @@
                 "fiscal-years"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1350"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1354"
           }
         },
         {
@@ -9051,7 +9051,7 @@
                 "fiscal-years"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1351"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1355"
           }
         },
         {
@@ -9076,7 +9076,7 @@
                 "jobs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:884"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:888"
           }
         },
         {
@@ -9109,7 +9109,7 @@
                 "jobs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:883"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:887"
           }
         },
         {
@@ -9135,7 +9135,7 @@
                 "{jobId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:885"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:889"
           }
         },
         {
@@ -9170,7 +9170,7 @@
                 "commit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:888"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:892"
           }
         },
         {
@@ -9197,7 +9197,7 @@
                 "rows"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:886"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:890"
           }
         },
         {
@@ -9233,7 +9233,7 @@
                 "{rowId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:887"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:891"
           }
         },
         {
@@ -9266,7 +9266,7 @@
                 "presign"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:882"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:886"
           }
         },
         {
@@ -9291,7 +9291,7 @@
                 "adjustments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1251"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1255"
           }
         },
         {
@@ -9324,7 +9324,7 @@
                 "adjustments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1253"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1257"
           }
         },
         {
@@ -9358,7 +9358,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1252"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1256"
           }
         },
         {
@@ -9384,7 +9384,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1256"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1260"
           }
         },
         {
@@ -9410,7 +9410,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1254"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1258"
           }
         },
         {
@@ -9444,7 +9444,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1255"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1259"
           }
         },
         {
@@ -9471,7 +9471,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1259"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1263"
           }
         },
         {
@@ -9506,7 +9506,7 @@
                 "post"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1258"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1262"
           }
         },
         {
@@ -9541,7 +9541,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1257"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1261"
           }
         },
         {
@@ -9566,7 +9566,7 @@
                 "bin-transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1278"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1282"
           }
         },
         {
@@ -9599,7 +9599,7 @@
                 "bin-transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1280"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1284"
           }
         },
         {
@@ -9633,7 +9633,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1279"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1283"
           }
         },
         {
@@ -9659,7 +9659,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1283"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1287"
           }
         },
         {
@@ -9685,7 +9685,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1281"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1285"
           }
         },
         {
@@ -9719,7 +9719,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1282"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1286"
           }
         },
         {
@@ -9754,7 +9754,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1285"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1289"
           }
         },
         {
@@ -9789,7 +9789,7 @@
                 "complete"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1287"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1291"
           }
         },
         {
@@ -9816,7 +9816,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1288"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1292"
           }
         },
         {
@@ -9851,7 +9851,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1286"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1290"
           }
         },
         {
@@ -9886,7 +9886,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1284"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1288"
           }
         },
         {
@@ -9911,7 +9911,7 @@
                 "bins"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1224"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1228"
           }
         },
         {
@@ -9944,7 +9944,7 @@
                 "bins"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1226"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1230"
           }
         },
         {
@@ -9970,7 +9970,7 @@
                 "tree"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1225"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1229"
           }
         },
         {
@@ -9996,7 +9996,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1230"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1234"
           }
         },
         {
@@ -10022,7 +10022,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1227"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1231"
           }
         },
         {
@@ -10056,7 +10056,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1229"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1233"
           }
         },
         {
@@ -10083,7 +10083,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1228"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1232"
           }
         },
         {
@@ -10108,7 +10108,7 @@
                 "bundles"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1236"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1240"
           }
         },
         {
@@ -10141,7 +10141,7 @@
                 "bundles"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1237"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1241"
           }
         },
         {
@@ -10167,7 +10167,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1240"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1244"
           }
         },
         {
@@ -10193,7 +10193,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1238"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1242"
           }
         },
         {
@@ -10227,7 +10227,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1239"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1243"
           }
         },
         {
@@ -10262,7 +10262,7 @@
                 "bin"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1246"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1250"
           }
         },
         {
@@ -10297,7 +10297,7 @@
                 "break"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1245"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1249"
           }
         },
         {
@@ -10324,7 +10324,7 @@
                 "members"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1243"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1247"
           }
         },
         {
@@ -10351,7 +10351,7 @@
                 "members"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1241"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1245"
           }
         },
         {
@@ -10386,7 +10386,7 @@
                 "members"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1242"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1246"
           }
         },
         {
@@ -10421,7 +10421,7 @@
                 "seal"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1244"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1248"
           }
         },
         {
@@ -10446,7 +10446,7 @@
                 "counts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1291"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1295"
           }
         },
         {
@@ -10479,7 +10479,7 @@
                 "counts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1293"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1297"
           }
         },
         {
@@ -10513,7 +10513,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1292"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1296"
           }
         },
         {
@@ -10539,7 +10539,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1296"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1300"
           }
         },
         {
@@ -10565,7 +10565,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1294"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1298"
           }
         },
         {
@@ -10599,7 +10599,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1295"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1299"
           }
         },
         {
@@ -10634,7 +10634,7 @@
                 "counts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1298"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1302"
           }
         },
         {
@@ -10669,7 +10669,7 @@
                 "freeze"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1297"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1301"
           }
         },
         {
@@ -10696,7 +10696,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1302"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1306"
           }
         },
         {
@@ -10731,7 +10731,7 @@
                 "post"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1301"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1305"
           }
         },
         {
@@ -10766,7 +10766,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1300"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1304"
           }
         },
         {
@@ -10801,7 +10801,7 @@
                 "unexpected"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1299"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1303"
           }
         },
         {
@@ -10826,7 +10826,7 @@
                 "items"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1184"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1188"
           }
         },
         {
@@ -10859,7 +10859,7 @@
                 "items"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1186"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1190"
           }
         },
         {
@@ -10893,7 +10893,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1185"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1189"
           }
         },
         {
@@ -10919,7 +10919,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1189"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1193"
           }
         },
         {
@@ -10945,7 +10945,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1187"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1191"
           }
         },
         {
@@ -10979,7 +10979,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1188"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1192"
           }
         },
         {
@@ -11006,7 +11006,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1190"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1194"
           }
         },
         {
@@ -11033,7 +11033,7 @@
                 "stock"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1191"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1195"
           }
         },
         {
@@ -11058,7 +11058,7 @@
                 "kits"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1197"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1201"
           }
         },
         {
@@ -11091,7 +11091,7 @@
                 "kits"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1199"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1203"
           }
         },
         {
@@ -11125,7 +11125,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1198"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1202"
           }
         },
         {
@@ -11151,7 +11151,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1202"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1206"
           }
         },
         {
@@ -11177,7 +11177,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1200"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1204"
           }
         },
         {
@@ -11211,7 +11211,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1201"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1205"
           }
         },
         {
@@ -11236,7 +11236,7 @@
                 "lookups"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1210"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1214"
           }
         },
         {
@@ -11262,7 +11262,7 @@
                 "{kind}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1211"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1215"
           }
         },
         {
@@ -11296,7 +11296,7 @@
                 "{kind}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1212"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1216"
           }
         },
         {
@@ -11323,7 +11323,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1214"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1218"
           }
         },
         {
@@ -11358,7 +11358,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1213"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1217"
           }
         },
         {
@@ -11384,7 +11384,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1445"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1449"
           }
         },
         {
@@ -11419,7 +11419,7 @@
                 "scrap"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1446"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1450"
           }
         },
         {
@@ -11453,7 +11453,7 @@
                 "reorder-point"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1193"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1197"
           }
         },
         {
@@ -11487,7 +11487,7 @@
                 "totals"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1192"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1196"
           }
         },
         {
@@ -11512,7 +11512,7 @@
                 "transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1262"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1266"
           }
         },
         {
@@ -11545,7 +11545,7 @@
                 "transfers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1265"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1269"
           }
         },
         {
@@ -11571,7 +11571,7 @@
                 "in-transit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1264"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1268"
           }
         },
         {
@@ -11605,7 +11605,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1263"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1267"
           }
         },
         {
@@ -11631,7 +11631,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1268"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1272"
           }
         },
         {
@@ -11657,7 +11657,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1266"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1270"
           }
         },
         {
@@ -11691,7 +11691,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1267"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1271"
           }
         },
         {
@@ -11718,7 +11718,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1272"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1276"
           }
         },
         {
@@ -11753,7 +11753,7 @@
                 "receive"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1271"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1275"
           }
         },
         {
@@ -11788,7 +11788,7 @@
                 "ship"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1270"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1274"
           }
         },
         {
@@ -11823,7 +11823,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1269"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1273"
           }
         },
         {
@@ -11848,7 +11848,7 @@
                 "units"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1429"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1433"
           }
         },
         {
@@ -11874,7 +11874,7 @@
                 "remnants"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1432"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1436"
           }
         },
         {
@@ -11908,7 +11908,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1430"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1434"
           }
         },
         {
@@ -11942,7 +11942,7 @@
                 "summary"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1431"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1435"
           }
         },
         {
@@ -11968,7 +11968,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1433"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1437"
           }
         },
         {
@@ -12003,7 +12003,7 @@
                 "bin"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1434"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1438"
           }
         },
         {
@@ -12038,7 +12038,7 @@
                 "cut"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1436"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1440"
           }
         },
         {
@@ -12065,7 +12065,7 @@
                 "history"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1440"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1444"
           }
         },
         {
@@ -12100,7 +12100,7 @@
                 "inspection"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1439"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1443"
           }
         },
         {
@@ -12135,7 +12135,7 @@
                 "release"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1438"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1442"
           }
         },
         {
@@ -12170,7 +12170,7 @@
                 "reserve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1437"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1441"
           }
         },
         {
@@ -12205,7 +12205,7 @@
                 "scrap"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1435"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1439"
           }
         },
         {
@@ -12230,7 +12230,7 @@
                 "warehouses"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1219"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1223"
           }
         },
         {
@@ -12256,7 +12256,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1220"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1224"
           }
         },
         {
@@ -12280,7 +12280,7 @@
                 "invites"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:755"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:759"
           }
         },
         {
@@ -12305,7 +12305,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:757"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:761"
           }
         },
         {
@@ -12339,7 +12339,7 @@
                 "resend"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:756"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:760"
           }
         },
         {
@@ -12363,7 +12363,7 @@
                 "invoices"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1643"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1647"
           }
         },
         {
@@ -12395,7 +12395,7 @@
                 "invoices"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1645"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1649"
           }
         },
         {
@@ -12428,7 +12428,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1644"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1648"
           }
         },
         {
@@ -12453,7 +12453,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1648"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1652"
           }
         },
         {
@@ -12478,7 +12478,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1646"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1650"
           }
         },
         {
@@ -12511,7 +12511,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1647"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1651"
           }
         },
         {
@@ -12545,7 +12545,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1650"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1654"
           }
         },
         {
@@ -12571,7 +12571,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1653"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1657"
           }
         },
         {
@@ -12597,7 +12597,7 @@
                 "credit-memos"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1692"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1696"
           }
         },
         {
@@ -12631,7 +12631,7 @@
                 "payment"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1652"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1656"
           }
         },
         {
@@ -12657,7 +12657,7 @@
                 "payments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1671"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1675"
           }
         },
         {
@@ -12717,7 +12717,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1651"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1655"
           }
         },
         {
@@ -12751,7 +12751,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1649"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1653"
           }
         },
         {
@@ -12775,7 +12775,7 @@
                 "item-receipts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1546"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1550"
           }
         },
         {
@@ -12807,7 +12807,7 @@
                 "item-receipts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1548"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1552"
           }
         },
         {
@@ -12840,7 +12840,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1547"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1551"
           }
         },
         {
@@ -12865,7 +12865,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1551"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1555"
           }
         },
         {
@@ -12890,7 +12890,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1549"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1553"
           }
         },
         {
@@ -12923,7 +12923,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1550"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1554"
           }
         },
         {
@@ -12949,7 +12949,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1555"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1559"
           }
         },
         {
@@ -12983,7 +12983,7 @@
                 "post"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1552"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1556"
           }
         },
         {
@@ -13017,7 +13017,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1554"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1558"
           }
         },
         {
@@ -13051,7 +13051,7 @@
                 "void"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1553"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1557"
           }
         },
         {
@@ -13099,7 +13099,7 @@
                 "my-transactions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:798"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:802"
           }
         },
         {
@@ -13124,7 +13124,7 @@
                 "summary"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:799"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:803"
           }
         },
         {
@@ -13148,7 +13148,7 @@
                 "payments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1659"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1663"
           }
         },
         {
@@ -13180,7 +13180,7 @@
                 "payments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1661"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1665"
           }
         },
         {
@@ -13213,7 +13213,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1660"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1664"
           }
         },
         {
@@ -13238,7 +13238,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1664"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1668"
           }
         },
         {
@@ -13263,7 +13263,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1662"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1666"
           }
         },
         {
@@ -13296,7 +13296,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1663"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1667"
           }
         },
         {
@@ -13330,7 +13330,7 @@
                 "apply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1668"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1672"
           }
         },
         {
@@ -13364,7 +13364,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1666"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1670"
           }
         },
         {
@@ -13390,7 +13390,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1670"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1674"
           }
         },
         {
@@ -13442,7 +13442,7 @@
                 "refunds"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1672"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1676"
           }
         },
         {
@@ -13476,7 +13476,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1667"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1671"
           }
         },
         {
@@ -13510,7 +13510,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1665"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1669"
           }
         },
         {
@@ -13544,7 +13544,7 @@
                 "unapply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1669"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1673"
           }
         },
         {
@@ -13569,7 +13569,7 @@
                 "catalog"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:704"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:708"
           }
         },
         {
@@ -13593,7 +13593,7 @@
                 "portal-users"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:655"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:659"
           }
         },
         {
@@ -13617,7 +13617,7 @@
                 "purchase-orders"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1527"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1531"
           }
         },
         {
@@ -13649,7 +13649,7 @@
                 "purchase-orders"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1529"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1533"
           }
         },
         {
@@ -13682,7 +13682,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1528"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1532"
           }
         },
         {
@@ -13707,7 +13707,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1532"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1536"
           }
         },
         {
@@ -13732,7 +13732,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1530"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1534"
           }
         },
         {
@@ -13765,7 +13765,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1531"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1535"
           }
         },
         {
@@ -13799,7 +13799,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1535"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1539"
           }
         },
         {
@@ -13825,7 +13825,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1538"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1542"
           }
         },
         {
@@ -13859,7 +13859,7 @@
                 "convert-to-bill"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1537"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1541"
           }
         },
         {
@@ -13885,7 +13885,7 @@
                 "next-slab-serial"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1559"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1563"
           }
         },
         {
@@ -13911,7 +13911,7 @@
                 "on-order-slabs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1561"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1565"
           }
         },
         {
@@ -13937,7 +13937,7 @@
                 "receipts"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1557"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1561"
           }
         },
         {
@@ -13971,7 +13971,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1536"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1540"
           }
         },
         {
@@ -14005,7 +14005,7 @@
                 "resend"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1534"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1538"
           }
         },
         {
@@ -14039,7 +14039,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1533"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1537"
           }
         },
         {
@@ -14063,7 +14063,7 @@
                 "quotes"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1467"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1471"
           }
         },
         {
@@ -14095,7 +14095,7 @@
                 "quotes"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1469"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1473"
           }
         },
         {
@@ -14128,7 +14128,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1468"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1472"
           }
         },
         {
@@ -14153,7 +14153,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1472"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1476"
           }
         },
         {
@@ -14178,7 +14178,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1470"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1474"
           }
         },
         {
@@ -14211,7 +14211,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1471"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1475"
           }
         },
         {
@@ -14245,7 +14245,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1474"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1478"
           }
         },
         {
@@ -14271,7 +14271,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1477"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1481"
           }
         },
         {
@@ -14305,7 +14305,7 @@
                 "convert"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1476"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1480"
           }
         },
         {
@@ -14339,7 +14339,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1475"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1479"
           }
         },
         {
@@ -14373,7 +14373,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1473"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1477"
           }
         },
         {
@@ -14399,7 +14399,7 @@
                 "pending"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:850"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:854"
           }
         },
         {
@@ -14424,7 +14424,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:851"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:855"
           }
         },
         {
@@ -14457,7 +14457,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:852"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:856"
           }
         },
         {
@@ -14491,7 +14491,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:854"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:858"
           }
         },
         {
@@ -14517,7 +14517,7 @@
                 "attachments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:864"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:868"
           }
         },
         {
@@ -14551,7 +14551,7 @@
                 "attachments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:863"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:867"
           }
         },
         {
@@ -14586,7 +14586,7 @@
                 "presign-batch"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:862"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:866"
           }
         },
         {
@@ -14613,7 +14613,7 @@
                 "{attachmentId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:866"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:870"
           }
         },
         {
@@ -14641,7 +14641,7 @@
                 "download"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:865"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:869"
           }
         },
         {
@@ -14668,7 +14668,7 @@
                 "pdf"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1075"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1079"
           }
         },
         {
@@ -14703,7 +14703,7 @@
                 "send"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1076"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1080"
           }
         },
         {
@@ -14730,7 +14730,7 @@
                 "sends"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1077"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1081"
           }
         },
         {
@@ -14756,7 +14756,7 @@
                 "emails"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1096"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1100"
           }
         },
         {
@@ -14790,7 +14790,7 @@
                 "emails"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1097"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1101"
           }
         },
         {
@@ -14819,7 +14819,7 @@
                 "download"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1098"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1102"
           }
         },
         {
@@ -14853,7 +14853,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:853"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:857"
           }
         },
         {
@@ -14877,7 +14877,7 @@
                 "refunds"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1702"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1706"
           }
         },
         {
@@ -14909,7 +14909,7 @@
                 "refunds"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1704"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1708"
           }
         },
         {
@@ -14942,7 +14942,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1703"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1707"
           }
         },
         {
@@ -14967,7 +14967,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1707"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1711"
           }
         },
         {
@@ -14992,7 +14992,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1705"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1709"
           }
         },
         {
@@ -15025,7 +15025,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1706"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1710"
           }
         },
         {
@@ -15059,7 +15059,7 @@
                 "apply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1711"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1715"
           }
         },
         {
@@ -15093,7 +15093,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1709"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1713"
           }
         },
         {
@@ -15119,7 +15119,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1713"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1717"
           }
         },
         {
@@ -15179,7 +15179,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1710"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1714"
           }
         },
         {
@@ -15213,7 +15213,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1708"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1712"
           }
         },
         {
@@ -15247,7 +15247,64 @@
                 "unapply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1712"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1716"
+          }
+        },
+        {
+          "name": "GET /api/tenant/replenishment",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staffToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/replenishment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tenant",
+                "replenishment"
+              ]
+            },
+            "description": "Requires: staff token + tenant\nRegistered at main.go:633"
+          }
+        },
+        {
+          "name": "POST /api/tenant/replenishment/draft",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staffToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/tenant/replenishment/draft",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tenant",
+                "replenishment",
+                "draft"
+              ]
+            },
+            "description": "Requires: staff token + tenant\nRegistered at main.go:634"
           }
         },
         {
@@ -15271,7 +15328,7 @@
                 "requisitions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1510"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1514"
           }
         },
         {
@@ -15303,7 +15360,7 @@
                 "requisitions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1512"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1516"
           }
         },
         {
@@ -15336,7 +15393,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1511"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1515"
           }
         },
         {
@@ -15361,7 +15418,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1515"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1519"
           }
         },
         {
@@ -15386,7 +15443,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1513"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1517"
           }
         },
         {
@@ -15419,7 +15476,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1514"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1518"
           }
         },
         {
@@ -15453,7 +15510,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1517"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1521"
           }
         },
         {
@@ -15479,7 +15536,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1520"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1524"
           }
         },
         {
@@ -15513,7 +15570,7 @@
                 "convert"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1519"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1523"
           }
         },
         {
@@ -15547,7 +15604,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1518"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1522"
           }
         },
         {
@@ -15581,7 +15638,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1516"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1520"
           }
         },
         {
@@ -15605,7 +15662,7 @@
                 "roles"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:705"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:709"
           }
         },
         {
@@ -15630,7 +15687,7 @@
                 ""
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:706"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:710"
           }
         },
         {
@@ -15654,7 +15711,7 @@
                 "sales-orders"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1369"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1373"
           }
         },
         {
@@ -15686,7 +15743,7 @@
                 "sales-orders"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1371"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1375"
           }
         },
         {
@@ -15711,7 +15768,7 @@
                 "schedule"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1383"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1387"
           }
         },
         {
@@ -15744,7 +15801,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1370"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1374"
           }
         },
         {
@@ -15769,7 +15826,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1374"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1378"
           }
         },
         {
@@ -15794,7 +15851,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1372"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1376"
           }
         },
         {
@@ -15827,7 +15884,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1373"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1377"
           }
         },
         {
@@ -15861,7 +15918,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1376"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1380"
           }
         },
         {
@@ -15887,7 +15944,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1380"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1384"
           }
         },
         {
@@ -15921,7 +15978,7 @@
                 "convert"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1378"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1382"
           }
         },
         {
@@ -15947,7 +16004,7 @@
                 "customer-order-form"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1381"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1385"
           }
         },
         {
@@ -15981,7 +16038,7 @@
                 "customer-order-form"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1382"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1386"
           }
         },
         {
@@ -16015,7 +16072,7 @@
                 "fabricate"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1395"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1399"
           }
         },
         {
@@ -16041,7 +16098,7 @@
                 "inventory"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1379"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1383"
           }
         },
         {
@@ -16101,7 +16158,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1377"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1381"
           }
         },
         {
@@ -16127,7 +16184,7 @@
                 "schedule"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1384"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1388"
           }
         },
         {
@@ -16162,7 +16219,7 @@
                 "{code}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1385"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1389"
           }
         },
         {
@@ -16196,7 +16253,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1375"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1379"
           }
         },
         {
@@ -16220,7 +16277,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1117"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1121"
           }
         },
         {
@@ -16244,7 +16301,7 @@
                 "sso-configs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:767"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:771"
           }
         },
         {
@@ -16276,7 +16333,7 @@
                 "sso-configs"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:768"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:772"
           }
         },
         {
@@ -16301,7 +16358,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:771"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:775"
           }
         },
         {
@@ -16326,7 +16383,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:769"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:773"
           }
         },
         {
@@ -16359,7 +16416,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:770"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:774"
           }
         },
         {
@@ -16385,7 +16442,7 @@
                 "domains"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:773"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:777"
           }
         },
         {
@@ -16419,7 +16476,7 @@
                 "domains"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:774"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:778"
           }
         },
         {
@@ -16446,7 +16503,7 @@
                 "{domainId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:775"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:779"
           }
         },
         {
@@ -16480,7 +16537,7 @@
                 "refresh-metadata"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:772"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:776"
           }
         },
         {
@@ -16504,7 +16561,7 @@
                 "users"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:742"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:746"
           }
         },
         {
@@ -16529,7 +16586,7 @@
                 ""
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:752"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:756"
           }
         },
         {
@@ -16554,7 +16611,7 @@
                 "assignable"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:738"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:742"
           }
         },
         {
@@ -16587,7 +16644,7 @@
                 "invite"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:743"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:747"
           }
         },
         {
@@ -16620,7 +16677,7 @@
                 "me"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:741"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:745"
           }
         },
         {
@@ -16646,7 +16703,7 @@
                 "permissions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:736"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:740"
           }
         },
         {
@@ -16679,7 +16736,7 @@
                 "mfa"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:746"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:750"
           }
         },
         {
@@ -16704,7 +16761,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:749"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:753"
           }
         },
         {
@@ -16729,7 +16786,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:747"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:751"
           }
         },
         {
@@ -16762,7 +16819,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:748"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:752"
           }
         },
         {
@@ -16786,7 +16843,7 @@
                 "vendor-bills"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1571"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1575"
           }
         },
         {
@@ -16818,7 +16875,7 @@
                 "vendor-bills"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1573"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1577"
           }
         },
         {
@@ -16851,7 +16908,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1572"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1576"
           }
         },
         {
@@ -16876,7 +16933,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1576"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1580"
           }
         },
         {
@@ -16901,7 +16958,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1574"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1578"
           }
         },
         {
@@ -16934,7 +16991,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1575"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1579"
           }
         },
         {
@@ -16968,7 +17025,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1578"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1582"
           }
         },
         {
@@ -16994,7 +17051,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1583"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1587"
           }
         },
         {
@@ -17028,7 +17085,7 @@
                 "payment"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1580"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1584"
           }
         },
         {
@@ -17054,7 +17111,7 @@
                 "payments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1581"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1585"
           }
         },
         {
@@ -17081,7 +17138,7 @@
                 "{paymentId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1582"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1586"
           }
         },
         {
@@ -17115,7 +17172,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1579"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1583"
           }
         },
         {
@@ -17149,7 +17206,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1577"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1581"
           }
         },
         {
@@ -17173,7 +17230,7 @@
                 "vendor-credits"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1610"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1614"
           }
         },
         {
@@ -17205,7 +17262,7 @@
                 "vendor-credits"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1612"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1616"
           }
         },
         {
@@ -17238,7 +17295,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1611"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1615"
           }
         },
         {
@@ -17263,7 +17320,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1615"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1619"
           }
         },
         {
@@ -17288,7 +17345,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1613"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1617"
           }
         },
         {
@@ -17321,7 +17378,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1614"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1618"
           }
         },
         {
@@ -17355,7 +17412,7 @@
                 "apply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1619"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1623"
           }
         },
         {
@@ -17389,7 +17446,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1617"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1621"
           }
         },
         {
@@ -17415,7 +17472,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1621"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1625"
           }
         },
         {
@@ -17449,7 +17506,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1618"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1622"
           }
         },
         {
@@ -17483,7 +17540,7 @@
                 "reverse"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1620"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1624"
           }
         },
         {
@@ -17517,7 +17574,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1616"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1620"
           }
         },
         {
@@ -17541,7 +17598,7 @@
                 "vendor-payments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1591"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1595"
           }
         },
         {
@@ -17573,7 +17630,7 @@
                 "vendor-payments"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1593"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1597"
           }
         },
         {
@@ -17606,7 +17663,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1592"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1596"
           }
         },
         {
@@ -17631,7 +17688,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1596"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1600"
           }
         },
         {
@@ -17656,7 +17713,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1594"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1598"
           }
         },
         {
@@ -17689,7 +17746,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1595"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1599"
           }
         },
         {
@@ -17723,7 +17780,7 @@
                 "apply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1600"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1604"
           }
         },
         {
@@ -17757,7 +17814,7 @@
                 "approve"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1598"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1602"
           }
         },
         {
@@ -17783,7 +17840,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1602"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1606"
           }
         },
         {
@@ -17817,7 +17874,7 @@
                 "reject"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1599"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1603"
           }
         },
         {
@@ -17851,7 +17908,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1597"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1601"
           }
         },
         {
@@ -17885,7 +17942,7 @@
                 "unapply"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1601"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1605"
           }
         },
         {
@@ -17909,7 +17966,7 @@
                 "vendors"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1484"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1488"
           }
         },
         {
@@ -17941,7 +17998,7 @@
                 "vendors"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1486"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1490"
           }
         },
         {
@@ -17974,7 +18031,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1485"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1489"
           }
         },
         {
@@ -17999,7 +18056,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1489"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1493"
           }
         },
         {
@@ -18024,7 +18081,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1487"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1491"
           }
         },
         {
@@ -18057,7 +18114,7 @@
                 "{uuid}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1488"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1492"
           }
         },
         {
@@ -18083,7 +18140,7 @@
                 "audit"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1491"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1495"
           }
         },
         {
@@ -18109,7 +18166,7 @@
                 "transactions"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1498"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1502"
           }
         },
         {
@@ -18136,7 +18193,7 @@
                 "aging"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1500"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1504"
           }
         },
         {
@@ -18163,7 +18220,7 @@
                 "chain"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1502"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1506"
           }
         },
         {
@@ -18190,7 +18247,7 @@
                 "export.csv"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1503"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1507"
           }
         },
         {
@@ -18217,7 +18274,7 @@
                 "scheduled"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1501"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1505"
           }
         },
         {
@@ -18244,7 +18301,7 @@
                 "summary"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1499"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1503"
           }
         },
         {
@@ -18278,7 +18335,7 @@
                 "transition"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1490"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1494"
           }
         },
         {
@@ -18302,7 +18359,7 @@
                 "workflows"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:834"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:838"
           }
         },
         {
@@ -18327,7 +18384,7 @@
                 "enabled"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:835"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:839"
           }
         },
         {
@@ -18352,7 +18409,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:836"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:840"
           }
         },
         {
@@ -18378,7 +18435,7 @@
                 "approval-chain"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:844"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:848"
           }
         },
         {
@@ -18412,7 +18469,7 @@
                 "approval-chain"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:845"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:849"
           }
         },
         {
@@ -18438,7 +18495,7 @@
                 "approvers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:842"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:846"
           }
         },
         {
@@ -18472,7 +18529,7 @@
                 "approvers"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:843"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:847"
           }
         },
         {
@@ -18507,7 +18564,7 @@
                 "enabled"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:838"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:842"
           }
         },
         {
@@ -18541,7 +18598,7 @@
                 "enabled"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:837"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:841"
           }
         },
         {
@@ -18575,7 +18632,7 @@
                 "fields"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:839"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:843"
           }
         },
         {
@@ -18602,7 +18659,7 @@
                 "{fieldId}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:840"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:844"
           }
         },
         {
@@ -18628,7 +18685,7 @@
                 "numbering"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:841"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:845"
           }
         },
         {
@@ -18662,7 +18719,7 @@
                 "numbering"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:846"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:850"
           }
         },
         {
@@ -18688,7 +18745,7 @@
                 "records"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:847"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:851"
           }
         },
         {
@@ -18722,7 +18779,7 @@
                 "records"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:849"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:853"
           }
         },
         {
@@ -18757,7 +18814,7 @@
                 "search"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:848"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:852"
           }
         }
       ]

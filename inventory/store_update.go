@@ -44,13 +44,15 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 		SELECT inventory_item_id, inventory_item_sku, inventory_item_name, inventory_item_unit_price,
 		       inventory_item_tracking, inventory_item_thickness_mm, inventory_item_is_active,
 		       inventory_item_track_stock, inventory_item_purchase_unit_price,
-		       inventory_item_dimension_unit
+		       inventory_item_dimension_unit, inventory_item_length_mm, inventory_item_width_mm,
+		       inventory_item_thickness_unit
 		FROM inventory_item
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL
 		FOR UPDATE`, uuid).Scan(
 		&itemID, &before.SKU, &before.Name, &before.UnitPrice,
 		&before.Tracking, &before.ThicknessMM, &before.IsActive, &before.TrackStock,
-		&before.PurchaseUnitPrice, &before.DimensionUnit)
+		&before.PurchaseUnitPrice, &before.DimensionUnit,
+		&before.LengthMM, &before.WidthMM, &before.ThicknessUnit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -91,6 +93,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 		in.DimensionUnit = before.DimensionUnit
 	}
 
+	// Likewise an omitted thickness unit.
+	if in.ThicknessUnit == "" {
+		in.ThicknessUnit = before.ThicknessUnit
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE inventory_item SET
 			inventory_item_sku = $2, inventory_item_name = $3, inventory_item_description = $4,
@@ -105,6 +112,8 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 			inventory_item_updated_at = NOW(), inventory_item_updated_by = $19,
 			inventory_item_purchase_unit_price = $20,
 			inventory_item_dimension_unit = $21,
+			inventory_item_length_mm = $22, inventory_item_width_mm = $23,
+			inventory_item_thickness_unit = $24,
 			inventory_item_record_version = inventory_item_record_version + 1
 		WHERE inventory_item_uuid = $1 AND inventory_item_deleted_at IS NULL`,
 		uuid, in.SKU, in.Name, in.Description, in.UnitID, *in.UnitPrice,
@@ -112,7 +121,8 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in CreateItemI
 		in.Tracking, nullableIntPtr(in.MaterialID), nullableIntPtr(in.ColorID),
 		nullableIntPtr(in.FinishID), in.ThicknessMM, nullableIntPtr(in.OriginCountryID),
 		in.Barcode, nullableIntPtr(in.DefaultWarehouseID), trackStock,
-		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice, in.DimensionUnit)
+		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice, in.DimensionUnit,
+		in.LengthMM, in.WidthMM, in.ThicknessUnit)
 	if err != nil {
 		return mapItemWriteErr(err, "update")
 	}
@@ -167,6 +177,11 @@ func itemDiff(before Item, in CreateItemInput) []fieldDiff {
 	}
 	add("thicknessMm", strconv.FormatFloat(before.ThicknessMM, 'f', 2, 64),
 		strconv.FormatFloat(in.ThicknessMM, 'f', 2, 64))
+	add("lengthMm", strconv.FormatFloat(before.LengthMM, 'f', 2, 64),
+		strconv.FormatFloat(in.LengthMM, 'f', 2, 64))
+	add("widthMm", strconv.FormatFloat(before.WidthMM, 'f', 2, 64),
+		strconv.FormatFloat(in.WidthMM, 'f', 2, 64))
+	add("thicknessUnit", before.ThicknessUnit, in.ThicknessUnit)
 	return out
 }
 

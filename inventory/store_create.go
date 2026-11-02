@@ -83,6 +83,10 @@ func createInTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, custom map[s
 	if dimensionUnit == "" {
 		dimensionUnit = linedim.DefaultUnit
 	}
+	thicknessUnit := in.ThicknessUnit
+	if thicknessUnit == "" {
+		thicknessUnit = "mm"
+	}
 	var (
 		newUUID string
 		newID   int
@@ -95,8 +99,9 @@ func createInTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, custom map[s
 			inventory_item_tracking, inventory_item_material_id, inventory_item_color_id,
 			inventory_item_finish_id, inventory_item_thickness_mm, inventory_item_origin_country_id,
 			inventory_item_barcode, inventory_item_default_warehouse_id, inventory_item_track_stock,
-			inventory_item_created_by, inventory_item_purchase_unit_price, inventory_item_dimension_unit
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+			inventory_item_created_by, inventory_item_purchase_unit_price, inventory_item_dimension_unit,
+			inventory_item_length_mm, inventory_item_width_mm, inventory_item_thickness_unit
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
 		RETURNING inventory_item_uuid, inventory_item_id`,
 		in.SKU, in.Name, in.Description, in.UnitID, *in.UnitPrice,
 		nullableIntPtr(in.CurrencyID), nullableIntPtr(in.TaxRateID), custom,
@@ -104,6 +109,7 @@ func createInTx(ctx context.Context, tx pgx.Tx, in CreateItemInput, custom map[s
 		nullableIntPtr(in.FinishID), in.ThicknessMM, nullableIntPtr(in.OriginCountryID),
 		in.Barcode, nullableIntPtr(in.DefaultWarehouseID), in.TrackStock == nil || *in.TrackStock,
 		nullableInt(actorEmployeeID), *in.PurchaseUnitPrice, dimensionUnit,
+		in.LengthMM, in.WidthMM, thicknessUnit,
 	).Scan(&newUUID, &newID)
 	if err != nil {
 		return "", mapItemWriteErr(err, "insert")

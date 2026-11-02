@@ -39,6 +39,13 @@ type Item struct {
 	Barcode            string  `json:"barcode"`
 	DefaultWarehouseID *int    `json:"defaultWarehouseId,omitempty"`
 
+	// LengthMM and WidthMM are the item's standard slab size in millimetres (0 =
+	// not stated); ThicknessUnit is the unit thickness is entered and shown in.
+	// A purchase order line starts from all three when the item is picked.
+	LengthMM      float64 `json:"lengthMm"`
+	WidthMM       float64 `json:"widthMm"`
+	ThicknessUnit string  `json:"thicknessUnit"`
+
 	// UnitPrice above is the SELLING price: what a sales document line defaults
 	// to. The JSON name is kept so every sales-side reader is untouched.
 	// PurchaseUnitPrice is what a purchase order, vendor bill or requisition line
@@ -94,6 +101,12 @@ type CreateItemInput struct {
 	OriginCountryID    *int    `json:"originCountryId,omitempty"`
 	Barcode            string  `json:"barcode"`
 	DefaultWarehouseID *int    `json:"defaultWarehouseId,omitempty"`
+
+	// LengthMM / WidthMM overwrite like every field here. ThicknessUnit is a
+	// string so an omitted field leaves the item's unit as it is (mm on create).
+	LengthMM      float64 `json:"lengthMm"`
+	WidthMM       float64 `json:"widthMm"`
+	ThicknessUnit string  `json:"thicknessUnit,omitempty"`
 
 	// TrackStock is a pointer so an omitted field means "leave as it is" — a
 	// plain bool would read a client that predates the field as "turn off".

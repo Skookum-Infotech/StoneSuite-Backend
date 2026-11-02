@@ -9458,6 +9458,16 @@ END $$;
 ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_dimension_unit VARCHAR(2) NOT NULL DEFAULT 'in'
     CHECK (inventory_item_dimension_unit IN ('mm','cm','in','ft','m'));
 
+-- An item's standard slab size, in millimetres (0 = not stated), and the unit its
+-- thickness is entered and shown in. A purchase order line starts from these when
+-- the item is picked. Thickness itself stays in inventory_item_thickness_mm.
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_length_mm DECIMAL(10,2) NOT NULL DEFAULT 0
+    CHECK (inventory_item_length_mm >= 0);
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_width_mm DECIMAL(10,2) NOT NULL DEFAULT 0
+    CHECK (inventory_item_width_mm >= 0);
+ALTER TABLE inventory_item ADD COLUMN IF NOT EXISTS inventory_item_thickness_unit VARCHAR(2) NOT NULL DEFAULT 'mm'
+    CHECK (inventory_item_thickness_unit IN ('mm','cm','in','ft','m'));
+
 ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_length DECIMAL(10,2) NULL CHECK (dim_length IS NULL OR dim_length > 0);
 ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS dim_width  DECIMAL(10,2) NULL CHECK (dim_width  IS NULL OR dim_width  > 0);
 ALTER TABLE estimate_item        ADD COLUMN IF NOT EXISTS slabs      INTEGER       NULL CHECK (slabs      IS NULL OR slabs      > 0);

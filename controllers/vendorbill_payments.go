@@ -16,7 +16,7 @@ import (
 // mutates the bill's own AP rollup).
 func (h *VendorBillOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
-	pool, identityID, before, ok := h.authVBByUUID(w, r, uuid, authz.ActionUpdate)
+	pool, identityID, _, ok := h.authVBByUUID(w, r, uuid, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -32,12 +32,11 @@ func (h *VendorBillOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	if key != "" {
 		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
 	}
-	after, err := vendorbill.RecordPayment(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))
+	after, err := vendorbill.RecordPayment(vbAuditCtx(r, pool, identityID), pool, uuid, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		vbFail(w, err, "Failed to record payment.")
 		return
 	}
-	auditVB(r, pool, identityID, "record_payment", uuid, before, after)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "vendorBill": after})
 }
 
@@ -67,15 +66,14 @@ func (h *VendorBillOps) Payments(w http.ResponseWriter, r *http.Request) {
 func (h *VendorBillOps) RemovePayment(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
 	paymentID := r.PathValue("paymentId")
-	pool, identityID, before, ok := h.authVBByUUID(w, r, uuid, authz.ActionUpdate)
+	pool, identityID, _, ok := h.authVBByUUID(w, r, uuid, authz.ActionUpdate)
 	if !ok {
 		return
 	}
-	after, err := vendorbill.RemovePayment(r.Context(), pool, uuid, paymentID, resolveEmployeeID(r, identityID))
+	after, err := vendorbill.RemovePayment(vbAuditCtx(r, pool, identityID), pool, uuid, paymentID, resolveEmployeeID(r, identityID))
 	if err != nil {
 		vbFail(w, err, "Failed to remove payment.")
 		return
 	}
-	auditVB(r, pool, identityID, "unapply_payment", uuid, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": after})
 }

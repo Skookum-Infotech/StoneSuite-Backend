@@ -26,12 +26,11 @@ func (h *CashTransferOps) Transition(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "toStatusCode is required.")
 		return
 	}
-	ct, err := cashtransfer.Transition(r.Context(), pool, uuid, req.ToStatusCode, resolveEmployeeID(r, identityID))
+	ct, err := cashtransfer.Transition(auditCtx(r, ""), pool, uuid, req.ToStatusCode, resolveEmployeeID(r, identityID))
 	if err != nil {
 		ctFail(w, err, "Failed to apply transition.")
 		return
 	}
-	auditCT(r, pool, resolveEmployeeID(r, identityID), "transition", uuid, nil, ct)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "cashTransfer": ct})
 }
 
@@ -43,12 +42,11 @@ func (h *CashTransferOps) Post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	ct, err := cashtransfer.Post(r.Context(), pool, uuid, empID)
+	ct, err := cashtransfer.Post(auditCtx(r, ""), pool, uuid, empID)
 	if err != nil {
 		ctFail(w, err, "Failed to post cash transfer.")
 		return
 	}
-	auditCT(r, pool, empID, "post", uuid, nil, ct)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "cashTransfer": ct})
 }
 
@@ -60,11 +58,10 @@ func (h *CashTransferOps) Reverse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	ct, err := cashtransfer.Reverse(r.Context(), pool, uuid, empID)
+	ct, err := cashtransfer.Reverse(auditCtx(r, ""), pool, uuid, empID)
 	if err != nil {
 		ctFail(w, err, "Failed to reverse cash transfer.")
 		return
 	}
-	auditCT(r, pool, empID, "reverse", uuid, nil, ct)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "cashTransfer": ct})
 }

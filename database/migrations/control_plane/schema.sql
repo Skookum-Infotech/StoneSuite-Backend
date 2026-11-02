@@ -652,3 +652,14 @@ CREATE TABLE IF NOT EXISTS platform_automation_settings (
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 INSERT INTO platform_automation_settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- Boot-time tenant migration skip: sha256 of the embedded tenant schema.sql the
+-- tenant's database was last migrated with. A tenant whose hash already matches
+-- is not re-migrated on boot; '' (never recorded) means "migrate me".
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS schema_hash TEXT NOT NULL DEFAULT '';
+
+-- Retry backoff: ClaimNext skips a job until run_after. MarkFailed pushes it out
+-- exponentially so a failing job no longer hot-loops on every poll. Existing
+-- rows default to NOW(), i.e. immediately claimable, as before.
+ALTER TABLE async_jobs ADD COLUMN IF NOT EXISTS run_after TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_async_jobs_status_run_after ON async_jobs(status, run_after);

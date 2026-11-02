@@ -69,6 +69,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorP
 	if lp.statusCode != "DRFT" && lp.statusCode != "PAPV" {
 		return nil, ClientError{Msg: "Only a draft or pending-approval vendor payment can be edited."}
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE vendor_payment SET
@@ -80,6 +86,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorP
 		in.MethodID, in.ReferenceNumber, in.PaymentDate, in.ScheduledDate, in.CurrencyID,
 		in.Memo, in.InternalNotes, custom, nullableInt(actorEmployeeID), lp.internalID); err != nil {
 		return nil, fmt.Errorf("update vendor payment: %w", err)
+	}
+	if err := auditTx(ctx, tx, auditUpdate, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update vendor payment: %w", err)
@@ -111,10 +120,17 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete a vendor payment with live applications; unapply or void it first."}
 	}
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE vendor_payment SET vendor_payment_deleted_at = NOW(), vendor_payment_deleted_by = $1
 		WHERE vendor_payment_id = $2`, actorOrSystem(actorEmployeeID), lp.internalID); err != nil {
 		return fmt.Errorf("delete vendor payment: %w", err)
+	}
+	if err := auditTx(ctx, tx, auditDelete, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete vendor payment: %w", err)

@@ -106,6 +106,9 @@ func Post(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID 
 	}
 	writeHistory(ctx, tx, ctInternalID, "post", &curStatusID, &postedStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditPost, uuid, nil, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit post cash transfer: %w", err)
 	}

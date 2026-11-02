@@ -2,46 +2,11 @@ package controllers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"stonesuite-backend/authz"
-	"stonesuite-backend/refund"
-	"stonesuite-backend/workflow"
 )
-
-// refundSnapshot flattens a Refund into the map recorded in audit_logs.
-func refundSnapshot(rf *refund.Refund) map[string]any {
-	if rf == nil {
-		return nil
-	}
-	return map[string]any{
-		"id":              rf.ID,
-		"number":          rf.Number,
-		"statusCode":      rf.StatusCode,
-		"customerId":      rf.Customer.ID,
-		"ownerUserId":     rf.OwnerUserID,
-		"paymentId":       rf.PaymentID,
-		"creditMemoId":    rf.CreditMemoID,
-		"amount":          rf.Amount,
-		"appliedTotal":    rf.AppliedTotal,
-		"unappliedAmount": rf.UnappliedAmount,
-		"customFields":    rf.CustomFields,
-	}
-}
-
-// auditRefund records a create/update/delete/transition/apply/unapply event for a refund.
-func auditRefund(r *http.Request, pool *pgxpool.Pool, actorEmployeeID int, action, refundID string, oldRefund, newRefund *refund.Refund) {
-	ctx := r.Context()
-	if err := workflow.LogAuditFull(ctx, pool, "", action, string(authz.ResourceRefund), refundID, "refund",
-		refundSnapshot(oldRefund), refundSnapshot(newRefund), map[string]any{"employee_id": actorEmployeeID},
-		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
-		log.Printf("refund: audit %s %s: %v", action, refundID, err)
-	}
-}
 
 // refundAuditEntry is a single row of a refund's audit trail.
 type refundAuditEntry struct {

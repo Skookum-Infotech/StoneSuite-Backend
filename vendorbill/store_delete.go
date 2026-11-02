@@ -53,12 +53,19 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 		return ClientError{Msg: "Only a draft or void vendor bill can be deleted."}
 	}
 
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE vendor_bill
 		SET vendor_bill_deleted_at = NOW(), vendor_bill_deleted_by = $2
 		WHERE vendor_bill_id = $1`,
 		l.InternalID, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete vendor bill: %w", err)
+	}
+	if err := auditTx(ctx, tx, auditDelete, uuid, before, nil); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete vendor bill: %w", err)

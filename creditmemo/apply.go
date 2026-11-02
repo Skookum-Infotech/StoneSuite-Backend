@@ -154,6 +154,10 @@ func ApplyIdempotent(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceU
 	if err != nil {
 		return nil, err
 	}
+	before, err := getQ(ctx, tx, memoUUID)
+	if err != nil {
+		return nil, err
+	}
 	if !appliableStatuses[lm.statusCode] {
 		return nil, ClientError{Msg: "Cannot apply a " + lm.statusCode + " credit memo; it must be approved first."}
 	}
@@ -227,6 +231,9 @@ func ApplyIdempotent(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceU
 		}
 	}
 
+	if err := auditTx(ctx, tx, auditApply, memoUUID, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit apply: %w", err)
 	}
@@ -244,6 +251,10 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID stri
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	lm, err := lockCreditMemoForUpdate(ctx, tx, memoUUID)
+	if err != nil {
+		return nil, err
+	}
+	before, err := getQ(ctx, tx, memoUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +281,9 @@ func Unapply(ctx context.Context, pool *pgxpool.Pool, memoUUID, invoiceUUID stri
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditUnapply, memoUUID, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit unapply: %w", err)
 	}

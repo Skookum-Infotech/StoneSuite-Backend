@@ -80,7 +80,13 @@ func scanCT(row pgx.Row) (*CashTransfer, ctMeta, error) {
 
 // Get loads a single live cash transfer by its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*CashTransfer, error) {
-	ct, _, err := scanCT(pool.QueryRow(ctx, headerSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*CashTransfer, error) {
+	ct, _, err := scanCT(q.QueryRow(ctx, headerSelect+`
 		WHERE ct.cash_transfer_uuid = $1 AND ct.cash_transfer_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

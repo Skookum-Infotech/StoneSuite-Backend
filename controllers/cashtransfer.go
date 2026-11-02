@@ -141,12 +141,11 @@ func (h *CashTransferOps) Create(w http.ResponseWriter, r *http.Request) {
 		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	empID := resolveEmployeeID(r, identityID)
-	ct, err := cashtransfer.Create(r.Context(), pool, in, empID)
+	ct, err := cashtransfer.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		ctFail(w, err, "Failed to create cash transfer.")
 		return
 	}
-	auditCT(r, pool, empID, "create", ct.ID, nil, ct)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "cashTransfer": ct})
 }
 
@@ -173,14 +172,12 @@ func (h *CashTransferOps) Update(w http.ResponseWriter, r *http.Request) {
 	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := cashtransfer.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := cashtransfer.Update(r.Context(), pool, id, in, empID)
+	after, err := cashtransfer.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		ctFail(w, err, "Failed to update cash transfer.")
 		return
 	}
-	auditCT(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "cashTransfer": after})
 }
 
@@ -190,13 +187,11 @@ func (h *CashTransferOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := cashtransfer.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := cashtransfer.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := cashtransfer.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		ctFail(w, err, "Failed to delete cash transfer.")
 		return
 	}
-	auditCT(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Cash transfer deleted."})
 }
 

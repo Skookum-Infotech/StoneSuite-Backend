@@ -37,6 +37,9 @@ func (rs *Resolver) CustomerMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		if rs.rejectIfMigrating(w, tenant.ID) {
+			return
+		}
 		if !tenant.Servable() {
 			writeUnservable(w, tenant)
 			return

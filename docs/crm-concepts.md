@@ -60,6 +60,18 @@ approval again. An edit to an approved customer also sends it for approval
 again, so it becomes Active only when its approvers approve it. If no
 approvers are configured, Make Active is used instead.
 
+A customer's Transactions tab lists the quotes, estimates, sales orders,
+installation jobs, invoices, payments, credit memos and refunds for that
+customer, newest first. You see only the kinds of record you have permission
+to read, and if your access is limited to your own records you see only those
+you own, so the figures can be partial. The list can be narrowed by type,
+status, date range, document number, or to open items only. An invoice that is
+past its due date and still unpaid is marked overdue. The summary above the
+list shows the open balance and overdue balance on invoices, credits not yet
+applied, what was billed and what was paid in the last 12 months, and the date
+of the latest activity. A figure is left blank when you cannot read the
+records behind it.
+
 ## Custom fields
 
 Each of the three pipelines (lead, prospect, customer) can have up to 15

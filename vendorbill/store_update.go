@@ -54,6 +54,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft vendor bill can be edited. Recall it to draft first."}
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return nil, err
+	}
 
 	// A changed, non-empty invoice number must not collide with another live
 	// bill of the same vendor (the bill itself is excluded).
@@ -132,6 +138,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateVendo
 
 	writeHistory(ctx, tx, internalID, "update", nil, nil, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditUpdate, uuid, before, duplicateExtra(dupUUID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update vendor bill: %w", err)
 	}

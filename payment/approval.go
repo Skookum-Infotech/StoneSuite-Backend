@@ -34,7 +34,7 @@ func moduleConfig() approvalchain.ModuleConfig {
 // approver has signed off -- or a super admin overrides -- the payment
 // auto-advances to the gate's target status in the same call.
 func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*Payment, error) {
-	_, err := approvalchain.Approve(ctx, pool, moduleConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
+	_, err := approvalchain.Approve(ctx, pool, approvalConfig(approverEmployeeID), uuid, approverEmployeeID, callerIsSuperAdmin)
 	switch {
 	case errors.Is(err, approvalchain.ErrNotFound):
 		return nil, ErrNotFound
@@ -69,7 +69,7 @@ func GetApprovalInfo(ctx context.Context, pool *pgxpool.Pool, uuid string, calle
 // needed. The reason / already-rejected errors pass through unchanged for the
 // controller to map.
 func Reject(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int, callerIsSuperAdmin bool, reason string) (*Payment, error) {
-	_, err := approvalchain.Reject(ctx, pool, moduleConfig(), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
+	_, err := approvalchain.Reject(ctx, pool, approvalConfig(actorEmployeeID), uuid, actorEmployeeID, callerIsSuperAdmin, reason)
 	switch {
 	case errors.Is(err, approvalchain.ErrNotFound):
 		return nil, ErrNotFound

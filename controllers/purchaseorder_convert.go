@@ -44,7 +44,7 @@ func (h *PurchaseOrderOps) ConvertToBill(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	bill, err := vendorbill.ConvertFromPurchaseOrder(r.Context(), pool, uuid, resolveEmployeeID(r, identityID))
+	bill, err := vendorbill.ConvertFromPurchaseOrder(vbAuditCtx(r, pool, identityID), pool, uuid, resolveEmployeeID(r, identityID))
 	if err != nil {
 		switch {
 		case errors.Is(err, vendorbill.ErrPurchaseOrderNotFound):
@@ -59,6 +59,5 @@ func (h *PurchaseOrderOps) ConvertToBill(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	auditVB(r, pool, identityID, "convert", bill.ID, nil, bill)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "vendorBill": bill, "created": true})
 }

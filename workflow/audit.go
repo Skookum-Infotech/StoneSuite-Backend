@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 
+	"github.com/jackc/pgx/v5"
+
 	"stonesuite-backend/provenance"
 )
 
@@ -59,6 +61,7 @@ func notifyAuditObservers(ctx context.Context, q Querier, ev AuditEvent) {
 	if obs == nil {
 		return
 	}
+	tx, inTx := q.(pgx.Tx)
 	for _, o := range *obs {
 		func() {
 			defer func() {
@@ -66,19 +69,63 @@ func notifyAuditObservers(ctx context.Context, q Querier, ev AuditEvent) {
 					slog.Error("audit observer panicked", "panic", r, "resource", ev.Resource, "action", ev.Action)
 				}
 			}()
-			o(ctx, q, ev)
+			if !inTx {
+				o(ctx, q, ev)
+				return
+			}
+			runObserverInSavepoint(ctx, tx, o, ev)
 		}()
+	}
+}
+
+// auditObserverSavepoint names the savepoint wrapped around each observer that
+// runs on a transaction.
+const auditObserverSavepoint = "audit_observer"
+
+// runObserverInSavepoint runs o on tx inside a savepoint so an observer whose
+// SQL fails cannot abort the caller's transaction. pgx nested transactions are
+// deliberately not used: their Commit marks them closed even on failure, so
+// they could not be rolled back afterwards.
+func runObserverInSavepoint(ctx context.Context, tx pgx.Tx, o AuditObserver, ev AuditEvent) {
+	if _, err := tx.Exec(ctx, "SAVEPOINT "+auditObserverSavepoint); err != nil {
+		slog.Warn("audit observer skipped: savepoint failed", "error", err, "resource", ev.Resource, "action", ev.Action)
+		return
+	}
+	// A panic must still leave the savepoint resolved; the outer recover logs it.
+	panicked := true
+	defer func() {
+		if panicked {
+			rollbackObserverSavepoint(ctx, tx, ev)
+		}
+	}()
+	o(ctx, tx, ev)
+	panicked = false
+	if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT "+auditObserverSavepoint); err != nil {
+		slog.Warn("audit observer aborted its statement; rolled back to savepoint", "error", err, "resource", ev.Resource, "action", ev.Action)
+		rollbackObserverSavepoint(ctx, tx, ev)
+	}
+}
+
+// rollbackObserverSavepoint undoes whatever the observer did and releases the savepoint.
+func rollbackObserverSavepoint(ctx context.Context, tx pgx.Tx, ev AuditEvent) {
+	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+auditObserverSavepoint); err != nil {
+		slog.Warn("audit observer savepoint rollback failed", "error", err, "resource", ev.Resource, "action", ev.Action)
+		return
+	}
+	if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT "+auditObserverSavepoint); err != nil {
+		slog.Warn("audit observer savepoint release failed", "error", err, "resource", ev.Resource, "action", ev.Action)
 	}
 }
 
 // LogAuditFull writes one enriched row to the unified audit_logs table (the
 // columns added by tenant migration 020): a before/after change record with
-// request provenance. Like LogAudit it is best-effort — callers log a failure
-// but never surface it to the client, because auditing must not break the
-// primary operation.
+// request provenance. Called with a pool it is best-effort — callers log a
+// failure but never surface it to the client, because auditing must not break
+// the primary operation. Money modules instead call LogAuditTx inside the store
+// transaction, where a failure rolls the write back.
 //
 // oldVal/newVal are marshalled to JSONB (nil → SQL NULL). ipAddress is cast to
-// INET; an empty string stores NULL. tableName names the mutated table (e.g.
+// INET; an empty or unparseable string stores NULL. tableName names the mutated table (e.g.
 // "customer") so the trail is filterable per entity. extraMeta keys are merged
 // into the details JSONB alongside "new" (e.g. {"reason": "..."} for deletes).
 func LogAuditFull(
@@ -106,7 +153,7 @@ func LogAuditFull(
 			table_name, old_value, new_value, ip_address, session_id, app_version)
 		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb,$9::inet,$10,$11)`,
 		nullIfEmpty(actorUserID), action, resource, resourceID, details,
-		nullIfEmpty(tableName), oldRaw, newRaw, nullIfEmpty(ipAddress),
+		nullIfEmpty(tableName), oldRaw, newRaw, nullIfEmpty(auditIP(ipAddress)),
 		nullIfEmpty(sessionID), nullIfEmpty(appVersion))
 	if err != nil {
 		return fmt.Errorf("log audit (full): %w", err)

@@ -155,12 +155,11 @@ func (h *VendorPaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Create(r.Context(), pool, in, empID)
+	vp, err := vendorpayment.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to create vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "create", vp.ID, nil, vp)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "vendorPayment": vp})
 }
 
@@ -200,14 +199,12 @@ func (h *VendorPaymentOps) Update(w http.ResponseWriter, r *http.Request) {
 	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := vendorpayment.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := vendorpayment.Update(r.Context(), pool, id, in, empID)
+	after, err := vendorpayment.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to update vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": after})
 }
 
@@ -218,13 +215,11 @@ func (h *VendorPaymentOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := vendorpayment.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := vendorpayment.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := vendorpayment.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		vendorPaymentFail(w, err, "Failed to delete vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Vendor payment deleted."})
 }
 

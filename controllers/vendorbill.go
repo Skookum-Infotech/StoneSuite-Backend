@@ -168,7 +168,7 @@ func (h *VendorBillOps) Create(w http.ResponseWriter, r *http.Request) {
 	if !authLinkedPurchaseOrder(w, r, pool, identityID, in.PurchaseOrderUUID) {
 		return
 	}
-	bill, err := vendorbill.Create(r.Context(), pool, in, resolveEmployeeID(r, identityID))
+	bill, err := vendorbill.Create(vbAuditCtx(r, pool, identityID), pool, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		if writeVBDuplicate(w, r, pool, identityID, err) {
 			return
@@ -176,7 +176,6 @@ func (h *VendorBillOps) Create(w http.ResponseWriter, r *http.Request) {
 		vbFail(w, err, "Failed to create vendor bill.")
 		return
 	}
-	auditVBMeta(r, pool, identityID, "create", bill.ID, nil, bill, vbCreateExtraMeta(bill))
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "vendorBill": bill})
 }
 
@@ -205,7 +204,7 @@ func (h *VendorBillOps) Get(w http.ResponseWriter, r *http.Request) {
 // Update PATCH /api/tenant/vendor-bills/{uuid}
 func (h *VendorBillOps) Update(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
-	pool, identityID, before, ok := h.authVBByUUID(w, r, uuid, authz.ActionUpdate)
+	pool, identityID, _, ok := h.authVBByUUID(w, r, uuid, authz.ActionUpdate)
 	if !ok {
 		return
 	}
@@ -213,7 +212,7 @@ func (h *VendorBillOps) Update(w http.ResponseWriter, r *http.Request) {
 	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	after, err := vendorbill.Update(r.Context(), pool, uuid, in, resolveEmployeeID(r, identityID))
+	after, err := vendorbill.Update(vbAuditCtx(r, pool, identityID), pool, uuid, in, resolveEmployeeID(r, identityID))
 	if err != nil {
 		if writeVBDuplicate(w, r, pool, identityID, err) {
 			return
@@ -221,22 +220,20 @@ func (h *VendorBillOps) Update(w http.ResponseWriter, r *http.Request) {
 		vbFail(w, err, "Failed to update vendor bill.")
 		return
 	}
-	auditVBMeta(r, pool, identityID, "update", uuid, before, after, vbCreateExtraMeta(after))
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": after})
 }
 
 // Delete DELETE /api/tenant/vendor-bills/{uuid}
 func (h *VendorBillOps) Delete(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
-	pool, identityID, before, ok := h.authVBByUUID(w, r, uuid, authz.ActionDelete)
+	pool, identityID, _, ok := h.authVBByUUID(w, r, uuid, authz.ActionDelete)
 	if !ok {
 		return
 	}
-	if err := vendorbill.SoftDelete(r.Context(), pool, uuid, resolveEmployeeID(r, identityID)); err != nil {
+	if err := vendorbill.SoftDelete(vbAuditCtx(r, pool, identityID), pool, uuid, resolveEmployeeID(r, identityID)); err != nil {
 		vbFail(w, err, "Failed to delete vendor bill.")
 		return
 	}
-	auditVBDelete(r, pool, identityID, uuid, before)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Vendor bill deleted."})
 }
 
@@ -254,12 +251,11 @@ func (h *VendorBillOps) Transition(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "toStatusCode is required.")
 		return
 	}
-	bill, err := vendorbill.Transition(r.Context(), pool, uuid, req.ToStatusCode, resolveEmployeeID(r, identityID))
+	bill, err := vendorbill.Transition(vbAuditCtx(r, pool, identityID), pool, uuid, req.ToStatusCode, resolveEmployeeID(r, identityID))
 	if err != nil {
 		vbFail(w, err, "Failed to apply transition.")
 		return
 	}
-	auditVB(r, pool, identityID, "transition", uuid, nil, bill)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": bill})
 }
 
@@ -275,7 +271,7 @@ func (h *VendorBillOps) Approve(w http.ResponseWriter, r *http.Request) {
 		vbFail(w, err, "Failed to approve vendor bill.")
 		return
 	}
-	bill, err := vendorbill.Approve(r.Context(), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
+	bill, err := vendorbill.Approve(vbAuditCtx(r, pool, identityID), pool, uuid, resolveEmployeeID(r, identityID), isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, vendorbill.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -283,7 +279,6 @@ func (h *VendorBillOps) Approve(w http.ResponseWriter, r *http.Request) {
 		vbFail(w, err, "Failed to approve vendor bill.")
 		return
 	}
-	auditVB(r, pool, identityID, "approve", uuid, nil, bill)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": bill})
 }
 
@@ -310,7 +305,7 @@ func (h *VendorBillOps) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rec, err := vendorbill.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	rec, err := vendorbill.Reject(vbAuditCtx(r, pool, identityID), pool, uuid, empID, isSuperAdmin, req.Reason)
 	if err != nil {
 		if errors.Is(err, vendorbill.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -318,6 +313,5 @@ func (h *VendorBillOps) Reject(w http.ResponseWriter, r *http.Request) {
 		vbFail(w, err, "Failed to reject vendor bill.")
 		return
 	}
-	auditVB(r, pool, identityID, "reject", uuid, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": rec})
 }

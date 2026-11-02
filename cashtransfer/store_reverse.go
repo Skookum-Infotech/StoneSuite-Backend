@@ -84,6 +84,9 @@ func Reverse(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployee
 	}
 	writeHistory(ctx, tx, ctInternalID, "reverse", &curStatusID, &reversedStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditReverse, uuid, nil, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit reverse cash transfer: %w", err)
 	}

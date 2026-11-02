@@ -189,6 +189,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 	if lockedVersion != curVersion || lockedApplied != curApplied {
 		return nil, ErrVersionConflict
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 	if sourcePaymentID != nil {
 		room, err := lockLinkedPayment(ctx, tx, *sourcePaymentID)
 		if err != nil {
@@ -281,6 +287,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateCreditM
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditUpdate, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update credit memo: %w", err)
 	}

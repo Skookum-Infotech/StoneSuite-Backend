@@ -50,6 +50,10 @@ type Tenant struct {
 	SchemaVersion   int
 	MigrationStatus string
 
+	// SchemaHash is the hex sha256 of the tenant schema.sql last applied to
+	// this tenant's database; empty until the first boot migration records it.
+	SchemaHash string
+
 	// DesignVersion selects the CRM data design (DesignV1 / DesignV2).
 	DesignVersion string
 

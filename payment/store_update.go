@@ -61,6 +61,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePayment
 	if err := checkExpectedVersion(in.ExpectedVersion, currentVersion); err != nil {
 		return nil, err
 	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 	if lp.statusCode == voidStatusCode {
 		return nil, ClientError{Msg: "Cannot edit a voided payment."}
 	}
@@ -96,6 +102,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdatePayment
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditUpdate, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update payment: %w", err)
 	}
@@ -145,6 +154,10 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	if liveApplications > 0 {
 		return ClientError{Msg: "Cannot delete a payment with live applications; unapply or void it first."}
 	}
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 	deletedBy := actorOrSystem(actorEmployeeID)
 	tag, err := tx.Exec(ctx, `
 		UPDATE payment SET payment_deleted_at = NOW(), payment_deleted_by = $1
@@ -154,6 +167,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, id string, actorEmploye
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := auditTx(ctx, tx, auditDelete, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete payment: %w", err)

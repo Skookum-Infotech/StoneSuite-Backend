@@ -4,23 +4,22 @@ package invoice
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/workflow"
 )
 
 // fillNextStatusCodes sets NextStatusCodes on every invoice given from one
 // read of the module's approver config -- a caller serving a list passes
 // every row at once so the counts are fetched once per request, not per row.
-func fillNextStatusCodes(ctx context.Context, pool *pgxpool.Pool, invoices ...*Invoice) error {
+func fillNextStatusCodes(ctx context.Context, q workflow.Querier, invoices ...*Invoice) error {
 	if len(invoices) == 0 {
 		return nil
 	}
-	typeID, err := typeIDByCode(ctx, pool, moduleConfig().RecordTypeCode)
+	typeID, err := typeIDByCode(ctx, q, moduleConfig().RecordTypeCode)
 	if err != nil {
 		return err
 	}
-	ungated, err := approvalchain.UngatedGates(ctx, pool, moduleConfig(), typeID)
+	ungated, err := approvalchain.UngatedGates(ctx, q, moduleConfig(), typeID)
 	if err != nil {
 		return err
 	}

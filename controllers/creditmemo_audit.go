@@ -2,51 +2,11 @@ package controllers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"stonesuite-backend/authz"
-	"stonesuite-backend/creditmemo"
-	"stonesuite-backend/workflow"
 )
-
-func creditMemoSnapshot(cm *creditmemo.CreditMemo) map[string]any {
-	if cm == nil {
-		return nil
-	}
-	return map[string]any{
-		"id":               cm.ID,
-		"number":           cm.Number,
-		"statusCode":       cm.StatusCode,
-		"customerId":       cm.Customer.ID,
-		"ownerUserId":      cm.OwnerUserID,
-		"grandTotal":       cm.GrandTotal,
-		"appliedTotal":     cm.AppliedTotal,
-		"unappliedAmount":  cm.UnappliedAmount,
-		"lineCount":        len(cm.Lines),
-		"applicationCount": len(cm.Applications),
-		"customFields":     cm.CustomFields,
-	}
-}
-
-// auditCreditMemo writes an audit_logs row. actorUserID is "" (-> NULL) and the
-// employee id goes into the details JSONB, per the DESIGN NOTE on audit_logs:
-// actor_user_id references the v1 UUID users table, while the v2 CRM uses
-// INTEGER employee ids.
-//
-// Audit failure is logged, never fatal — losing the trail must not fail the
-// business operation that already committed.
-func auditCreditMemo(r *http.Request, pool *pgxpool.Pool, actorEmployeeID int, action, creditMemoID string, oldCM, newCM *creditmemo.CreditMemo) {
-	ctx := r.Context()
-	if err := workflow.LogAuditFull(ctx, pool, "", action, string(authz.ResourceCreditMemo), creditMemoID, "credit_memo",
-		creditMemoSnapshot(oldCM), creditMemoSnapshot(newCM), map[string]any{"employee_id": actorEmployeeID},
-		clientIP(r), r.Header.Get("X-Session-Id"), appVersion); err != nil {
-		log.Printf("creditmemo: audit %s %s: %v", action, creditMemoID, err)
-	}
-}
 
 type cmAuditEntry struct {
 	Action     string         `json:"action"`

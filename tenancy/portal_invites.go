@@ -53,8 +53,9 @@ func (p *PortalInvite) Usable() bool {
 	return p.Status == PortalInviteStatusPending && !p.Expired()
 }
 
+// portalInviteColumns reads an empty string for token; see inviteColumns.
 const portalInviteColumns = `id, tenant_id, identity_id, email, full_name, customer_uuid,
-	token, status, COALESCE(invited_by::text, ''), expires_at, accepted_at, created_at,
+	'' AS token, status, COALESCE(invited_by::text, ''), expires_at, accepted_at, created_at,
 	notify_notification_ids`
 
 func scanPortalInvite(row pgx.Row) (*PortalInvite, error) {
@@ -83,15 +84,20 @@ func (c *ControlPlane) CreatePortalInvite(ctx context.Context,
 		(tenant_id, identity_id, email, full_name, customer_uuid, token, status, invited_by, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
 		RETURNING ` + portalInviteColumns
-	return scanPortalInvite(c.pool.QueryRow(ctx, q,
-		tenantID, identityID, email, fullName, customerUUID, token,
+	inv, err := scanPortalInvite(c.pool.QueryRow(ctx, q,
+		tenantID, identityID, email, fullName, customerUUID, HashToken(token),
 		nullable(invitedByIdentityID), expiresAt))
+	if err != nil {
+		return nil, err
+	}
+	inv.Token = token
+	return inv, nil
 }
 
 // PortalInviteByToken loads an invite by its token.
 func (c *ControlPlane) PortalInviteByToken(ctx context.Context, token string) (*PortalInvite, error) {
 	q := `SELECT ` + portalInviteColumns + ` FROM portal_invites WHERE token = $1`
-	return scanPortalInvite(c.pool.QueryRow(ctx, q, token))
+	return scanPortalInvite(c.pool.QueryRow(ctx, q, HashToken(token)))
 }
 
 // PendingPortalInviteByEmail returns the live invite for an email in a tenant.
@@ -140,7 +146,12 @@ func (c *ControlPlane) RefreshPortalInvite(ctx context.Context, id, token string
 		    notify_notification_ids = '{}', updated_at = NOW()
 		WHERE id = $1
 		RETURNING ` + portalInviteColumns
-	return scanPortalInvite(c.pool.QueryRow(ctx, q, id, token, expiresAt))
+	inv, err := scanPortalInvite(c.pool.QueryRow(ctx, q, id, HashToken(token), expiresAt))
+	if err != nil {
+		return nil, err
+	}
+	inv.Token = token
+	return inv, nil
 }
 
 // SetPortalInviteNotifyIDs records the stonesuite-notify notification ids for

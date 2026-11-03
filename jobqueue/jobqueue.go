@@ -107,7 +107,7 @@ func (q *Queue) ClaimNext(ctx context.Context, jobTypes []string) (*Job, error) 
 		SET status = $2, attempts = attempts + 1, updated_at = NOW()
 		WHERE id = (
 			SELECT id FROM async_jobs
-			WHERE status = $3 AND job_type = ANY($1)
+			WHERE status = $3 AND job_type = ANY($1) AND run_after <= NOW()
 			ORDER BY created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
@@ -134,17 +134,49 @@ func (q *Queue) MarkSucceeded(ctx context.Context, id string) error {
 	return nil
 }
 
+// Retry backoff parameters for MarkFailed.
+const (
+	backoffBase = 5 * time.Second
+	backoffCap  = time.Hour
+	// backoffMaxShift bounds the exponent so the shift can never overflow;
+	// backoffBase<<12 already exceeds backoffCap.
+	backoffMaxShift = 12
+)
+
+// BackoffDelay returns the retry delay after the given number of attempts:
+// 2^attempts x 5s, capped at one hour. attempts <= 0 yields the base delay.
+func BackoffDelay(attempts int) time.Duration {
+	if attempts <= 0 {
+		return backoffBase
+	}
+	if attempts > backoffMaxShift {
+		return backoffCap
+	}
+	d := backoffBase << uint(attempts)
+	if d > backoffCap {
+		return backoffCap
+	}
+	return d
+}
+
 // MarkFailed records the error and either resets the job to 'pending' (for
-// the worker to retry later) or moves it to 'dead' once max_attempts is
-// reached.
+// the worker to retry after an exponential backoff, via run_after) or moves it
+// to 'dead' once max_attempts is reached.
 func (q *Queue) MarkFailed(ctx context.Context, id string, errMsg string) error {
+	var attempts int
+	if err := q.pool.QueryRow(ctx, `SELECT attempts FROM async_jobs WHERE id = $1`, id).Scan(&attempts); err != nil {
+		return fmt.Errorf("mark job %s failed: read attempts: %w", id, err)
+	}
+	backoffSecs := BackoffDelay(attempts).Seconds()
 	if _, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
 		SET status = CASE WHEN attempts >= max_attempts THEN $3 ELSE $4 END,
+		    run_after = CASE WHEN attempts >= max_attempts THEN run_after
+		                     ELSE NOW() + make_interval(secs => $5) END,
 		    last_error = $2,
 		    updated_at = NOW()
 		WHERE id = $1`,
-		id, errMsg, StatusDead, StatusPending); err != nil {
+		id, errMsg, StatusDead, StatusPending, backoffSecs); err != nil {
 		return fmt.Errorf("mark job %s failed: %w", id, err)
 	}
 	return nil
@@ -182,7 +214,9 @@ func (q *Queue) UpdateProgress(ctx context.Context, id string, progress any) err
 
 // RequeueStale resets jobs stuck in 'running' (e.g. due to a worker crash)
 // back to 'pending' if they haven't been updated within staleAfter, scoped to
-// jobTypes. Returns the number of jobs requeued.
+// jobTypes. A stale job that has already used max_attempts goes to 'dead'
+// instead: a job that keeps dying mid-run (e.g. one whose input crashes the
+// process) must not be requeued forever. Returns the number of jobs touched.
 //
 // jobTypes is required, not optional: ClaimNext is already scoped this way
 // (see its own job_type = ANY($1) — the whole reason two worker pools can
@@ -199,9 +233,12 @@ func (q *Queue) RequeueStale(ctx context.Context, jobTypes []string, staleAfter 
 	threshold := time.Now().Add(-staleAfter)
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
-		SET status = $2, updated_at = NOW()
+		SET status = CASE WHEN attempts >= max_attempts THEN $5 ELSE $2 END,
+		    last_error = CASE WHEN attempts >= max_attempts
+		                      THEN 'abandoned while running after max attempts' ELSE last_error END,
+		    updated_at = NOW()
 		WHERE status = $3 AND updated_at < $1 AND job_type = ANY($4)`,
-		threshold, StatusPending, StatusRunning, jobTypes)
+		threshold, StatusPending, StatusRunning, jobTypes, StatusDead)
 	if err != nil {
 		return 0, fmt.Errorf("requeue stale jobs: %w", err)
 	}
@@ -213,7 +250,7 @@ func (q *Queue) RequeueStale(ctx context.Context, jobTypes []string, staleAfter 
 func (q *Queue) Retry(ctx context.Context, id string) error {
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE async_jobs
-		SET status = $2, attempts = 0, last_error = NULL, updated_at = NOW()
+		SET status = $2, attempts = 0, last_error = NULL, run_after = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status = ANY($3)`,
 		id, StatusPending, []string{StatusFailed, StatusDead})
 	if err != nil {

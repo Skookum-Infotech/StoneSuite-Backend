@@ -112,7 +112,7 @@ const headerSelect = `
 	       (SELECT COALESCE(SUM(l.qty_delta),0) FROM inventory_adjustment_line l
 	         WHERE l.inventory_adjustment_id = a.inventory_adjustment_id
 	           AND l.line_deleted_at IS NULL),
-	       a.adjustment_created_at, a.adjustment_updated_at
+	       a.adjustment_created_at, a.adjustment_updated_at, a.adjustment_record_version
 	FROM inventory_adjustment a
 	JOIN lkp_record_status rs        ON rs.record_status_id = a.adjustment_status
 	JOIN company_location w          ON w.company_location_id = a.warehouse_id
@@ -127,7 +127,7 @@ func scanHeader(row pgx.Row) (*Adjustment, error) {
 		&a.ReasonID, &a.ReasonName, &a.Notes, &a.InternalNotes,
 		&a.OwnerID, &a.OwnerName,
 		&a.PostedAt, &a.CancelledAt, &a.CancelReason,
-		&a.NetDelta, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&a.NetDelta, &a.CreatedAt, &a.UpdatedAt, &a.RecordVersion); err != nil {
 		return nil, err
 	}
 	return &a, nil

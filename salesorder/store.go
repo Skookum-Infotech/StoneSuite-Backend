@@ -95,7 +95,7 @@ const orderSelect = `
 	       so.sales_order_shipping_charge, so.sales_order_adjustment, so.sales_order_grand_total,
 	       so.sales_order_created_at, so.sales_order_updated_at,
 	       so.sales_order_status, so.sales_order_customer_id,
-	       COALESCE(cu.id::text,'')
+	       COALESCE(cu.id::text,''), so.sales_order_record_version
 	FROM sales_order so
 	JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 	JOIN customer c ON c.customer_id = so.sales_order_customer_id
@@ -139,7 +139,7 @@ func scanOrder(row pgx.Row) (*Order, orderMeta, error) {
 		&o.Subtotal, &o.DiscountTotal, &o.TaxTotal,
 		&o.ShippingCharge, &o.Adjustment, &o.GrandTotal,
 		&o.CreatedAt, &o.UpdatedAt,
-		&meta.statusID, &meta.customerID, &o.CreatedByUserID,
+		&meta.statusID, &meta.customerID, &o.CreatedByUserID, &o.RecordVersion,
 	); err != nil {
 		return nil, orderMeta{}, err
 	}

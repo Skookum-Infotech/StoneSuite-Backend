@@ -77,7 +77,14 @@ func GenerateStorageKey(tenantSlug, workflowKey, recordID, attachmentID, fileNam
 		}
 		return -1
 	}, ext)
-	return fmt.Sprintf("%s/%s/%s/%s%s", tenantSlug, workflowKey, recordID, attachmentID, clean)
+	return StorageKeyPrefix(tenantSlug, workflowKey, recordID) + attachmentID + clean
+}
+
+// StorageKeyPrefix is the key prefix every attachment of one record shares
+// (see GenerateStorageKey). Confirm requires it, so a key minted for another
+// record — or for imports, feedback, email — can't be attached here.
+func StorageKeyPrefix(tenantSlug, workflowKey, recordID string) string {
+	return fmt.Sprintf("%s/%s/%s/", tenantSlug, workflowKey, recordID)
 }
 
 // RecordExistsInTenant verifies that a workflow_record with the given id

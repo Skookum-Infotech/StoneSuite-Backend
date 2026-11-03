@@ -69,8 +69,17 @@ func invalidateGrants(q Querier) {
 	}
 }
 
+// InvalidateGrants drops q's tenant's cached effective grants so a change to a
+// user's standing (suspend, deactivate) takes effect on the next request
+// instead of after the cache TTL.
+func InvalidateGrants(q Querier) {
+	invalidateGrants(q)
+}
+
 // EffectiveGrants returns every grant the given control-plane identity has in
-// this tenant, resolved through users -> user_roles -> role_permissions.
+// this tenant, resolved through users -> user_roles -> role_permissions. A
+// user whose status is not 'active' (suspended, disabled, invited) has no
+// grants, so an access token that outlives a deactivation authorizes nothing.
 // Results are cached briefly per tenant pool (ADR-3); callers passing a
 // *pgxpool.Pool benefit from the cache, callers inside a transaction (pgx.Tx)
 // always read through.
@@ -92,6 +101,17 @@ func EffectiveGrantsForRole(ctx context.Context, q Querier, identityID, activeRo
 	if pool, ok := q.(*pgxpool.Pool); ok {
 		key := grantsCacheKey{pool: pool, identityID: identityID, activeRoleID: activeRoleID}
 		if g, ok := grantsCache.Get(key); ok {
+			// The cache is per process, so a deactivation handled by another
+			// machine never invalidates this one: re-check the (cheap) status
+			// on every hit and drop the entry when the user is no longer active.
+			active, err := identityIsActive(ctx, q, identityID)
+			if err != nil {
+				return nil, err
+			}
+			if !active {
+				grantsCache.Delete(key)
+				return nil, nil
+			}
 			return g, nil
 		}
 		g, err := loadEffectiveGrants(ctx, q, identityID, activeRoleID)
@@ -114,13 +134,30 @@ func activeRoleFromContext(ctx context.Context) string {
 	return payload.ActiveRoleID
 }
 
+// identityIsActive reports whether the tenant user for identityID exists and
+// has status 'active'. A missing user is not active.
+func identityIsActive(ctx context.Context, q Querier, identityID string) (bool, error) {
+	var active bool
+	err := q.QueryRow(ctx,
+		`SELECT status = 'active' FROM users WHERE identity_id = $1`, identityID,
+	).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("effective grants: check user status: %w", err)
+	}
+	return active, nil
+}
+
 func loadEffectiveGrants(ctx context.Context, q Querier, identityID, activeRoleID string) ([]Grant, error) {
 	query := `
 		SELECT rp.resource, rp.action, rp.scope
 		FROM users u
 		JOIN user_roles ur       ON ur.user_id = u.id
 		JOIN role_permissions rp ON rp.role_id = ur.role_id
-		WHERE u.identity_id = $1`
+		WHERE u.identity_id = $1
+		  AND u.status = 'active'`
 	args := []any{identityID}
 	if activeRoleID != "" {
 		query += ` AND ur.role_id = $2`

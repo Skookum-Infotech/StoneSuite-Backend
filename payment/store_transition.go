@@ -159,6 +159,9 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditTransition, id, nil, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)
 	}

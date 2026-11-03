@@ -9,7 +9,6 @@ package purchaseorder
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,36 +30,6 @@ type requisitionSnapshot struct {
 	paymentTermsID  *int
 	salesTaxPercent float64
 	customFields    map[string]any
-}
-
-// loadRequisitionSnapshot loads a live requisition's header snapshot by
-// external uuid inside tx (row is not locked — a source document does not
-// change once converted, and requisition has no FOR UPDATE convention
-// elsewhere for this read).
-func loadRequisitionSnapshot(ctx context.Context, tx pgx.Tx, requisitionUUID string) (*requisitionSnapshot, error) {
-	var s requisitionSnapshot
-	var customRaw []byte
-	err := tx.QueryRow(ctx, `
-		SELECT reqn.requisition_id, rs.record_status_code,
-		       reqn.requisition_memo, reqn.requisition_payment_terms,
-		       reqn.requisition_sales_tax_percent, reqn.requisition_custom_fields
-		FROM requisition reqn JOIN lkp_record_status rs ON rs.record_status_id = reqn.requisition_status
-		WHERE reqn.requisition_uuid = $1 AND reqn.requisition_deleted_at IS NULL`, requisitionUUID).Scan(
-		&s.internalID, &s.statusCode,
-		&s.memo, &s.paymentTermsID,
-		&s.salesTaxPercent, &customRaw,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrRequisitionNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load requisition snapshot: %w", err)
-	}
-	s.customFields = map[string]any{}
-	if len(customRaw) > 0 {
-		_ = json.Unmarshal(customRaw, &s.customFields)
-	}
-	return &s, nil
 }
 
 // requisitionSourceLine is one live requisition_item row's frozen values,

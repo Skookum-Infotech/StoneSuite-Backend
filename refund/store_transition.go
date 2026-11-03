@@ -45,6 +45,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	if err != nil {
 		return nil, ClientError{Msg: "Unknown target status: " + toStatusCode}
 	}
+	before, err := getQ(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
 
 	// AD-8 approval gate: a refund may not leave a status that has
 	// configured approvers until it has been approved (except into an
@@ -175,6 +179,9 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		return nil, err
 	}
 
+	if err := auditTx(ctx, tx, auditTransition, id, before, employeeExtra(actorEmployeeID)); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)
 	}

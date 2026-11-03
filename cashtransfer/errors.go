@@ -31,7 +31,10 @@ var ErrNoAccountingPeriod = errors.New("no accounting period exists for this dat
 // own, so controllers keep matching on cashtransfer errors only and never have
 // to import journal.
 func translatePeriodError(err error) error {
+	var jce journal.ClientError
 	switch {
+	case errors.As(err, &jce):
+		return ClientError{Msg: jce.Msg}
 	case errors.Is(err, journal.ErrPeriodClosed):
 		return ErrPeriodClosed
 	case errors.Is(err, journal.ErrNoAccountingPeriod):

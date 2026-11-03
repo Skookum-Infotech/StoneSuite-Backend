@@ -9,10 +9,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
-	"stonesuite-backend/payment"
 	"stonesuite-backend/query"
 	"stonesuite-backend/tenancy"
 )
@@ -80,58 +80,30 @@ func (h *InvoiceOps) authInvoiceByUUID(w http.ResponseWriter, r *http.Request, u
 	return pool, identityID, scope, true
 }
 
-func invoiceFail(w http.ResponseWriter, err error, serverMsg string) {
-	if status, ok := approvalRejectStatus(err); ok {
-		fail(w, status, err.Error())
-		return
-	}
-	switch {
-	case errors.Is(err, invoice.ErrNotFound):
-		fail(w, http.StatusNotFound, "Invoice not found.")
-	case errors.Is(err, invoice.ErrInvalidTransition),
-		errors.Is(err, invoice.ErrVoidWithSettlement),
-		errors.Is(err, invoice.ErrApprovalRequired),
-		errors.Is(err, invoice.ErrApprovalNotRequired):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, invoice.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	default:
-		var ce invoice.ClientError
-		if errors.As(err, &ce) {
-			fail(w, http.StatusBadRequest, ce.Error())
-			return
-		}
-		var pce payment.ClientError
-		if errors.As(err, &pce) {
-			fail(w, http.StatusBadRequest, pce.Error())
-			return
-		}
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 func (h *InvoiceOps) Create(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authInvoice(w, r, authz.ActionCreate)
 	if !ok {
 		return
 	}
 	var in invoice.CreateInvoiceInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
 	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
+	}
 	empID := resolveEmployeeID(r, identityID)
-	inv, err := invoice.Create(r.Context(), pool, in, empID)
+	inv, err := invoice.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		invoiceFail(w, err, "Failed to create invoice.")
 		return
 	}
-	auditInvoice(r, pool, empID, "create", inv.ID, nil, inv)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "invoice": inv})
 }
 
@@ -172,7 +144,7 @@ func (h *InvoiceOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	inv, err := invoice.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	inv, err := invoice.Approve(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, invoice.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -180,7 +152,6 @@ func (h *InvoiceOps) Approve(w http.ResponseWriter, r *http.Request) {
 		invoiceFail(w, err, "Failed to approve invoice.")
 		return
 	}
-	auditInvoice(r, pool, empID, "approve", uuid, nil, inv)
 	if approvalFinalized(inv.StatusCode) {
 		notifyCustomerApproved(r.Context(), h.cp, identityID, inv.Customer.ID, "invoice", "Invoice", inv.Number, inv.GrandTotal, uuid)
 	}
@@ -194,18 +165,15 @@ func (h *InvoiceOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in invoice.UpdateInvoiceInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := invoice.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := invoice.Update(r.Context(), pool, id, in, empID)
+	after, err := invoice.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		invoiceFail(w, err, "Failed to update invoice.")
 		return
 	}
-	auditInvoice(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": after})
 }
 
@@ -215,13 +183,11 @@ func (h *InvoiceOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := invoice.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := invoice.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := invoice.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		invoiceFail(w, err, "Failed to delete invoice.")
 		return
 	}
-	auditInvoice(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Invoice deleted."})
 }
 
@@ -293,7 +259,7 @@ func (h *InvoiceOps) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rec, err := invoice.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	rec, err := invoice.Reject(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin, req.Reason)
 	if err != nil {
 		if errors.Is(err, invoice.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -301,6 +267,5 @@ func (h *InvoiceOps) Reject(w http.ResponseWriter, r *http.Request) {
 		invoiceFail(w, err, "Failed to reject invoice.")
 		return
 	}
-	auditInvoice(r, pool, empID, "reject", uuid, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": rec})
 }

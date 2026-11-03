@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/dberr"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
@@ -136,6 +138,12 @@ func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
 		errors.Is(err, payment.ErrApprovalRequired),
 		errors.Is(err, payment.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, payment.ErrVersionConflict):
+		fail(w, http.StatusConflict, "This payment was changed by someone else — reload and try again")
+	case errors.Is(err, idempotency.ErrKeyReuse):
+		fail(w, http.StatusConflict, "Idempotency-Key was already used with a different request")
+	case errors.Is(err, idempotency.ErrInProgress):
+		fail(w, http.StatusConflict, "A request with this Idempotency-Key is still in progress")
 	case errors.Is(err, payment.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())
 	default:
@@ -157,6 +165,10 @@ func paymentFail(w http.ResponseWriter, err error, serverMsg string) {
 			fail(w, http.StatusBadRequest, ife.Error())
 			return
 		}
+		if status, msg, ok := dberr.Map(err); ok {
+			fail(w, status, msg)
+			return
+		}
 		fail(w, http.StatusInternalServerError, serverMsg)
 	}
 }
@@ -167,9 +179,17 @@ func (h *PaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in payment.CreatePaymentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	for _, app := range in.Applications {
 		if !h.invoiceInScopeForUpdate(w, r, pool, identityID, app.InvoiceUUID) {
@@ -177,12 +197,11 @@ func (h *PaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	empID := resolveEmployeeID(r, identityID)
-	p, err := payment.Create(r.Context(), pool, in, empID)
+	p, err := payment.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		paymentFail(w, err, "Failed to create payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "create", p.ID, nil, p)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "payment": p})
 }
 
@@ -223,7 +242,7 @@ func (h *PaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	p, err := payment.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	p, err := payment.Approve(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, payment.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -231,7 +250,6 @@ func (h *PaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 		paymentFail(w, err, "Failed to approve payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "approve", uuid, nil, p)
 	if approvalFinalized(p.StatusCode) {
 		notifyCustomerApproved(r.Context(), h.cp, identityID, p.Customer.ID, "payment", "Payment", p.Number, p.Amount, uuid)
 	}
@@ -245,18 +263,15 @@ func (h *PaymentOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in payment.UpdatePaymentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := payment.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := payment.Update(r.Context(), pool, id, in, empID)
+	after, err := payment.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		paymentFail(w, err, "Failed to update payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": after})
 }
 
@@ -266,13 +281,11 @@ func (h *PaymentOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := payment.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := payment.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := payment.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		paymentFail(w, err, "Failed to delete payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Payment deleted."})
 }
 
@@ -344,7 +357,7 @@ func (h *PaymentOps) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rec, err := payment.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	rec, err := payment.Reject(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin, req.Reason)
 	if err != nil {
 		if errors.Is(err, payment.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -352,6 +365,5 @@ func (h *PaymentOps) Reject(w http.ResponseWriter, r *http.Request) {
 		paymentFail(w, err, "Failed to reject payment.")
 		return
 	}
-	auditPayment(r, pool, empID, "reject", uuid, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": rec})
 }

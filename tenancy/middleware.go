@@ -22,11 +22,24 @@ const (
 type Resolver struct {
 	cp     *ControlPlane
 	router *Router
+	gate   *MigrationGate
 }
 
 // NewResolver builds a Resolver from a control plane and router.
 func NewResolver(cp *ControlPlane, router *Router) *Resolver {
 	return &Resolver{cp: cp, router: router}
+}
+
+// WithMigrationGate makes the resolver answer 503 for tenants still being
+// migrated at boot. Returns the resolver for chaining.
+func (rs *Resolver) WithMigrationGate(g *MigrationGate) *Resolver {
+	rs.gate = g
+	return rs
+}
+
+// rejectIfMigrating writes a 503 and returns true while the tenant is gated.
+func (rs *Resolver) rejectIfMigrating(w http.ResponseWriter, tenantID string) bool {
+	return rejectIfMigrating(w, rs.gate, tenantID)
 }
 
 // Middleware resolves the authenticated request's tenant and attaches the
@@ -56,6 +69,9 @@ func (rs *Resolver) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		if rs.rejectIfMigrating(w, tenant.ID) {
+			return
+		}
 		if !tenant.Servable() {
 			writeUnservable(w, tenant)
 			return

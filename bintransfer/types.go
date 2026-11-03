@@ -98,6 +98,15 @@ type Input struct {
 	OwnerEmployeeID *int           `json:"ownerEmployeeId,omitempty"`
 	CustomFields    map[string]any `json:"customFields"`
 	Lines           []LineInput    `json:"lines"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the bin transfer the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, an
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // LineInput is one line on the way in. UnitID and ToBinID are uuids; the

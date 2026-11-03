@@ -45,6 +45,9 @@ func CreateInTx(ctx context.Context, tx pgx.Tx, in CreateOrderInput, actorEmploy
 	if in.SalesTaxPercent < 0 || in.SalesTaxPercent > 100 {
 		return nil, ClientError{Msg: "Sales tax percent must be between 0 and 100."}
 	}
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, effectiveOrderDate(in.OrderDate), in.ExpectedDelivery); err != nil {
+		return nil, err
+	}
 	// The installation date is checked up front (no DB needed). Blank is allowed
 	// here — the HTTP layer is what makes it mandatory — and then no schedule is
 	// planned until a later update supplies one.
@@ -101,6 +104,9 @@ func CreateInTx(ctx context.Context, tx pgx.Tx, in CreateOrderInput, actorEmploy
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The sales order total cannot be negative."}
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, sordRecordTypeCode)
 	if err != nil {

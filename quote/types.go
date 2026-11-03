@@ -80,12 +80,21 @@ type CreateQuoteInput struct {
 	CustomerUUID string  `json:"customerUuid"`
 	EstimateUUID *string `json:"estimateUuid,omitempty"`
 	quoteFields
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the quote the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateQuoteInput mirrors CreateQuoteInput minus the customer (an
 // quote's customer is fixed after creation).
 type UpdateQuoteInput struct {
 	quoteFields
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // CustomerRef is the light customer reference on an Quote response.
@@ -169,6 +178,7 @@ type Quote struct {
 	GrandTotal     float64   `json:"grandTotal"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	RecordVersion  int       `json:"recordVersion"`
 	EstimateUUID   *string   `json:"estimateUuid,omitempty"`
 	Items          []Line    `json:"items,omitempty"`
 }

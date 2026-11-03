@@ -107,8 +107,8 @@ const applicationSelect = `
 	WHERE ra.refund_id = $1 AND ra.application_deleted_at IS NULL
 	ORDER BY ra.application_created_at ASC`
 
-func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Application, error) {
-	rows, err := pool.Query(ctx, applicationSelect, internalID)
+func loadApplications(ctx context.Context, q workflow.Querier, internalID int) ([]Application, error) {
+	rows, err := q.Query(ctx, applicationSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load refund applications: %w", err)
 	}
@@ -126,7 +126,13 @@ func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) (
 
 // Get loads a single live refund (header + applications) by its external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Refund, error) {
-	rf, meta, err := scanRefund(pool.QueryRow(ctx, headerSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*Refund, error) {
+	rf, meta, err := scanRefund(q.QueryRow(ctx, headerSelect+`
 		WHERE rfnd.refund_uuid = $1 AND rfnd.refund_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -134,7 +140,7 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*Refund, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get refund: %w", err)
 	}
-	apps, err := loadApplications(ctx, pool, meta.internalID)
+	apps, err := loadApplications(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}

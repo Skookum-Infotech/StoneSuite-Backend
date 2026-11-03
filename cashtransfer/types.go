@@ -57,6 +57,12 @@ type CreateInput struct {
 	InternalNotes   string         `json:"internalNotes"`
 	OwnerEmployeeID *int           `json:"ownerEmployeeId,omitempty"`
 	CustomFields    map[string]any `json:"customFields"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the transfer the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateInput is the request payload for PATCH .../{uuid} (Draft only —
@@ -78,6 +84,10 @@ type UpdateInput struct {
 	// deliberately means "no version check requested," not "expect version 0."
 	// Mirrors chartofaccounts.UpdateInput.RecordVersion.
 	RecordVersion int `json:"recordVersion"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent (a
+	// pointer, so 0 is distinguishable from absent), the update is refused
+	// with ErrVersionConflict if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // Page is one keyset-paginated slice of cash transfers.

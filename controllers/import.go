@@ -243,7 +243,9 @@ func (h *ImportOps) CreateJob(w http.ResponseWriter, r *http.Request) {
 	// storageKey must be one this tenant's own presign call minted — never
 	// trust a client-supplied key blindly, or one tenant could point another
 	// tenant's job at its own bucket path.
-	if !strings.HasPrefix(req.StorageKey, tenant.Slug+"/imports/") {
+	// One segment after the prefix: "slug/imports/../<record>/<file>" would
+	// otherwise pass a plain prefix check and read another record's file.
+	if !attachmentKeyForRecord(req.StorageKey, tenant.Slug+"/imports/") {
 		fail(w, http.StatusBadRequest, "Invalid storage key.")
 		return
 	}

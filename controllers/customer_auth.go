@@ -260,20 +260,6 @@ func (h *CustomerAuthOps) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var identityID string
-	err = pool.QueryRow(r.Context(), `
-		SELECT id FROM customer_identities
-		WHERE invite_token = $1 AND status = 'invited' AND invite_token_expiry > NOW()`, req.Token,
-	).Scan(&identityID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		fail(w, http.StatusBadRequest, "Invalid or expired invitation.")
-		return
-	}
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to accept invitation.")
-		return
-	}
-
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), 10)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to hash password.")
@@ -281,14 +267,21 @@ func (h *CustomerAuthOps) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	fullName := strings.TrimSpace(req.FullName)
 
-	_, err = pool.Exec(r.Context(), `
+	// The token is stored hashed. Lookup and activation are one conditional
+	// UPDATE, so two concurrent accepts cannot both succeed: the loser matches
+	// no row. Only the hash matches; a raw (pre-hashing) value is refused.
+	tag, err := pool.Exec(r.Context(), `
 		UPDATE customer_identities SET
 			password_hash = $1, status = 'active', invite_token = NULL, invite_token_expiry = NULL,
 			full_name = CASE WHEN $2 = '' THEN full_name ELSE $2 END, updated_at = NOW()
-		WHERE id = $3`,
-		string(hash), fullName, identityID)
+		WHERE invite_token = $3 AND status = 'invited' AND invite_token_expiry > NOW()`,
+		string(hash), fullName, tenancy.HashToken(req.Token))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to activate account.")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		fail(w, http.StatusBadRequest, "Invalid or expired invitation.")
 		return
 	}
 

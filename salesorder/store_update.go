@@ -44,14 +44,18 @@ func UpdateInTx(ctx context.Context, tx pgx.Tx, uuid string, in UpdateOrderInput
 		return ClientError{Msg: "Sales tax percent must be between 0 and 100."}
 	}
 
-	var internalID, custInternalID int
+	var internalID, custInternalID, recordVersion int
 	var statusCode, storedInstall string
+	// FOR UPDATE OF so: the version check below and the write that follows
+	// must see the same row, so a concurrent save waits here.
 	err := tx.QueryRow(ctx, `
 		SELECT so.sales_order_id, so.sales_order_customer_id, rs.record_status_code,
-		       COALESCE(to_char(so.sales_order_scheduled_install_date,'YYYY-MM-DD'),'')
+		       COALESCE(to_char(so.sales_order_scheduled_install_date,'YYYY-MM-DD'),''),
+		       so.sales_order_record_version
 		FROM sales_order so JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
-		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, uuid,
-	).Scan(&internalID, &custInternalID, &statusCode, &storedInstall)
+		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL
+		FOR UPDATE OF so`, uuid,
+	).Scan(&internalID, &custInternalID, &statusCode, &storedInstall, &recordVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -60,6 +64,12 @@ func UpdateInTx(ctx context.Context, tx pgx.Tx, uuid string, in UpdateOrderInput
 	}
 	if statusCode == "FILL" || statusCode == "CANC" {
 		return ClientError{Msg: "A filled or cancelled order cannot be edited."}
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, recordVersion); err != nil {
+		return err
+	}
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, effectiveOrderDate(in.OrderDate), in.ExpectedDelivery); err != nil {
+		return err
 	}
 	// A blank date leaves the stored one alone; the date already on the order is
 	// accepted even once it has slipped into the past; only a different date is
@@ -94,6 +104,9 @@ func UpdateInTx(ctx context.Context, tx pgx.Tx, uuid string, in UpdateOrderInput
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if header.GrandTotal < 0 {
+		return ClientError{Msg: "The sales order total cannot be negative."}
+	}
 
 	dueDate, err := resolvePaymentDueDate(ctx, tx, in.OrderDate, in.PaymentDueDate, in.PaymentTermsID)
 	if err != nil {
@@ -194,7 +207,11 @@ func customerSnapshotByInternalID(ctx context.Context, q workflow.Querier, custI
 // ----- SoftDelete ------------------------------------------------------------
 
 // SoftDelete marks a live order deleted and releases the stock it was holding,
-// so a deleted draft does not keep stone back from other orders.
+// so a deleted draft does not keep stone back from other orders. It refuses an
+// order that is partly or fully fulfilled, or that a live invoice, fabrication
+// job, credit memo or child order still points at (ErrHasDependents): deleting
+// the parent would orphan a document that bills or builds from it. The checks
+// and the delete run under the order's row lock.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -203,16 +220,30 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var internalID int
+	var statusCode string
 	err = tx.QueryRow(ctx, `
-		UPDATE sales_order
-		SET sales_order_deleted_at = NOW(), sales_order_deleted_by = $2
-		WHERE sales_order_uuid = $1 AND sales_order_deleted_at IS NULL
-		RETURNING sales_order_id`,
-		uuid, actorOrSystem(actorEmployeeID)).Scan(&internalID)
+		SELECT so.sales_order_id, rs.record_status_code
+		FROM sales_order so JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
+		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL
+		FOR UPDATE OF so`, uuid).Scan(&internalID, &statusCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
+		return fmt.Errorf("lock sales order for delete: %w", err)
+	}
+	if !deletableStatus(statusCode) {
+		return fmt.Errorf("%w: it is already being fulfilled", ErrHasDependents)
+	}
+	if err := refuseIfReferenced(ctx, tx, internalID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE sales_order
+		SET sales_order_deleted_at = NOW(), sales_order_deleted_by = $2
+		WHERE sales_order_id = $1`,
+		internalID, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete sales order: %w", err)
 	}
 	if err := inventory.ReleaseOrder(ctx, tx, internalID); err != nil {

@@ -260,7 +260,7 @@ func TestRefreshSession_PlatformAdminWithUnservableHomeTenantStillRefreshes_DB(t
 	owner := f.seedUnservableOwner(t)
 	admin := f.seedHomeIdentity(t, owner.ID, "platform-admin")
 	require.NoError(t, f.cp.AddPlatformAdmin(context.Background(), admin.ID))
-	refreshToken, _, err := issueRefreshToken(context.Background(), f.cp, admin.ID)
+	refreshToken, _, err := issueRefreshToken(context.Background(), f.cp, admin.ID, false)
 	require.NoError(t, err)
 
 	rec := f.refresh(t, refreshToken)

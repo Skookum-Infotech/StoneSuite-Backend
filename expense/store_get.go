@@ -28,6 +28,7 @@ const expSelect = `
 	       exp.expense_approved_by, exp.expense_rejected_by, exp.expense_rejection_reason,
 	       exp.expense_custom_fields,
 	       exp.expense_total,
+	       exp.expense_record_version,
 	       exp.expense_created_at, exp.expense_updated_at,
 	       exp.expense_status
 	FROM expense exp
@@ -53,6 +54,7 @@ func scanExpense(row pgx.Row) (*Expense, expMeta, error) {
 		&p.ApprovedByEmployeeID, &p.RejectedByEmployeeID, &p.RejectionReason,
 		&customRaw,
 		&p.Total,
+		&p.RecordVersion,
 		&p.CreatedAt, &p.UpdatedAt,
 		&meta.statusID,
 	); err != nil {

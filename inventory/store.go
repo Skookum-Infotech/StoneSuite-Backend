@@ -49,6 +49,16 @@ func validateItemInput(in *CreateItemInput) error {
 	if in.ThicknessMM < 0 {
 		return ClientError{Msg: "Thickness cannot be negative."}
 	}
+	if in.LengthMM < 0 || in.WidthMM < 0 {
+		return ClientError{Msg: "Length and width cannot be negative."}
+	}
+	if strings.TrimSpace(in.ThicknessUnit) != "" {
+		unit, ok := linedim.NormalizeUnit(in.ThicknessUnit)
+		if !ok {
+			return ClientError{Msg: "Thickness unit must be one of " + strings.Join(linedim.Units, ", ") + "."}
+		}
+		in.ThicknessUnit = unit
+	}
 	// Blank stays blank — create defaults it and update keeps what the item has —
 	// so only a stated unit is checked.
 	if strings.TrimSpace(in.DimensionUnit) != "" {

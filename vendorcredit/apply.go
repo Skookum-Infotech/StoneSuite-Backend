@@ -132,8 +132,8 @@ func recomputeCredit(ctx context.Context, tx pgx.Tx, lc lockedCredit, action str
 // the credit is not approved or the bill isn't in a payable status, and (400)
 // on a vendor mismatch.
 func Apply(ctx context.Context, pool *pgxpool.Pool, creditUUID, billUUID string, amount float64, actorEmployeeID int) (*VendorCredit, error) {
-	if amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount("amount", amount); err != nil {
+		return nil, err
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -141,29 +141,41 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, creditUUID, billUUID string,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	lc, err := lockVendorCreditForUpdate(ctx, tx, creditUUID) // lock order: vendor_credit first
-	if err != nil {
+	if err := applyTx(ctx, tx, creditUUID, billUUID, amount, actorEmployeeID); err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit apply: %w", err)
+	}
+	return Get(ctx, pool, creditUUID)
+}
+
+// applyTx is Apply's body inside a caller-owned transaction: it neither begins
+// nor commits, so ApplyIdempotent can claim its key in the same transaction.
+func applyTx(ctx context.Context, tx pgx.Tx, creditUUID, billUUID string, amount float64, actorEmployeeID int) error {
+	lc, err := lockVendorCreditForUpdate(ctx, tx, creditUUID) // lock order: vendor_credit first
+	if err != nil {
+		return err
+	}
 	if !appliableStatuses[lc.statusCode] {
-		return nil, ClientError{Msg: "Cannot apply a " + lc.statusCode + " vendor credit; it must be approved first."}
+		return ClientError{Msg: "Cannot apply a " + lc.statusCode + " vendor credit; it must be approved first."}
 	}
 	li, err := vendorbill.LockForUpdate(ctx, tx, billUUID) // then vendor bill, always last
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if li.VendorID != lc.vendorID {
-		return nil, ClientError{Msg: "Vendor bill belongs to a different vendor than the vendor credit."}
+		return ClientError{Msg: "Vendor bill belongs to a different vendor than the vendor credit."}
 	}
 	if !vendorbill.PayableStatuses[li.StatusCode] {
-		return nil, ClientError{Msg: "Cannot apply credit to a " + li.StatusCode + " vendor bill; it must be approved first."}
+		return ClientError{Msg: "Cannot apply credit to a " + li.StatusCode + " vendor bill; it must be approved first."}
 	}
 
 	var applied float64
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(application_amount),0) FROM vendor_credit_application
 		WHERE vendor_credit_id = $1 AND application_deleted_at IS NULL`, lc.internalID).Scan(&applied); err != nil {
-		return nil, fmt.Errorf("sum vendor credit applications: %w", err)
+		return fmt.Errorf("sum vendor credit applications: %w", err)
 	}
 	unapplied := round2(lc.grandTotal - applied)
 	capAmt := unapplied
@@ -171,7 +183,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, creditUUID, billUUID string,
 		capAmt = b
 	}
 	if amount > capAmt+0.001 {
-		return nil, ClientError{Msg: "Amount exceeds available credit or vendor bill balance."}
+		return ClientError{Msg: "Amount exceeds available credit or vendor bill balance."}
 	}
 
 	// uq_vcrd_app_live_pair permits one live row per (credit, bill), so a
@@ -186,30 +198,27 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, creditUUID, billUUID string,
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO vendor_credit_application (vendor_credit_id, vendor_bill_id, application_amount, application_created_by)
 			VALUES ($1,$2,$3,$4)`, lc.internalID, li.InternalID, round2(amount), nullableInt(actorEmployeeID)); err != nil {
-			return nil, fmt.Errorf("insert vendor credit application: %w", err)
+			return fmt.Errorf("insert vendor credit application: %w", err)
 		}
 	case err != nil:
-		return nil, fmt.Errorf("check existing application: %w", err)
+		return fmt.Errorf("check existing application: %w", err)
 	default:
 		if _, err := tx.Exec(ctx, `
 			UPDATE vendor_credit_application
 			SET application_amount = application_amount + $1, application_record_version = application_record_version + 1
 			WHERE application_id = $2`, round2(amount), existingID); err != nil {
-			return nil, fmt.Errorf("increase vendor credit application: %w", err)
+			return fmt.Errorf("increase vendor credit application: %w", err)
 		}
 	}
 
 	if err := recomputeCredit(ctx, tx, lc, "apply", actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 	if err := vendorbill.RecomputeBalance(ctx, tx, li, "credit", actorEmployeeID); err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit apply: %w", err)
-	}
-	return Get(ctx, pool, creditUUID)
+	return nil
 }
 
 // Reverse reverses the live application between creditUUID and billUUID

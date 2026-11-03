@@ -23,6 +23,9 @@ func CreateDraftTx(ctx context.Context, tx pgx.Tx, in CreatePurchaseOrderInput, 
 	if err := validateCustom(ctx, tx, in.CustomFields); err != nil {
 		return DraftRef{}, err
 	}
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, in.SalesTaxPercent, effectiveOrderDate(in.OrderDate), in.ExpectedDate); err != nil {
+		return DraftRef{}, err
+	}
 	vendorInternalID, vendorName, err := vendorSnapshot(ctx, tx, in.VendorUUID)
 	if err != nil {
 		return DraftRef{}, err
@@ -37,6 +40,9 @@ func CreateDraftTx(ctx context.Context, tx pgx.Tx, in CreatePurchaseOrderInput, 
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if err := validateTotals("purchase order total", header.GrandTotal); err != nil {
+		return DraftRef{}, err
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, pordRecordTypeCode)
 	if err != nil {

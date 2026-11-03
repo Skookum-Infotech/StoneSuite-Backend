@@ -17,8 +17,7 @@ func newHeadTestClient(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	redirectDefaultClient(t, srv)
-	c := &Client{accessKey: "ak", secretKey: "sk", host: "acct.r2.cloudflarestorage.com"}
+	c := &Client{accessKey: "ak", secretKey: "sk", host: "acct.r2.cloudflarestorage.com", http: redirectClient(t, srv)}
 	return c.WithBucket(headTestBucket)
 }
 

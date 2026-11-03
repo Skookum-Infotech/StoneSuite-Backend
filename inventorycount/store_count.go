@@ -18,6 +18,9 @@ func RecordCounts(ctx context.Context, pool *pgxpool.Pool, uuid string, entries 
 	if len(entries) == 0 {
 		return nil, ClientError{Msg: "No counts were supplied."}
 	}
+	if err := validateCountEntries(entries); err != nil {
+		return nil, err
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin record counts: %w", err)
@@ -98,8 +101,8 @@ func resolveCountedQty(ctx context.Context, tx pgx.Tx, countID int, e CountEntry
 	if e.CountedQty == nil {
 		return 0, ClientError{Msg: "Each entry needs either a counted quantity or found/not-found."}
 	}
-	if *e.CountedQty < 0 {
-		return 0, ClientError{Msg: "A counted quantity cannot be negative."}
+	if err := validateCountedQty(*e.CountedQty); err != nil {
+		return 0, err
 	}
 	return *e.CountedQty, nil
 }

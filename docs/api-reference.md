@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-620 endpoints across 7 surfaces, read from `main.go`.
+638 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 520 |
+| staff token + tenant | 538 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 519 endpoints
+## `tenant` — 537 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -435,6 +435,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/automation/rules` | staff token + tenant | `automationRuleOps.List` |
 | `PUT` | `/api/tenant/automation/rules/{key}` | staff token + tenant | `automationRuleOps.SetEnabled` |
 | `POST` | `/api/tenant/automation/rules/{key}/preview` | staff token + tenant | `controllers.NewAutomationPreviewOps` |
+| `GET` | `/api/tenant/automation/settings` | staff token + tenant | `automationSettingsOps.Get` |
+| `PUT` | `/api/tenant/automation/settings` | staff token + tenant | `automationSettingsOps.Put` |
 
 ### company-locations
 
@@ -490,6 +492,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `DELETE` | `/api/tenant/crm/customer/records/{id}/notes/{noteId}` | staff token + tenant | `customerNoteStaff.Delete` |
 | `PATCH` | `/api/tenant/crm/customer/records/{id}/notes/{noteId}` | staff token + tenant | `customerNoteStaff.UpdateStatus` |
 | `POST` | `/api/tenant/crm/customer/records/{id}/portal-invite` | staff token + tenant | `customerPortalAdmin.PortalInvite` |
+| `GET` | `/api/tenant/crm/customer/records/{id}/transactions` | staff token + tenant | `custTxOps.List` |
+| `GET` | `/api/tenant/crm/customer/records/{id}/transactions/summary` | staff token + tenant | `custTxOps.Summary` |
 | `GET` | `/api/tenant/crm/lookups` | staff token + tenant | `crmLookups.GetLookups` |
 | `GET` | `/api/tenant/crm/statuses` | staff token + tenant | `crm.AllStatuses` |
 | `GET` | `/api/tenant/crm/{workflowKey}/approvals/pending` | staff token + tenant | `crm.PendingApprovals` |
@@ -755,6 +759,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Get` |
 | `PATCH` | `/api/tenant/inventory/items/{uuid}` | staff token + tenant | `inv.Update` |
 | `GET` | `/api/tenant/inventory/items/{uuid}/history` | staff token + tenant | `inv.History` |
+| `GET` | `/api/tenant/inventory/items/{uuid}/stock` | staff token + tenant | `inv.StockForItem` |
 | `GET` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.ListKits` |
 | `POST` | `/api/tenant/inventory/kits` | staff token + tenant | `inv.CreateKit` |
 | `POST` | `/api/tenant/inventory/kits/search` | staff token + tenant | `inv.SearchKits` |
@@ -768,6 +773,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PATCH` | `/api/tenant/inventory/lookups/{kind}/{id}` | staff token + tenant | `invLookup.Update` |
 | `GET` | `/api/tenant/inventory/slabs/{uuid}` | staff token + tenant | `invUnit.Get` |
 | `POST` | `/api/tenant/inventory/slabs/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
+| `PATCH` | `/api/tenant/inventory/stock/reorder-point` | staff token + tenant | `inv.SetReorderPoint` |
+| `POST` | `/api/tenant/inventory/stock/totals` | staff token + tenant | `inv.StockTotals` |
 | `GET` | `/api/tenant/inventory/transfers` | staff token + tenant | `invTrf.List` |
 | `POST` | `/api/tenant/inventory/transfers` | staff token + tenant | `invTrf.Create` |
 | `GET` | `/api/tenant/inventory/transfers/in-transit` | staff token + tenant | `invTrf.InTransit` |
@@ -788,6 +795,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/inventory/units/{uuid}/cut` | staff token + tenant | `invUnit.Cut` |
 | `GET` | `/api/tenant/inventory/units/{uuid}/history` | staff token + tenant | `invUnit.History` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/inspection` | staff token + tenant | `invUnit.Inspect` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/release` | staff token + tenant | `invUnit.ReleaseReservation` |
+| `POST` | `/api/tenant/inventory/units/{uuid}/reserve` | staff token + tenant | `invUnit.Reserve` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
 | `GET` | `/api/tenant/inventory/warehouses` | staff token + tenant | `invWh.List` |
 | `GET` | `/api/tenant/inventory/warehouses/{uuid}` | staff token + tenant | `invWh.Get` |
@@ -892,6 +901,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/purchase-orders/{uuid}/audit` | staff token + tenant | `poOps.Audit` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/convert-to-bill` | staff token + tenant | `poOps.ConvertToBill` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/next-slab-serial` | staff token + tenant | `irOps.NextSlabSequence` |
+| `GET` | `/api/tenant/purchase-orders/{uuid}/on-order-slabs` | staff token + tenant | `irOps.OnOrderSlabs` |
 | `GET` | `/api/tenant/purchase-orders/{uuid}/receipts` | staff token + tenant | `irOps.ForPurchaseOrder` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/reject` | staff token + tenant | `poOps.Reject` |
 | `POST` | `/api/tenant/purchase-orders/{uuid}/resend` | staff token + tenant | `poOps.ResendToVendor` |
@@ -951,6 +961,13 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/refunds/{uuid}/reject` | staff token + tenant | `rfndOps.Reject` |
 | `POST` | `/api/tenant/refunds/{uuid}/transition` | staff token + tenant | `rfndOps.Transition` |
 | `POST` | `/api/tenant/refunds/{uuid}/unapply` | staff token + tenant | `rfndOps.Unapply` |
+
+### replenishment
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/replenishment` | staff token + tenant | `replenishmentOps.List` |
+| `POST` | `/api/tenant/replenishment/draft` | staff token + tenant | `replenishmentOps.Draft` |
 
 ### requisitions
 
@@ -1097,6 +1114,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/vendors/{uuid}` | staff token + tenant | `vnd.Get` |
 | `PATCH` | `/api/tenant/vendors/{uuid}` | staff token + tenant | `vnd.Update` |
 | `GET` | `/api/tenant/vendors/{uuid}/audit` | staff token + tenant | `vnd.Audit` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions` | staff token + tenant | `vndTx.List` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/aging` | staff token + tenant | `vndTx.Aging` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/chain` | staff token + tenant | `vndTx.Chain` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/export.csv` | staff token + tenant | `vndTx.Export` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/scheduled` | staff token + tenant | `vndTx.Scheduled` |
+| `GET` | `/api/tenant/vendors/{uuid}/transactions/summary` | staff token + tenant | `vndTx.Summary` |
 | `POST` | `/api/tenant/vendors/{uuid}/transition` | staff token + tenant | `vnd.Transition` |
 
 ### workflows

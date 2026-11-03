@@ -177,6 +177,12 @@ type CreateInvoiceInput struct {
 	Adjustment         float64            `json:"adjustment"`
 	CustomFields       map[string]any     `json:"customFields"`
 	Items              []InvoiceLineInput `json:"items"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the invoice the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateInvoiceInput is the request payload for PATCH /api/tenant/invoices/{uuid}.
@@ -202,6 +208,9 @@ type UpdateInvoiceInput struct {
 	Adjustment         float64            `json:"adjustment"`
 	CustomFields       map[string]any     `json:"customFields"`
 	Items              []InvoiceLineInput `json:"items"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // Page is one page of invoices plus keyset-pagination state.

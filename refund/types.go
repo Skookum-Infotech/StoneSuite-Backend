@@ -85,6 +85,12 @@ type CreateRefundInput struct {
 	PaymentUUID    string `json:"paymentUuid,omitempty"`
 	CreditMemoUUID string `json:"creditMemoUuid,omitempty"`
 	InvoiceUUID    string `json:"invoiceUuid,omitempty"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the refund the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateRefundInput is the request payload for PATCH /api/tenant/refunds/{uuid}.
@@ -100,6 +106,9 @@ type UpdateRefundInput struct {
 	Memo            string         `json:"memo"`
 	InternalNotes   string         `json:"internalNotes"`
 	CustomFields    map[string]any `json:"customFields"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // Page is one page of refunds plus keyset-pagination state.

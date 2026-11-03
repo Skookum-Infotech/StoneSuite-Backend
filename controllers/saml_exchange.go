@@ -80,7 +80,7 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 	// Non-fatal, exactly like TenantLogin: the session still works without a
 	// refresh token, the caller just re-authenticates when the access token
 	// expires.
-	refreshRaw, refreshExpiry, err := issueRefreshToken(ctx, h.cp, identity.ID)
+	refreshRaw, refreshExpiry, err := issueRefreshToken(ctx, h.cp, identity.ID, false)
 	if err != nil {
 		slog.Warn("saml exchange: failed to issue refresh token",
 			slog.String("identity_id", identity.ID), slog.String("error", err.Error()))

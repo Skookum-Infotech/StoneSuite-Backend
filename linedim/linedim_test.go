@@ -158,3 +158,77 @@ func TestIsAreaUnit(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveThickness(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    float64
+		unit     string
+		area     string
+		wantVal  float64
+		wantUnit string
+		wantErr  string // substring; "" = no error
+	}{
+		{name: "inches", value: 0.75, unit: "in", area: "SQFT", wantVal: 0.75, wantUnit: "in"},
+		{name: "blank unit means inches", value: 1.25, unit: "", area: "SQFT", wantVal: 1.25, wantUnit: "in"},
+		{name: "centimetres on a square-metre line", value: 3, unit: "cm", area: "SQM", wantVal: 3, wantUnit: "cm"},
+		{name: "rounds to two decimals", value: 0.754, unit: "in", area: "SQFT", wantVal: 0.75, wantUnit: "in"},
+		{name: "unit and area are case tolerant", value: 2, unit: " CM ", area: " sqft ", wantVal: 2, wantUnit: "cm"},
+		{name: "exactly one metre is allowed", value: 100, unit: "cm", area: "SQFT", wantVal: 100, wantUnit: "cm"},
+
+		{name: "zero", value: 0, unit: "in", area: "SQFT", wantErr: "greater than zero"},
+		{name: "negative", value: -1, unit: "in", area: "SQFT", wantErr: "greater than zero"},
+		{name: "rounds down to zero", value: 0.004, unit: "in", area: "SQFT", wantErr: "greater than zero"},
+		{name: "past a metre", value: 101, unit: "cm", area: "SQFT", wantErr: "cannot exceed 1 m"},
+		{name: "past a metre in feet", value: 4, unit: "ft", area: "SQFT", wantErr: "cannot exceed 1 m"},
+		{name: "unknown unit", value: 1, unit: "yd", area: "SQFT", wantErr: "must be one of mm, cm, in, ft, m"},
+		{name: "not an area line", value: 1, unit: "in", area: "EA", wantErr: "SQFT or SQM"},
+		{name: "free-text line", value: 1, unit: "in", area: "", wantErr: "SQFT or SQM"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			val, unit, msg := ResolveThickness(tc.value, tc.unit, tc.area)
+			if tc.wantErr != "" {
+				if !strings.Contains(msg, tc.wantErr) {
+					t.Fatalf("msg = %q, want it to contain %q", msg, tc.wantErr)
+				}
+				return
+			}
+			if msg != "" {
+				t.Fatalf("unexpected error %q", msg)
+			}
+			if math.Abs(val-tc.wantVal) > 1e-9 || unit != tc.wantUnit {
+				t.Errorf("got (%v, %q), want (%v, %q)", val, unit, tc.wantVal, tc.wantUnit)
+			}
+		})
+	}
+}
+
+func TestToMM(t *testing.T) {
+	tests := []struct {
+		name  string
+		value float64
+		unit  string
+		want  float64
+	}{
+		{name: "an inch is 25.4 mm", value: 1, unit: "in", want: 25.4},
+		{name: "ten feet", value: 10, unit: "ft", want: 3048},
+		{name: "a 120 x 60 in slab side", value: 120, unit: "in", want: 3048},
+		{name: "centimetres", value: 30.48, unit: "cm", want: 304.8},
+		{name: "millimetres pass through", value: 18.5, unit: "mm", want: 18.5},
+		{name: "metres", value: 1.5, unit: "m", want: 1500},
+		{name: "blank unit means inches", value: 2, unit: "", want: 50.8},
+		{name: "rounds to two decimals", value: 0.333, unit: "in", want: 8.46},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ToMM(tc.value, tc.unit)
+			if !ok || math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("ToMM(%v, %q) = (%v, %v), want (%v, true)", tc.value, tc.unit, got, ok, tc.want)
+			}
+		})
+	}
+	if _, ok := ToMM(1, "yd"); ok {
+		t.Error("ToMM accepted an unknown unit")
+	}
+}

@@ -88,7 +88,7 @@ func Post(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID 
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create journal entry: %w", err)
+		return nil, fmt.Errorf("create journal entry: %w", translatePeriodError(err))
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -106,6 +106,9 @@ func Post(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID 
 	}
 	writeHistory(ctx, tx, ctInternalID, "post", &curStatusID, &postedStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditPost, uuid, nil, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit post cash transfer: %w", err)
 	}

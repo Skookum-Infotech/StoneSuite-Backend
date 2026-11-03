@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -102,10 +103,41 @@ func CommitJob(ctx context.Context, pool *pgxpool.Pool, store crmstore.Store, ro
 			continue
 		}
 
-		if err := rows.MarkCommitted(ctx, row.ID, rec.ID); err != nil {
-			return summary, fmt.Errorf("mark row %s committed: %w", row.ID, err)
+		if err := markCommitted(ctx, rows, row.ID, rec.ID); err != nil {
+			return summary, fmt.Errorf("mark row %s committed (record %s was created): %w", row.ID, rec.ID, err)
 		}
 		summary.Committed++
 	}
 	return summary, nil
+}
+
+const (
+	// markCommittedAttempts bounds retries of the row-to-record link write.
+	markCommittedAttempts = 3
+	// markCommittedTimeout bounds each attempt, independent of the caller's ctx.
+	markCommittedTimeout = 5 * time.Second
+	// markCommittedBackoff is the pause before attempt n+1, times n.
+	markCommittedBackoff = 200 * time.Millisecond
+)
+
+// markCommitted links a staged row to the record CreateRecord just made. By
+// the time it runs the record exists, so losing this write means a re-run
+// commits the row again and creates a duplicate. It therefore ignores the
+// caller's cancellation (a client that disconnects mid-commit used to land
+// exactly here) and retries a few times before giving up.
+func markCommitted(ctx context.Context, rows rowUpdater, rowID, recordID string) error {
+	detached := context.WithoutCancel(ctx)
+	var err error
+	for attempt := 1; attempt <= markCommittedAttempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(detached, markCommittedTimeout)
+		err = rows.MarkCommitted(attemptCtx, rowID, recordID)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if attempt < markCommittedAttempts {
+			time.Sleep(time.Duration(attempt) * markCommittedBackoff)
+		}
+	}
+	return err
 }

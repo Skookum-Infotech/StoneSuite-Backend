@@ -19,6 +19,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateRequi
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
 	}
+	if err := validateWriteInput(len(in.Items), in.SalesTaxPercent, in.NeededByDate); err != nil {
+		return nil, err
+	}
 	priority, err := orNormal(in.Priority)
 	if err != nil {
 		return nil, err
@@ -30,14 +33,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateRequi
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID int
+	var internalID, recordVersion int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT reqn.requisition_id, rs.record_status_code
+		SELECT reqn.requisition_id, rs.record_status_code, reqn.requisition_record_version
 		FROM requisition reqn JOIN lkp_record_status rs ON rs.record_status_id = reqn.requisition_status
 		WHERE reqn.requisition_uuid = $1 AND reqn.requisition_deleted_at IS NULL
 		FOR UPDATE OF reqn`, uuid,
-	).Scan(&internalID, &statusCode)
+	).Scan(&internalID, &statusCode, &recordVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -46,6 +49,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateRequi
 	}
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft requisition can be edited. Recall it to draft first."}
+	}
+	// Checked under the row lock, so a save that landed after the caller
+	// loaded the form is caught rather than silently overwritten.
+	if err := checkExpectedVersion(in.ExpectedVersion, recordVersion); err != nil {
+		return nil, err
 	}
 
 	var vendorInternalID any
@@ -67,6 +75,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateRequi
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.SalesTaxPercent)
+	if err := validateTotals("requisition total", header.EstimatedTotal); err != nil {
+		return nil, err
+	}
 
 	requestedByID := in.RequestedByEmployeeID
 	if requestedByID <= 0 {
@@ -127,28 +138,53 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateRequi
 
 // SoftDelete marks a live requisition deleted. Only DRFT and CANC
 // requisitions may be deleted (AD-11) — a request visible to an approver
-// keeps its trail.
+// keeps its trail — and never once it has been converted into a live
+// purchase order (ErrHasDependents). The checks and the delete run under the
+// requisition's row lock; the convert path reads the requisition FOR SHARE, so
+// a conversion cannot commit between the check and the delete.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	tag, err := pool.Exec(ctx, `
-		UPDATE requisition reqn
-		SET requisition_deleted_at = NOW(), requisition_deleted_by = $2
-		FROM lkp_record_status rs
-		WHERE reqn.requisition_uuid = $1 AND reqn.requisition_deleted_at IS NULL
-		  AND rs.record_status_id = reqn.requisition_status
-		  AND rs.record_status_code IN ('DRFT','CANC')`,
-		uuid, actorOrSystem(actorEmployeeID))
+	tx, err := pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin delete requisition: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var internalID int
+	var statusCode string
+	err = tx.QueryRow(ctx, `
+		SELECT reqn.requisition_id, rs.record_status_code
+		FROM requisition reqn JOIN lkp_record_status rs ON rs.record_status_id = reqn.requisition_status
+		WHERE reqn.requisition_uuid = $1 AND reqn.requisition_deleted_at IS NULL
+		FOR UPDATE OF reqn`, uuid).Scan(&internalID, &statusCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock requisition for delete: %w", err)
+	}
+	if !deletableStatus(statusCode) {
+		return ClientError{Msg: "Only a draft or cancelled requisition can be deleted."}
+	}
+	var converted int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM requisition_conversion rc
+		JOIN purchase_order po ON po.purchase_order_id = rc.purchase_order_id AND po.purchase_order_deleted_at IS NULL
+		WHERE rc.requisition_id = $1`, internalID).Scan(&converted); err != nil {
+		return fmt.Errorf("count requisition conversions: %w", err)
+	}
+	if converted > 0 {
+		return fmt.Errorf("%w: it has been converted to a purchase order", ErrHasDependents)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE requisition
+		SET requisition_deleted_at = NOW(), requisition_deleted_by = $2
+		WHERE requisition_id = $1`,
+		internalID, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete requisition: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish "not found" from "found but not deletable" for the 400/404 split.
-		var exists bool
-		if qerr := pool.QueryRow(ctx, `
-			SELECT EXISTS(SELECT 1 FROM requisition
-				WHERE requisition_uuid = $1 AND requisition_deleted_at IS NULL)`, uuid).Scan(&exists); qerr == nil && exists {
-			return ClientError{Msg: "Only a draft or cancelled requisition can be deleted."}
-		}
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete requisition: %w", err)
 	}
 	return nil
 }

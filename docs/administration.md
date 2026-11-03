@@ -147,6 +147,23 @@ nothing is checked and no
 alerts are sent; switching it back on resumes at the next check and may raise
 anything from the last month that was missed.
 
+## Automation
+
+Configure → Automation lists every scheduled reminder StoneSuite sends on your
+workspace's behalf: invoice payment reminders (emailed to customers), quote and
+estimate expiry reminders, and stuck-approval reminders (internal only). Each
+rule shows its schedule in plain words, whether it is on, and when it was last
+checked. Turning a rule off cancels reminders that are planned but not yet sent;
+turning it on starts reminders from today, so invoices that were already overdue
+do not receive past reminders. For invoice payment reminders, Preview shows who
+would be emailed right now without sending anything. Changing a rule needs the
+Automation configure permission; read access only shows the page.
+
+The "Pause all automated emails" switch stops every automated email for this
+workspace at once without changing any rule; reminders resume when you switch it
+back on. If StoneSuite support has turned automation off for the whole platform,
+a banner says so and rules marked On will start sending once it is turned back on.
+
 ## Dashboard widgets
 
 Configure → Dashboard Widgets controls which widgets each role can see on

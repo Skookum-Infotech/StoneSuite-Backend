@@ -167,6 +167,9 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		if err := finalize(ctx, tx, cfg, recordTypeID, internalID, curStatusID, gate.TargetStatusCode, approverEmployeeID, "approve_override"); err != nil {
 			return ApproveOutcome{}, err
 		}
+		if err := runAuditTx(ctx, tx, cfg, internalID, uuid, auditActionApprove); err != nil {
+			return ApproveOutcome{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
 		}
@@ -190,6 +193,9 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		if err := finalize(ctx, tx, cfg, recordTypeID, internalID, curStatusID, gate.TargetStatusCode, approverEmployeeID, "approve"); err != nil {
 			return ApproveOutcome{}, err
 		}
+		if err := runAuditTx(ctx, tx, cfg, internalID, uuid, auditActionApprove); err != nil {
+			return ApproveOutcome{}, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
 		}
@@ -209,6 +215,9 @@ func Approve(ctx context.Context, pool *pgxpool.Pool, cfg ModuleConfig, uuid str
 		return ApproveOutcome{}, err
 	}
 
+	if err := runAuditTx(ctx, tx, cfg, internalID, uuid, auditActionApprove); err != nil {
+		return ApproveOutcome{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ApproveOutcome{}, fmt.Errorf("commit approve %s: %w", rec.Table, err)
 	}

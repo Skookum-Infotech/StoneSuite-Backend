@@ -10,6 +10,8 @@ import (
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/creditmemo"
+	"stonesuite-backend/dberr"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/payment"
@@ -179,6 +181,12 @@ func refundFail(w http.ResponseWriter, err error, serverMsg string) {
 		errors.Is(err, refund.ErrApprovalRequired),
 		errors.Is(err, refund.ErrApprovalNotRequired):
 		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, refund.ErrVersionConflict):
+		fail(w, http.StatusConflict, "This refund was changed by someone else — reload and try again")
+	case errors.Is(err, idempotency.ErrKeyReuse):
+		fail(w, http.StatusConflict, "Idempotency-Key was already used with a different request")
+	case errors.Is(err, idempotency.ErrInProgress):
+		fail(w, http.StatusConflict, "A request with this Idempotency-Key is still in progress")
 	case errors.Is(err, refund.ErrNotApprover):
 		fail(w, http.StatusForbidden, err.Error())
 	default:
@@ -205,6 +213,10 @@ func refundFail(w http.ResponseWriter, err error, serverMsg string) {
 			fail(w, http.StatusBadRequest, ife.Error())
 			return
 		}
+		if status, msg, ok := dberr.Map(err); ok {
+			fail(w, status, msg)
+			return
+		}
 		fail(w, http.StatusInternalServerError, serverMsg)
 	}
 }
@@ -215,17 +227,24 @@ func (h *RefundOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in refund.CreateRefundInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
 	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
+	}
 	empID := resolveEmployeeID(r, identityID)
-	rf, err := refund.Create(r.Context(), pool, in, empID)
+	rf, err := refund.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		refundFail(w, err, "Failed to create refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "create", rf.ID, nil, rf)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "refund": rf})
 }
 
@@ -270,7 +289,7 @@ func (h *RefundOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rf, err := refund.Approve(r.Context(), pool, uuid, empID, isSuperAdmin)
+	rf, err := refund.Approve(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, refund.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -278,7 +297,6 @@ func (h *RefundOps) Approve(w http.ResponseWriter, r *http.Request) {
 		refundFail(w, err, "Failed to approve refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "approve", uuid, nil, rf)
 	if approvalFinalized(rf.StatusCode) {
 		notifyCustomerApproved(r.Context(), h.cp, identityID, rf.Customer.ID, "refund", "Refund", rf.Number, rf.Amount, uuid)
 	}
@@ -292,18 +310,15 @@ func (h *RefundOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in refund.UpdateRefundInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := refund.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := refund.Update(r.Context(), pool, id, in, empID)
+	after, err := refund.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		refundFail(w, err, "Failed to update refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": after})
 }
 
@@ -313,13 +328,11 @@ func (h *RefundOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := refund.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := refund.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := refund.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		refundFail(w, err, "Failed to delete refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Refund deleted."})
 }
 
@@ -391,7 +404,7 @@ func (h *RefundOps) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rec, err := refund.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	rec, err := refund.Reject(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin, req.Reason)
 	if err != nil {
 		if errors.Is(err, refund.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -399,6 +412,5 @@ func (h *RefundOps) Reject(w http.ResponseWriter, r *http.Request) {
 		refundFail(w, err, "Failed to reject refund.")
 		return
 	}
-	auditRefund(r, pool, empID, "reject", uuid, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rec})
 }

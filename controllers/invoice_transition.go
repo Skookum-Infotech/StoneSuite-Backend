@@ -25,12 +25,11 @@ func (h *InvoiceOps) Transition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	inv, err := invoice.Transition(r.Context(), pool, id, req.ToStatusCode, empID)
+	inv, err := invoice.Transition(auditCtx(r, ""), pool, id, req.ToStatusCode, empID)
 	if err != nil {
 		invoiceFail(w, err, "Failed to transition invoice.")
 		return
 	}
-	auditInvoice(r, pool, empID, "transition", id, nil, inv)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})
 }
 
@@ -58,12 +57,14 @@ func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if key != "" {
+		key = callerIdempotencyKey(identityID, key)
+	}
 	empID := resolveEmployeeID(r, identityID)
-	inv, err := payment.QuickPay(r.Context(), pool, id, req.Amount, key, empID)
+	inv, err := payment.QuickPay(auditCtx(r, ""), pool, id, req.Amount, key, empID)
 	if err != nil {
 		invoiceFail(w, err, "Failed to record payment.")
 		return
 	}
-	auditInvoice(r, pool, empID, "payment", id, nil, inv)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})
 }

@@ -128,6 +128,12 @@ type CreateVendorBillInput struct {
 	PurchaseOrderUUID string `json:"purchaseOrderUuid,omitempty"`
 	AllowDuplicate    bool   `json:"allowDuplicate,omitempty"`
 	vendorBillFields
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the vendor bill the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateVendorBillInput mirrors CreateVendorBillInput minus the vendor and
@@ -137,6 +143,9 @@ type UpdateVendorBillInput struct {
 	// bill with the same normalized number (store_create_dupguard.go).
 	AllowDuplicate bool `json:"allowDuplicate,omitempty"`
 	vendorBillFields
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // VendorBill is the full API response for a vendor bill header (+ lines,

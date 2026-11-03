@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/docflow"
+	"stonesuite-backend/idempotency"
 )
 
 func validateHeader(in *Input) error {
@@ -20,7 +21,21 @@ func validateHeader(in *Input) error {
 
 // Create opens a new adjustment in draft with its lines attached.
 func Create(ctx context.Context, pool *pgxpool.Pool, in Input, actorEmployeeID int) (*Adjustment, error) {
+	// A retry whose first attempt already committed gets that adjustment back
+	// before any validation: a replay answers like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
 	if err := validateHeader(&in); err != nil {
+		return nil, err
+	}
+	if err := validateWriteInput(in.Lines); err != nil {
 		return nil, err
 	}
 	tx, err := pool.Begin(ctx)
@@ -28,6 +43,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in Input, actorEmployeeID i
 		return nil, fmt.Errorf("begin create adjustment: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	recordTypeID, statusID, err := docflow.InitialStatus(ctx, tx, recordTypeCode, StatusDraft)
 	if err != nil {
@@ -64,6 +92,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in Input, actorEmployeeID i
 		id, FormatNumber(int64(id))); err != nil {
 		return nil, mapWriteErr(err, "number")
 	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
+	}
 	if err := replaceLines(ctx, tx, id, lines, actorEmployeeID); err != nil {
 		return nil, err
 	}
@@ -81,6 +114,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in Input, acto
 	if err := validateHeader(&in); err != nil {
 		return err
 	}
+	if err := validateWriteInput(in.Lines); err != nil {
+		return err
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin update adjustment: %w", err)
@@ -95,6 +131,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in Input, acto
 		// Editing after approval would mean the numbers that were signed off are
 		// not the numbers that post.
 		return ErrNotEditable
+	}
+	if err := checkLockedVersion(ctx, tx, id, in.ExpectedVersion); err != nil {
+		return err
 	}
 	lines, err := resolveLines(ctx, tx, in.WarehouseID, in.Lines)
 	if err != nil {

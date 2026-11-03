@@ -57,7 +57,7 @@ func Reverse(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployee
 	reversingEntry, err := journal.ReverseEntry(ctx, tx, *journalEntryID, reversalDate,
 		fmt.Sprintf("Reversal of cash transfer %s", uuid), actorEmployeeID)
 	if err != nil {
-		return nil, fmt.Errorf("create reversing journal entry: %w", err)
+		return nil, fmt.Errorf("create reversing journal entry: %w", translatePeriodError(err))
 	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, recordTypeCode)
@@ -84,6 +84,9 @@ func Reverse(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployee
 	}
 	writeHistory(ctx, tx, ctInternalID, "reverse", &curStatusID, &reversedStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditReverse, uuid, nil, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit reverse cash transfer: %w", err)
 	}

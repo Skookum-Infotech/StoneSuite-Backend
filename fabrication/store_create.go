@@ -61,7 +61,10 @@ func CreateOnce(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, acto
 // existingByRequestID returns the live job this caller already created for
 // in.SalesOrderUUID under in.RequestID, if any.
 func existingByRequestID(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actorEmployeeID int) (*Job, bool, error) {
-	if in.RequestID == "" {
+	// No resolved employee: every such caller would share the NULL created_by
+	// bucket and could replay another's job, so never replay for them (a
+	// duplicate requestId then fails on uq_fj_create_request instead).
+	if in.RequestID == "" || actorEmployeeID == 0 {
 		return nil, false, nil
 	}
 	var uuid string
@@ -94,6 +97,7 @@ func createJob(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actor
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Resolve the originating sales order and its customer (the job inherits both).
+	// FOR SHARE serializes against salesorder.SoftDelete's FOR UPDATE.
 	var soInternalID, customerInternalID int
 	var soShipName, soShipLine1, soShipLine2, soShipCity, soShipZip, soShipPhone string
 	var soShipState *int
@@ -105,7 +109,8 @@ func createJob(ctx context.Context, pool *pgxpool.Pool, in CreateJobInput, actor
 		       rs.record_status_code
 		FROM sales_order so
 		JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
-		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL`, in.SalesOrderUUID).Scan(
+		WHERE so.sales_order_uuid = $1 AND so.sales_order_deleted_at IS NULL
+		FOR SHARE OF so`, in.SalesOrderUUID).Scan(
 		&soInternalID, &customerInternalID,
 		&soShipName, &soShipLine1, &soShipLine2, &soShipCity, &soShipState, &soShipZip, &soShipPhone, &soStatusCode)
 	if errors.Is(err, pgx.ErrNoRows) {

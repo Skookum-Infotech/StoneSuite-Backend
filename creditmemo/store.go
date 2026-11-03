@@ -151,8 +151,8 @@ const lineSelect = `
 	WHERE cmi.credit_memo_id = $1 AND cmi.item_deleted_at IS NULL
 	ORDER BY cmi.line_number ASC`
 
-func loadLines(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Line, error) {
-	rows, err := pool.Query(ctx, lineSelect, internalID)
+func loadLines(ctx context.Context, q workflow.Querier, internalID int) ([]Line, error) {
+	rows, err := q.Query(ctx, lineSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load credit memo lines: %w", err)
 	}
@@ -179,8 +179,8 @@ const applicationSelect = `
 	WHERE ca.credit_memo_id = $1 AND ca.application_deleted_at IS NULL
 	ORDER BY ca.application_created_at ASC`
 
-func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Application, error) {
-	rows, err := pool.Query(ctx, applicationSelect, internalID)
+func loadApplications(ctx context.Context, q workflow.Querier, internalID int) ([]Application, error) {
+	rows, err := q.Query(ctx, applicationSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load credit memo applications: %w", err)
 	}
@@ -198,7 +198,13 @@ func loadApplications(ctx context.Context, pool *pgxpool.Pool, internalID int) (
 
 // Get loads a single live credit memo (header + lines + applications) by uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*CreditMemo, error) {
-	cm, meta, err := scanCreditMemo(pool.QueryRow(ctx, headerSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*CreditMemo, error) {
+	cm, meta, err := scanCreditMemo(q.QueryRow(ctx, headerSelect+`
 		WHERE cm.credit_memo_uuid = $1 AND cm.credit_memo_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -206,12 +212,12 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*CreditMemo, error
 	if err != nil {
 		return nil, fmt.Errorf("get credit memo: %w", err)
 	}
-	lines, err := loadLines(ctx, pool, meta.internalID)
+	lines, err := loadLines(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}
 	cm.Lines = lines
-	apps, err := loadApplications(ctx, pool, meta.internalID)
+	apps, err := loadApplications(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}

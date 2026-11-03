@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/idempotency"
 )
 
 // orNow returns the given "yyyy-mm-dd" date string, or "now" when blank, for
@@ -27,8 +29,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorCreditInput,
 	if strings.TrimSpace(in.VendorUUID) == "" {
 		return nil, ClientError{Msg: "A vendor is required."}
 	}
-	if in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be greater than zero."}
+	if err := validateAmount("amount", in.Amount); err != nil {
+		return nil, err
+	}
+	// A retry whose first attempt already committed gets that credit back
+	// before any database-dependent check: a replay must answer like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
 	}
 
 	vendorInternalID, vendorName, err := activeVendorSnapshot(ctx, pool, in.VendorUUID)
@@ -64,6 +77,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorCreditInput,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
+
 	cv := []colVal{
 		{"record_type", recordTypeID, ""},
 		{"vendor_credit_status", draftStatusID, ""},
@@ -95,6 +121,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorCreditInput,
 
 	if _, err := assignNumber(ctx, tx, int64(internalID)); err != nil {
 		return nil, err
+	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `

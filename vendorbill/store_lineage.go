@@ -58,7 +58,8 @@ func resolvePurchaseOrderLineage(ctx context.Context, q workflow.Querier, poUUID
 	err := q.QueryRow(ctx, `
 		SELECT purchase_order_id, purchase_order_vendor_id
 		FROM purchase_order
-		WHERE purchase_order_uuid = $1 AND purchase_order_deleted_at IS NULL`, poUUID).Scan(&id, &poVendorID)
+		WHERE purchase_order_uuid = $1 AND purchase_order_deleted_at IS NULL
+		FOR SHARE`, poUUID).Scan(&id, &poVendorID) // shared lock: the order's SoftDelete (FOR UPDATE) serializes against this link
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, UnknownPurchaseOrderError()
 	}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,31 +45,58 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateJobIn
 	return Get(ctx, pool, uuid)
 }
 
-// SoftDelete marks a job deleted. Draft/cancelled jobs only — a job with live
-// slab reservations must be cancelled (which releases them) before deletion.
+// ErrJobHasDependents is returned when a delete would orphan effects it cannot
+// reverse: live material allocations or a live shortage purchase order.
+var ErrJobHasDependents = errors.New("job has live material allocations or purchase orders; release or remove them before deleting")
+
+// SoftDelete marks a job deleted. Draft/cancelled jobs only, and only when no
+// live dependent rows remain whose effects a delete would not reverse (slabs
+// still reserved or consumed without a disposition, open cutting runs, live
+// shortage purchase orders). The job row is locked FOR UPDATE so the gate and
+// the delete serialize against transitions and allocation.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	var statusCode string
-	err := pool.QueryRow(ctx, `
-		SELECT rs.record_status_code FROM fabrication_job fj
-		JOIN lkp_record_status rs ON rs.record_status_id = fj.fabrication_job_status
-		WHERE fj.fabrication_job_uuid = $1 AND fj.fabrication_job_deleted_at IS NULL`, uuid).Scan(&statusCode)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("load job for delete: %w", err)
+		return fmt.Errorf("begin delete fabrication job: %w", err)
 	}
-	if statusCode != StatusDraft && statusCode != StatusCancelled {
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	st, err := lockJob(ctx, tx, uuid)
+	if err != nil {
+		return err
+	}
+	if st.statusCode != StatusDraft && st.statusCode != StatusCancelled {
 		return ClientError{Msg: "Only draft or cancelled jobs can be deleted; cancel the job first to release its material."}
 	}
-	ct, err := pool.Exec(ctx, `
+	var dependents int
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM fabrication_job_slab
+			  WHERE fabrication_job_id = $1
+			    AND (allocation_status = 'reserved'
+			         OR (allocation_status = 'consumed' AND disposition IS NULL)))
+		  + (SELECT COUNT(*) FROM fabrication_cutting_run
+			  WHERE fabrication_job_id = $1 AND state = 'started')
+		  + (SELECT COUNT(*) FROM fabrication_shortage_purchase sp
+			  JOIN purchase_order po ON po.purchase_order_id = sp.purchase_order_id
+			  WHERE sp.fabrication_job_id = $1 AND po.purchase_order_deleted_at IS NULL)`,
+		st.internalID).Scan(&dependents); err != nil {
+		return fmt.Errorf("count fabrication job dependents: %w", err)
+	}
+	if dependents > 0 {
+		return ErrJobHasDependents
+	}
+	ct, err := tx.Exec(ctx, `
 		UPDATE fabrication_job SET fabrication_job_deleted_at = NOW(), fabrication_job_deleted_by = $2
-		WHERE fabrication_job_uuid = $1 AND fabrication_job_deleted_at IS NULL`, uuid, actorOrSystem(actorEmployeeID))
+		WHERE fabrication_job_id = $1 AND fabrication_job_deleted_at IS NULL`, st.internalID, actorOrSystem(actorEmployeeID))
 	if err != nil {
 		return fmt.Errorf("soft delete fabrication job: %w", err)
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete fabrication job: %w", err)
 	}
 	return nil
 }

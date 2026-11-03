@@ -50,6 +50,9 @@ type Count struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// RecordVersion increments on every edit; clients echo it back as
+	// expectedVersion to detect a concurrent save.
+	RecordVersion int `json:"recordVersion"`
 }
 
 // Line is one countable thing and what the crew found.
@@ -90,6 +93,15 @@ type Input struct {
 	Notes         string  `json:"notes"`
 	InternalNotes string  `json:"internalNotes"`
 	OwnerID       *int    `json:"ownerId,omitempty"`
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the count the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
+	// ExpectedVersion is the recordVersion the client loaded. When sent, an
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // CountEntry records one line's physical count.

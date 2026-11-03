@@ -262,128 +262,6 @@ func (h *AttachmentOps) PresignBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "files": out})
 }
 
-// ---- POST /api/tenant/records/{id}/attachments ------------------------------
-
-type confirmAttachIn struct {
-	FileName       string `json:"fileName"`
-	ContentType    string `json:"contentType"`
-	SizeBytes      int64  `json:"sizeBytes"`
-	StorageKey     string `json:"storageKey"`
-	ChecksumSHA256 string `json:"checksumSha256"`
-}
-
-type confirmBatchRequest struct {
-	Attachments []confirmAttachIn `json:"attachments"`
-}
-
-// ConfirmAttachments inserts attachment metadata rows after the client has
-// finished uploading to R2. RBAC: record:update.
-// For v1, status is set immediately to 'clean'; see workflow.InsertAttachment
-// for the malware-scanning extension point comment.
-func (h *AttachmentOps) ConfirmAttachments(w http.ResponseWriter, r *http.Request) {
-	recordID := r.PathValue("id")
-	pool, info, identityID, ok := h.attachAuth(w, r, recordID, authz.ActionUpdate)
-	if !ok {
-		return
-	}
-
-	var req confirmBatchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
-		return
-	}
-	if len(req.Attachments) == 0 {
-		fail(w, http.StatusBadRequest, "At least one attachment is required.")
-		return
-	}
-	if len(req.Attachments) > maxFilesPerBatch {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("Maximum %d attachments per call.", maxFilesPerBatch))
-		return
-	}
-
-	// Resolve actor user ID (for uploaded_by and audit log).
-	actorUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
-
-	// Tenant slug: validate that storageKey prefix matches this tenant to
-	// prevent a tenant from claiming an object uploaded by another tenant.
-	tenant, err := tenancy.TenantFromContext(r.Context())
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Tenant not resolved.")
-		return
-	}
-	// The key must belong to THIS record (presign mints
-	// slug/workflowKey/recordID/<uuid>.<ext>), not merely this tenant —
-	// otherwise a caller could attach another record's object to their own.
-	recordPrefix := tenant.Slug + "/" + info.WorkflowKey + "/" + recordID + "/"
-	r2 := h.r2ForTenant(tenant)
-
-	inserted := make([]workflow.Attachment, 0, len(req.Attachments))
-	for i, a := range req.Attachments {
-		if a.StorageKey == "" {
-			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: storageKey is required.", i+1))
-			return
-		}
-		if !strings.HasPrefix(a.StorageKey, recordPrefix) || strings.Contains(a.StorageKey[len(recordPrefix):], "/") {
-			logSecurityEvent(r, "attachment_key_rejected",
-				"identity", identityID, "record", recordID, "reason", "key_not_for_record")
-			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: invalid storageKey.", i+1))
-			return
-		}
-		// Trust the stored object, not the client's claim: it must exist, and
-		// its real size/type are what get validated and recorded.
-		obj, headErr := r2.Head(r.Context(), a.StorageKey)
-		if errors.Is(headErr, storage.ErrNotFound) {
-			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: file was not uploaded.", i+1))
-			return
-		}
-		if headErr != nil {
-			slog.Error("attachment confirm head failed", "record", recordID, "error", headErr)
-			fail(w, http.StatusServiceUnavailable, "Could not verify the uploaded file. Try again.")
-			return
-		}
-		if vErr := validateAttachFile(a.FileName, a.ContentType, obj.Size); vErr != nil {
-			fail(w, http.StatusBadRequest, fmt.Sprintf("Attachment %d: %s.", i+1, vErr.Error()))
-			return
-		}
-		a.SizeBytes = obj.Size
-		safe := workflow.SanitizeFileName(a.FileName)
-		id, insErr := workflow.InsertAttachment(r.Context(), pool, workflow.Attachment{
-			RecordID:         recordID,
-			FileName:         safe,
-			ContentType:      a.ContentType,
-			SizeBytes:        a.SizeBytes,
-			StorageKey:       a.StorageKey,
-			ChecksumSHA256:   a.ChecksumSHA256,
-			UploadedByUserID: actorUserID,
-		})
-		if insErr != nil {
-			fail(w, http.StatusInternalServerError, "Failed to save attachment metadata.")
-			return
-		}
-		inserted = append(inserted, workflow.Attachment{
-			ID:         id,
-			RecordID:   recordID,
-			FileName:   safe,
-			Status:     "clean",
-			StorageKey: a.StorageKey,
-			SizeBytes:  a.SizeBytes,
-		})
-
-		// Audit log: upload confirmed (best-effort).
-		if logErr := workflow.LogAudit(r.Context(), pool, actorUserID,
-			"attachment.upload", "record_attachment", id,
-			map[string]any{"recordId": recordID, "fileName": safe, "sizeBytes": a.SizeBytes},
-		); logErr != nil {
-			log.Printf("audit log (attachment.upload) attachment=%s: %v", id, logErr)
-		}
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"success":     true,
-		"attachments": inserted,
-	})
-}
-
 // ---- GET /api/tenant/records/{id}/attachments --------------------------------
 
 // ListAttachments returns all attachments for a record. RBAC: record:read.
@@ -439,6 +317,11 @@ func (h *AttachmentOps) DownloadAttachment(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to load attachment.")
+		return
+	}
+	if !storedKeyOwnedByRecord(att.StorageKey, tenant.Slug, recordID) {
+		logSecurityEvent(r, "attachment_key_mismatch", "identity", identityID, "record", recordID, "attachment", attachmentID)
+		fail(w, http.StatusNotFound, "Attachment not found.")
 		return
 	}
 
@@ -497,13 +380,21 @@ func (h *AttachmentOps) DeleteAttachment(w http.ResponseWriter, r *http.Request)
 		fail(w, http.StatusInternalServerError, "Failed to load attachment.")
 		return
 	}
+	if !storedKeyOwnedByRecord(att.StorageKey, tenant.Slug, recordID) {
+		logSecurityEvent(r, "attachment_key_mismatch", "identity", identityID, "record", recordID, "attachment", attachmentID)
+		fail(w, http.StatusNotFound, "Attachment not found.")
+		return
+	}
 
-	// Best-effort R2 object deletion. If it fails we log the storage key so
-	// an operator can clean it up manually, then remove the metadata row.
+	// Object first, then the row. Deleting the row after a failed object
+	// delete left a file nobody could see or remove (the row was the only
+	// pointer to it) still counting toward the bucket; keeping the row lets
+	// the user simply retry. An already-missing object is a successful delete.
 	if h.r2.IsConfigured() {
 		if r2Err := h.r2ForTenant(tenant).Delete(r.Context(), att.StorageKey); r2Err != nil {
-			log.Printf("WARNING: R2 delete failed for key %q (attachment %s): %v — removing metadata row anyway",
-				att.StorageKey, attachmentID, r2Err)
+			slog.Error("attachment delete: r2 delete failed", "attachment", attachmentID, "err", r2Err)
+			fail(w, http.StatusBadGateway, "Could not delete the file from storage. Please try again.")
+			return
 		}
 	}
 

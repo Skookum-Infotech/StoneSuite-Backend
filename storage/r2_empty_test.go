@@ -88,8 +88,7 @@ func newEmptyBucketClient(t *testing.T, f *fakeBucket) *Client {
 	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	redirectDefaultClient(t, srv)
-	c := &Client{accessKey: "AKIATEST", secretKey: "secret", host: "acct.r2.cloudflarestorage.com"}
+	c := &Client{accessKey: "AKIATEST", secretKey: "secret", host: "acct.r2.cloudflarestorage.com", http: redirectClient(t, srv)}
 	return c.WithBucket(testEmptyBucketName)
 }
 

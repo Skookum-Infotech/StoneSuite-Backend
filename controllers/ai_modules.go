@@ -17,6 +17,7 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/globalsearch"
+	"stonesuite-backend/safego"
 )
 
 // moduleLexicon is what the question classifiers know about the AI-indexed
@@ -175,17 +176,20 @@ func findModuleRecordByNumber(ctx context.Context, pool *pgxpool.Pool, grants ai
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results, _, err := p.Search(ctx, pool, authz.Scope(grants[p.AI.RecordType]), identityID, number, moduleNumberSearchCap)
-			if err != nil {
-				slog.Warn("ai record lookup: module search failed", "type", p.AI.RecordType, "err", err)
-				return
-			}
-			for _, r := range results {
-				if strings.EqualFold(r.Number, number) {
-					ids[i] = r.ID
+			// A panicking module search is skipped like an erroring one.
+			_ = safego.Do(ctx, "ai.recordLookup", func() { // reported inside Do
+				results, _, err := p.Search(ctx, pool, authz.Scope(grants[p.AI.RecordType]), identityID, number, moduleNumberSearchCap)
+				if err != nil {
+					slog.Warn("ai record lookup: module search failed", "type", p.AI.RecordType, "err", err)
 					return
 				}
-			}
+				for _, r := range results {
+					if strings.EqualFold(r.Number, number) {
+						ids[i] = r.ID
+						return
+					}
+				}
+			})
 		}()
 	}
 	wg.Wait()

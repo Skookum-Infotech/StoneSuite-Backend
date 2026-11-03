@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func seedActiveCustomerIdentity(t *testing.T, pool *pgxpool.Pool, customerID int
 	return id
 }
 
-// seedInvitedCustomerIdentity inserts an 'invited' customer_identities row
+// seedInvitedCustomerIdentity (storing the hash of token, as the app does) inserts an 'invited' customer_identities row
 // with an invite token, mirroring the state PortalInvite would create.
 func seedInvitedCustomerIdentity(t *testing.T, pool *pgxpool.Pool, customerID int, email, token string, expiry time.Time) string {
 	t.Helper()
@@ -92,7 +93,7 @@ func seedInvitedCustomerIdentity(t *testing.T, pool *pgxpool.Pool, customerID in
 	require.NoError(t, pool.QueryRow(context.Background(), `
 		INSERT INTO customer_identities (customer_id, email, status, invite_token, invite_token_expiry)
 		VALUES ($1, $2, 'invited', $3, $4) RETURNING id`,
-		customerID, email, token, expiry).Scan(&id))
+		customerID, email, tenancy.HashToken(token), expiry).Scan(&id))
 	return id
 }
 
@@ -234,4 +235,70 @@ func TestCustomerAuthOps_AcceptInvite_ExpiredToken_DB(t *testing.T) {
 	h.AcceptInvite(rec, req)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func postAcceptInvite(h *CustomerAuthOps, slug, token string) *httptest.ResponseRecorder {
+	body := strings.NewReader(fmt.Sprintf(`{"tenantSlug":%q,"token":%q,"password":"a-new-password"}`, slug, token))
+	rec := httptest.NewRecorder()
+	h.AcceptInvite(rec, httptest.NewRequest(http.MethodPost, "/api/customer/auth/accept-invite", body))
+	return rec
+}
+
+// TestCustomerAuthOps_AcceptInvite_HashedToken_DB pins that the invite token is
+// matched by hash only: the stored hash (or a legacy raw row) is not a working
+// token, and a token redeems exactly once.
+func TestCustomerAuthOps_AcceptInvite_HashedToken_DB(t *testing.T) {
+	withTestJWTSecret(t)
+	pool, dsn := testCustomerTenantPool(t)
+	cp := newSAMLTestControlPlane(t)
+	tenant := seedServableCustomerTestTenant(t, cp, dsn)
+	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+
+	t.Run("stored hash is not a working token", func(t *testing.T) {
+		custID := seedCustomerRecord(t, pool)
+		email := fmt.Sprintf("customer-%d@example.com", time.Now().UnixNano())
+		token := fmt.Sprintf("invite-token-%d", time.Now().UnixNano())
+		seedInvitedCustomerIdentity(t, pool, custID, email, token, time.Now().Add(time.Hour))
+		assert.Equal(t, http.StatusBadRequest, postAcceptInvite(h, tenant.Slug, tenancy.HashToken(token)).Code)
+	})
+
+	t.Run("legacy raw row is refused", func(t *testing.T) {
+		custID := seedCustomerRecord(t, pool)
+		email := fmt.Sprintf("customer-%d@example.com", time.Now().UnixNano())
+		token := fmt.Sprintf("legacy-token-%d", time.Now().UnixNano())
+		_, err := pool.Exec(context.Background(), `
+			INSERT INTO customer_identities (customer_id, email, status, invite_token, invite_token_expiry)
+			VALUES ($1, $2, 'invited', $3, NOW() + INTERVAL '1 hour')`, custID, email, token)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, postAcceptInvite(h, tenant.Slug, token).Code)
+	})
+
+	t.Run("concurrent accepts: exactly one wins", func(t *testing.T) {
+		custID := seedCustomerRecord(t, pool)
+		email := fmt.Sprintf("customer-%d@example.com", time.Now().UnixNano())
+		token := fmt.Sprintf("invite-token-%d", time.Now().UnixNano())
+		seedInvitedCustomerIdentity(t, pool, custID, email, token, time.Now().Add(time.Hour))
+
+		const racers = 8
+		codes := make(chan int, racers)
+		var wg sync.WaitGroup
+		for i := 0; i < racers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				codes <- postAcceptInvite(h, tenant.Slug, token).Code
+			}()
+		}
+		wg.Wait()
+		close(codes)
+		wins := 0
+		for c := range codes {
+			if c == http.StatusOK {
+				wins++
+			} else {
+				assert.Equal(t, http.StatusBadRequest, c)
+			}
+		}
+		assert.Equal(t, 1, wins)
+	})
 }

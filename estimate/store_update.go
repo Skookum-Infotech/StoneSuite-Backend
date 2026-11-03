@@ -15,19 +15,26 @@ import (
 // terminal status (RJCT/EXPR/CANC) — a rejected, expired, or cancelled
 // estimate is immutable.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEstimateInput, actorEmployeeID int) (*Estimate, error) {
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, effectiveDate(in.EstimateDate), in.ValidUntil); err != nil {
+		return nil, err
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update estimate: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID, custInternalID int
+	// Lock the header first, then judge status and version against what the
+	// lock guarantees stays true until commit.
+	var internalID, custInternalID, recordVersion int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT est.estimate_id, est.estimate_customer_id, rs.record_status_code
+		SELECT est.estimate_id, est.estimate_customer_id, rs.record_status_code, est.estimate_record_version
 		FROM estimate est JOIN lkp_record_status rs ON rs.record_status_id = est.estimate_status
-		WHERE est.estimate_uuid = $1 AND est.estimate_deleted_at IS NULL`, uuid,
-	).Scan(&internalID, &custInternalID, &statusCode)
+		WHERE est.estimate_uuid = $1 AND est.estimate_deleted_at IS NULL
+		FOR UPDATE OF est`, uuid,
+	).Scan(&internalID, &custInternalID, &statusCode, &recordVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -36,6 +43,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEstim
 	}
 	if statusCode == "RJCT" || statusCode == "EXPR" || statusCode == "CANC" {
 		return nil, ClientError{Msg: "A rejected, expired, or cancelled estimate cannot be edited."}
+	}
+	if err := checkExpectedVersion(in.ExpectedVersion, recordVersion); err != nil {
+		return nil, err
 	}
 
 	_, custName, defBilling, defShipping, err := customerSnapshotByInternalID(ctx, tx, custInternalID)
@@ -59,6 +69,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEstim
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if header.GrandTotal < 0 {
+		return nil, ClientError{Msg: "The estimate total cannot be negative."}
+	}
 
 	// estimate_custom_fields is NOT NULL DEFAULT '{}'; a nil map encodes as SQL
 	// NULL and violates the constraint.
@@ -124,18 +137,50 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEstim
 	return Get(ctx, pool, uuid)
 }
 
-// SoftDelete marks a live estimate deleted.
+// SoftDelete marks a live estimate deleted. It runs in one transaction holding
+// the estimate's row lock and refuses an estimate a live quote was made from
+// (quote_estimate_id): deleting the source would orphan that quote's lineage.
+// The conversion link is the only marker; estimates have no CONV status.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	tag, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete estimate: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var internalID int
+	err = tx.QueryRow(ctx, `
+		SELECT estimate_id FROM estimate
+		WHERE estimate_uuid = $1 AND estimate_deleted_at IS NULL
+		FOR UPDATE`, uuid,
+	).Scan(&internalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock estimate for delete: %w", err)
+	}
+	var converted bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM quote
+			WHERE quote_estimate_id = $1 AND quote_deleted_at IS NULL)`,
+		internalID).Scan(&converted); err != nil {
+		return fmt.Errorf("check estimate conversion: %w", err)
+	}
+	if converted {
+		return ClientError{Msg: ErrConverted.Error()}
+	}
+
+	if _, err := tx.Exec(ctx, `
 		UPDATE estimate
 		SET estimate_deleted_at = NOW(), estimate_deleted_by = $2
-		WHERE estimate_uuid = $1 AND estimate_deleted_at IS NULL`,
-		uuid, actorOrSystem(actorEmployeeID))
-	if err != nil {
+		WHERE estimate_id = $1`,
+		internalID, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete estimate: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete estimate: %w", err)
 	}
 	return nil
 }

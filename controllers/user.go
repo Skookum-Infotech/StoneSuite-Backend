@@ -455,12 +455,24 @@ func (h *UserOps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Grants depend on status (authz drops a non-active user's), so a status
+	// change must not wait out the grants cache TTL.
+	if req.Status != "" {
+		authz.InvalidateGrants(pool)
+	}
+
 	// When suspending, revoke all active refresh tokens so the user is forced
 	// to re-authenticate and the status check at login blocks them immediately.
 	if req.Status == "suspended" || req.Status == "disabled" {
 		if rErr := h.CP.RevokeAllRefreshTokens(r.Context(), u.IdentityID); rErr != nil {
-			log.Printf("warn: suspend user %s: revoke refresh tokens: %v", id, rErr)
+			slog.Error("suspend user: revoke refresh tokens", "user", id, "error", rErr)
+			logSecurityEvent(r, "user_suspended", "user", id, "identity", u.IdentityID,
+				"by_identity", payload.ID, "sessions_revoked", false)
+			fail(w, http.StatusInternalServerError, "User status updated, but their sessions could not be ended. Please try again.")
+			return
 		}
+		logSecurityEvent(r, "user_suspended", "user", id, "identity", u.IdentityID,
+			"by_identity", payload.ID, "sessions_revoked", true)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})
@@ -516,6 +528,15 @@ func (h *UserOps) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	target, err := userstore.GetUserByID(r.Context(), pool, id)
+	if errors.Is(err, userstore.ErrUserNotFound) {
+		fail(w, http.StatusNotFound, "User not found.")
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load user.")
+		return
+	}
 	if err := userstore.DeactivateUser(r.Context(), pool, id); err != nil {
 		if errors.Is(err, userstore.ErrUserNotFound) {
 			fail(w, http.StatusNotFound, "User not found.")
@@ -524,6 +545,22 @@ func (h *UserOps) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to deactivate user.")
 		return
 	}
+
+	// Their grants are now empty (authz filters on status), so any access
+	// token they still hold authorizes nothing once the cache is dropped.
+	// Revoking the refresh tokens ends every session outright. A revoke
+	// failure answers 500 so the admin retries: deactivating again is
+	// harmless and is the only way to finish ending the sessions.
+	authz.InvalidateGrants(pool)
+	if err := h.CP.RevokeAllRefreshTokens(r.Context(), target.IdentityID); err != nil {
+		slog.Error("deactivate user: revoke refresh tokens", "user", id, "error", err)
+		logSecurityEvent(r, "user_deactivated", "user", id, "identity", target.IdentityID,
+			"by_identity", payload.ID, "sessions_revoked", false)
+		fail(w, http.StatusInternalServerError, "User deactivated, but their sessions could not be ended. Please try again.")
+		return
+	}
+	logSecurityEvent(r, "user_deactivated", "user", id, "identity", target.IdentityID,
+		"by_identity", payload.ID, "sessions_revoked", true)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "User deactivated."})
 }
 
@@ -828,6 +865,18 @@ func (h *UserOps) AcceptUserInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Claim the invite before touching any account. Marking it accepted only at
+	// the end let two concurrent submissions of one link both run — and on the
+	// existing-identity path below, each one overwrites the password.
+	if err := h.CP.MarkUserInviteAccepted(r.Context(), invite.ID); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This invitation has already been accepted.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to accept invitation.")
+		return
+	}
+
 	// Resolve the display name: request body overrides invite-time name.
 	fullName := invite.FullName
 	if req.FullName != "" {
@@ -905,11 +954,6 @@ func (h *UserOps) AcceptUserInvite(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("accept invite: initial role %s no longer exists, skipping assignment", invite.InitialRoleID)
 		}
-	}
-
-	// Mark the invite accepted (idempotent if called twice).
-	if err := h.CP.MarkUserInviteAccepted(r.Context(), invite.ID); err != nil {
-		log.Printf("accept invite: failed to mark invite accepted (non-fatal): %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

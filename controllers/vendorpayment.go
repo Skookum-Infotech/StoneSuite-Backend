@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/query"
@@ -129,45 +130,6 @@ func (h *VendorPaymentOps) vendorBillInScopeForUpdate(w http.ResponseWriter, r *
 	return true
 }
 
-// vendorPaymentFail maps a vendorpayment/vendorbill error to the correct
-// HTTP status and writes the JSON error response.
-func vendorPaymentFail(w http.ResponseWriter, err error, serverMsg string) {
-	if status, ok := approvalRejectStatus(err); ok {
-		fail(w, status, err.Error())
-		return
-	}
-	switch {
-	case errors.Is(err, vendorpayment.ErrNotFound):
-		fail(w, http.StatusNotFound, "Vendor payment not found.")
-	case errors.Is(err, vendorpayment.ErrInvalidTransition),
-		errors.Is(err, vendorpayment.ErrApprovalRequired),
-		errors.Is(err, vendorpayment.ErrApprovalNotRequired):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, vendorpayment.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	default:
-		var ce vendorpayment.ClientError
-		if errors.As(err, &ce) {
-			fail(w, http.StatusBadRequest, ce.Error())
-			return
-		}
-		// Apply/Refund reach into the vendorbill package for the row lock and
-		// rollup, so a bad bill surfaces as vendorbill.ClientError. Without this
-		// arm it would fall through to 500.
-		var ve vendorbill.ClientError
-		if errors.As(err, &ve) {
-			fail(w, http.StatusBadRequest, ve.Error())
-			return
-		}
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 // Create handles POST /api/tenant/vendor-payments.
 func (h *VendorPaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authVendorPayment(w, r, authz.ActionCreate)
@@ -175,9 +137,17 @@ func (h *VendorPaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in vendorpayment.CreateVendorPaymentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	for _, app := range in.Applications {
 		if !h.vendorBillInScopeForUpdate(w, r, pool, identityID, app.VendorBillUUID) {
@@ -185,12 +155,11 @@ func (h *VendorPaymentOps) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Create(r.Context(), pool, in, empID)
+	vp, err := vendorpayment.Create(auditCtx(r, ""), pool, in, empID)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to create vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "create", vp.ID, nil, vp)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "vendorPayment": vp})
 }
 
@@ -227,18 +196,15 @@ func (h *VendorPaymentOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in vendorpayment.UpdateVendorPaymentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
-	before, _ := vendorpayment.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	after, err := vendorpayment.Update(r.Context(), pool, id, in, empID)
+	after, err := vendorpayment.Update(auditCtx(r, ""), pool, id, in, empID)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to update vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "update", id, before, after)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": after})
 }
 
@@ -249,13 +215,11 @@ func (h *VendorPaymentOps) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	before, _ := vendorpayment.Get(r.Context(), pool, id)
 	empID := resolveEmployeeID(r, identityID)
-	if err := vendorpayment.SoftDelete(r.Context(), pool, id, empID); err != nil {
+	if err := vendorpayment.SoftDelete(auditCtx(r, ""), pool, id, empID); err != nil {
 		vendorPaymentFail(w, err, "Failed to delete vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "delete", id, before, nil)
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Vendor payment deleted."})
 }
 

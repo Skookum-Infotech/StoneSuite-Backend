@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/workflow"
 )
 
 // vbSelect is the base SELECT shared by Get and Search. Column order must
@@ -107,8 +109,8 @@ const lineSelect = `
 	WHERE vbi.vendor_bill_id = $1 AND vbi.item_deleted_at IS NULL
 	ORDER BY vbi.line_number ASC`
 
-func loadLines(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Line, error) {
-	rows, err := pool.Query(ctx, lineSelect, internalID)
+func loadLines(ctx context.Context, q workflow.Querier, internalID int) ([]Line, error) {
+	rows, err := q.Query(ctx, lineSelect, internalID)
 	if err != nil {
 		return nil, fmt.Errorf("load vendor bill lines: %w", err)
 	}
@@ -138,7 +140,13 @@ func loadLines(ctx context.Context, pool *pgxpool.Pool, internalID int) ([]Line,
 // Get loads a single live vendor bill (header + lines + payments) by its
 // external uuid.
 func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*VendorBill, error) {
-	b, meta, err := scanVendorBill(pool.QueryRow(ctx, vbSelect+`
+	return getQ(ctx, pool, id)
+}
+
+// getQ is Get against any Querier, so a store transaction can read its own
+// uncommitted state (e.g. for the in-transaction audit snapshot).
+func getQ(ctx context.Context, q workflow.Querier, id string) (*VendorBill, error) {
+	b, meta, err := scanVendorBill(q.QueryRow(ctx, vbSelect+`
 		WHERE vb.vendor_bill_uuid = $1 AND vb.vendor_bill_deleted_at IS NULL`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -146,17 +154,17 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id string) (*VendorBill, error
 	if err != nil {
 		return nil, fmt.Errorf("get vendor bill: %w", err)
 	}
-	lines, err := loadLines(ctx, pool, meta.internalID)
+	lines, err := loadLines(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}
 	b.Items = lines
-	payments, err := loadPayments(ctx, pool, meta.internalID)
+	payments, err := loadPayments(ctx, q, meta.internalID)
 	if err != nil {
 		return nil, err
 	}
 	b.Payments = payments
-	if err := fillNextStatusCodes(ctx, pool, b); err != nil {
+	if err := fillNextStatusCodes(ctx, q, b); err != nil {
 		return nil, err
 	}
 	return b, nil

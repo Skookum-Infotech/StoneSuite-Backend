@@ -15,6 +15,9 @@ import (
 // once submitted/approved/sent the document is in (or on its way to) the
 // vendor's hands; recall it to draft (PAPV→DRFT / APPV→DRFT) to revise.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdatePurchaseOrderInput, actorEmployeeID int) (*PurchaseOrder, error) {
+	if err := validateWriteInput(len(in.Items), in.ShippingCharge, in.Adjustment, in.SalesTaxPercent, effectiveOrderDate(in.OrderDate), in.ExpectedDate); err != nil {
+		return nil, err
+	}
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
 	}
@@ -25,14 +28,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdatePurch
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID int
+	var internalID, recordVersion int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT po.purchase_order_id, rs.record_status_code
+		SELECT po.purchase_order_id, rs.record_status_code, po.purchase_order_record_version
 		FROM purchase_order po JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
 		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL
 		FOR UPDATE OF po`, uuid,
-	).Scan(&internalID, &statusCode)
+	).Scan(&internalID, &statusCode, &recordVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -41,6 +44,11 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdatePurch
 	}
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft purchase order can be edited. Recall it to draft first."}
+	}
+	// Checked under the row lock, so a save that landed after the caller
+	// loaded the form is caught rather than silently overwritten.
+	if err := checkExpectedVersion(in.ExpectedVersion, recordVersion); err != nil {
+		return nil, err
 	}
 
 	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
@@ -52,6 +60,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdatePurch
 		lineMoney[i] = l.money
 	}
 	header := ComputeHeader(lineMoney, in.ShippingCharge, in.Adjustment)
+	if err := validateTotals("purchase order total", header.GrandTotal); err != nil {
+		return nil, err
+	}
 
 	// purchase_order_custom_fields is NOT NULL DEFAULT '{}'; a nil map encodes
 	// as SQL NULL and violates the constraint.
@@ -112,28 +123,47 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdatePurch
 }
 
 // SoftDelete marks a live purchase order deleted. Only DRFT and CANC orders
-// may be deleted (AD-9) — a document the vendor may hold keeps its trail.
+// may be deleted (AD-9) — a document the vendor may hold keeps its trail — and
+// never while a live item receipt or vendor bill still points at it
+// (ErrHasDependents). The checks and the delete run under the order's row
+// lock; receipt and bill creation read the order FOR SHARE, so neither can
+// commit between the count and the delete.
 func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeID int) error {
-	tag, err := pool.Exec(ctx, `
-		UPDATE purchase_order po
-		SET purchase_order_deleted_at = NOW(), purchase_order_deleted_by = $2
-		FROM lkp_record_status rs
-		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL
-		  AND rs.record_status_id = po.purchase_order_status
-		  AND rs.record_status_code IN ('DRFT','CANC')`,
-		uuid, actorOrSystem(actorEmployeeID))
+	tx, err := pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin delete purchase order: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var internalID int
+	var statusCode string
+	err = tx.QueryRow(ctx, `
+		SELECT po.purchase_order_id, rs.record_status_code
+		FROM purchase_order po JOIN lkp_record_status rs ON rs.record_status_id = po.purchase_order_status
+		WHERE po.purchase_order_uuid = $1 AND po.purchase_order_deleted_at IS NULL
+		FOR UPDATE OF po`, uuid).Scan(&internalID, &statusCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock purchase order for delete: %w", err)
+	}
+	if !deletableStatus(statusCode) {
+		return ClientError{Msg: "Only a draft or cancelled purchase order can be deleted."}
+	}
+	if err := refuseIfReferenced(ctx, tx, internalID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE purchase_order
+		SET purchase_order_deleted_at = NOW(), purchase_order_deleted_by = $2
+		WHERE purchase_order_id = $1`,
+		internalID, actorOrSystem(actorEmployeeID)); err != nil {
 		return fmt.Errorf("delete purchase order: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		// Distinguish "not found" from "found but not deletable" for the 400/404 split.
-		var exists bool
-		if qerr := pool.QueryRow(ctx, `
-			SELECT EXISTS(SELECT 1 FROM purchase_order
-				WHERE purchase_order_uuid = $1 AND purchase_order_deleted_at IS NULL)`, uuid).Scan(&exists); qerr == nil && exists {
-			return ClientError{Msg: "Only a draft or cancelled purchase order can be deleted."}
-		}
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete purchase order: %w", err)
 	}
 	return nil
 }

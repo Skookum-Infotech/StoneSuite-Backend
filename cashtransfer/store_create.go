@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/idempotency"
 )
 
 // Create inserts a new Draft cash transfer inside one transaction: validates
@@ -13,8 +15,19 @@ import (
 // validates custom fields, inserts the header, assigns the document number,
 // and writes the 'create' history row.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInput, actorEmployeeID int) (*CashTransfer, error) {
-	if in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	// A retry whose first attempt already committed gets that transfer back
+	// before any validation: a replay must answer like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
+	if err := validateAmount(in.Amount); err != nil {
+		return nil, err
 	}
 	if in.FromAccountUUID == "" || in.ToAccountUUID == "" {
 		return nil, ClientError{Msg: "fromAccountUuid and toAccountUuid are required."}
@@ -68,6 +81,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInput, actorEmploy
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
+
 	var newID int
 	var newUUID string
 	err = tx.QueryRow(ctx, `
@@ -95,8 +121,17 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateInput, actorEmploy
 		return nil, fmt.Errorf("set cash transfer number: %w", err)
 	}
 
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
+	}
+
 	writeHistory(ctx, tx, newID, "create", nil, &draftStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditCreate, newUUID, nil, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create cash transfer: %w", err)
 	}

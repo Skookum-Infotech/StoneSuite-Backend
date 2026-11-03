@@ -96,12 +96,22 @@ type CreateOrderInput struct {
 	// AllowDuplicate lets the create proceed past a live same-customer, same-PO order.
 	AllowDuplicate bool `json:"allowDuplicate"`
 	orderFields
+
+	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
+	// a retried create return the order the first attempt made.
+	IdempotencyKey string `json:"-"`
+	// RequestHash fingerprints the body the key arrived with.
+	RequestHash string `json:"-"`
 }
 
 // UpdateOrderInput mirrors CreateOrderInput minus the customer (an order's
 // customer is fixed after creation).
 type UpdateOrderInput struct {
 	orderFields
+
+	// ExpectedVersion is the recordVersion the client loaded. When sent, the
+	// update is refused (ErrVersionConflict) if someone saved in between.
+	ExpectedVersion *int `json:"expectedVersion,omitempty"`
 }
 
 // CustomerRef is the light customer reference on an Order response.
@@ -204,6 +214,9 @@ type Order struct {
 	Shipping          AddressInput `json:"shipping"`
 
 	CustomFields map[string]any `json:"customFields,omitempty"`
+
+	// RecordVersion bumps on every save; send it back as expectedVersion.
+	RecordVersion int `json:"recordVersion"`
 
 	Subtotal       float64   `json:"subtotal"`
 	DiscountTotal  float64   `json:"discountTotal"`

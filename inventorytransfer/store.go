@@ -97,7 +97,7 @@ const headerSelect = `
 	       (SELECT COALESCE(SUM(l.qty),0) FROM inventory_transfer_line l
 	         WHERE l.inventory_transfer_id = t.inventory_transfer_id
 	           AND l.line_deleted_at IS NULL),
-	       t.transfer_created_at, t.transfer_updated_at
+	       t.transfer_created_at, t.transfer_updated_at, t.transfer_record_version
 	FROM inventory_transfer t
 	JOIN lkp_record_status rs  ON rs.record_status_id = t.transfer_status
 	JOIN company_location fw   ON fw.company_location_id = t.from_warehouse_id
@@ -114,7 +114,7 @@ func scanHeader(row pgx.Row) (*Transfer, error) {
 		&t.Date, &t.ExpectedDate, &t.Carrier, &t.TrackingNumber,
 		&t.Notes, &t.InternalNotes, &t.OwnerID,
 		&t.ShippedAt, &t.ReceivedAt, &t.CancelledAt, &t.CancelReason,
-		&t.TotalQty, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		&t.TotalQty, &t.CreatedAt, &t.UpdatedAt, &t.RecordVersion); err != nil {
 		return nil, err
 	}
 	return &t, nil

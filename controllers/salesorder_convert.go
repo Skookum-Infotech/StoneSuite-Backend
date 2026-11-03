@@ -39,7 +39,7 @@ func (h *SalesOrderOps) Convert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	empID := resolveEmployeeID(r, identityID)
-	inv, created, err := invoice.ConvertFromSalesOrder(r.Context(), pool, uuid, empID)
+	inv, created, err := invoice.ConvertFromSalesOrder(auditCtx(r, ""), pool, uuid, empID)
 	if err != nil {
 		switch {
 		case errors.Is(err, invoice.ErrSalesOrderNotFound):
@@ -58,7 +58,6 @@ func (h *SalesOrderOps) Convert(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
-		auditInvoice(r, pool, empID, "convert", inv.ID, nil, inv)
 	}
 	writeJSON(w, status, map[string]any{"success": true, "invoice": inv, "created": created})
 }

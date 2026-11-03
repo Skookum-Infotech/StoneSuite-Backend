@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
 	"stonesuite-backend/query"
@@ -134,43 +135,6 @@ func (h *VendorCreditOps) vendorBillInScopeForUpdate(w http.ResponseWriter, r *h
 	return true
 }
 
-// vendorCreditFail maps a store error to an HTTP response.
-func vendorCreditFail(w http.ResponseWriter, err error, serverMsg string) {
-	if status, ok := approvalRejectStatus(err); ok {
-		fail(w, status, err.Error())
-		return
-	}
-	switch {
-	case errors.Is(err, vendorcredit.ErrNotFound):
-		fail(w, http.StatusNotFound, "Vendor credit not found.")
-	case errors.Is(err, vendorcredit.ErrInvalidTransition),
-		errors.Is(err, vendorcredit.ErrApprovalRequired),
-		errors.Is(err, vendorcredit.ErrApprovalNotRequired):
-		fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, vendorcredit.ErrNotApprover):
-		fail(w, http.StatusForbidden, err.Error())
-	default:
-		var ce vendorcredit.ClientError
-		if errors.As(err, &ce) {
-			fail(w, http.StatusBadRequest, ce.Error())
-			return
-		}
-		// Apply/Reverse reach into the vendorbill package for the row lock and
-		// the AP rollup, so a bad vendor bill surfaces as vendorbill.ClientError.
-		var ve vendorbill.ClientError
-		if errors.As(err, &ve) {
-			fail(w, http.StatusBadRequest, ve.Error())
-			return
-		}
-		var ife *query.InvalidFilterError
-		if errors.As(err, &ife) {
-			fail(w, http.StatusBadRequest, ife.Error())
-			return
-		}
-		fail(w, http.StatusInternalServerError, serverMsg)
-	}
-}
-
 // Create POST /api/tenant/vendor-credits
 func (h *VendorCreditOps) Create(w http.ResponseWriter, r *http.Request) {
 	pool, identityID, _, ok := h.authVendorCredit(w, r, authz.ActionCreate)
@@ -178,9 +142,17 @@ func (h *VendorCreditOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in vendorcredit.CreateVendorCreditInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	raw, ok := readJSONBody(w, r, &in)
+	if !ok {
 		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if key != "" {
+		in.IdempotencyKey = callerIdempotencyKey(identityID, key)
+		in.RequestHash = idempotency.HashRequest(raw)
 	}
 	empID := resolveEmployeeID(r, identityID)
 	vc, err := vendorcredit.Create(r.Context(), pool, in, empID)
@@ -253,8 +225,7 @@ func (h *VendorCreditOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in vendorcredit.UpdateVendorCreditInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, http.StatusBadRequest, "Invalid request body.")
+	if _, ok := readJSONBody(w, r, &in); !ok {
 		return
 	}
 	before, _ := vendorcredit.Get(r.Context(), pool, id)

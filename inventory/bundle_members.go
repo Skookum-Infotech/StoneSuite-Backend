@@ -88,6 +88,9 @@ func attachMembers(ctx context.Context, tx pgx.Tx, bundleUUID string, memberIDs 
 		if u.bundleID != nil {
 			return ClientError{Msg: "A unit is already in another bundle. Remove it from that one first."}
 		}
+		if u.status == StatusOnOrder {
+			return ClientError{Msg: "A unit that is still on order cannot be bundled."}
+		}
 		if u.status == StatusConsumed || u.status == StatusScrapped {
 			return ClientError{Msg: "A consumed or scrapped unit cannot be bundled."}
 		}

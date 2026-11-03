@@ -36,7 +36,7 @@ const reqnSelect = `
 	       reqn.requisition_subtotal, reqn.requisition_tax_total, reqn.requisition_estimated_total,
 	       po.purchase_order_uuid,
 	       reqn.requisition_created_at, reqn.requisition_updated_at,
-	       reqn.requisition_status
+	       reqn.requisition_status, reqn.requisition_record_version
 	FROM requisition reqn
 	JOIN lkp_record_status rs ON rs.record_status_id = reqn.requisition_status
 	JOIN employee re ON re.employee_id = reqn.requisition_requested_by_id
@@ -72,7 +72,7 @@ func scanRequisition(row pgx.Row) (*Requisition, reqnMeta, error) {
 		&p.Subtotal, &p.TaxTotal, &p.EstimatedTotal,
 		&convertedPOUUID,
 		&p.CreatedAt, &p.UpdatedAt,
-		&meta.statusID,
+		&meta.statusID, &p.RecordVersion,
 	); err != nil {
 		return nil, reqnMeta{}, err
 	}

@@ -67,7 +67,7 @@ func TestCreate_SnapshotsAndTotals(t *testing.T) {
 	pool := testPool(t)
 	_, itemUUID := seedVendorAndItem(t, pool)
 
-	in := CreateRequisitionInput{requisitionFields{
+	in := CreateRequisitionInput{requisitionFields: requisitionFields{
 		SalesTaxPercent: 8,
 		Items: []LineInput{
 			{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 2},
@@ -105,7 +105,7 @@ func TestCreate_SnapshotsAndTotals(t *testing.T) {
 
 func TestCreate_NoVendorRequired(t *testing.T) {
 	pool := testPool(t)
-	got, err := Create(context.Background(), pool, CreateRequisitionInput{requisitionFields{
+	got, err := Create(context.Background(), pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, Description: "Something not in the catalog yet", Quantity: 1, EstimatedUnitPrice: 100}},
 	}}, 1)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestCreate_RequiresAtLeastOneLine(t *testing.T) {
 func TestCreate_RejectsInvalidPriority(t *testing.T) {
 	pool := testPool(t)
 	_, itemUUID := seedVendorAndItem(t, pool)
-	_, err := Create(context.Background(), pool, CreateRequisitionInput{requisitionFields{
+	_, err := Create(context.Background(), pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Priority: "urgentish",
 		Items:    []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
@@ -141,7 +141,7 @@ func TestUpdate_OnlyDraftEditable(t *testing.T) {
 	_, itemUUID := seedVendorAndItem(t, pool)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -149,7 +149,7 @@ func TestUpdate_OnlyDraftEditable(t *testing.T) {
 	}
 
 	// Draft update recomputes totals.
-	updated, err := Update(ctx, pool, created.ID, UpdateRequisitionInput{requisitionFields{
+	updated, err := Update(ctx, pool, created.ID, UpdateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 3}},
 	}}, 1)
 	if err != nil {
@@ -163,7 +163,7 @@ func TestUpdate_OnlyDraftEditable(t *testing.T) {
 	if _, err := Transition(ctx, pool, created.ID, "PAPV", 1); err != nil {
 		t.Fatalf("Transition to PAPV: %v", err)
 	}
-	_, err = Update(ctx, pool, created.ID, UpdateRequisitionInput{requisitionFields{
+	_, err = Update(ctx, pool, created.ID, UpdateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 5}},
 	}}, 1)
 	if !IsClientError(err) {
@@ -176,7 +176,7 @@ func TestSoftDelete_GuardedByStatus(t *testing.T) {
 	_, itemUUID := seedVendorAndItem(t, pool)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -207,7 +207,7 @@ func TestTransition_RejectsIllegalMove(t *testing.T) {
 	pool := testPool(t)
 	_, itemUUID := seedVendorAndItem(t, pool)
 
-	created, err := Create(context.Background(), pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(context.Background(), pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -239,7 +239,7 @@ func TestTransition_DraftStraightToApproved_WhenNoApprovers(t *testing.T) {
 		t.Fatalf("clear requisition_approver: %v", err)
 	}
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -270,7 +270,7 @@ func TestApprove_RequiresConfiguredApprover(t *testing.T) {
 	_, itemUUID := seedVendorAndItem(t, pool)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	_, itemUUID := seedVendorAndItem(t, pool)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestSearch_ReturnsCreatedRequisition(t *testing.T) {
 	_, itemUUID := seedVendorAndItem(t, pool)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {
@@ -376,7 +376,7 @@ func TestSoftDelete_UnresolvedActor(t *testing.T) {
 	ctx := context.Background()
 	_, itemUUID := seedVendorAndItem(t, pool)
 
-	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields{
+	created, err := Create(ctx, pool, CreateRequisitionInput{requisitionFields: requisitionFields{
 		Items: []LineInput{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}},
 	}}, 1)
 	if err != nil {

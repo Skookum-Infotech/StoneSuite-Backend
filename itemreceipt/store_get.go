@@ -33,6 +33,7 @@ const irSelect = `
 	       ir.item_receipt_posted_at, ir.item_receipt_voided_at,
 	       ir.item_receipt_void_reason, ir.item_receipt_over_receipt_reason,
 	       ir.item_receipt_custom_fields,
+	       ir.item_receipt_record_version,
 	       ir.item_receipt_created_at, ir.item_receipt_updated_at
 	FROM item_receipt ir
 	JOIN lkp_record_status rs ON rs.record_status_id = ir.item_receipt_status
@@ -59,6 +60,7 @@ func scanItemReceipt(row pgx.Row) (*ItemReceipt, error) {
 		&r.PostedAt, &r.VoidedAt,
 		&r.VoidReason, &r.OverReceiptReason,
 		&customRaw,
+		&r.RecordVersion,
 		&r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return nil, err

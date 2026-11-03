@@ -2,7 +2,10 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -32,4 +35,18 @@ func ApplyTenantSchema(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 // ApplyTenantMigrations is an alias kept for call-site compatibility.
 func ApplyTenantMigrations(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	return ApplyTenantSchema(ctx, pool)
+}
+
+var (
+	tenantSchemaHashOnce  sync.Once
+	tenantSchemaHashValue string
+)
+
+// TenantSchemaHash returns the hex sha256 of the embedded tenant schema.sql.
+func TenantSchemaHash() string {
+	tenantSchemaHashOnce.Do(func() {
+		sum := sha256.Sum256([]byte(tenantSchemaSQL))
+		tenantSchemaHashValue = hex.EncodeToString(sum[:])
+	})
+	return tenantSchemaHashValue
 }

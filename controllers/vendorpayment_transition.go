@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/vendorpayment"
 )
 
@@ -27,12 +28,11 @@ func (h *VendorPaymentOps) Transition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Transition(r.Context(), pool, id, req.ToStatusCode, empID)
+	vp, err := vendorpayment.Transition(auditCtx(r, ""), pool, id, req.ToStatusCode, empID)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to transition vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "transition", id, nil, vp)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp})
 }
 
@@ -50,7 +50,7 @@ func (h *VendorPaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Approve(r.Context(), pool, id, empID, isSuperAdmin)
+	vp, err := vendorpayment.Approve(auditCtx(r, ""), pool, id, empID, isSuperAdmin)
 	if err != nil {
 		if errors.Is(err, vendorpayment.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", id)
@@ -58,7 +58,6 @@ func (h *VendorPaymentOps) Approve(w http.ResponseWriter, r *http.Request) {
 		vendorPaymentFail(w, err, "Failed to approve vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "approve", id, nil, vp)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp})
 }
 
@@ -80,20 +79,34 @@ func (h *VendorPaymentOps) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req vendorPayApplyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VendorBillUUID == "" || req.Amount <= 0 {
+	raw, ok := readJSONBody(w, r, &req)
+	if !ok {
+		return
+	}
+	if req.VendorBillUUID == "" || !(req.Amount > 0) {
 		fail(w, http.StatusBadRequest, "vendorBillUuid and a positive amount are required.")
+		return
+	}
+	key, ok := idempotencyKeyFromRequest(w, r)
+	if !ok {
 		return
 	}
 	if !h.vendorBillInScopeForUpdate(w, r, pool, identityID, req.VendorBillUUID) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Apply(r.Context(), pool, id, req.VendorBillUUID, req.Amount, empID)
+	var applyKey, applyHash string
+	if key != "" {
+		applyKey = callerIdempotencyKey(identityID, key)
+		// The hash covers the payment id too: the body alone names only the
+		// bill and amount, so one key must not replay across payments.
+		applyHash = idempotency.HashRequest([]byte(id + "\n" + string(raw)))
+	}
+	vp, err := vendorpayment.ApplyIdempotent(auditCtx(r, ""), pool, id, req.VendorBillUUID, req.Amount, empID, applyKey, applyHash)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to apply vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "apply", id, nil, vp)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp})
 }
 
@@ -118,12 +131,11 @@ func (h *VendorPaymentOps) Unapply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	vp, err := vendorpayment.Unapply(r.Context(), pool, id, req.VendorBillUUID, empID)
+	vp, err := vendorpayment.Unapply(auditCtx(r, ""), pool, id, req.VendorBillUUID, empID)
 	if err != nil {
 		vendorPaymentFail(w, err, "Failed to unapply vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "unapply", id, nil, vp)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp})
 }
 
@@ -150,7 +162,7 @@ func (h *VendorPaymentOps) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	empID := resolveEmployeeID(r, identityID)
-	rec, err := vendorpayment.Reject(r.Context(), pool, uuid, empID, isSuperAdmin, req.Reason)
+	rec, err := vendorpayment.Reject(auditCtx(r, ""), pool, uuid, empID, isSuperAdmin, req.Reason)
 	if err != nil {
 		if errors.Is(err, vendorpayment.ErrNotApprover) {
 			logSecurityEvent(r, "approval_denied", "identity", identityID, "record", uuid)
@@ -158,6 +170,5 @@ func (h *VendorPaymentOps) Reject(w http.ResponseWriter, r *http.Request) {
 		vendorPaymentFail(w, err, "Failed to reject vendor payment.")
 		return
 	}
-	auditVendorPayment(r, pool, empID, "reject", uuid, nil, rec)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": rec})
 }

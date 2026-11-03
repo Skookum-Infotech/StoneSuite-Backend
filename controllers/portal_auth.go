@@ -259,10 +259,9 @@ func (h *PortalAuthOps) Refresh(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return
 	}
-	refreshRaw, refreshExpiry, err := rotateRefreshToken(r.Context(), h.CP, hash, identityID)
+	refreshRaw, refreshExpiry, err := rotateRefreshToken(r, h.CP, hash)
 	if err != nil {
-		slog.Error("portal refresh rotation: issue new refresh token", "error", err)
-		fail(w, http.StatusInternalServerError, "Failed to refresh session.")
+		refreshTokenFailed(w, r, h.CP, err, hash, "portal_refresh_token_reused")
 		return
 	}
 	if err := setAuthCookiesAt(w, token, d, refreshRaw, refreshExpiry, portalRefreshCookiePath); err != nil {
@@ -395,15 +394,20 @@ func (h *PortalAuthOps) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
 	}
+	// Claim the invite first (it only flips while still pending), so two
+	// concurrent submissions of one link can't both set the password. If the
+	// password write below then fails, the customer uses forgot-password.
+	if err := h.CP.MarkPortalInviteAccepted(r.Context(), invite.ID); err != nil {
+		if errors.Is(err, tenancy.ErrPortalInviteNotFound) {
+			fail(w, http.StatusBadRequest, "This invitation is no longer valid.")
+			return
+		}
+		fail(w, http.StatusInternalServerError, "Failed to accept the invitation.")
+		return
+	}
 	if err := h.CP.SetIdentityPassword(r.Context(), invite.IdentityID, string(hash)); err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to set password.")
 		return
-	}
-	// Close the invite last: if this fails the password is already set, and a
-	// still-pending invite is harmless because the identity now has a password
-	// (which is what the resend path refuses to overwrite).
-	if err := h.CP.MarkPortalInviteAccepted(r.Context(), invite.ID); err != nil {
-		log.Printf("warn: mark portal invite %s accepted: %v", invite.ID, err)
 	}
 
 	logSecurityEvent(r, "portal_invite_accepted", "identity", invite.IdentityID)
@@ -506,13 +510,19 @@ func (h *PortalAuthOps) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to reset password.")
 		return
 	}
-	// SetIdentityPassword NULLs the token in the same statement, so the link is
-	// single-use without a separate delete.
-	if err := h.CP.SetIdentityPassword(r.Context(), identity.ID, string(hash)); err != nil {
+	// ConsumePasswordToken sets the password and NULLs the token in one
+	// conditional statement, so the link is single-use even under a race, and
+	// ends every session the identity holds.
+	if err := h.CP.ConsumePasswordToken(r.Context(), identity.ID, req.Token, string(hash)); err != nil {
+		if errors.Is(err, tenancy.ErrTokenAlreadyUsed) {
+			fail(w, http.StatusBadRequest, "This reset link is invalid or has expired.")
+			return
+		}
+		slog.Error("portal reset password", "identity", identity.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to reset password.")
 		return
 	}
-	logSecurityEvent(r, "portal_password_reset", "identity", identity.ID)
+	logSecurityEvent(r, "portal_password_reset", "identity", identity.ID, "sessions_revoked", true)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -573,10 +583,13 @@ func (h *PortalAuthOps) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Failed to change password.")
 		return
 	}
-	if err := h.CP.SetIdentityPassword(r.Context(), payload.ID, string(hash)); err != nil {
+	// Ends every other session; the caller's own refresh token is kept.
+	if err := h.CP.SetIdentityPasswordRevokingSessions(r.Context(), payload.ID, string(hash), presentedRefreshTokenHash(r)); err != nil {
+		slog.Error("portal change password", "identity", payload.ID, "error", err)
 		fail(w, http.StatusInternalServerError, "Failed to change password.")
 		return
 	}
+	logSecurityEvent(r, "portal_password_changed", "identity", payload.ID, "other_sessions_revoked", true)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

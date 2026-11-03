@@ -118,12 +118,21 @@ func main() {
 	// (login, password reset, activation). Token bucket: 10 immediate attempts,
 	// then refills at 1 every 5s (~12/min sustained) per client IP.
 	authRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.2, 10)
+	// Refresh gets its own, looser bucket: it is called automatically by every
+	// open tab, so sharing the login bucket let one busy office (many users
+	// behind one NAT IP) exhaust it and lock its own users out of login too.
+	refreshRateLimiter := middleware.NewRateLimiter(shutdownCtx, 1, 30)
 
 	// 2. Initialize the multi-tenant control plane (required).
 	// When CONTROL_PLANE_DB_URL is set, requests can be resolved to a tenant and
 	// routed to that tenant's isolated database. Until then, legacy routes work
 	// unchanged so existing functionality is not disrupted during the migration.
 	var resolver *tenancy.Resolver
+	// migrationGate 503s requests for tenants still migrating at boot; bootStale
+	// is that set; ragRescan is signalled (non-blocking) as each tenant finishes.
+	migrationGate := tenancy.NewMigrationGate()
+	var bootStale []tenancy.Tenant
+	ragRescan := make(chan struct{}, 1)
 	var tenantOps *controllers.TenantOps
 	var userOps *controllers.UserOps
 	var portalAuthOps *controllers.PortalAuthOps
@@ -160,7 +169,7 @@ func main() {
 	indexCoordinator := NewIndexCoordinator()
 	if config.AppConfig.ControlPlaneDBURL != "" {
 		var err error
-		cp, err = tenancy.NewControlPlane(context.Background(), config.AppConfig.ControlPlaneDBURL)
+		cp, err = tenancy.NewControlPlaneWithTimeouts(context.Background(), config.AppConfig.ControlPlaneDBURL, dbSessionTimeouts())
 		if err != nil {
 			log.Fatalf("CRITICAL ERROR: Failed to initialize control plane: %v", err)
 		}
@@ -196,15 +205,15 @@ func main() {
 		} else {
 			log.Println("Tenant DSN encryption: disabled (plaintext DSNs — development only).")
 		}
-		tenantRouter = tenancy.NewRouter(dsnResolver) // nil resolver -> PlainDSNResolver
-		resolver = tenancy.NewResolver(cp, tenantRouter)
+		tenantRouter = tenancy.NewRouterWithTimeouts(dsnResolver, dbSessionTimeouts()) // nil resolver -> PlainDSNResolver
+		resolver = tenancy.NewResolver(cp, tenantRouter).WithMigrationGate(migrationGate)
 
 		// Durable job queue (async_jobs table): backs tenant provisioning and
 		// future long-running work (e.g. workflow transition actions).
 		jobQueue = jobqueue.New(cp.Pool())
 
 		// Cloudflare client — shared by provisioner and admin repair endpoints.
-		cfClient := storage.NewCFClient(config.AppConfig.CloudflareAccountID, config.AppConfig.CloudflareAPIToken)
+		cfClient := storage.NewCFClient(config.AppConfig.CloudflareAccountID, config.AppConfig.CloudflareAPIToken, config.AppConfig.R2HTTPTimeout)
 		if cfClient.IsConfigured() {
 			log.Println("R2 per-tenant buckets: Cloudflare API configured.")
 		}
@@ -232,12 +241,17 @@ func main() {
 			// workspace (workflows/roles) like any tenant.
 			ensureOwnerWorkspace(context.Background(), cp, provisioner)
 
-			// Fan-out migrations: apply schema.sql to all already-provisioned
-			// tenant DBs. Idempotent (CREATE IF NOT EXISTS / ON CONFLICT DO
-			// NOTHING) so it's safe — and necessary — to re-run on every boot;
-			// run synchronously so RAG workers below never start against a
-			// tenant DB that hasn't picked up new tables yet (e.g. rag_index_queue).
-			migrateAllTenants(context.Background(), cp, tenantRouter)
+			// Boot migrations: tenants whose schema hash is stale (or whose
+			// migration_status is stuck) are gated with a 503 and migrated in the
+			// background after the HTTP server starts listening, so cold start
+			// never waits on tenant DBs. RAG workers started below tolerate a
+			// tenant that has not yet picked up new tables (e.g. rag_index_queue);
+			// they are re-scanned via ragRescan as each tenant finishes.
+			var serr error
+			bootStale, serr = staleTenants(context.Background(), cp, migrationGate)
+			if serr != nil {
+				log.Printf("boot-migrate: %v", serr)
+			}
 
 			// Ollama embedder box lifecycle: started here (in parallel with the
 			// rest of boot, since a cold model load takes ~10s) so it's tied to
@@ -283,7 +297,7 @@ func main() {
 			// (see ai/index.Worker). Tied to shutdownCtx since these are
 			// long-running loops that must stop on server shutdown.
 			workflow.RegisterAuditObserver(ragAuditObserver)
-			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator)
+			go startRAGIndexing(shutdownCtx, cp, tenantRouter, aiSettingsCache, indexCoordinator, migrationGate, (<-chan struct{})(ragRescan))
 		} else {
 			log.Println("Note: PROVISION_ADMIN_DB_URL not set — tenant provisioning disabled.")
 		}
@@ -383,7 +397,7 @@ func main() {
 		// credential-stuffing attacks (no tenant id exists yet to key on).
 		mux.Handle("/api/auth/tenant-login", authRateLimiter.PerIPFunc(tenantOps.TenantLogin))
 		mux.Handle("POST /api/auth/identify", authRateLimiter.PerIPFunc(tenantOps.Identify))
-		mux.Handle("POST /api/auth/refresh", authRateLimiter.PerIPFunc(tenantOps.RefreshSession))
+		mux.Handle("POST /api/auth/refresh", refreshRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
 		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(http.HandlerFunc(tenantOps.ChangePassword)))
 		mux.Handle("POST /api/auth/forgot-password", authRateLimiter.PerIPFunc(tenantOps.ForgotPassword))
@@ -609,12 +623,19 @@ func main() {
 			previewTZ, _ = time.LoadLocation(tz)
 		}
 		mux.Handle("POST /api/tenant/automation/rules/{key}/preview", tenantChain(controllers.NewAutomationPreviewOps(previewTZ).Preview))
+		automationSettingsOps := controllers.NewAutomationSettingsOps(automation.NewPlatformStore(cp.Pool()))
+		mux.Handle("GET /api/tenant/automation/settings", tenantChain(automationSettingsOps.Get))
+		mux.Handle("PUT /api/tenant/automation/settings", tenantChain(automationSettingsOps.Put))
 		automationDeliveryOps := controllers.NewAutomationDeliveryOps()
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
 		anomalyOps := controllers.NewAnomalyOps(automation.NewAnomalyScan(automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL}), previewTZ)
 		mux.Handle("GET /api/tenant/anomalies", tenantChain(anomalyOps.List))
 		mux.Handle("POST /api/tenant/anomalies/scan", tenantChain(anomalyOps.ScanNow))
 		mux.Handle("PATCH /api/tenant/anomalies/{uuid}", tenantChain(anomalyOps.UpdateStatus))
+
+		var replenishmentOps controllers.ReplenishmentOps
+		mux.Handle("GET /api/tenant/replenishment", tenantChain(replenishmentOps.List))
+		mux.Handle("POST /api/tenant/replenishment/draft", tenantChain(replenishmentOps.Draft))
 
 		// Executors are registered before the ops are built. The docextract create
 		// executors are inert until DOC_EXTRACT_PROPOSE_ENTITIES_ENABLED lets
@@ -1049,7 +1070,10 @@ func main() {
 		if cp != nil && tenantRouter != nil {
 			docOps.WithPublicDownload(cp, tenantRouter.PoolFor)
 			// Customer PDF link from the email card: no login, signed + expiring.
-			mux.HandleFunc("GET "+controllers.DocLinkPathPrefix+"{token}", docOps.DownloadByLink)
+			// Per-IP limited: every hit renders a PDF, and the route needs no login,
+			// so an unthrottled link (forwarded, or replayed) burns CPU for free.
+			docLinkRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.5, 10)
+			mux.Handle("GET "+controllers.DocLinkPathPrefix+"{token}", docLinkRateLimiter.PerIPFunc(docOps.DownloadByLink))
 		}
 		if config.AppConfig.PDFDefaultClientLogo {
 			// Same client logo the app header shows, for tenants that have not
@@ -1144,6 +1168,13 @@ func main() {
 		// {workflowKey}) since notes only ever attach to customer records.
 		customerPortalAdmin := controllers.NewCustomerPortalAdminOps()
 		mux.Handle("POST /api/tenant/crm/customer/records/{id}/portal-invite", tenantChain(customerPortalAdmin.PortalInvite))
+		var custTxTZ *time.Location
+		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
+			custTxTZ, _ = time.LoadLocation(tz)
+		}
+		custTxOps := controllers.NewCustomerTransactionsOps(custTxTZ)
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/transactions", tenantChain(custTxOps.List))
+		mux.Handle("GET /api/tenant/crm/customer/records/{id}/transactions/summary", tenantChain(custTxOps.Summary))
 		customerNoteStaff := controllers.NewCustomerNoteOps()
 		mux.Handle("GET /api/tenant/crm/customer/records/{id}/notes", tenantChain(customerNoteStaff.List))
 		mux.Handle("PATCH /api/tenant/crm/customer/records/{id}/notes/{noteId}", tenantChain(customerNoteStaff.UpdateStatus))
@@ -1165,6 +1196,9 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/items/{uuid}", tenantChain(inv.Update))
 		mux.Handle("DELETE /api/tenant/inventory/items/{uuid}", tenantChain(inv.Delete))
 		mux.Handle("GET /api/tenant/inventory/items/{uuid}/history", tenantChain(inv.History))
+		mux.Handle("GET /api/tenant/inventory/items/{uuid}/stock", tenantChain(inv.StockForItem))
+		mux.Handle("POST /api/tenant/inventory/stock/totals", tenantChain(inv.StockTotals))
+		mux.Handle("PATCH /api/tenant/inventory/stock/reorder-point", tenantChain(inv.SetReorderPoint))
 
 		// Kits: named groups of catalog items sold together ("Kitchen"). Same
 		// inventory_item grant as the items they hold.
@@ -1408,6 +1442,8 @@ func main() {
 		mux.Handle("PATCH /api/tenant/inventory/units/{uuid}/bin", tenantChain(invUnit.MoveBin))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/scrap", tenantChain(invUnit.Scrap))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/cut", tenantChain(invUnit.Cut))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/reserve", tenantChain(invUnit.Reserve))
+		mux.Handle("POST /api/tenant/inventory/units/{uuid}/release", tenantChain(invUnit.ReleaseReservation))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/inspection", tenantChain(invUnit.Inspect))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
 
@@ -1461,6 +1497,18 @@ func main() {
 		mux.Handle("DELETE /api/tenant/vendors/{uuid}", tenantChain(vnd.Delete))
 		mux.Handle("POST /api/tenant/vendors/{uuid}/transition", tenantChain(vnd.Transition))
 		mux.Handle("GET /api/tenant/vendors/{uuid}/audit", tenantChain(vnd.Audit))
+		var vndTxTZ *time.Location
+		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
+			vndTxTZ, _ = time.LoadLocation(tz)
+		}
+		vndTx := controllers.NewVendorTransactionsOps(vndTxTZ, middleware.NewUserRateLimiter(
+			float64(time.Second)/float64(controllers.VendorTxExportRefill), controllers.VendorTxExportBurst))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions", tenantChain(vndTx.List))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/summary", tenantChain(vndTx.Summary))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/aging", tenantChain(vndTx.Aging))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/scheduled", tenantChain(vndTx.Scheduled))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/chain", tenantChain(vndTx.Chain))
+		mux.Handle("GET /api/tenant/vendors/{uuid}/transactions/export.csv", tenantChain(vndTx.Export))
 
 		// Requisition: dedicated v2 relational module (header + line items +
 		// approval), the internal request-to-buy raised before a vendor or
@@ -1517,6 +1565,8 @@ func main() {
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/receipts", tenantChain(irOps.ForPurchaseOrder))
 		// Preview of the serials the next received slabs will get -- same gate.
 		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/next-slab-serial", tenantChain(irOps.NextSlabSequence))
+		// Slabs the order put on order when it was sent, still to arrive -- same gate.
+		mux.Handle("GET /api/tenant/purchase-orders/{uuid}/on-order-slabs", tenantChain(irOps.OnOrderSlabs))
 
 		// Vendor Bill: dedicated v2 relational module (header + line items +
 		// AD-6 approval + AD-7 settlement ledger), the accounts-payable mirror
@@ -1789,7 +1839,16 @@ func main() {
 	// correlation id and logs every response; Recover turns any handler panic
 	// into a clean 500 (logged with stack) instead of crashing the VM. Recover
 	// is inside RequestLogger so panics are still logged as a 500 request line.
-	globalHandler := middleware.RequestLogger(middleware.Recover(corsHandler))
+	// Deadline cancels the request context after REQUEST_TIMEOUT so abandoned
+	// work stops and releases its DB connection. Exempt: routes that bound
+	// their own duration -- the AI answer stream (rolling write deadline plus
+	// streamMaxDuration) and the automation tick (per-tenant timeouts).
+	// MaxBody sits inside Recover so an oversized request is still logged.
+	deadlineExemptPrefixes := []string{"/api/internal/automation/"}
+	deadlineExemptSuffixes := []string{"/ask/stream"}
+	globalHandler := middleware.RequestLogger(middleware.Recover(
+		middleware.MaxBody(config.AppConfig.MaxRequestBodyBytes, ownBodyCapRoute,
+			middleware.Deadline(config.AppConfig.RequestTimeout, deadlineExemptPrefixes, deadlineExemptSuffixes, corsHandler))))
 
 	// 5. Start Server
 	port := config.AppConfig.Port
@@ -1833,6 +1892,12 @@ func main() {
 		}
 	}()
 
+	// Migrate stale tenants in the background now that the listener is up.
+	var bootMigrate *bootMigrations
+	if cp != nil && tenantRouter != nil && len(bootStale) > 0 {
+		bootMigrate = runBootMigrations(shutdownCtx, cp, tenantRouter, migrationGate, bootStale, func(string) { signalRescan(ragRescan) })
+	}
+
 	// Block until SIGTERM or Ctrl-C is received.
 	<-shutdownCtx.Done()
 	stopSignal() // release signal resources
@@ -1850,6 +1915,9 @@ func main() {
 	var workers []namedStopper
 	if provisioner != nil {
 		workers = append(workers, namedStopper{"provisioner", provisioner})
+	}
+	if bootMigrate != nil {
+		workers = append(workers, namedStopper{"boot-migrate", bootMigrate})
 	}
 	if importWorker != nil {
 		workers = append(workers, namedStopper{"import", importWorker})
@@ -1884,70 +1952,6 @@ func main() {
 		cp.Close()
 	}
 	log.Println("Server stopped.")
-}
-
-// tenantMigrateTimeout bounds one tenant's boot-time schema apply.
-const tenantMigrateTimeout = 2 * time.Minute
-
-// migrateAllTenants runs ApplyTenantMigrations on every provisioned tenant DB.
-// Called synchronously on startup, before RAG workers start, so schema.sql
-// (idempotent via CREATE IF NOT EXISTS / ON CONFLICT DO NOTHING) is applied
-// to existing tenant DBs on every boot without manual intervention. There is
-// no version gate: schema.sql is the single canonical source of truth and is
-// always safe to re-run.
-//
-// Eligibility is status==active && db_name set, not Servable() — a tenant
-// whose migration_status is stuck short of "ok" (e.g. an interrupted first
-// run) still has a real database and must be attempted here, since this is
-// the only code path that can ever promote migration_status back to "ok".
-// Gating on Servable() would make that state permanent: unservable because
-// migration_status isn't "ok", but never retried because it's unservable.
-func migrateAllTenants(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router) {
-	tenants, err := cp.ListTenants(ctx)
-	if err != nil {
-		log.Printf("migrate-all: failed to list tenants: %v", err)
-		return
-	}
-	for _, t := range tenants {
-		if t.Status != tenancy.StatusActive || t.DBName == "" {
-			continue
-		}
-		migrateTenant(ctx, cp, router, t)
-	}
-}
-
-// migrateTenant migrates one tenant under its own tenantMigrateTimeout, so a
-// slow or lock-blocked tenant fails on its own instead of hanging boot.
-func migrateTenant(ctx context.Context, cp *tenancy.ControlPlane, router *tenancy.Router, t tenancy.Tenant) {
-	ctx, cancel := context.WithTimeout(ctx, tenantMigrateTimeout)
-	defer cancel()
-	pool, err := router.PoolFor(ctx, &t)
-	if err != nil {
-		log.Printf("migrate-all: tenant %s: pool error: %v", t.Slug, err)
-		return
-	}
-	ver, err := database.ApplyTenantMigrations(ctx, pool)
-	if err != nil {
-		log.Printf("migrate-all: tenant %s: migration failed: %v", t.Slug, err)
-		return
-	}
-	if err := cp.SetTenantSchemaVersion(ctx, t.ID, ver); err != nil {
-		log.Printf("migrate-all: tenant %s: update schema version failed: %v", t.Slug, err)
-	} else {
-		log.Printf("migrate-all: tenant %s migrated to v%d", t.Slug, ver)
-	}
-	if t.MigrationStatus != tenancy.MigrationOK {
-		if err := cp.SetTenantMigrationStatus(ctx, t.ID, tenancy.MigrationOK); err != nil {
-			log.Printf("migrate-all: tenant %s: failed to recover migration_status to ok: %v", t.Slug, err)
-		} else {
-			log.Printf("migrate-all: tenant %s: migration_status recovered to ok", t.Slug)
-		}
-	}
-	if empty, verr := database.ValidateLookupSeeds(ctx, pool); verr != nil {
-		log.Printf("migrate-all: tenant %s: lookup seed check failed: %v", t.Slug, verr)
-	} else if len(empty) > 0 {
-		log.Printf("migrate-all: tenant %s: WARNING unseeded CRM lookup tables: %v", t.Slug, empty)
-	}
 }
 
 // seedPlatformOwner creates the platform-owner tenant and admin identity on
@@ -2104,4 +2108,27 @@ func ensureOwnerWorkspace(ctx context.Context, cp *tenancy.ControlPlane, p *prov
 		Email:      identity.Email,
 		FullName:   identity.FullName,
 	})
+}
+
+// dbSessionTimeouts maps the DB_* timeout settings onto every pool's connections.
+func dbSessionTimeouts() tenancy.SessionTimeouts {
+	return tenancy.SessionTimeouts{
+		Statement: config.AppConfig.DBStatementTimeout,
+		Lock:      config.AppConfig.DBLockTimeout,
+		IdleInTx:  config.AppConfig.DBIdleInTxTimeout,
+	}
+}
+
+// ownBodyCapRoute reports the upload routes that take bodies over the global
+// cap and enforce their own limit in the handler (see middleware.MaxBody).
+func ownBodyCapRoute(r *http.Request) bool {
+	p := r.URL.Path
+	switch r.Method {
+	case http.MethodPut:
+		return p == "/api/tenant/company-profile/logo" ||
+			(strings.HasPrefix(p, "/api/internal/email/inbound/") && strings.Contains(p, "/attachments/"))
+	case http.MethodPost:
+		return strings.HasPrefix(p, "/api/tenant/records/") && strings.HasSuffix(p, "/emails")
+	}
+	return false
 }

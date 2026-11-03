@@ -13,8 +13,8 @@ import (
 // (spec: "prevent edits after posting") — every other status returns a
 // ClientError (400).
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput, actorEmployeeID int) (*CashTransfer, error) {
-	if in.Amount <= 0 {
-		return nil, ClientError{Msg: "amount must be positive."}
+	if err := validateAmount(in.Amount); err != nil {
+		return nil, err
 	}
 	if in.FromAccountUUID == "" || in.ToAccountUUID == "" {
 		return nil, ClientError{Msg: "fromAccountUuid and toAccountUuid are required."}
@@ -41,6 +41,18 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 		return nil, err
 	}
 
+	// Early, unlocked check so a stale form fails before the tx; re-checked
+	// under the row lock below, which is the one that counts.
+	if in.ExpectedVersion != nil {
+		existing, err := Get(ctx, pool, uuid)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkExpectedVersion(in.ExpectedVersion, existing.RecordVersion); err != nil {
+			return nil, err
+		}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin update cash transfer: %w", err)
@@ -62,12 +74,23 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 	if err != nil {
 		return nil, fmt.Errorf("load cash transfer for update: %w", err)
 	}
-	if curStatusCode != draftStatusCode {
-		return nil, ClientError{Msg: "Only a draft cash transfer can be edited."}
+	// Version checks run under the row lock and before the status gate, so a
+	// stale form is told "changed by someone else" rather than a status error.
+	if err := checkExpectedVersion(in.ExpectedVersion, curVersion); err != nil {
+		return nil, err
 	}
 	// See UpdateInput.RecordVersion: 0 opts out of the check entirely.
 	if in.RecordVersion != 0 && in.RecordVersion != curVersion {
 		return nil, ErrVersionMismatch
+	}
+	if curStatusCode != draftStatusCode {
+		return nil, ClientError{Msg: "Only a draft cash transfer can be edited."}
+	}
+	// Captured under the row lock so the audit "old" value is the row this
+	// update actually replaces.
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -87,6 +110,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateInput
 	}
 	writeHistory(ctx, tx, internalID, "update", &curStatusID, &curStatusID, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditUpdate, uuid, before, actorEmployeeID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update cash transfer: %w", err)
 	}
@@ -120,6 +146,10 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	if curStatusCode != draftStatusCode {
 		return ClientError{Msg: "Only a draft cash transfer can be deleted."}
 	}
+	before, err := getQ(ctx, tx, uuid)
+	if err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE cash_transfer SET
@@ -131,6 +161,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	}
 	writeHistory(ctx, tx, internalID, "delete", &curStatusID, nil, actorEmployeeID)
 
+	if err := auditTx(ctx, tx, auditDelete, uuid, before, actorEmployeeID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete cash transfer: %w", err)
 	}

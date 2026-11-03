@@ -51,7 +51,7 @@ func seedInactiveEmployee(t *testing.T, pool *pgxpool.Pool) int {
 
 func TestCreate_TotalsAndNumber(t *testing.T) {
 	pool := testPool(t)
-	got, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields{
+	got, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields: expenseFields{
 		Department: "Sales",
 		Items: []LineInput{
 			{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 412.50},
@@ -88,7 +88,7 @@ func TestCreate_RequiresAtLeastOneLine(t *testing.T) {
 
 func TestCreate_RequiresResolvedActor(t *testing.T) {
 	pool := testPool(t)
-	_, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields{
+	_, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 0)
 	if !IsClientError(err) {
@@ -99,7 +99,7 @@ func TestCreate_RequiresResolvedActor(t *testing.T) {
 func TestCreate_RejectsInactiveClaimant(t *testing.T) {
 	pool := testPool(t)
 	inactiveID := seedInactiveEmployee(t, pool)
-	_, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields{
+	_, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, inactiveID)
 	if !IsClientError(err) {
@@ -109,7 +109,7 @@ func TestCreate_RejectsInactiveClaimant(t *testing.T) {
 
 func TestCreate_RejectsUnknownCategory(t *testing.T) {
 	pool := testPool(t)
-	_, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields{
+	_, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "NOPE", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if !IsClientError(err) {
@@ -121,14 +121,14 @@ func TestUpdate_OnlyDraftEditable(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 100}},
 	}}, 1)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	updated, err := Update(ctx, pool, created.ID, UpdateExpenseInput{expenseFields{
+	updated, err := Update(ctx, pool, created.ID, UpdateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 300}},
 	}}, 1)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestUpdate_OnlyDraftEditable(t *testing.T) {
 	if _, err := Transition(ctx, pool, created.ID, "SUBM", 1); err != nil {
 		t.Fatalf("Transition to SUBM: %v", err)
 	}
-	_, err = Update(ctx, pool, created.ID, UpdateExpenseInput{expenseFields{
+	_, err = Update(ctx, pool, created.ID, UpdateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 500}},
 	}}, 1)
 	if !IsClientError(err) {
@@ -153,7 +153,7 @@ func TestSoftDelete_GuardedByStatus(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -192,7 +192,7 @@ func TestSoftDelete_GuardedByStatus(t *testing.T) {
 
 func TestTransition_RejectsIllegalMove(t *testing.T) {
 	pool := testPool(t)
-	created, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields{
+	created, err := Create(context.Background(), pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -211,7 +211,7 @@ func TestApprove_RequiresConfiguredApprover(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -231,7 +231,7 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestReject_UngatedWhenNoApproversConfigured(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -339,7 +339,7 @@ func TestReject_RequiresConfiguredApproverWhenConfigured(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -380,7 +380,7 @@ func TestSearch_ReturnsCreatedExpense(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {
@@ -411,7 +411,7 @@ func TestSoftDelete_UnresolvedActor(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields{
+	created, err := Create(ctx, pool, CreateExpenseInput{expenseFields: expenseFields{
 		Items: []LineInput{{LineNumber: 1, CategoryCode: "TRAVEL", ExpenseDate: "2026-08-10", Amount: 10}},
 	}}, 1)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/idempotency"
 	"stonesuite-backend/workflow"
 )
 
@@ -61,6 +62,17 @@ func writeHistory(ctx context.Context, tx workflow.Querier, transferID int, acti
 
 // Create opens a new bin transfer in draft. Nothing moves: this is the request.
 func Create(ctx context.Context, pool *pgxpool.Pool, in Input, actorEmployeeID int) (*BinTransfer, error) {
+	// A retry whose first attempt already committed gets that transfer back
+	// before any validation: a replay answers like the original.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Lookup(ctx, pool, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			return Get(ctx, pool, prior)
+		}
+	}
 	if err := validateInput(&in); err != nil {
 		return nil, err
 	}
@@ -77,6 +89,19 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in Input, actorEmployeeID i
 		return nil, fmt.Errorf("begin create bin transfer: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Claim inside the create's transaction: a concurrent duplicate blocks
+	// here until this one commits, then replays it instead of creating.
+	if in.IdempotencyKey != "" {
+		prior, err := idempotency.Claim(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, in.RequestHash)
+		if err != nil {
+			return nil, err
+		}
+		if prior != "" {
+			_ = tx.Rollback(ctx)
+			return Get(ctx, pool, prior)
+		}
+	}
 
 	recordTypeID, err := recordTypeIDByCode(ctx, tx, recordTypeCode)
 	if err != nil {
@@ -118,6 +143,11 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in Input, actorEmployeeID i
 	if _, err := assignNumber(ctx, tx, int64(id)); err != nil {
 		return nil, err
 	}
+	if in.IdempotencyKey != "" {
+		if err := idempotency.Complete(ctx, tx, idempotencyScopeCreate, in.IdempotencyKey, newUUID); err != nil {
+			return nil, err
+		}
+	}
 	if err := replaceLines(ctx, tx, id, lines, actorEmployeeID); err != nil {
 		return nil, err
 	}
@@ -158,6 +188,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in Input, acto
 	}
 	if !IsEditable(cur.statusCode) {
 		return nil, ErrNotEditable
+	}
+	if err := checkLockedVersion(ctx, tx, cur.id, in.ExpectedVersion); err != nil {
+		return nil, err
 	}
 	lines, err := resolveLines(ctx, tx, in.WarehouseID, cur.id, in.Lines)
 	if err != nil {

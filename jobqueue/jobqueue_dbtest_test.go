@@ -238,3 +238,104 @@ func TestQueue_RequeueStaleIsScopedToJobType(t *testing.T) {
 			"reaper must never touch a provision job no matter how stale it looks", provisionJob.Status)
 	}
 }
+
+// TestQueue_FailedJobHonoursRunAfter proves a retry-pending job is not
+// claimable until its run_after passes, and that fresh jobs still claim.
+func TestQueue_FailedJobHonoursRunAfter(t *testing.T) {
+	q, tenantID := newTestQueue(t)
+	ctx := context.Background()
+
+	id, err := q.Enqueue(ctx, "import", tenantID, map[string]string{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"import"}); err != nil {
+		t.Fatalf("fresh job must be claimable: %v", err)
+	}
+	if err := q.MarkFailed(ctx, id, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := q.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != StatusPending {
+		t.Fatalf("Status = %q, want pending (attempts < max)", job.Status)
+	}
+	if _, err := q.ClaimNext(ctx, []string{"import"}); err != ErrNoJob {
+		t.Fatalf("err = %v, want ErrNoJob while run_after is in the future", err)
+	}
+	if _, err := q.pool.Exec(ctx, `UPDATE async_jobs SET run_after = NOW() - INTERVAL '1 second' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := q.ClaimNext(ctx, []string{"import"})
+	if err != nil {
+		t.Fatalf("job must be claimable once run_after passes: %v", err)
+	}
+	if claimed.ID != id {
+		t.Fatalf("claimed %s, want %s", claimed.ID, id)
+	}
+}
+
+// TestQueue_RequeueStaleDeadLettersExhaustedJobs guards the crash loop where a
+// job whose input kills the process mid-run (so it never reaches MarkFailed)
+// was requeued by the reaper forever: once attempts >= max_attempts, a stale
+// running job must go to dead, while one with attempts left still requeues.
+func TestQueue_RequeueStaleDeadLettersExhaustedJobs(t *testing.T) {
+	q, tenantID := newTestQueue(t)
+	ctx := context.Background()
+
+	exhaustedID, err := q.Enqueue(ctx, "import", tenantID, map[string]string{}, "exhausted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryableID, err := q.Enqueue(ctx, "import", tenantID, map[string]string{}, "retryable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setMaxAttempts(t, ctx, exhaustedID, 1)
+	setMaxAttempts(t, ctx, retryableID, 2)
+	for range 2 {
+		if _, err := q.ClaimNext(ctx, []string{"import"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backdateUpdatedAt(t, ctx, exhaustedID, time.Hour)
+	backdateUpdatedAt(t, ctx, retryableID, time.Hour)
+
+	n, err := q.RequeueStale(ctx, []string{"import"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("RequeueStale touched %d jobs, want 2", n)
+	}
+
+	exhausted, err := q.Get(ctx, exhaustedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exhausted.Status != StatusDead {
+		t.Fatalf("exhausted job Status = %q, want dead", exhausted.Status)
+	}
+	retryable, err := q.Get(ctx, retryableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retryable.Status != StatusPending {
+		t.Fatalf("retryable job Status = %q, want pending", retryable.Status)
+	}
+}
+
+// setMaxAttempts overrides a job's max_attempts (Enqueue always uses the column default).
+func setMaxAttempts(t *testing.T, ctx context.Context, id string, n int) {
+	t.Helper()
+	pool, err := pgxpool.New(ctx, os.Getenv("TEST_CP_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("connect test db: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `UPDATE async_jobs SET max_attempts = $2 WHERE id = $1`, id, n); err != nil {
+		t.Fatalf("set max_attempts on job %s: %v", id, err)
+	}
+}

@@ -123,6 +123,19 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 	}
 
 	writeHistory(ctx, tx, internalID, "transition", &curStatusID, &toStatusID, actorEmployeeID)
+	// Sending the order puts its slabs on order in Inventory; an order that ends
+	// before they arrive takes them back off. Both ride this transaction, so an
+	// order is never Sent without its slabs or Cancelled with them still on order.
+	switch toStatusCode {
+	case SentStatusCode:
+		if err := allocateOnOrderSlabs(ctx, tx, internalID, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	case cancelledStatusCode, closedStatusCode:
+		if err := releaseOnOrderSlabs(ctx, tx, internalID, toStatusCode, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
 	// Any move takes the order out of the state a Reject left it in.
 	if err := approvalchain.ClearRejection(ctx, tx, recordTypeID, internalID); err != nil {
 		return nil, err

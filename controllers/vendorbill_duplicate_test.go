@@ -36,10 +36,3 @@ func TestVBDuplicateBody(t *testing.T) {
 		})
 	}
 }
-
-func TestVBCreateExtraMeta(t *testing.T) {
-	assert.Nil(t, vbCreateExtraMeta(nil))
-	assert.Nil(t, vbCreateExtraMeta(&vendorbill.VendorBill{}))
-	got := vbCreateExtraMeta(&vendorbill.VendorBill{DuplicateOverride: true, DuplicateOfUUID: "u-9"})
-	assert.Equal(t, map[string]any{"duplicate_override": true, "existing_uuid": "u-9"}, got)
-}

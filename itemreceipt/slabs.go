@@ -25,13 +25,12 @@ const (
 	// Column widths of inventory_slab / item_receipt_line_unit.
 	maxSlabTextLen     = 50
 	maxSupplierCodeLen = 80
-	maxSerialLen       = 50
 
 	// A slab's serial is <PO number>-<running number>, the number zero-padded to
-	// at least serialSuffixDigits. serialSuffixMaxDigits bounds how much of an
-	// existing serial's tail is read back as that number.
-	serialSuffixDigits    = 3
-	serialSuffixMaxDigits = 6
+	// at least serialSuffixDigits. The numbering lives in package inventory, which
+	// also mints the serials of the slabs a purchase order puts on order.
+	maxSerialLen       = inventory.MaxSlabSerialLen
+	serialSuffixDigits = inventory.SlabSerialSuffixDigits
 
 	// maxSlabDimensionMM (100 m) is far beyond any real slab; it exists so an
 	// absurd value is refused as a 400 instead of overflowing DECIMAL(10,2).
@@ -51,6 +50,9 @@ type resolvedSlab struct {
 	binID                          *int
 	blockID, lot, grade            string
 	supplierCode                   string
+	// expectedSlabID is the On Order slab this row stands for (internal id), nil
+	// on a slab the purchase order did not list.
+	expectedSlabID *int
 }
 
 // fromInventoryErr re-wraps the inventory package's client errors as this
@@ -128,11 +130,13 @@ func insertLineSlabs(ctx context.Context, tx pgx.Tx, lineID, lineNo int, slabs [
 			INSERT INTO item_receipt_line_unit (
 				item_receipt_line_id, unit_seq,
 				slab_length_mm, slab_width_mm, slab_thickness_mm, slab_area,
-				inventory_bin_id, slab_block_id, slab_lot, slab_grade, slab_supplier_code)
-			VALUES ($1,$2, $3,$4,$5,$6, $7,$8,$9,$10,$11)`,
+				inventory_bin_id, slab_block_id, slab_lot, slab_grade, slab_supplier_code,
+				expected_slab_id)
+			VALUES ($1,$2, $3,$4,$5,$6, $7,$8,$9,$10,$11, $12)`,
 			lineID, i+1,
 			s.lengthMM, s.widthMM, s.thicknessMM, s.area,
 			s.binID, s.blockID, s.lot, s.grade, s.supplierCode,
+			s.expectedSlabID,
 		); err != nil {
 			if isForeignKeyViolation(err) {
 				return ClientError{Msg: fmt.Sprintf("Line %d, slab %d: an invalid bin was referenced.", lineNo, i+1)}
@@ -147,37 +151,21 @@ func insertLineSlabs(ctx context.Context, tx pgx.Tx, lineID, lineNo int, slabs [
 
 // serialPrefix is the fixed part of every serial minted for a purchase order.
 func serialPrefix(poNumber string) (string, error) {
-	po := strings.TrimSpace(poNumber)
-	if po == "" {
-		return "", ClientError{Msg: "The purchase order has no number yet, so slab serials cannot be assigned."}
-	}
-	prefix := po + "-"
-	if len(prefix)+serialSuffixDigits > maxSerialLen {
-		return "", ClientError{Msg: "The purchase order number is too long to build slab serials from."}
-	}
-	return prefix, nil
+	prefix, err := inventory.SlabSerialPrefix(poNumber)
+	return prefix, fromInventoryErr(err)
 }
 
 // slabSerial formats the n-th serial under a prefix, e.g. PO-000012-003.
 func slabSerial(prefix string, n int) string {
-	return fmt.Sprintf("%s%0*d", prefix, serialSuffixDigits, n)
+	return inventory.SlabSerial(prefix, n)
 }
 
 // nextSlabNumber returns the number the next slab under prefix should take: one
 // past the highest suffix ever used, counting scrapped and soft-deleted units so
-// a serial is never handed out twice (a voided receipt's slabs keep theirs).
+// a serial is never handed out twice (a voided receipt's slabs keep theirs, and
+// so do the On Order slabs the purchase order minted when it was sent).
 func nextSlabNumber(ctx context.Context, q workflow.Querier, prefix string) (int, error) {
-	var highest int
-	err := q.QueryRow(ctx, fmt.Sprintf(`
-		SELECT COALESCE(MAX(substr(slab_serial, length($1::text) + 1)::int), 0)
-		FROM inventory_slab
-		WHERE starts_with(slab_serial, $1::text)
-		  AND substr(slab_serial, length($1::text) + 1) ~ '^[0-9]{1,%d}$'`, serialSuffixMaxDigits),
-		prefix).Scan(&highest)
-	if err != nil {
-		return 0, fmt.Errorf("find highest slab serial: %w", err)
-	}
-	return highest + 1, nil
+	return inventory.NextSlabNumber(ctx, q, prefix)
 }
 
 // NextSlabSequence previews how the next slabs received against a purchase
@@ -211,15 +199,18 @@ func NextSlabSequence(ctx context.Context, q workflow.Querier, poUUID string) (*
 // belong to, in the order they were entered.
 func loadSlabs(ctx context.Context, q workflow.Querier, irInternalID int) (map[string][]LineSlab, error) {
 	rows, err := q.Query(ctx, `
-		SELECT irl.item_receipt_line_uuid, iru.slab_serial,
+		SELECT irl.item_receipt_line_uuid,
+		       COALESCE(NULLIF(iru.slab_serial, ''), e.slab_serial, ''),
 		       iru.slab_length_mm, iru.slab_width_mm, iru.slab_thickness_mm, iru.slab_area,
 		       b.inventory_bin_uuid, COALESCE(b.bin_path,''),
 		       iru.slab_block_id, iru.slab_lot, iru.slab_grade, iru.slab_supplier_code,
-		       s.inventory_slab_uuid, COALESCE(s.slab_status,'')
+		       s.inventory_slab_uuid, COALESCE(s.slab_status,''),
+		       e.inventory_slab_uuid
 		FROM item_receipt_line_unit iru
 		JOIN item_receipt_line irl ON irl.item_receipt_line_id = iru.item_receipt_line_id
 		LEFT JOIN inventory_bin b  ON b.inventory_bin_id = iru.inventory_bin_id
 		LEFT JOIN inventory_slab s ON s.inventory_slab_id = iru.inventory_slab_id
+		LEFT JOIN inventory_slab e ON e.inventory_slab_id = iru.expected_slab_id
 		WHERE irl.item_receipt_id = $1 AND irl.item_deleted_at IS NULL
 		ORDER BY irl.line_number, iru.unit_seq`, irInternalID)
 	if err != nil {
@@ -236,7 +227,7 @@ func loadSlabs(ctx context.Context, q workflow.Querier, irInternalID int) (map[s
 			&s.LengthMM, &s.WidthMM, &s.ThicknessMM, &s.Area,
 			&s.BinID, &s.BinPath,
 			&s.BlockID, &s.Lot, &s.Grade, &s.SupplierCode,
-			&s.UnitID, &s.UnitStatus); err != nil {
+			&s.UnitID, &s.UnitStatus, &s.OnOrderSlabID); err != nil {
 			return nil, fmt.Errorf("scan item receipt slab: %w", err)
 		}
 		out[lineUUID] = append(out[lineUUID], s)

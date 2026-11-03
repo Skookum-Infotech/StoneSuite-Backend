@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/automation"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/tenancy"
 )
@@ -24,11 +25,17 @@ type automationRuleEnv struct {
 // AutomationRuleOps serves GET/PUT /api/tenant/automation/rules.
 type AutomationRuleOps struct {
 	resolve func(r *http.Request) (automationRuleEnv, error)
+	// platform reports the platform-wide scheduler switch; nil skips the gate.
+	platform platformSwitchReader
 }
 
-// NewAutomationRuleOps builds the handler set backed by the resolved tenant pool.
-func NewAutomationRuleOps() *AutomationRuleOps {
-	return &AutomationRuleOps{resolve: func(r *http.Request) (automationRuleEnv, error) {
+// msgAnomalyNeedsPlatform tells a tenant why anomaly scanning cannot be turned on yet.
+const msgAnomalyNeedsPlatform = "Anomaly scanning cannot be turned on yet. A super admin must turn on Automation for the platform first, then you can enable it."
+
+// NewAutomationRuleOps builds the handler set backed by the resolved tenant pool;
+// platform is the control-plane switch that gates turning anomaly scanning on.
+func NewAutomationRuleOps(platform platformSwitchReader) *AutomationRuleOps {
+	return &AutomationRuleOps{platform: platform, resolve: func(r *http.Request) (automationRuleEnv, error) {
 		pool, err := tenancy.PoolFromContext(r.Context())
 		if err != nil {
 			return automationRuleEnv{}, err
@@ -82,6 +89,26 @@ func (h *AutomationRuleOps) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "rules": rules})
 }
 
+// platformAllowsAnomalyScan reports whether anomaly scanning may be turned on:
+// only while the platform scheduler is on. It writes the refusal itself (409 when
+// off, 503 when the switch cannot be read, so enabling fails closed).
+func (h *AutomationRuleOps) platformAllowsAnomalyScan(w http.ResponseWriter, r *http.Request) bool {
+	if h.platform == nil {
+		return true
+	}
+	on, err := h.platform.Enabled(r.Context())
+	if err != nil {
+		slog.Error("read automation platform switch", "error", err)
+		fail(w, http.StatusServiceUnavailable, "Could not confirm that automation is running. Try again shortly.")
+		return false
+	}
+	if !on {
+		fail(w, http.StatusConflict, msgAnomalyNeedsPlatform)
+		return false
+	}
+	return true
+}
+
 // SetEnabled handles PUT /api/tenant/automation/rules/{key}.
 func (h *AutomationRuleOps) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	env, identityID, ok := h.auth(w, r, authz.ActionConfigure)
@@ -98,6 +125,9 @@ func (h *AutomationRuleOps) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
+	if *body.Enabled && key == automation.RuleKeyAnomalyScan && !h.platformAllowsAnomalyScan(w, r) {
+		return
+	}
 	rule, err := env.store.SetEnabled(r.Context(), key, *body.Enabled)
 	if errors.Is(err, ErrAutomationRuleNotFound) {
 		fail(w, http.StatusNotFound, "Automation rule not found.")

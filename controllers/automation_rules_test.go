@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -142,4 +143,40 @@ func TestAutomationRules_ExposeMachineFields(t *testing.T) {
 	assert.Contains(t, body, `"isSystem":true`)
 	assert.Contains(t, body, `"previewSupported":true`)
 	assert.Contains(t, body, `"lastPlannedAt":"2026-11-02T13:45:00Z"`)
+}
+
+func TestAutomationRules_AnomalyScanNeedsPlatform(t *testing.T) {
+	configure := map[authz.Action]bool{authz.ActionConfigure: true}
+	tests := []struct {
+		name     string
+		platform platformSwitchReader
+		key      string
+		body     string
+		want     int
+		wantMsg  string
+	}{
+		{"enable blocked while platform off", fakePlatform{on: false}, "anomaly_scan", `{"enabled":true}`,
+			http.StatusConflict, "super admin must turn on Automation"},
+		{"enable allowed while platform on", fakePlatform{on: true}, "anomaly_scan", `{"enabled":true}`, http.StatusOK, ""},
+		{"disable always allowed", fakePlatform{on: false}, "anomaly_scan", `{"enabled":false}`, http.StatusOK, ""},
+		{"fails closed when the switch is unreadable", fakePlatform{err: errors.New("cp down")}, "anomaly_scan",
+			`{"enabled":true}`, http.StatusServiceUnavailable, "Could not confirm"},
+		{"other rules are not gated", fakePlatform{on: false}, "ar_dunning", `{"enabled":true}`, http.StatusOK, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeRuleStore()
+			store.rules["anomaly_scan"] = &AutomationRule{RuleKey: "anomaly_scan", Name: "Anomaly detection", Audience: "internal"}
+			ops := ruleOps(store, configure)
+			ops.platform = tt.platform
+			rec := putRule(ops.SetEnabled, tt.key, tt.body, true)
+			require.Equal(t, tt.want, rec.Code, rec.Body.String())
+			if tt.wantMsg != "" {
+				assert.Contains(t, rec.Body.String(), tt.wantMsg)
+			}
+			if tt.want != http.StatusOK {
+				assert.False(t, store.rules[tt.key].Enabled, "a refused request must not change the rule")
+			}
+		})
+	}
 }

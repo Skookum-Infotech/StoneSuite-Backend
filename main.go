@@ -615,7 +615,7 @@ func main() {
 			mux.Handle("/api/tenant/"+slug+"/{uuid}/portal-messages", tenantChain(portalMessageOps.MessagesFor(mod)))
 		}
 
-		automationRuleOps := controllers.NewAutomationRuleOps()
+		automationRuleOps := controllers.NewAutomationRuleOps(automation.NewPlatformStore(cp.Pool()))
 		mux.Handle("GET /api/tenant/automation/rules", tenantChain(automationRuleOps.List))
 		mux.Handle("PUT /api/tenant/automation/rules/{key}", tenantChain(automationRuleOps.SetEnabled))
 		var previewTZ *time.Location

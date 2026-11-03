@@ -74,7 +74,7 @@ func (c *ControlPlane) AnyIdentityForTenant(ctx context.Context, tenantID string
 	return scanIdentity(c.pool.QueryRow(ctx, q, tenantID))
 }
 
-// SetIdentityPasswordSetupToken stores a one-time token + expiry an onboarded
+// SetIdentityPasswordSetupToken stores the SHA-256 of a one-time token + expiry an onboarded
 // customer uses to set their initial password (reuses the password-reset cols).
 // Only HashToken(token) is persisted.
 func (c *ControlPlane) SetIdentityPasswordSetupToken(ctx context.Context, identityID, token string, expiry time.Time) error {

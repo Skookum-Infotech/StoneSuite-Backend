@@ -14,11 +14,25 @@ import (
 
 // Search returns a keyset-paginated page of transfers, headers only.
 func Search(ctx context.Context, pool *pgxpool.Pool, req query.Request) (Page, error) {
-	built, err := query.Build(req, transferResolver{}, 1)
+	return SearchOwned(ctx, pool, nil, req)
+}
+
+// SearchOwned is Search narrowed to transfers owned by ownerEmployeeID (the
+// caller's employee id under an own-scope grant); nil means no narrowing.
+func SearchOwned(ctx context.Context, pool *pgxpool.Pool, ownerEmployeeID *int, req query.Request) (Page, error) {
+	args := []any{}
+	nextIdx := 1
+	ownerClause := ""
+	if ownerEmployeeID != nil {
+		ownerClause = " AND t.transfer_owner_id = $1"
+		args = append(args, *ownerEmployeeID)
+		nextIdx++
+	}
+	built, err := query.Build(req, transferResolver{}, nextIdx)
 	if err != nil {
 		return Page{}, err
 	}
-	where := "t.transfer_deleted_at IS NULL"
+	where := "t.transfer_deleted_at IS NULL" + ownerClause
 	if built.Where != "" {
 		where += " AND " + built.Where
 	}
@@ -28,7 +42,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, req query.Request) (Page, e
 	q := headerSelect + " WHERE " + where +
 		" ORDER BY " + built.OrderBy + " LIMIT " + strconv.Itoa(built.EffLimit+1)
 
-	rows, err := pool.Query(ctx, q, built.Args...)
+	rows, err := pool.Query(ctx, q, append(args, built.Args...)...)
 	if err != nil {
 		return Page{}, fmt.Errorf("search transfers: %w", err)
 	}
@@ -72,10 +86,11 @@ func sortValue(t Transfer, field string) any {
 
 // InTransit returns transfers that have shipped and not landed — the stock that
 // inventory_stock deliberately does not count anywhere.
-func InTransit(ctx context.Context, pool *pgxpool.Pool) ([]Transfer, error) {
+func InTransit(ctx context.Context, pool *pgxpool.Pool, ownerEmployeeID *int) ([]Transfer, error) {
+	ownerFilter := "AND ($2::int IS NULL OR t.transfer_owner_id = $2)"
 	rows, err := pool.Query(ctx, headerSelect+`
-		WHERE t.transfer_deleted_at IS NULL AND rs.record_status_code = $1
-		ORDER BY t.transfer_shipped_at`, StatusInTransit)
+		WHERE t.transfer_deleted_at IS NULL AND rs.record_status_code = $1 `+ownerFilter+`
+		ORDER BY t.transfer_shipped_at`, StatusInTransit, ownerEmployeeID)
 	if err != nil {
 		return nil, fmt.Errorf("load in-transit transfers: %w", err)
 	}

@@ -622,6 +622,9 @@ func main() {
 			previewTZ, _ = time.LoadLocation(tz)
 		}
 		mux.Handle("POST /api/tenant/automation/rules/{key}/preview", tenantChain(controllers.NewAutomationPreviewOps(previewTZ).Preview))
+		automationSettingsOps := controllers.NewAutomationSettingsOps(automation.NewPlatformStore(cp.Pool()))
+		mux.Handle("GET /api/tenant/automation/settings", tenantChain(automationSettingsOps.Get))
+		mux.Handle("PUT /api/tenant/automation/settings", tenantChain(automationSettingsOps.Put))
 		automationDeliveryOps := controllers.NewAutomationDeliveryOps()
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
 		anomalyOps := controllers.NewAnomalyOps(automation.NewAnomalyScan(automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL}), previewTZ)

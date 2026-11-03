@@ -4,6 +4,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"stonesuite-backend/automation"
+	"stonesuite-backend/tenancy"
 )
 
 // seedToggleTestRule inserts a disabled non-system rule and removes it (deliveries first) on cleanup.
@@ -179,4 +181,43 @@ func TestListIncludesBuiltInRules(t *testing.T) {
 	assert.True(t, stuck.Enabled)
 	assert.Equal(t, "internal", stuck.Audience)
 	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: 2}, {OffsetDays: 4}, {OffsetDays: 6}}, stuck.Cadence)
+}
+
+// TestListRuleMachineFields: seeded rules carry isSystem, lastPlannedAt from
+// automation_state, and previewSupported only for the rule PreviewAR can dry-run.
+func TestListRuleMachineFields(t *testing.T) {
+	pool, _ := testCustomerTenantPool(t)
+	ctx := context.Background()
+	planned := time.Date(2026, 11, 2, 13, 45, 0, 0, time.UTC)
+	_, err := pool.Exec(ctx, `UPDATE automation_state SET last_planned_at = $1
+		WHERE rule_id = (SELECT id FROM automation_rules WHERE rule_key = $2)`, planned, automation.RuleKeyARDunning)
+	require.NoError(t, err)
+
+	rules, err := pgAutomationRuleStore{pool: pool}.List(ctx)
+	require.NoError(t, err)
+	byKey := map[string]AutomationRule{}
+	for _, r := range rules {
+		byKey[r.RuleKey] = r
+	}
+	ar := byKey[automation.RuleKeyARDunning]
+	assert.True(t, ar.IsSystem)
+	assert.True(t, ar.PreviewSupported)
+	require.NotNil(t, ar.LastPlannedAt)
+	assert.True(t, planned.Equal(*ar.LastPlannedAt))
+	assert.False(t, byKey[automation.RuleKeyQuoteExpiry].PreviewSupported)
+}
+
+// TestPreviewSupportedMatchesPreviewAR: previewSupported agrees with PreviewAR
+// for every seeded rule (unsupported rules return ErrPreviewUnsupported).
+func TestPreviewSupportedMatchesPreviewAR(t *testing.T) {
+	pool, _ := testCustomerTenantPool(t)
+	ctx := context.Background()
+	rules, err := pgAutomationRuleStore{pool: pool}.List(ctx)
+	require.NoError(t, err)
+	tenant := &tenancy.Tenant{ID: "dbtest-tenant", Slug: "dbtest", Status: tenancy.StatusActive}
+	env := automation.NewPreviewEnv(tenant, time.Now(), "", time.UTC)
+	for _, r := range rules {
+		_, err := automation.PreviewAR(ctx, pool, env, r.RuleKey)
+		assert.Equal(t, !errors.Is(err, automation.ErrPreviewUnsupported), r.PreviewSupported, r.RuleKey)
+	}
 }

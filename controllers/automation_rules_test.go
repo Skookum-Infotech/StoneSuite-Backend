@@ -156,7 +156,7 @@ func TestAutomationRules_AnomalyScanNeedsPlatform(t *testing.T) {
 		wantMsg  string
 	}{
 		{"enable blocked while platform off", fakePlatform{on: false}, "anomaly_scan", `{"enabled":true}`,
-			http.StatusConflict, "Ask a super admin to turn on Automation"},
+			http.StatusConflict, "isn't available yet because Automation is off"},
 		{"enable allowed while platform on", fakePlatform{on: true}, "anomaly_scan", `{"enabled":true}`, http.StatusOK, ""},
 		{"disable always allowed", fakePlatform{on: false}, "anomaly_scan", `{"enabled":false}`, http.StatusOK, ""},
 		{"fails closed when the switch is unreadable", fakePlatform{err: errors.New("cp down")}, "anomaly_scan",

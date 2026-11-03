@@ -30,7 +30,7 @@ type AutomationRuleOps struct {
 }
 
 // msgAnomalyNeedsPlatform tells a tenant why anomaly scanning cannot be turned on yet.
-const msgAnomalyNeedsPlatform = "Ask a super admin to turn on Automation first."
+const msgAnomalyNeedsPlatform = "Anomaly scanning isn't available yet because Automation is off."
 
 // NewAutomationRuleOps builds the handler set backed by the resolved tenant pool;
 // platform is the control-plane switch that gates turning anomaly scanning on.

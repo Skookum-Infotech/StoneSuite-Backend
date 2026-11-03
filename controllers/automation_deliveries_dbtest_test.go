@@ -77,51 +77,54 @@ func TestAutomationDeliveries_KeysetPagination(t *testing.T) {
 	}
 }
 
-// TestDeliveryList_RecordNumber: a delivery resolves its document number per
-// resource (including a soft-deleted record), and stays "" for a resource with
-// no number source or a record id that is not a uuid.
+// TestDeliveryList_RecordNumber: a delivery resolves its document number through
+// the resource -> number-column map, and stays "" for a resource with no number
+// source or a record id that is not a uuid. A scratch table stands in for a real
+// document so the test needs no invoice fixtures.
 func TestDeliveryList_RecordNumber(t *testing.T) {
 	pool, _ := testCustomerTenantPool(t)
 	ctx := context.Background()
-	const ruleKey = "dbtest_recordnumber_rule"
+	const (
+		ruleKey  = "dbtest_recordnumber_rule"
+		resource = "dbtest_numbered_doc"
+		table    = "dbtest_numbered_doc"
+		docUUID  = "11111111-2222-4333-8444-555555555555"
+	)
+	_, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (doc_uuid UUID PRIMARY KEY, doc_number VARCHAR(20))`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO `+table+` VALUES ($1, 'DOC-000123') ON CONFLICT (doc_uuid) DO NOTHING`, docUUID)
+	require.NoError(t, err)
+	deliveryNumberSources[resource] = deliveryNumberSource{Table: table, UUIDColumn: "doc_uuid", NumberColumn: "doc_number"}
+
 	var ruleID string
 	require.NoError(t, pool.QueryRow(ctx,
 		`INSERT INTO automation_rules (rule_key, name, audience, is_system) VALUES ($1, 'dbtest', 'internal', FALSE)
 		 ON CONFLICT (rule_key) DO UPDATE SET name = EXCLUDED.name RETURNING id::text`, ruleKey).Scan(&ruleID))
 	t.Cleanup(func() {
+		delete(deliveryNumberSources, resource)
 		_, _ = pool.Exec(ctx, `DELETE FROM automation_deliveries WHERE rule_id = $1`, ruleID)
 		_, _ = pool.Exec(ctx, `DELETE FROM automation_rules WHERE id = $1`, ruleID)
+		_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS `+table)
 	})
 
-	var invoiceUUID, quoteUUID string
-	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT invoice_uuid::text, invoice_number FROM invoice WHERE invoice_number IS NOT NULL LIMIT 1`).
-		Scan(&invoiceUUID, new(string)))
-	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT quote_uuid::text FROM quote WHERE quote_number IS NOT NULL LIMIT 1`).Scan(&quoteUUID))
-
-	seed := func(resource, recordID string) {
+	seed := func(res, recordID string) {
 		_, err := pool.Exec(ctx, `INSERT INTO automation_deliveries
 			(rule_id, resource, record_id, anchor_date, stage, occurrence_key, recipient_kind, run_at)
 			VALUES ($1, $2, $3, '2026-01-01', 0, $4, 'internal', NOW())`,
-			ruleID, resource, recordID, ruleKey+"|"+resource+"|"+recordID)
+			ruleID, res, recordID, ruleKey+"|"+res+"|"+recordID)
 		require.NoError(t, err)
 	}
-	seed("invoice", invoiceUUID)
-	seed("quote", quoteUUID)
-	seed("mystery", invoiceUUID)
-	seed("invoice", "not-a-uuid")
+	seed(resource, docUUID)
+	seed("mystery", docUUID)
+	seed(resource, "not-a-uuid")
 
 	rows, _, err := pgAutomationDeliveryStore{pool: pool}.List(ctx, DeliveryFilter{RuleKey: ruleKey, Limit: 10})
 	require.NoError(t, err)
-	require.Len(t, rows, 4)
+	require.Len(t, rows, 3)
 	for _, d := range rows {
-		switch {
-		case d.Resource == "invoice" && d.RecordID == invoiceUUID:
-			assert.NotEmpty(t, d.RecordNumber)
-		case d.Resource == "quote":
-			assert.NotEmpty(t, d.RecordNumber)
-		default:
+		if d.Resource == resource && d.RecordID == docUUID {
+			assert.Equal(t, "DOC-000123", d.RecordNumber)
+		} else {
 			assert.Empty(t, d.RecordNumber, "%s/%s", d.Resource, d.RecordID)
 		}
 	}

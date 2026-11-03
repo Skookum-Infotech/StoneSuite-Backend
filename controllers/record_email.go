@@ -309,8 +309,8 @@ func (h *RecordEmailOps) Reply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "The email was sent but could not be saved to the conversation.")
 		return
 	}
-	_ = workflow.LogAudit(ctx, pool, actor.ID, "record_email.replied", "record_email", recordID,
-		map[string]any{"recordId": recordID, "workflowKey": info.WorkflowKey, "to": to, "attachments": len(atts)})
+	logAuditErr("workflow_audit", workflow.LogAudit(ctx, pool, actor.ID, "record_email.replied", "record_email", recordID,
+		map[string]any{"recordId": recordID, "workflowKey": info.WorkflowKey, "to": to, "attachments": len(atts)}))
 
 	resp := map[string]any{"success": true}
 	outcome := services.ConfirmEmailDelivery(ctx, tenant.ID, res, nil)
@@ -339,8 +339,8 @@ func saveInternalNote(
 		fail(w, http.StatusInternalServerError, "Failed to save the note.")
 		return false
 	}
-	_ = workflow.LogAudit(ctx, pool, actor.ID, "record_email.note_added", "record_email", recordID,
-		map[string]any{"recordId": recordID, "workflowKey": workflowKey, "attachments": len(atts)})
+	logAuditErr("workflow_audit", workflow.LogAudit(ctx, pool, actor.ID, "record_email.note_added", "record_email", recordID,
+		map[string]any{"recordId": recordID, "workflowKey": workflowKey, "attachments": len(atts)}))
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 	return true
 }

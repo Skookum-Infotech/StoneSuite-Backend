@@ -24,6 +24,10 @@ type AutomationRule struct {
 	Enabled   bool                        `json:"enabled"`
 	EnabledAt *time.Time                  `json:"enabledAt"`
 	Cadence   []automation.ARCadenceStage `json:"cadence"`
+	IsSystem  bool                        `json:"isSystem"`
+	// PreviewSupported is true only for the rule automation.PreviewAR can dry-run.
+	PreviewSupported bool       `json:"previewSupported"`
+	LastPlannedAt    *time.Time `json:"lastPlannedAt"`
 }
 
 // automationRuleStore is the persistence the rules API needs (consumer-side).
@@ -36,7 +40,7 @@ type automationRuleStore interface {
 type pgAutomationRuleStore struct{ pool *pgxpool.Pool }
 
 const automationRuleSelect = `
-SELECT r.rule_key, r.name, r.audience, r.enabled, s.enabled_at, r.rule
+SELECT r.rule_key, r.name, r.audience, r.enabled, s.enabled_at, r.rule, r.is_system, s.last_planned_at
 FROM automation_rules r
 LEFT JOIN automation_state s ON s.rule_id = r.id`
 
@@ -58,7 +62,7 @@ func scanAutomationRule(row pgx.Row) (AutomationRule, error) {
 		rule AutomationRule
 		raw  []byte
 	)
-	if err := row.Scan(&rule.RuleKey, &rule.Name, &rule.Audience, &rule.Enabled, &rule.EnabledAt, &raw); err != nil {
+	if err := row.Scan(&rule.RuleKey, &rule.Name, &rule.Audience, &rule.Enabled, &rule.EnabledAt, &raw, &rule.IsSystem, &rule.LastPlannedAt); err != nil {
 		return AutomationRule{}, err
 	}
 	var cfg automation.ARRuleConfig
@@ -67,6 +71,7 @@ func scanAutomationRule(row pgx.Row) (AutomationRule, error) {
 			return AutomationRule{}, fmt.Errorf("decode rule config %s: %w", rule.RuleKey, err)
 		}
 	}
+	rule.PreviewSupported = rule.RuleKey == automation.PreviewRuleKey
 	rule.Cadence = cfg.Cadence
 	if rule.Cadence == nil {
 		rule.Cadence = []automation.ARCadenceStage{}

@@ -16,6 +16,7 @@ type AutomationDelivery struct {
 	RuleKey        string     `json:"ruleKey"`
 	Resource       string     `json:"resource"`
 	RecordID       string     `json:"recordId"`
+	RecordNumber   string     `json:"recordNumber"`
 	Stage          int        `json:"stage"`
 	AnchorDate     string     `json:"anchorDate"`
 	RecipientEmail string     `json:"recipientEmail"`
@@ -110,6 +111,9 @@ func (s pgAutomationDeliveryStore) List(ctx context.Context, f DeliveryFilter) (
 		out = out[:f.Limit]
 		last := out[len(out)-1]
 		next = encodeDeliveryCursor(last.CreatedAt, last.ID)
+	}
+	if err := fillRecordNumbers(ctx, s.pool, out); err != nil {
+		return nil, "", err
 	}
 	return out, next, nil
 }

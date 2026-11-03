@@ -41,6 +41,7 @@ machine after the response).
    count toward the weekly/daily caps. Disabling a rule skips its unsent rows (`rule_disabled`).
    Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
    pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
+   `GET`/`PUT /api/tenant/automation/settings` (`automation:read` / `automation:configure`, body `{"killSwitch":bool}`) expose the tenant kill switch, read-only caps and the platform switch (`platformEnabled`, `null` when the control plane is unreadable); rules also return `isSystem`, `previewSupported` (`automation.PreviewRuleKey`) and `lastPlannedAt`, and deliveries a `recordNumber`.
    Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
 6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **enabled** and use a
    `-3d` cadence (3 days before expiry). They send owner-only **internal** digests through the

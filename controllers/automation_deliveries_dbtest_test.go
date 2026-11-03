@@ -76,3 +76,53 @@ func TestAutomationDeliveries_KeysetPagination(t *testing.T) {
 		}
 	}
 }
+
+// TestDeliveryList_RecordNumber: a delivery resolves its document number per
+// resource (including a soft-deleted record), and stays "" for a resource with
+// no number source or a record id that is not a uuid.
+func TestDeliveryList_RecordNumber(t *testing.T) {
+	pool, _ := testCustomerTenantPool(t)
+	ctx := context.Background()
+	const ruleKey = "dbtest_recordnumber_rule"
+	var ruleID string
+	require.NoError(t, pool.QueryRow(ctx,
+		`INSERT INTO automation_rules (rule_key, name, audience, is_system) VALUES ($1, 'dbtest', 'internal', FALSE)
+		 ON CONFLICT (rule_key) DO UPDATE SET name = EXCLUDED.name RETURNING id::text`, ruleKey).Scan(&ruleID))
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM automation_deliveries WHERE rule_id = $1`, ruleID)
+		_, _ = pool.Exec(ctx, `DELETE FROM automation_rules WHERE id = $1`, ruleID)
+	})
+
+	var invoiceUUID, quoteUUID string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT invoice_uuid::text, invoice_number FROM invoice WHERE invoice_number IS NOT NULL LIMIT 1`).
+		Scan(&invoiceUUID, new(string)))
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT quote_uuid::text FROM quote WHERE quote_number IS NOT NULL LIMIT 1`).Scan(&quoteUUID))
+
+	seed := func(resource, recordID string) {
+		_, err := pool.Exec(ctx, `INSERT INTO automation_deliveries
+			(rule_id, resource, record_id, anchor_date, stage, occurrence_key, recipient_kind, run_at)
+			VALUES ($1, $2, $3, '2026-01-01', 0, $4, 'internal', NOW())`,
+			ruleID, resource, recordID, ruleKey+"|"+resource+"|"+recordID)
+		require.NoError(t, err)
+	}
+	seed("invoice", invoiceUUID)
+	seed("quote", quoteUUID)
+	seed("mystery", invoiceUUID)
+	seed("invoice", "not-a-uuid")
+
+	rows, _, err := pgAutomationDeliveryStore{pool: pool}.List(ctx, DeliveryFilter{RuleKey: ruleKey, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, rows, 4)
+	for _, d := range rows {
+		switch {
+		case d.Resource == "invoice" && d.RecordID == invoiceUUID:
+			assert.NotEmpty(t, d.RecordNumber)
+		case d.Resource == "quote":
+			assert.NotEmpty(t, d.RecordNumber)
+		default:
+			assert.Empty(t, d.RecordNumber, "%s/%s", d.Resource, d.RecordID)
+		}
+	}
+}

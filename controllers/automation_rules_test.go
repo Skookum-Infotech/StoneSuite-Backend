@@ -125,3 +125,21 @@ func TestAutomationRules_EnabledAtSemantics(t *testing.T) {
 	require.Equal(t, http.StatusOK, putRule(h, "ar_dunning", `{"enabled":true}`, true).Code)
 	assert.True(t, store.rules["ar_dunning"].EnabledAt.After(first), "re-enable resets enabledAt")
 }
+
+func TestAutomationRules_ExposeMachineFields(t *testing.T) {
+	planned := time.Date(2026, 11, 2, 13, 45, 0, 0, time.UTC)
+	store := newFakeRuleStore()
+	store.rules["ar_dunning"].IsSystem = true
+	store.rules["ar_dunning"].PreviewSupported = true
+	store.rules["ar_dunning"].LastPlannedAt = &planned
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tenant/automation/rules", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, middleware.UserContextPayload{ID: "i"}))
+	rec := httptest.NewRecorder()
+	ruleOps(store, map[authz.Action]bool{authz.ActionRead: true}).List(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `"isSystem":true`)
+	assert.Contains(t, body, `"previewSupported":true`)
+	assert.Contains(t, body, `"lastPlannedAt":"2026-11-02T13:45:00Z"`)
+}

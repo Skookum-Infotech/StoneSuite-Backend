@@ -13,6 +13,10 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
+// PreviewRuleKey is the only rule PreviewAR supports; the rules API derives
+// previewSupported from it so the two cannot drift.
+const PreviewRuleKey = RuleKeyARDunning
+
 // maxPreviewRecipients caps the recipients listed in a preview; Counts stay total.
 const maxPreviewRecipients = 200
 
@@ -60,7 +64,7 @@ func previewAR(ctx context.Context, q Querier, env JobEnv, ruleKey string) (Prev
 	if !found {
 		return Preview{}, ErrRuleNotFound
 	}
-	if ruleKey != RuleKeyARDunning {
+	if ruleKey != PreviewRuleKey {
 		return Preview{}, ErrPreviewUnsupported
 	}
 	enabled, err := ruleEnabled(ctx, q, ruleKey)

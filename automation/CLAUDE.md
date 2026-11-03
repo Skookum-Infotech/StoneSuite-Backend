@@ -42,6 +42,7 @@ machine after the response).
    Admin read endpoints: `GET /api/tenant/automation/deliveries` (delivery log, keyset
    pagination) and `POST /api/tenant/automation/rules/{key}/preview` (dry run, writes nothing).
    `GET`/`PUT /api/tenant/automation/settings` (`automation:read` / `automation:configure`, body `{"killSwitch":bool}`) expose the tenant kill switch, read-only caps and the platform switch (`platformEnabled`, `null` when the control plane is unreadable); rules also return `isSystem`, `previewSupported` (`automation.PreviewRuleKey`) and `lastPlannedAt`, and deliveries a `recordNumber`.
+   Turning `anomaly_scan` on is refused (409) while the platform switch is off, and fails closed (503) if the switch cannot be read; turning it off is always allowed.
    Deferred: owner in-app notes, stop-reminders link, `unknown` reconciliation, cadence edit API (P2).
 6. **Expiry reminders (`quote_expiry`, `estimate_expiry`)** are seeded **enabled** and use a
    `-3d` cadence (3 days before expiry). They send owner-only **internal** digests through the

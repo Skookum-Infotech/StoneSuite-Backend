@@ -39,7 +39,9 @@ a Schedule section (Template Date, Fabrication Start, and Promised Install
 Date). You can also assign a Job Owner, Templater, Fabricator, and Install
 Crew Lead, each picked from your employees — the Job Owner defaults to
 whoever created the job, and the others are left for you to assign as the
-work is staffed.
+work is staffed. Crew visits to the job site are booked on the Install
+Schedule calendar, separately from these dates. See
+[Install Schedule](install-schedule.md).
 
 ## Materials
 

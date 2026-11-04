@@ -86,3 +86,31 @@ func TestCatalog_ImportPermissionIsDistinctFromLead(t *testing.T) {
 		t.Fatal("ResourceImport must not alias ResourceLead")
 	}
 }
+
+// install_appointment carries exactly create/read/update/transition; visits are never hard-deleted.
+func TestCatalog_InstallAppointmentPermissions(t *testing.T) {
+	tests := []struct {
+		action Action
+		want   bool
+	}{
+		{ActionCreate, true},
+		{ActionRead, true},
+		{ActionUpdate, true},
+		{ActionTransition, true},
+		{ActionDelete, false},
+	}
+	for _, tt := range tests {
+		if got := IsValidPermission(ResourceInstallAppointment, tt.action); got != tt.want {
+			t.Fatalf("install_appointment:%s valid = %v, want %v", tt.action, got, tt.want)
+		}
+	}
+	count := 0
+	for _, p := range Catalog() {
+		if p.Resource == ResourceInstallAppointment {
+			count++
+		}
+	}
+	if count != 4 {
+		t.Fatalf("install_appointment catalog rows = %d, want 4", count)
+	}
+}

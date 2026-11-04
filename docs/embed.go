@@ -30,6 +30,7 @@ import "embed"
 //go:embed purchasing.md
 //go:embed inventory.md
 //go:embed fabrication.md
+//go:embed install-schedule.md
 //go:embed accounting.md
 //go:embed import.md
 //go:embed customer-portal.md

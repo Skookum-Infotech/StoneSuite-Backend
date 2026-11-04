@@ -21,7 +21,8 @@ sections:
 
 - **Workspace** — CRM (Leads, Prospects, Customers), Sales (Estimates,
   Quotes, Sales Orders, Installation / Fabrication, Invoices, Payments,
-  Credit Memos, Refunds), Calendar (Activity Planner), Purchases (Vendors,
+  Credit Memos, Refunds), Calendar (Activity Planner and Install Schedule),
+  Purchases (Vendors,
   Requisitions, Purchase Orders, Item Receipts, Vendor Bills, Vendor
   Payments, Vendor Credits, Expenses), Inventory (Items, Inventory,
   Bundles, Bin Management, Locations, Adjust Inventory, Transfer

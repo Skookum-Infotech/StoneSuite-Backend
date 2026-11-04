@@ -10301,3 +10301,78 @@ BEGIN
         END IF;
     END IF;
 END $$;
+
+-- Install schedule (roadmap item 5, slice 1)
+CREATE TABLE IF NOT EXISTS install_appointment (
+    install_appointment_id   SERIAL PRIMARY KEY,
+    install_appointment_uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    fabrication_job_id       INT NOT NULL REFERENCES fabrication_job(fabrication_job_id),
+    visit_type               VARCHAR(16) NOT NULL DEFAULT 'install',
+    appointment_status       VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+    starts_at                TIMESTAMPTZ NOT NULL,
+    ends_at                  TIMESTAMPTZ NOT NULL,
+    all_day                  BOOLEAN NOT NULL DEFAULT false,
+    local_start_date         DATE NOT NULL,
+    local_end_date           DATE NOT NULL,
+    timezone                 VARCHAR(64) NOT NULL,
+    notes                    TEXT NULL,
+    cancel_reason            TEXT NULL,
+    cancelled_at             TIMESTAMPTZ NULL,
+    cancelled_by             INT NULL REFERENCES employee(employee_id),
+    completed_at             TIMESTAMPTZ NULL,
+    completed_by             INT NULL REFERENCES employee(employee_id),
+    create_request_id        UUID NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by               INT NOT NULL REFERENCES employee(employee_id),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by               INT NOT NULL REFERENCES employee(employee_id),
+    record_version           INT NOT NULL DEFAULT 1,
+    CONSTRAINT chk_ia_visit_type CHECK (visit_type IN ('template', 'install', 'service')),
+    CONSTRAINT chk_ia_status CHECK (appointment_status IN ('scheduled', 'completed', 'cancelled')),
+    CONSTRAINT chk_ia_range CHECK (ends_at > starts_at),
+    CONSTRAINT chk_ia_max_span CHECK (ends_at - starts_at <= interval '14 days'),
+    CONSTRAINT chk_ia_local_dates CHECK (local_end_date >= local_start_date),
+    CONSTRAINT chk_ia_notes_len CHECK (notes IS NULL OR char_length(notes) <= 2000),
+    CONSTRAINT chk_ia_cancel_reason_len CHECK (cancel_reason IS NULL OR char_length(cancel_reason) <= 500),
+    CONSTRAINT chk_ia_status_stamps CHECK (
+        (appointment_status = 'cancelled') = (cancelled_at IS NOT NULL)
+        AND (appointment_status = 'completed') = (completed_at IS NOT NULL)
+        AND (cancel_reason IS NULL OR appointment_status = 'cancelled')
+    )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ia_create_request
+    ON install_appointment (fabrication_job_id, create_request_id) WHERE create_request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ia_job_start ON install_appointment (fabrication_job_id, starts_at);
+CREATE INDEX IF NOT EXISTS idx_ia_live_start ON install_appointment (starts_at) WHERE appointment_status <> 'cancelled';
+
+CREATE TABLE IF NOT EXISTS install_appointment_crew (
+    install_appointment_id INT NOT NULL REFERENCES install_appointment(install_appointment_id) ON DELETE CASCADE,
+    employee_id            INT NOT NULL REFERENCES employee(employee_id),
+    crew_role              VARCHAR(8) NOT NULL DEFAULT 'member',
+    assigned_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    assigned_by            INT NOT NULL REFERENCES employee(employee_id),
+    PRIMARY KEY (install_appointment_id, employee_id),
+    CONSTRAINT chk_iac_role CHECK (crew_role IN ('lead', 'member'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_iac_one_lead
+    ON install_appointment_crew (install_appointment_id) WHERE crew_role = 'lead';
+CREATE INDEX IF NOT EXISTS idx_iac_employee ON install_appointment_crew (employee_id, install_appointment_id);
+
+CREATE TABLE IF NOT EXISTS install_appointment_history (
+    install_appointment_history_id BIGSERIAL PRIMARY KEY,
+    install_appointment_id         INT NOT NULL REFERENCES install_appointment(install_appointment_id),
+    action                         VARCHAR(16) NOT NULL,
+    from_starts_at                 TIMESTAMPTZ NULL,
+    from_ends_at                   TIMESTAMPTZ NULL,
+    to_starts_at                   TIMESTAMPTZ NULL,
+    to_ends_at                     TIMESTAMPTZ NULL,
+    reason                         TEXT NULL,
+    conflicts_acknowledged         JSONB NULL,
+    snapshot                       JSONB NOT NULL,
+    actor_employee_id              INT NOT NULL REFERENCES employee(employee_id),
+    notify_notification_ids        TEXT[] NULL,
+    at                             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT chk_iah_action CHECK (action IN ('create', 'reschedule', 'reassign', 'update', 'cancel', 'complete')),
+    CONSTRAINT chk_iah_reason_len CHECK (reason IS NULL OR char_length(reason) <= 500)
+);
+CREATE INDEX IF NOT EXISTS idx_iah_appt_at ON install_appointment_history (install_appointment_id, at DESC);

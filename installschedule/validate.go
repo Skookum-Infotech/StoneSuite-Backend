@@ -16,6 +16,7 @@ const (
 	fieldVisitType = "visitType"
 	fieldJob       = "fabricationJobId"
 	fieldReason    = "reason"
+	fieldChanges   = "changes"
 )
 
 // ValidateCrew checks crew size, ids, roles, uniqueness and the single-lead rule.
@@ -69,11 +70,19 @@ func ValidateCreate(in CreateInput, today time.Time) error {
 	if err != nil {
 		return &ValidationError{Field: fieldStart, Message: "invalid date"}
 	}
+	if err := validateNotBackdated(startDay, today); err != nil {
+		return err
+	}
+	return ValidateCrew(in.Crew)
+}
+
+// validateNotBackdated rejects a start date earlier than tenant today minus the backdate allowance.
+func validateNotBackdated(startDay dateonly.Date, today time.Time) error {
 	earliest := dateonly.New(today).AddDate(0, 0, -backdateDays)
 	if startDay.Before(earliest) {
 		return &ValidationError{Field: fieldStart, Message: fmt.Sprintf("cannot be more than %d day in the past", backdateDays)}
 	}
-	return ValidateCrew(in.Crew)
+	return nil
 }
 
 // ValidateReason checks a cancel/reschedule reason is at most MaxReason characters.

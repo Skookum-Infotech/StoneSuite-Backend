@@ -162,3 +162,16 @@ type ConflictError struct {
 func (e *ConflictError) Error() string {
 	return fmt.Sprintf("installschedule: %d scheduling conflicts", len(e.Conflicts)+e.More)
 }
+
+// StaleVersionError reports an optimistic-lock miss and the version now stored; it matches ErrStaleVersion.
+type StaleVersionError struct {
+	CurrentVersion int
+}
+
+// Error implements error.
+func (e *StaleVersionError) Error() string {
+	return fmt.Sprintf("%s (current version %d)", ErrStaleVersion.Error(), e.CurrentVersion)
+}
+
+// Unwrap lets errors.Is match ErrStaleVersion.
+func (e *StaleVersionError) Unwrap() error { return ErrStaleVersion }

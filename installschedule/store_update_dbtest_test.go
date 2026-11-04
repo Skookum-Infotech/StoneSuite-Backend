@@ -174,7 +174,7 @@ func TestUpdate_NotesVisitTypeAndStatusGuards(t *testing.T) {
 	var ve *ValidationError
 	require.ErrorAs(t, err, &ve)
 
-	_, err = Cancel(ctx, pool, appt.ID, res.After.Version, "no longer needed", owner)
+	_, err = Cancel(ctx, pool, appt.ID, res.After.Version, "no longer needed", owner, "")
 	require.NoError(t, err)
 	_, err = Update(ctx, pool, loc, time.Now(), appt.ID,
 		UpdateInput{Notes: strPtr("late"), ExpectedVersion: res.After.Version + 1}, owner, allVisible)

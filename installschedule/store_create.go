@@ -104,6 +104,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now tim
 	if err != nil {
 		return nil, err
 	}
+	if err := emitEvent(ctx, tx, EventScheduled, appt, nil, in.ActorUserID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create appointment: %w", err)
 	}

@@ -79,6 +79,9 @@ func Update(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now tim
 	if err := recordUpdateHistory(ctx, tx, res, ref.ID, plan, in.Reason, acked, actorEmployeeID); err != nil {
 		return nil, err
 	}
+	if err := emitChangeEvents(ctx, tx, res, in.ActorUserID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit update appointment: %w", err)
 	}

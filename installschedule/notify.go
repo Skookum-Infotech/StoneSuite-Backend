@@ -121,10 +121,10 @@ func whenText(a *Appointment) string {
 func messageFor(eventType, group string, a *Appointment) (title, body string) {
 	subject := fmt.Sprintf("%s visit for job %s", capitalize(string(a.VisitType)), a.JobNumber)
 	when := whenText(a)
-	switch {
-	case group == groupAdded:
+	switch group {
+	case groupAdded:
 		return "You've been booked: " + subject, when
-	case group == groupRemoved:
+	case groupRemoved:
 		return "You've been taken off: " + subject, when
 	}
 	switch eventType {

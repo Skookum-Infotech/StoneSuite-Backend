@@ -118,6 +118,8 @@ type Appointment struct {
 	Notes            string        `json:"notes"`
 	CancelReason     *string       `json:"cancelReason"`
 	Version          int           `json:"version"`
+	// JobCancelled is derived from the linked job status (read-only join, never stored).
+	JobCancelled bool `json:"jobCancelled"`
 }
 
 // Conflict describes one overlap found while scheduling.

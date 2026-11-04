@@ -1,6 +1,7 @@
 package installschedule
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -65,6 +66,9 @@ func ResolveInterval(startLocal, endLocal string, allDay bool, loc *time.Locatio
 
 func parseSlot(field, s string, loc *time.Location) (time.Time, error) {
 	t, err := ParseLocal(s, loc)
+	if errors.Is(err, ErrNonexistentLocalTime) {
+		return time.Time{}, fmt.Errorf("%s: %w", field, err)
+	}
 	if err != nil {
 		return time.Time{}, &ValidationError{Field: field, Message: err.Error()}
 	}

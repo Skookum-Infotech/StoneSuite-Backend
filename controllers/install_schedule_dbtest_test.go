@@ -268,3 +268,30 @@ func TestInstallSchedule_Feed_BadWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallSchedule_InvalidTimeAndJobCancelled(t *testing.T) {
+	e := newISEnv(t)
+	c := e.caller("itc",
+		isGrant(authz.ResourceInstallAppointment, authz.ActionCreate, authz.ScopeAll),
+		isGrant(authz.ResourceInstallAppointment, authz.ActionRead, authz.ScopeAll),
+		isGrant(authz.ResourceInstallation, authz.ActionRead, authz.ScopeAll))
+	jobID, jobUUID := e.job(c.employeeID)
+
+	gap := fmt.Sprintf(`{"fabricationJobId":%q,"visitType":"install","startLocal":"2033-03-13T02:30","endLocal":"2033-03-13T04:00","crew":[]}`, jobUUID)
+	rec := e.do(c, http.MethodPost, isBasePath, gap)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"invalid_time"`)
+	assert.NotContains(t, rec.Body.String(), "installschedule:")
+
+	appt := e.appt(jobUUID, c.employeeID, "08:00", "12:00")
+	_, err := e.pool.Exec(context.Background(), `
+		UPDATE fabrication_job SET fabrication_job_status = (
+			SELECT s.record_status_id FROM lkp_record_status s
+			JOIN lkp_record_type t ON t.record_type_id = s.record_status_record_type
+			WHERE t.record_type_code = 'FJOB' AND s.record_status_code = 'CANC')
+		WHERE fabrication_job_id = $1`, jobID)
+	require.NoError(t, err)
+	rec = e.do(c, http.MethodGet, isBasePath+"/"+appt.ID, "")
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"jobCancelled":true`)
+}

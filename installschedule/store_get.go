@@ -26,9 +26,11 @@ const apptSelect = `
 	SELECT ia.install_appointment_id, ia.install_appointment_uuid::text, fj.fabrication_job_uuid::text,
 	       COALESCE(fj.fabrication_job_number,''), c.customer_name, fj.job_site_addr_city,
 	       ia.visit_type, ia.appointment_status, ia.starts_at, ia.ends_at, ia.timezone, ia.all_day,
-	       ia.local_start_date, ia.local_end_date, COALESCE(ia.notes,''), ia.cancel_reason, ia.record_version
+	       ia.local_start_date, ia.local_end_date, COALESCE(ia.notes,''), ia.cancel_reason, ia.record_version,
+	       (js.record_status_code = '` + jobStatusCancelled + `')
 	FROM install_appointment ia
 	JOIN fabrication_job fj ON fj.fabrication_job_id = ia.fabrication_job_id
+	JOIN lkp_record_status js ON js.record_status_id = fj.fabrication_job_status
 	JOIN customer c ON c.customer_id = fj.fabrication_job_customer_id`
 
 // scanAppt scans one apptSelect row, returning the internal id alongside the appointment.
@@ -37,7 +39,7 @@ func scanAppt(row pgx.Row) (int, *Appointment, error) {
 	var id int
 	if err := row.Scan(&id, &a.ID, &a.FabricationJobID, &a.JobNumber, &a.CustomerName, &a.SiteCity,
 		&a.VisitType, &a.Status, &a.StartsAt, &a.EndsAt, &a.Timezone, &a.AllDay,
-		&a.LocalStartDate, &a.LocalEndDate, &a.Notes, &a.CancelReason, &a.Version); err != nil {
+		&a.LocalStartDate, &a.LocalEndDate, &a.Notes, &a.CancelReason, &a.Version, &a.JobCancelled); err != nil {
 		return 0, nil, err
 	}
 	a.Crew = []CrewMember{}

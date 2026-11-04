@@ -225,3 +225,44 @@ func TestCreate_CompletedPastDoesNotConflict(t *testing.T) {
 	_, err = Create(ctx, pool, loc, start.Add(26*time.Hour), in, owner, allVisible)
 	require.NoError(t, err)
 }
+
+func TestJobCancelledFlag_AllReadPaths(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	loc := chicagoLoc(t)
+	_, _, owner := seedUserEmployee(t, pool, "owner")
+	_, _, emp := seedUserEmployee(t, pool, "crew")
+	jobID, jobUUID := seedJob(t, pool, owner)
+	res, err := Create(ctx, pool, loc, time.Now(), createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
+	require.NoError(t, err)
+	assert.False(t, res.Appointment.JobCancelled, "create response on an open job")
+
+	setJobStatus(t, pool, jobID, "CANC")
+	var before int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT fabrication_job_status FROM fabrication_job WHERE fabrication_job_id=$1`, jobID).Scan(&before))
+
+	got, err := Get(ctx, pool, res.Appointment.ID)
+	require.NoError(t, err)
+	assert.True(t, got.JobCancelled, "get")
+
+	list, err := ListForJob(ctx, pool, jobUUID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.True(t, list[0].JobCancelled, "list for job")
+
+	day := res.Appointment.LocalStartDate.String()
+	feed, _, err := Feed(ctx, pool, loc, scopeAllTest, "", FeedRequest{From: day, To: day})
+	require.NoError(t, err)
+	var found bool
+	for _, a := range feed {
+		if a.ID == res.Appointment.ID {
+			found = true
+			assert.True(t, a.JobCancelled, "feed")
+		}
+	}
+	assert.True(t, found)
+
+	var after int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT fabrication_job_status FROM fabrication_job WHERE fabrication_job_id=$1`, jobID).Scan(&after))
+	assert.Equal(t, before, after, "reads never write the job")
+}

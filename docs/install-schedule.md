@@ -122,7 +122,8 @@ Cancelling a visit notifies the crew on it.
 
 StoneSuite does not cancel a job's visits for you. If a job is cancelled or
 completed, its scheduled visits stay on the calendar until you cancel them
-yourself.
+yourself. Those visits are flagged "Job cancelled" when the job is cancelled,
+so you can spot them and cancel each one by hand.
 
 ## Completing a visit
 

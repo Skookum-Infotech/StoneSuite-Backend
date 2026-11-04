@@ -94,3 +94,19 @@ func TestResolveIntervalMinuteMessage(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "15-minute steps")
 }
+
+func TestResolveIntervalDSTGapKeepsSentinel(t *testing.T) {
+	for _, field := range []string{fieldStart, fieldEnd} {
+		start, end := "2026-03-08T01:00", "2026-03-08T03:00"
+		if field == fieldStart {
+			start = "2026-03-08T02:30"
+		} else {
+			end = "2026-03-08T02:30"
+		}
+		_, err := ResolveInterval(start, end, false, chicago(t))
+		require.Error(t, err, field)
+		assert.ErrorIs(t, err, ErrNonexistentLocalTime, field)
+		var ve *ValidationError
+		assert.False(t, errors.As(err, &ve), field)
+	}
+}

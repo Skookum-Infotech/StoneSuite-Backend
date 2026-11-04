@@ -75,7 +75,9 @@ Edges, Quality Control, Installation or Invoicing, and each order appears as a
 job card on the day and time it is planned for. Switch the columns between Day
 (hours), Week and Month. A card links to its order's Scheduling tab; on the
 Invoicing tab the cards are the invoices made from your orders, listed on
-their due date, and link to the invoice. Cancelled orders are left out.
+their due date, and link to the invoice. Cancelled orders are left out. The
+Installation cards show each order's planned install dates, not crew bookings,
+which are kept on Calendar → Install Schedule.
 
 A sales order checks your stock when you save it. If any line asks for more of
 an item than is free — what is on hand, less what other orders are already

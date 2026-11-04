@@ -63,6 +63,9 @@ const (
 	ResourceCreditMemo    Resource = "credit_memo"
 	ResourceRefund        Resource = "refund"
 
+	// ResourceInstallAppointment gates install-schedule visits (calendar bookings on fabrication jobs).
+	ResourceInstallAppointment Resource = "install_appointment"
+
 	// Purchases module resources
 	ResourceVendor        Resource = "vendor"
 	ResourceRequisition   Resource = "requisition"
@@ -301,6 +304,11 @@ var catalog = []Permission{
 	{ResourceInstallation, ActionUpdate},
 	{ResourceInstallation, ActionDelete},
 	{ResourceInstallation, ActionTransition},
+
+	{ResourceInstallAppointment, ActionCreate},
+	{ResourceInstallAppointment, ActionRead},
+	{ResourceInstallAppointment, ActionUpdate},
+	{ResourceInstallAppointment, ActionTransition},
 
 	{ResourceInvoice, ActionCreate},
 	{ResourceInvoice, ActionRead},

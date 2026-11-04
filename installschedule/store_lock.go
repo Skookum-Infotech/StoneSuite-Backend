@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -96,7 +97,19 @@ func lockAppointment(ctx context.Context, tx pgx.Tx, uuid string, extraEmployeeI
 	if err := lockScope(ctx, tx, pre.JobID, append(oldCrew, extraEmployeeIDs...)); err != nil {
 		return apptRef{}, err
 	}
-	return readRef(ctx, tx, uuid)
+	fresh, err := readRef(ctx, tx, uuid)
+	if err != nil {
+		return apptRef{}, err
+	}
+	lockedCrew, err := readCrewIDs(ctx, tx, fresh.ID)
+	if err != nil {
+		return apptRef{}, err
+	}
+	// A crew change that committed between the first read and the locks leaves some employees unlocked.
+	if !slices.Equal(sortedUniqueIDs(oldCrew), sortedUniqueIDs(lockedCrew)) {
+		return apptRef{}, &StaleVersionError{CurrentVersion: fresh.Version}
+	}
+	return fresh, nil
 }
 
 // checkScheduledAt verifies the appointment is scheduled and at the expected version.

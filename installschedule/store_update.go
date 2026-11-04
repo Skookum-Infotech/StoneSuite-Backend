@@ -13,6 +13,7 @@ import (
 // Update patches a scheduled appointment (now is the caller's clock), returning a *ConflictError on
 // unacknowledged overlaps and a *StaleVersionError when in.ExpectedVersion is out of date.
 func Update(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now time.Time, uuid string, in UpdateInput, actorEmployeeID int, canSee func(string) bool) (*ChangeResult, error) {
+	// Crew is validated here, before any lock is taken; planUpdate relies on it.
 	var newCrewIDs []int
 	if in.Crew != nil {
 		if err := ValidateCrew(*in.Crew); err != nil {
@@ -52,7 +53,12 @@ func Update(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now tim
 	}
 	var acked []Conflict
 	if plan.needsConflictCheck() {
-		shown, more, all, err := findConflicts(ctx, tx, now, ref.JobID, plan.iv, plan.conflictEmployees(), ref.ID, canSee)
+		// Job overlap is only new when the time moved; id 0 matches no job, which skips it for crew-only edits.
+		conflictJobID := 0
+		if plan.timeChanged {
+			conflictJobID = ref.JobID
+		}
+		shown, more, all, err := findConflicts(ctx, tx, now, conflictJobID, plan.iv, plan.conflictEmployees(), ref.ID, canSee)
 		if err != nil {
 			return nil, err
 		}
@@ -92,8 +98,5 @@ func ensureJobOpen(ctx context.Context, tx pgx.Tx, jobID int) error {
 	if err != nil {
 		return fmt.Errorf("read job status: %w", err)
 	}
-	if status == jobStatusCompleted || status == jobStatusCancelled {
-		return ErrJobClosed
-	}
-	return nil
+	return checkJobStatus(status)
 }

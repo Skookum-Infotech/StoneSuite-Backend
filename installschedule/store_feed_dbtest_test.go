@@ -120,9 +120,22 @@ func chicagoLoc(t *testing.T) *time.Location {
 	return loc
 }
 
+// purgeYear deletes every appointment starting in the given year so fixed-date tests can re-run on one DB.
+func purgeYear(t *testing.T, pool *pgxpool.Pool, year int) {
+	t.Helper()
+	const where = `install_appointment_id IN (SELECT install_appointment_id FROM install_appointment
+		WHERE starts_at >= make_date($1,1,1) - interval '2 days' AND starts_at < make_date($1+1,1,1))`
+	for _, table := range []string{"install_appointment_history", "install_appointment_crew", "install_appointment"} {
+		_, err := pool.Exec(context.Background(), `DELETE FROM `+table+` WHERE `+where, year)
+		require.NoError(t, err)
+	}
+}
+
 func TestFeed_WindowAndScope(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
+	const feedYear = 2031
+	purgeYear(t, pool, feedYear)
 	loc := chicagoLoc(t)
 	ownerUser, ownerIdent, ownerEmp := seedUserEmployee(t, pool, "owner")
 	crewUser, crewIdent, crewEmp := seedUserEmployee(t, pool, "crew")

@@ -31,6 +31,7 @@ func TestPlanUpdate(t *testing.T) {
 		name       string
 		in         UpdateInput
 		wantErr    bool
+		late       bool
 		time, crew bool
 		added, rm  []int
 	}{
@@ -39,13 +40,17 @@ func TestPlanUpdate(t *testing.T) {
 		{name: "reschedule", in: UpdateInput{StartLocal: s("2032-06-10T09:00"), EndLocal: s("2032-06-10T13:00")}, time: true},
 		{name: "swap member", in: UpdateInput{Crew: crew(CrewInput{1, CrewLead}, CrewInput{3, CrewMemberRole})}, crew: true, added: []int{3}, rm: []int{2}},
 		{name: "role swap only", in: UpdateInput{Crew: crew(CrewInput{2, CrewLead}, CrewInput{1, CrewMemberRole})}, crew: true},
-		{name: "two leads", in: UpdateInput{Crew: crew(CrewInput{1, CrewLead}, CrewInput{2, CrewLead})}, wantErr: true},
+		{name: "extend end of started visit", in: UpdateInput{EndLocal: s("2032-06-10T14:00")}, time: true, late: true},
+		{name: "move start of started visit", in: UpdateInput{StartLocal: s("2032-06-10T09:00")}, wantErr: true, late: true},
 		{name: "backdated", in: UpdateInput{StartLocal: s("2032-06-01T09:00"), EndLocal: s("2032-06-01T10:00")}, wantErr: true},
 		{name: "bad visit type", in: UpdateInput{VisitType: func() *VisitType { v := VisitType("x"); return &v }()}, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cur, loc, now := planFixture(t)
+			if tc.late {
+				now = cur.StartsAt.Add(72 * time.Hour)
+			}
 			p, err := planUpdate(cur, tc.in, loc, now)
 			if tc.wantErr {
 				var ve *ValidationError

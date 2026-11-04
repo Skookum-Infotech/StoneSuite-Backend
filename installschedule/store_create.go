@@ -146,10 +146,18 @@ func resolveOpenJob(ctx context.Context, tx pgx.Tx, jobUUID string) (int, error)
 	if err != nil {
 		return 0, fmt.Errorf("resolve fabrication job: %w", err)
 	}
-	if status == jobStatusCompleted || status == jobStatusCancelled {
-		return 0, ErrJobClosed
+	if err := checkJobStatus(status); err != nil {
+		return 0, err
 	}
 	return id, nil
+}
+
+// checkJobStatus returns ErrJobClosed for a completed or cancelled job status code.
+func checkJobStatus(status string) error {
+	if status == jobStatusCompleted || status == jobStatusCancelled {
+		return ErrJobClosed
+	}
+	return nil
 }
 
 // replayCreate returns the earlier result for a repeated (job, request id), or nil when there is none.

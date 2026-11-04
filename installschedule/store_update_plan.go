@@ -74,8 +74,19 @@ func (p *updatePlan) planTime(cur *Appointment, in UpdateInput, loc *time.Locati
 	if iv.Start.Equal(cur.StartsAt) && iv.End.Equal(cur.EndsAt) && iv.AllDay == cur.AllDay {
 		return nil
 	}
-	if err := validateNotBackdated(iv.LocalStartDate, now.In(loc)); err != nil {
-		return err
+	// A bound the client did not send keeps its stored instant rather than being rebuilt in the current zone.
+	if allDay == cur.AllDay {
+		if in.StartLocal == nil {
+			iv.Start, iv.LocalStartDate = cur.StartsAt, cur.LocalStartDate
+		}
+		if in.EndLocal == nil {
+			iv.End, iv.LocalEndDate = cur.EndsAt, cur.LocalEndDate
+		}
+	}
+	if !iv.Start.Equal(cur.StartsAt) {
+		if err := validateNotBackdated(iv.LocalStartDate, now.In(loc)); err != nil {
+			return err
+		}
 	}
 	p.iv, p.timeChanged = iv, true
 	return nil
@@ -113,7 +124,7 @@ func (p *updatePlan) planFields(cur *Appointment, in UpdateInput) error {
 	return nil
 }
 
-// planCrew validates a replacement crew and computes added and removed employee ids.
+// planCrew diffs a replacement crew (already checked by ValidateCrew) and computes added and removed employee ids.
 func (p *updatePlan) planCrew(cur *Appointment, in UpdateInput) error {
 	curRoles := make(map[int]CrewRole, len(cur.Crew))
 	for _, m := range cur.Crew {
@@ -122,9 +133,6 @@ func (p *updatePlan) planCrew(cur *Appointment, in UpdateInput) error {
 	}
 	if in.Crew == nil {
 		return nil
-	}
-	if err := ValidateCrew(*in.Crew); err != nil {
-		return err
 	}
 	p.crew = *in.Crew
 	next := make(map[int]struct{}, len(p.crew))

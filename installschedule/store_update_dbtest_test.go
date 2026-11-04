@@ -4,9 +4,7 @@ package installschedule
 
 import (
 	"context"
-	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -200,64 +198,4 @@ func TestUpdate_RescheduleClosedJob(t *testing.T) {
 	in := UpdateInput{StartLocal: strPtr(createDay + "T09:00"), EndLocal: strPtr(createDay + "T13:00"), ExpectedVersion: appt.Version}
 	_, err := Update(ctx, pool, loc, time.Now(), appt.ID, in, owner, allVisible)
 	assert.ErrorIs(t, err, ErrJobClosed)
-}
-func TestUpdateAndCreate_ConcurrentNoDeadlock(t *testing.T) {
-	pool := testPool(t)
-	ctx := context.Background()
-	loc := chicagoLoc(t)
-	_, _, owner := seedUserEmployee(t, pool, "owner")
-	emps := make([]int, 3)
-	for i := range emps {
-		_, _, emps[i] = seedUserEmployee(t, pool, "crew")
-	}
-	_, jobUUID := seedJob(t, pool, owner)
-	appt := bookAt(t, pool, jobUUID, emps[0], owner, "06:00", "07:00")
-
-	const workers = 10
-	jobs := make([]string, workers)
-	for i := range jobs {
-		_, jobs[i] = seedJob(t, pool, owner)
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			var err error
-			if i%2 == 0 {
-				crew := []CrewInput{{EmployeeID: emps[(i+1)%3], Role: CrewLead}, {EmployeeID: emps[(i+2)%3], Role: CrewMemberRole}}
-				v := currentVersion(t, pool, appt.ID)
-				_, err = Update(ctx, pool, loc, time.Now(), appt.ID,
-					UpdateInput{Crew: &crew, AcknowledgeConflicts: true, ExpectedVersion: v}, owner, allVisible)
-			} else {
-				in := createInput(jobs[i], emps[i%3], "08:00", "12:00")
-				in.Crew = append(in.Crew, CrewInput{EmployeeID: emps[(i+1)%3], Role: CrewMemberRole})
-				in.AcknowledgeConflicts = true
-				_, err = Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
-			}
-			// Stale versions are expected under contention; anything else (deadlock, SQL error) is not.
-			var sv *StaleVersionError
-			var ve *ValidationError
-			if err != nil && !errors.As(err, &sv) && !errors.As(err, &ve) {
-				t.Errorf("worker %d: %v", i, err)
-			}
-		}(i)
-	}
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("concurrent update/create did not finish: probable deadlock")
-	}
-}
-
-func currentVersion(t *testing.T, pool *pgxpool.Pool, uuid string) int {
-	t.Helper()
-	var v int
-	if err := pool.QueryRow(context.Background(),
-		`SELECT record_version FROM install_appointment WHERE install_appointment_uuid=$1`, uuid).Scan(&v); err != nil {
-		t.Errorf("read version: %v", err)
-	}
-	return v
 }

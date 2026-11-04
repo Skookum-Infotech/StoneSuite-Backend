@@ -3,40 +3,58 @@ package installschedule
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Cancel cancels a scheduled appointment; reason is required (at most MaxReason characters).
+// execTransition runs the versioned status UPDATE for appointment id at version ver.
+type execTransition func(ctx context.Context, tx pgx.Tx, id, ver int) (pgconn.CommandTag, error)
+
+// Cancel cancels a scheduled appointment; reason is required (non-blank, at most MaxReason characters).
 func Cancel(ctx context.Context, pool *pgxpool.Pool, uuid string, expectedVersion int, reason string, actorEmployeeID int) (*ChangeResult, error) {
-	if reason == "" {
+	if strings.TrimSpace(reason) == "" {
 		return nil, &ValidationError{Field: fieldReason, Message: "required"}
 	}
 	if err := ValidateReason(reason); err != nil {
 		return nil, err
 	}
-	return transition(ctx, pool, uuid, expectedVersion, ActionCancel, `
-		UPDATE install_appointment
-		SET appointment_status = 'cancelled', cancelled_at = now(), cancelled_by = $3, cancel_reason = $4,
-		    updated_at = now(), updated_by = $3, record_version = record_version + 1
-		WHERE install_appointment_id = $1 AND record_version = $2 AND appointment_status = 'scheduled'`,
-		actorEmployeeID, reason, nil)
+	exec := func(ctx context.Context, tx pgx.Tx, id, ver int) (pgconn.CommandTag, error) {
+		return tx.Exec(ctx, `
+			UPDATE install_appointment
+			SET appointment_status = 'cancelled', cancelled_at = now(), cancelled_by = $3, cancel_reason = $4,
+			    updated_at = now(), updated_by = $3, record_version = record_version + 1
+			WHERE install_appointment_id = $1 AND record_version = $2 AND appointment_status = 'scheduled'`,
+			id, ver, actorEmployeeID, reason)
+	}
+	return transition(ctx, pool, uuid, expectedVersion, ActionCancel, reason, actorEmployeeID, nil, exec)
 }
 
 // Complete marks a scheduled appointment completed once now has reached its start (now is the caller's clock).
 func Complete(ctx context.Context, pool *pgxpool.Pool, uuid string, expectedVersion int, actorEmployeeID int, now time.Time) (*ChangeResult, error) {
-	return transition(ctx, pool, uuid, expectedVersion, ActionComplete, `
-		UPDATE install_appointment
-		SET appointment_status = 'completed', completed_at = $4, completed_by = $3,
-		    updated_at = now(), updated_by = $3, record_version = record_version + 1
-		WHERE install_appointment_id = $1 AND record_version = $2 AND appointment_status = 'scheduled'`,
-		actorEmployeeID, "", &now)
+	exec := func(ctx context.Context, tx pgx.Tx, id, ver int) (pgconn.CommandTag, error) {
+		return tx.Exec(ctx, `
+			UPDATE install_appointment
+			SET appointment_status = 'completed', completed_at = $4, completed_by = $3,
+			    updated_at = now(), updated_by = $3, record_version = record_version + 1
+			WHERE install_appointment_id = $1 AND record_version = $2 AND appointment_status = 'scheduled'`,
+			id, ver, actorEmployeeID, now)
+	}
+	started := func(a *Appointment) error {
+		if now.Before(a.StartsAt) {
+			return ErrNotStarted
+		}
+		return nil
+	}
+	return transition(ctx, pool, uuid, expectedVersion, ActionComplete, "", actorEmployeeID, started, exec)
 }
 
-// transition runs a cancel or complete UPDATE under the appointment's advisory locks and records its history row.
-// Arguments after $2 are $3 actor, $4 reason (cancel) or completion instant (complete).
-func transition(ctx context.Context, pool *pgxpool.Pool, uuid string, expectedVersion int, action, updateSQL string, actor int, reason string, completedAt *time.Time) (*ChangeResult, error) {
+// transition runs a cancel or complete under the appointment's advisory locks and records its history row.
+// precheck, when set, vetoes the change after the status and version checks.
+func transition(ctx context.Context, pool *pgxpool.Pool, uuid string, expectedVersion int, action, reason string, actor int, precheck func(*Appointment) error, exec execTransition) (*ChangeResult, error) {
 	tx, rollback, err := beginTx(ctx, pool, action+" appointment")
 	if err != nil {
 		return nil, err
@@ -54,15 +72,12 @@ func transition(ctx context.Context, pool *pgxpool.Pool, uuid string, expectedVe
 	if err != nil {
 		return nil, fmt.Errorf("load appointment before %s: %w", action, err)
 	}
-	if completedAt != nil && completedAt.Before(before.StartsAt) {
-		return nil, ErrNotStarted
+	if precheck != nil {
+		if err := precheck(before); err != nil {
+			return nil, err
+		}
 	}
-
-	var arg any = reason
-	if completedAt != nil {
-		arg = *completedAt
-	}
-	tag, err := tx.Exec(ctx, updateSQL, ref.ID, expectedVersion, actor, arg)
+	tag, err := exec(ctx, tx, ref.ID, expectedVersion)
 	if err != nil {
 		return nil, fmt.Errorf("%s appointment: %w", action, err)
 	}

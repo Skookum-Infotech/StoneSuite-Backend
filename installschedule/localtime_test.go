@@ -61,6 +61,8 @@ func TestResolveInterval(t *testing.T) {
 	}{
 		{name: "all-day spring forward", start: "2026-03-08", end: "2026-03-08", allDay: true, wantDur: 23 * time.Hour},
 		{name: "all-day fall back two days", start: "2026-11-01", end: "2026-11-02", allDay: true, wantDur: 49 * time.Hour},
+		{name: "all-day 14 days ok", start: "2026-11-10", end: "2026-11-23", allDay: true, wantDur: 14 * 24 * time.Hour},
+		{name: "all-day 15 days rejected", start: "2026-11-10", end: "2026-11-24", allDay: true, wantField: "endLocal"},
 		{name: "timed ok", start: "2026-11-10T08:00", end: "2026-11-10T12:00", wantDur: 4 * time.Hour},
 		{name: "zero length", start: "2026-11-10T08:00", end: "2026-11-10T08:00", wantField: "endLocal"},
 		{name: "too long", start: "2026-11-10T08:00", end: "2026-11-24T08:15", wantField: "endLocal"},

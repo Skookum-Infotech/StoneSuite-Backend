@@ -61,6 +61,8 @@ func TestValidateCreate(t *testing.T) {
 		{name: "yesterday allowed", in: with(func(c *CreateInput) { c.StartLocal = "2026-11-09T08:00" })},
 		{name: "backdated", in: with(func(c *CreateInput) { c.StartLocal = "2026-11-08T08:00" }), wantField: "startLocal"},
 		{name: "notes too long", in: with(func(c *CreateInput) { c.Notes = strings.Repeat("x", MaxNotes+1) }), wantField: "notes"},
+		{name: "2000 multibyte runes ok", in: with(func(c *CreateInput) { c.Notes = strings.Repeat("é", MaxNotes) })},
+		{name: "2001 multibyte runes rejected", in: with(func(c *CreateInput) { c.Notes = strings.Repeat("é", MaxNotes+1) }), wantField: "notes"},
 		{name: "bad visit type", in: with(func(c *CreateInput) { c.VisitType = "party" }), wantField: "visitType"},
 		{name: "missing job", in: with(func(c *CreateInput) { c.FabricationJobUUID = "" }), wantField: "fabricationJobId"},
 	}
@@ -74,6 +76,32 @@ func TestValidateCreate(t *testing.T) {
 			var ve *ValidationError
 			require.True(t, errors.As(err, &ve))
 			assert.Equal(t, tc.wantField, ve.Field)
+		})
+	}
+}
+
+func TestValidateReason(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{name: "empty", in: ""},
+		{name: "500 ascii", in: strings.Repeat("x", MaxReason)},
+		{name: "500 multibyte", in: strings.Repeat("é", MaxReason)},
+		{name: "501 ascii", in: strings.Repeat("x", MaxReason+1), wantErr: true},
+		{name: "501 multibyte", in: strings.Repeat("é", MaxReason+1), wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateReason(tc.in)
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			var ve *ValidationError
+			require.True(t, errors.As(err, &ve))
+			assert.Equal(t, "reason", ve.Field)
 		})
 	}
 }

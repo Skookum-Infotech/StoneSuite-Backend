@@ -3,6 +3,7 @@ package installschedule
 import (
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"stonesuite-backend/dateonly"
 )
@@ -14,6 +15,7 @@ const (
 	fieldNotes     = "notes"
 	fieldVisitType = "visitType"
 	fieldJob       = "fabricationJobId"
+	fieldReason    = "reason"
 )
 
 // ValidateCrew checks crew size, ids, roles, uniqueness and the single-lead rule.
@@ -57,7 +59,7 @@ func ValidateCreate(in CreateInput, today time.Time) error {
 	if !validVisitType(in.VisitType) {
 		return &ValidationError{Field: fieldVisitType, Message: "must be template, install or service"}
 	}
-	if len(in.Notes) > MaxNotes {
+	if utf8.RuneCountInString(in.Notes) > MaxNotes {
 		return &ValidationError{Field: fieldNotes, Message: fmt.Sprintf("at most %d characters", MaxNotes)}
 	}
 	if len(in.StartLocal) < dateLayoutLen {
@@ -69,7 +71,15 @@ func ValidateCreate(in CreateInput, today time.Time) error {
 	}
 	earliest := dateonly.New(today).AddDate(0, 0, -backdateDays)
 	if startDay.Before(earliest) {
-		return &ValidationError{Field: fieldStart, Message: "cannot be more than 1 day in the past"}
+		return &ValidationError{Field: fieldStart, Message: fmt.Sprintf("cannot be more than %d day in the past", backdateDays)}
 	}
 	return ValidateCrew(in.Crew)
+}
+
+// ValidateReason checks a cancel/reschedule reason is at most MaxReason characters.
+func ValidateReason(s string) error {
+	if utf8.RuneCountInString(s) > MaxReason {
+		return &ValidationError{Field: fieldReason, Message: fmt.Sprintf("at most %d characters", MaxReason)}
+	}
+	return nil
 }

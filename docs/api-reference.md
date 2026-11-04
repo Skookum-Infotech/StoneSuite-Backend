@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-647 endpoints across 7 surfaces, read from `main.go`.
+653 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 547 |
+| staff token + tenant | 553 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 546 endpoints
+## `tenant` — 552 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -1022,6 +1022,11 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/sales-orders/{uuid}/convert` | staff token + tenant | `so.Convert` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/customer-order-form` | staff token + tenant | `so.CustomerOrderForm` |
 | `PUT` | `/api/tenant/sales-orders/{uuid}/customer-order-form` | staff token + tenant | `so.UpdateCustomerOrderForm` |
+| `GET` | `/api/tenant/sales-orders/{uuid}/drawing` | staff token + tenant | `so.GetDrawing` |
+| `PUT` | `/api/tenant/sales-orders/{uuid}/drawing` | staff token + tenant | `so.PutDrawing` |
+| `GET` | `/api/tenant/sales-orders/{uuid}/drawing/versions` | staff token + tenant | `so.ListDrawingVersions` |
+| `GET` | `/api/tenant/sales-orders/{uuid}/drawing/versions/{version}` | staff token + tenant | `so.GetDrawingVersion` |
+| `POST` | `/api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore` | staff token + tenant | `so.RestoreDrawingVersion` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/fabricate` | staff token + tenant | `fj.Fabricate` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/inventory` | staff token + tenant | `so.Inventory` |
 | `ANY` | `/api/tenant/sales-orders/{uuid}/portal-messages` | staff token + tenant | `portalMessageOps.MessagesFor` |
@@ -1035,6 +1040,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `GET` | `/api/tenant/search` | staff token + tenant | `gsOps.Search` |
+
+### settings
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/settings/edge-codes` | staff token + tenant | `controllers.GetEdgeCodes` |
 
 ### sso-configs
 

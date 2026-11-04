@@ -10330,7 +10330,7 @@ CREATE TABLE IF NOT EXISTS install_appointment (
     CONSTRAINT chk_ia_visit_type CHECK (visit_type IN ('template', 'install', 'service')),
     CONSTRAINT chk_ia_status CHECK (appointment_status IN ('scheduled', 'completed', 'cancelled')),
     CONSTRAINT chk_ia_range CHECK (ends_at > starts_at),
-    CONSTRAINT chk_ia_max_span CHECK (ends_at - starts_at <= interval '14 days'),
+    CONSTRAINT chk_ia_max_span CHECK (ends_at - starts_at <= interval '14 days 1 hour'),
     CONSTRAINT chk_ia_local_dates CHECK (local_end_date >= local_start_date),
     CONSTRAINT chk_ia_notes_len CHECK (notes IS NULL OR char_length(notes) <= 2000),
     CONSTRAINT chk_ia_cancel_reason_len CHECK (cancel_reason IS NULL OR char_length(cancel_reason) <= 500),

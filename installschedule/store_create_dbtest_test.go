@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -49,11 +50,11 @@ func TestCreate_SoftConflictThenAck(t *testing.T) {
 	_, jobUUID := seedJob(t, pool, owner)
 	_, jobUUID2 := seedJob(t, pool, owner)
 
-	first, err := Create(ctx, pool, loc, createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
+	first, err := Create(ctx, pool, loc, time.Now(), createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
 	require.NoError(t, err)
 
 	in := createInput(jobUUID2, emp, "10:00", "14:00")
-	_, err = Create(ctx, pool, loc, in, owner, allVisible)
+	_, err = Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
 	var ce *ConflictError
 	require.ErrorAs(t, err, &ce)
 	require.Len(t, ce.Conflicts, 1)
@@ -62,14 +63,20 @@ func TestCreate_SoftConflictThenAck(t *testing.T) {
 	assert.Equal(t, emp, ce.Conflicts[0].EmployeeID)
 	assert.Equal(t, first.Appointment.ID, ce.Conflicts[0].AppointmentUUID)
 
-	// Hidden conflicts are counted but not detailed.
-	_, err = Create(ctx, pool, loc, in, owner, func(string) bool { return false })
+	// Hidden conflicts are redacted to type, employee and times.
+	_, err = Create(ctx, pool, loc, time.Now(), in, owner, func(string) bool { return false })
 	require.ErrorAs(t, err, &ce)
-	assert.Empty(t, ce.Conflicts)
-	assert.Equal(t, 1, ce.More)
+	require.Len(t, ce.Conflicts, 1)
+	assert.Equal(t, ConflictCrew, ce.Conflicts[0].Type)
+	assert.Equal(t, emp, ce.Conflicts[0].EmployeeID)
+	assert.NotEmpty(t, ce.Conflicts[0].EmployeeName)
+	assert.NotEmpty(t, ce.Conflicts[0].StartLocal)
+	assert.Empty(t, ce.Conflicts[0].AppointmentUUID)
+	assert.Empty(t, ce.Conflicts[0].JobNumber)
+	assert.Zero(t, ce.More)
 
 	in.AcknowledgeConflicts = true
-	second, err := Create(ctx, pool, loc, in, owner, allVisible)
+	second, err := Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
 	require.NoError(t, err)
 	assert.False(t, second.Replayed)
 
@@ -78,6 +85,18 @@ func TestCreate_SoftConflictThenAck(t *testing.T) {
 		`SELECT conflicts_acknowledged::text FROM install_appointment_history WHERE install_appointment_history_id=$1`,
 		second.HistoryID).Scan(&acked))
 	assert.Contains(t, acked, first.Appointment.ID)
+
+	// Acknowledging with a viewer who sees nothing still records the full, unredacted conflict.
+	in.StartLocal, in.EndLocal = createDay+"T09:00", createDay+"T11:00"
+	_, jobUUID3 := seedJob(t, pool, owner)
+	in.FabricationJobUUID = jobUUID3
+	third, err := Create(ctx, pool, loc, time.Now(), in, owner, func(string) bool { return false })
+	require.NoError(t, err)
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT conflicts_acknowledged::text FROM install_appointment_history WHERE install_appointment_history_id=$1`,
+		third.HistoryID).Scan(&acked))
+	assert.Contains(t, acked, first.Appointment.ID)
+	assert.Contains(t, acked, second.Appointment.ID)
 }
 
 func TestCreate_JobConflict(t *testing.T) {
@@ -89,9 +108,9 @@ func TestCreate_JobConflict(t *testing.T) {
 	_, _, e2 := seedUserEmployee(t, pool, "c2")
 	_, jobUUID := seedJob(t, pool, owner)
 
-	_, err := Create(ctx, pool, loc, createInput(jobUUID, e1, "08:00", "12:00"), owner, allVisible)
+	_, err := Create(ctx, pool, loc, time.Now(), createInput(jobUUID, e1, "08:00", "12:00"), owner, allVisible)
 	require.NoError(t, err)
-	_, err = Create(ctx, pool, loc, createInput(jobUUID, e2, "09:00", "10:00"), owner, allVisible)
+	_, err = Create(ctx, pool, loc, time.Now(), createInput(jobUUID, e2, "09:00", "10:00"), owner, allVisible)
 	var ce *ConflictError
 	require.ErrorAs(t, err, &ce)
 	require.Len(t, ce.Conflicts, 1)
@@ -108,10 +127,10 @@ func TestCreate_IdempotentRequestID(t *testing.T) {
 
 	in := createInput(jobUUID, emp, "08:00", "12:00")
 	in.RequestID = "6f1c1f0e-2d0e-4f55-9a53-0f5d2b1a7c11"
-	a, err := Create(ctx, pool, loc, in, owner, allVisible)
+	a, err := Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
 	require.NoError(t, err)
 	assert.False(t, a.Replayed)
-	b, err := Create(ctx, pool, loc, in, owner, allVisible)
+	b, err := Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
 	require.NoError(t, err)
 	assert.True(t, b.Replayed)
 	assert.Equal(t, a.Appointment.ID, b.Appointment.ID)
@@ -138,7 +157,7 @@ func TestCreate_ConcurrentSameCrew(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := Create(ctx, pool, loc, createInput(jobs[i], emp, "08:00", "12:00"), owner, allVisible)
+			_, err := Create(ctx, pool, loc, time.Now(), createInput(jobs[i], emp, "08:00", "12:00"), owner, allVisible)
 			var ce *ConflictError
 			switch {
 			case err == nil:
@@ -166,7 +185,7 @@ func TestCreate_ClosedJob(t *testing.T) {
 	for _, code := range []string{"CANC", "COMP"} {
 		jobID, jobUUID := seedJob(t, pool, owner)
 		setJobStatus(t, pool, jobID, code)
-		_, err := Create(ctx, pool, loc, createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
+		_, err := Create(ctx, pool, loc, time.Now(), createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
 		assert.ErrorIs(t, err, ErrJobClosed, code)
 	}
 }
@@ -178,10 +197,10 @@ func TestCreate_UnknownJobAndBadCrew(t *testing.T) {
 	_, _, owner := seedUserEmployee(t, pool, "owner")
 	_, jobUUID := seedJob(t, pool, owner)
 
-	_, err := Create(ctx, pool, loc, createInput("00000000-0000-0000-0000-000000000000", owner, "08:00", "12:00"), owner, allVisible)
+	_, err := Create(ctx, pool, loc, time.Now(), createInput("00000000-0000-0000-0000-000000000000", owner, "08:00", "12:00"), owner, allVisible)
 	assert.ErrorIs(t, err, ErrNotFound)
 
-	_, err = Create(ctx, pool, loc, createInput(jobUUID, 999999999, "08:00", "12:00"), owner, allVisible)
+	_, err = Create(ctx, pool, loc, time.Now(), createInput(jobUUID, 999999999, "08:00", "12:00"), owner, allVisible)
 	var ve *ValidationError
 	assert.ErrorAs(t, err, &ve)
 }
@@ -199,7 +218,91 @@ func TestCreate_DoesNotTouchJobVersion(t *testing.T) {
 		return v
 	}
 	before := version()
-	_, err := Create(ctx, pool, loc, createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
+	_, err := Create(ctx, pool, loc, time.Now(), createInput(jobUUID, emp, "08:00", "12:00"), owner, allVisible)
 	require.NoError(t, err)
 	assert.Equal(t, before, version())
+}
+
+func TestCreate_AllDayFourteenDaysAcrossFallBack(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	loc := chicagoLoc(t)
+	_, _, owner := seedUserEmployee(t, pool, "owner")
+	_, _, emp := seedUserEmployee(t, pool, "crew")
+	_, jobUUID := seedJob(t, pool, owner)
+	in := CreateInput{
+		FabricationJobUUID: jobUUID, VisitType: VisitInstall, AllDay: true,
+		StartLocal: "2026-10-31", EndLocal: "2026-11-13",
+		Crew: []CrewInput{{EmployeeID: emp, Role: CrewLead}},
+	}
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, loc)
+	res, err := Create(ctx, pool, loc, now, in, owner, allVisible)
+	require.NoError(t, err)
+	assert.True(t, res.Appointment.AllDay)
+}
+
+func TestCreate_CompletedPastDoesNotConflict(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	loc := chicagoLoc(t)
+	_, _, owner := seedUserEmployee(t, pool, "owner")
+	_, _, emp := seedUserEmployee(t, pool, "crew")
+	jobID, _ := seedJob(t, pool, owner)
+	_, jobUUID2 := seedJob(t, pool, owner)
+	start := time.Date(2032, 6, 10, 8, 0, 0, 0, loc)
+	done := seedAppt(t, pool, jobID, start, start.Add(4*time.Hour), false, emp)
+	_, err := pool.Exec(ctx, `UPDATE install_appointment SET appointment_status='completed', completed_at=$2, completed_by=1
+		WHERE install_appointment_uuid=$1`, done, start)
+	require.NoError(t, err)
+
+	in := createInput(jobUUID2, emp, "10:00", "11:00")
+	// Still before the completed visit's end: it counts.
+	_, err = Create(ctx, pool, loc, start.Add(time.Hour), in, owner, allVisible)
+	var ce *ConflictError
+	require.ErrorAs(t, err, &ce)
+	// After its end: it no longer conflicts.
+	_, err = Create(ctx, pool, loc, start.Add(26*time.Hour), in, owner, allVisible)
+	require.NoError(t, err)
+}
+
+func TestCreate_ConcurrentSameRequestID(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	loc := chicagoLoc(t)
+	_, _, owner := seedUserEmployee(t, pool, "owner")
+	_, _, emp := seedUserEmployee(t, pool, "crew")
+	jobID, jobUUID := seedJob(t, pool, owner)
+	in := createInput(jobUUID, emp, "08:00", "12:00")
+	in.RequestID = "0b8f6c2e-5a1d-4c7e-8d33-2f9a4e6b1c07"
+
+	const workers = 5
+	var wg sync.WaitGroup
+	var fresh, replayed atomic.Int32
+	ids := make([]string, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
+			if err != nil {
+				t.Errorf("create: %v", err)
+				return
+			}
+			ids[i] = res.Appointment.ID
+			if res.Replayed {
+				replayed.Add(1)
+			} else {
+				fresh.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	assert.EqualValues(t, 1, fresh.Load())
+	assert.EqualValues(t, workers-1, replayed.Load())
+	for _, id := range ids {
+		assert.Equal(t, ids[0], id)
+	}
+	var n int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM install_appointment WHERE fabrication_job_id=$1`, jobID).Scan(&n))
+	assert.Equal(t, 1, n)
 }

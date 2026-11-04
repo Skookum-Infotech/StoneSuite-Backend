@@ -16,6 +16,9 @@ const (
 	// SeveritySoft marks an overlap the actor may acknowledge and override.
 	SeveritySoft = "soft"
 
+	// SpanSlack is the extra hour a 14-local-day span can gain across a DST fall-back.
+	SpanSlack = time.Hour
+
 	lockKeyJob = "ia:job:%d"
 	lockKeyEmp = "ia:emp:%d"
 )
@@ -58,12 +61,12 @@ func lockScope(ctx context.Context, tx pgx.Tx, jobID int, employeeIDs []int) err
 }
 
 // findConflicts lists crew and job overlaps with iv, excluding excludeApptID (0 for none).
-// Conflicts whose appointment canSee rejects, and visible ones beyond ConflictListCap,
-// are not detailed; the returned int counts them.
-func findConflicts(ctx context.Context, tx pgx.Tx, jobID int, iv Interval, employeeIDs []int, excludeApptID int, canSee func(apptUUID string) bool) ([]Conflict, int, error) {
-	now := time.Now()
-	lowerBound := iv.Start.Add(-MaxDuration)
-	var rows []Conflict
+// It returns the client-facing list (conflicts canSee rejects are redacted to type, employee and times,
+// and the list is capped at ConflictListCap), the count of conflicts beyond the cap, and every
+// conflict unredacted and uncapped for the audit trail. now decides which completed visits still count.
+func findConflicts(ctx context.Context, tx pgx.Tx, now time.Time, jobID int, iv Interval, employeeIDs []int, excludeApptID int, canSee func(apptUUID string) bool) ([]Conflict, int, []Conflict, error) {
+	lowerBound := iv.Start.Add(-(MaxDuration + SpanSlack))
+	var all []Conflict
 
 	if ids := sortedUniqueIDs(employeeIDs); len(ids) > 0 {
 		crew, err := queryConflicts(ctx, tx, ConflictCrew, `
@@ -82,9 +85,9 @@ func findConflicts(ctx context.Context, tx pgx.Tx, jobID int, iv Interval, emplo
 			ORDER BY ia.starts_at, ia.install_appointment_id, iac.employee_id`,
 			now, ids, excludeApptID, iv.End, iv.Start, lowerBound)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
-		rows = append(rows, crew...)
+		all = append(all, crew...)
 	}
 
 	job, err := queryConflicts(ctx, tx, ConflictJob, `
@@ -99,24 +102,21 @@ func findConflicts(ctx context.Context, tx pgx.Tx, jobID int, iv Interval, emplo
 		ORDER BY ia.starts_at, ia.install_appointment_id`,
 		now, jobID, excludeApptID, iv.End, iv.Start, lowerBound)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
-	rows = append(rows, job...)
+	all = append(all, job...)
 
-	visible := make([]Conflict, 0, len(rows))
-	hidden := 0
-	for _, c := range rows {
+	shown := make([]Conflict, 0, min(len(all), ConflictListCap))
+	for _, c := range all {
+		if len(shown) >= ConflictListCap {
+			break
+		}
 		if canSee == nil || !canSee(c.AppointmentUUID) {
-			hidden++
-			continue
+			c.AppointmentUUID, c.JobNumber = "", ""
 		}
-		if len(visible) >= ConflictListCap {
-			hidden++
-			continue
-		}
-		visible = append(visible, c)
+		shown = append(shown, c)
 	}
-	return visible, hidden, nil
+	return shown, len(all) - len(shown), all, nil
 }
 
 // queryConflicts runs one conflict query and maps rows to Conflicts of the given type.

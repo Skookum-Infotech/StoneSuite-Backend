@@ -27,9 +27,9 @@ type CreateResult struct {
 	Replayed    bool
 }
 
-// Create books an appointment, returning a *ConflictError on unacknowledged overlaps.
-func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, in CreateInput, actorEmployeeID int, canSee func(string) bool) (*CreateResult, error) {
-	if err := ValidateCreate(in, time.Now().In(loc)); err != nil {
+// Create books an appointment (now is the caller's clock), returning a *ConflictError on unacknowledged overlaps.
+func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now time.Time, in CreateInput, actorEmployeeID int, canSee func(string) bool) (*CreateResult, error) {
+	if err := ValidateCreate(in, now.In(loc)); err != nil {
 		return nil, err
 	}
 	if in.RequestID != "" {
@@ -53,6 +53,8 @@ func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, in Crea
 		}
 	}()
 
+	// The closed-job check deliberately precedes the idempotency replay: a closed job accepts no
+	// scheduling activity at all, so a retried request after the job closes reports ErrJobClosed.
 	jobID, err := resolveOpenJob(ctx, tx, in.FabricationJobUUID)
 	if err != nil {
 		return nil, err
@@ -73,12 +75,12 @@ func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, in Crea
 		return res, err
 	}
 
-	conflicts, hidden, err := findConflicts(ctx, tx, jobID, iv, employeeIDs, 0, canSee)
+	shown, more, all, err := findConflicts(ctx, tx, now, jobID, iv, employeeIDs, 0, canSee)
 	if err != nil {
 		return nil, err
 	}
-	if len(conflicts)+hidden > 0 && !in.AcknowledgeConflicts {
-		return nil, &ConflictError{Conflicts: conflicts, More: hidden}
+	if len(all) > 0 && !in.AcknowledgeConflicts {
+		return nil, &ConflictError{Conflicts: shown, More: more}
 	}
 
 	apptID, uuid, err := insertAppointment(ctx, tx, jobID, in, iv, actorEmployeeID)
@@ -95,7 +97,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, in Crea
 	histID, err := writeHistory(ctx, tx, HistoryRow{
 		AppointmentID: apptID, Action: ActionCreate,
 		ToStart: &iv.Start, ToEnd: &iv.End,
-		ConflictsAcknowledged: ackedConflicts(in.AcknowledgeConflicts, conflicts),
+		ConflictsAcknowledged: ackedConflicts(in.AcknowledgeConflicts, all),
 		Snapshot:              HistorySnapshot{Appointment: *appt, CrewIDs: employeeIDs},
 		ActorEmployeeID:       actorEmployeeID,
 	})

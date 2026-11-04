@@ -56,7 +56,7 @@ func Feed(ctx context.Context, q Querier, loc *time.Location, scope, actorIdenti
 	if err != nil {
 		return nil, false, err
 	}
-	args := []any{winEnd, winStart, winStart.Add(-MaxDuration)}
+	args := []any{winEnd, winStart, winStart.Add(-(MaxDuration + SpanSlack))}
 	where := []string{
 		"ia.starts_at < $1", "ia.ends_at > $2", "ia.starts_at >= $3",
 		"fj.fabrication_job_deleted_at IS NULL",

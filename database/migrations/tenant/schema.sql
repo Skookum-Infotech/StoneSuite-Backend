@@ -2585,6 +2585,59 @@ CREATE TABLE IF NOT EXISTS sales_order_history (
     at                      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- sales_order_drawing -- current/live countertop drawing document per order, one row per
+-- sales order. Pieces/areas are stored as one JSONB document rather than modeled relationally,
+-- same choice already made for sales_order_history.snapshot/workflow_record_history/
+-- crm_record_history/customer_history -- the drawing editor itself treats the whole thing as
+-- one document, and the server only needs to validate its shape (see drawing.Validate), not
+-- query inside individual pieces.
+CREATE TABLE IF NOT EXISTS sales_order_drawing (
+    sales_order_drawing_id   SERIAL       PRIMARY KEY,
+    sales_order_id           INTEGER      NOT NULL UNIQUE REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    schema_version           INTEGER      NOT NULL DEFAULT 1,
+    display_unit             VARCHAR(8)   NOT NULL DEFAULT 'in',
+    fraction_denominator     INTEGER      NOT NULL DEFAULT 32,
+    areas                    JSONB        NOT NULL DEFAULT '[]',
+    drawing_record_version   INTEGER      NOT NULL DEFAULT 1,
+    actor_employee_id        INTEGER          NULL REFERENCES employee(employee_id),
+    updated_at               TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- sales_order_drawing_version -- append-only snapshot per save, same JSONB-snapshot-per-version
+-- shape as sales_order_history, used for the spec's version history drawer and restore.
+CREATE TABLE IF NOT EXISTS sales_order_drawing_version (
+    sales_order_drawing_version_id SERIAL    PRIMARY KEY,
+    sales_order_id                 INTEGER   NOT NULL REFERENCES sales_order(sales_order_id) ON DELETE CASCADE,
+    version                        INTEGER   NOT NULL,
+    snapshot                       JSONB     NOT NULL,
+    actor_employee_id              INTEGER       NULL REFERENCES employee(employee_id),
+    at                             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_sales_order_drawing_version UNIQUE (sales_order_id, version)
+);
+
+-- lkp_edge_code -- countertop edge profile options for the drawing editor (spec's
+-- GET /api/tenant/settings/edge-codes), same shape as the other lkp_* lookup tables.
+CREATE TABLE IF NOT EXISTS lkp_edge_code (
+    edge_code_id            SERIAL       PRIMARY KEY,
+    edge_code_code          VARCHAR(16)  NOT NULL,
+    edge_code_label         VARCHAR(64)  NOT NULL,
+    edge_code_is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
+    edge_code_created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    edge_code_created_by    INTEGER      NOT NULL REFERENCES employee(employee_id),
+    edge_code_record_version INTEGER    NOT NULL DEFAULT 1,
+    CONSTRAINT uq_edge_code_code UNIQUE (edge_code_code)
+);
+
+INSERT INTO lkp_edge_code (edge_code_code, edge_code_label, edge_code_created_by) VALUES
+    ('EE',  'Eased Edge',            1),
+    ('SE',  'Straight/Square Edge',  1),
+    ('BN',  'Bullnose',              1),
+    ('BEV', 'Beveled',               1),
+    ('OG',  'Ogee',                  1),
+    ('DR',  'Dupont/Demi-bullnose',  1),
+    ('WF',  'Waterfall',             1)
+ON CONFLICT (edge_code_code) DO NOTHING;
+
 -- Indexes -- listing/filtering (all partial on live rows) -------------------
 CREATE INDEX IF NOT EXISTS idx_so_customer   ON sales_order (sales_order_customer_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_status     ON sales_order (sales_order_status)      WHERE sales_order_deleted_at IS NULL;

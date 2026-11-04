@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-638 endpoints across 7 surfaces, read from `main.go`.
+647 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 538 |
+| staff token + tenant | 547 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 537 endpoints
+## `tenant` — 546 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -602,6 +602,7 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/approve` | staff token + tenant | `fj.Approve` |
 | `PUT` | `/api/tenant/fabrication-jobs/{uuid}/fabrication/status` | staff token + tenant | `fj.Transition` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/hold` | staff token + tenant | `fj.Hold` |
+| `GET` | `/api/tenant/fabrication-jobs/{uuid}/install-appointments` | staff token + tenant | `installSched.ListForJob` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/material-allocations` | staff token + tenant | `fj.AllocateMaterial` |
 | `POST` | `/api/tenant/fabrication-jobs/{uuid}/material-releases` | staff token + tenant | `fj.ReleaseMaterial` |
 | `GET` | `/api/tenant/fabrication-jobs/{uuid}/materials` | staff token + tenant | `fj.JobMaterials` |
@@ -697,6 +698,19 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/import/jobs/{jobId}/rows` | staff token + tenant | `importOps.ListRows` |
 | `PATCH` | `/api/tenant/import/jobs/{jobId}/rows/{rowId}` | staff token + tenant | `importOps.UpdateRow` |
 | `POST` | `/api/tenant/import/presign` | staff token + tenant | `importOps.Presign` |
+
+### install-appointments
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/install-appointments` | staff token + tenant | `installSched.Feed` |
+| `POST` | `/api/tenant/install-appointments` | staff token + tenant | `installSched.Create` |
+| `GET` | `/api/tenant/install-appointments/crew-options` | staff token + tenant | `installSched.CrewOptions` |
+| `GET` | `/api/tenant/install-appointments/{uuid}` | staff token + tenant | `installSched.Get` |
+| `PATCH` | `/api/tenant/install-appointments/{uuid}` | staff token + tenant | `installSched.Update` |
+| `POST` | `/api/tenant/install-appointments/{uuid}/cancel` | staff token + tenant | `installSched.Cancel` |
+| `POST` | `/api/tenant/install-appointments/{uuid}/complete` | staff token + tenant | `installSched.Complete` |
+| `GET` | `/api/tenant/install-appointments/{uuid}/history` | staff token + tenant | `installSched.History` |
 
 ### inventory
 

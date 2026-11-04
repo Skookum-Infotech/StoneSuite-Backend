@@ -1430,6 +1430,20 @@ func main() {
 		mux.Handle("PATCH /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.UpdatePiece))
 		mux.Handle("DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid}", tenantChain(fj.RemovePiece))
 
+		// Install schedule: template/install/service visits booked against fabrication
+		// jobs. Guarded by install_appointment:*; booking also needs installation:read
+		// on the job. crew-options is a literal segment, so it wins over {uuid}.
+		installSched := controllers.NewInstallScheduleOps(custTxTZ)
+		mux.Handle("GET /api/tenant/install-appointments", tenantChain(installSched.Feed))
+		mux.Handle("GET /api/tenant/install-appointments/crew-options", tenantChain(installSched.CrewOptions))
+		mux.Handle("POST /api/tenant/install-appointments", tenantChain(installSched.Create))
+		mux.Handle("GET /api/tenant/install-appointments/{uuid}", tenantChain(installSched.Get))
+		mux.Handle("PATCH /api/tenant/install-appointments/{uuid}", tenantChain(installSched.Update))
+		mux.Handle("POST /api/tenant/install-appointments/{uuid}/cancel", tenantChain(installSched.Cancel))
+		mux.Handle("POST /api/tenant/install-appointments/{uuid}/complete", tenantChain(installSched.Complete))
+		mux.Handle("GET /api/tenant/install-appointments/{uuid}/history", tenantChain(installSched.History))
+		mux.Handle("GET /api/tenant/fabrication-jobs/{uuid}/install-appointments", tenantChain(installSched.ListForJob))
+
 		// Serialized physical stock — individual slabs and the remnants cut from
 		// them. Guarded by inventory_unit:*, which tenant/schema.sql backfills
 		// from inventory_item:* so no existing role loses access.

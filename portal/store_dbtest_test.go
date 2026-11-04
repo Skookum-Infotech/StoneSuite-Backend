@@ -131,7 +131,7 @@ func TestListUsersForTenant_ExcludesDeletedCustomers(t *testing.T) {
 		`UPDATE customer SET customer_deleted_at = NOW(), customer_deleted_by = 1 WHERE customer_id = $1`, deletedID)
 	require.NoError(t, err)
 
-	users, err := ListUsersForTenant(ctx, pool)
+	users, err := ListUsersForTenant(ctx, pool, nil)
 	require.NoError(t, err)
 
 	seen := map[string]bool{}

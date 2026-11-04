@@ -118,7 +118,7 @@ func (h *TenantOps) reviewOnboarding(w http.ResponseWriter, r *http.Request, adm
 			fail(w, http.StatusInternalServerError, "Failed to reject application.")
 			return
 		}
-		_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.rejected", "{}")
+		logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.rejected", "{}"))
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Application rejected."})
 		return
 	}
@@ -133,7 +133,7 @@ func (h *TenantOps) reviewOnboarding(w http.ResponseWriter, r *http.Request, adm
 		fail(w, http.StatusInternalServerError, "Approval failed: "+err.Error())
 		return
 	}
-	_ = h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.approved", "{}")
+	logAuditErr("platform_audit", h.CP.LogPlatformAudit(r.Context(), admin.ID, admin.Email, tenantID, "tenant.approved", "{}"))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true, "message": "Approved. Provisioning started.", "passwordSetupLink": setup,
 	})

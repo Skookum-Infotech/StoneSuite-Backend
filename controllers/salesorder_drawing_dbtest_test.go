@@ -58,7 +58,11 @@ func newDrawingTestEnv(t *testing.T, grants ...authz.Grant) *drawingTestEnv {
 	mux.HandleFunc("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", so.GetDrawingVersion)
 	mux.HandleFunc("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", so.RestoreDrawingVersion)
 	mux.HandleFunc("GET /api/tenant/settings/edge-codes", GetEdgeCodes)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	// Each env owns tenant connection pools; close them so six tests' worth do
+	// not pile up and exhaust Postgres's connection limit for later tests.
+	router := tenancy.NewRouter(nil)
+	t.Cleanup(router.Close)
+	resolver := tenancy.NewResolver(cp, router)
 
 	return &drawingTestEnv{t: t, mux: resolver.Middleware(mux), identityID: identity.ID, tenantID: tenant.ID, soUUID: order.ID}
 }

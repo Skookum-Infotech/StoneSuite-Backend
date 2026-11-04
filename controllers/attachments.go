@@ -66,8 +66,9 @@ var allowedMIME = map[string]string{
 	"application/pdf": ".pdf",
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
 	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":       ".xlsx",
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
+	"image/png":       ".png",
+	"image/jpeg":      ".jpg",
+	"application/dxf": ".dxf",
 }
 
 // allowedExt maps accepted extensions to their canonical content-type.
@@ -78,6 +79,7 @@ var allowedExt = map[string]string{
 	".png":  "image/png",
 	".jpg":  "image/jpeg",
 	".jpeg": "image/jpeg",
+	".dxf":  "application/dxf",
 }
 
 // ---- authorisation ----------------------------------------------------------
@@ -425,7 +427,7 @@ func (h *AttachmentOps) DeleteAttachment(w http.ResponseWriter, r *http.Request)
 // within the per-file size cap.
 func validateAttachFile(fileName, contentType string, sizeBytes int64) error {
 	if _, ok := allowedMIME[contentType]; !ok {
-		return fmt.Errorf("content type %q is not allowed (allowed: pdf, docx, xlsx, png, jpg)", contentType)
+		return fmt.Errorf("content type %q is not allowed (allowed: pdf, docx, xlsx, png, jpg, dxf)", contentType)
 	}
 	ext := strings.ToLower(filepath.Ext(fileName))
 	expectedCT, ok := allowedExt[ext]

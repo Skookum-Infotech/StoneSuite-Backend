@@ -1392,6 +1392,16 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/schedule", tenantChain(so.Schedule))
 		mux.Handle("PATCH /api/tenant/sales-orders/{uuid}/schedule/{code}", tenantChain(so.UpdateScheduleActivity))
 
+		// Countertop drawing editor: saved document, version history, and restore
+		// (build spec §5 Task 5 / §6). Follows the sales order itself for RBAC
+		// and scope, same as customer-order-form above.
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing", tenantChain(so.GetDrawing))
+		mux.Handle("PUT /api/tenant/sales-orders/{uuid}/drawing", tenantChain(so.PutDrawing))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/versions", tenantChain(so.ListDrawingVersions))
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", tenantChain(so.GetDrawingVersion))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", tenantChain(so.RestoreDrawingVersion))
+		mux.Handle("GET /api/tenant/settings/edge-codes", tenantChain(controllers.GetEdgeCodes))
+
 		// Fabrication & Installation: a production job spawned from a sales order,
 		// tracking a stone order through 16 shop-floor statuses with serialized
 		// slab allocation, a 16-step checklist, and dual approval gates. Guarded

@@ -28,7 +28,7 @@ type CreateResult struct {
 }
 
 // Create books an appointment (now is the caller's clock), returning a *ConflictError on unacknowledged overlaps.
-func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now time.Time, in CreateInput, actorEmployeeID int, canSee func(string) bool) (*CreateResult, error) {
+func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now time.Time, in CreateInput, actorEmployeeID int, canSee CanSeeFunc) (*CreateResult, error) {
 	if err := ValidateCreate(in, now.In(loc)); err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now tim
 	if err != nil {
 		return nil, err
 	}
-	if res, err := replayCreate(ctx, tx, jobID, in.RequestID); err != nil || res != nil {
+	if res, err := replayCreate(ctx, tx, jobID, in.RequestID, canSee); err != nil || res != nil {
 		return res, err
 	}
 
@@ -71,7 +71,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now tim
 		return nil, err
 	}
 	// A concurrent retry may have committed while we waited for the locks.
-	if res, err := replayCreate(ctx, tx, jobID, in.RequestID); err != nil || res != nil {
+	if res, err := replayCreate(ctx, tx, jobID, in.RequestID, canSee); err != nil || res != nil {
 		return res, err
 	}
 
@@ -163,8 +163,8 @@ func checkJobStatus(status string) error {
 	return nil
 }
 
-// replayCreate returns the earlier result for a repeated (job, request id), or nil when there is none.
-func replayCreate(ctx context.Context, tx pgx.Tx, jobID int, requestID string) (*CreateResult, error) {
+// replayCreate returns the earlier result for a repeated (job, request id), nil when there is none, or ErrNotFound when canSee rejects the stored appointment.
+func replayCreate(ctx context.Context, tx pgx.Tx, jobID int, requestID string, canSee CanSeeFunc) (*CreateResult, error) {
 	if requestID == "" {
 		return nil, nil
 	}
@@ -178,6 +178,10 @@ func replayCreate(ctx context.Context, tx pgx.Tx, jobID int, requestID string) (
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lookup create request: %w", err)
+	}
+	// A replay returns the stored appointment, so the caller must be allowed to see it.
+	if canSee == nil || !canSee(ctx, tx, uuid) {
+		return nil, ErrNotFound
 	}
 	appt, err := Get(ctx, tx, uuid)
 	if err != nil {

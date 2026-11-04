@@ -36,3 +36,24 @@ func TestHistory_ListsRowsNewestFirstWithoutConflictDetail(t *testing.T) {
 	_, err = History(ctx, pool, "00000000-0000-0000-0000-000000000000")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestCreate_ReplayRequiresVisibility(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	loc := chicagoLoc(t)
+	_, _, owner := seedUserEmployee(t, pool, "replayowner")
+	_, jobUUID := seedJob(t, pool, owner)
+	in := createInput(jobUUID, owner, "08:00", "12:00")
+	in.RequestID = "5b1d9a36-0a3c-4c5e-9d0e-3f7a1c2b4d60"
+
+	_, err := Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
+	require.NoError(t, err)
+
+	hidden := func(context.Context, Querier, string) bool { return false }
+	_, err = Create(ctx, pool, loc, time.Now(), in, owner, hidden)
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	res, err := Create(ctx, pool, loc, time.Now(), in, owner, allVisible)
+	require.NoError(t, err)
+	assert.True(t, res.Replayed)
+}

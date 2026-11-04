@@ -138,6 +138,9 @@ func Get(ctx context.Context, q Querier, uuid string) (*Appointment, error) {
 	return a, nil
 }
 
+// CanSeeFunc reports whether the caller may see another appointment, querying through q (the write transaction).
+type CanSeeFunc func(ctx context.Context, q Querier, apptUUID string) bool
+
 // OwnerAndCrew returns the job owner's users.id and the crew members' users.ids for the IDOR check.
 func OwnerAndCrew(ctx context.Context, q Querier, uuid string) (string, []string, error) {
 	var apptID int
@@ -146,7 +149,7 @@ func OwnerAndCrew(ctx context.Context, q Querier, uuid string) (string, []string
 		SELECT ia.install_appointment_id, COALESCE(ou.id::text,'')
 		FROM install_appointment ia
 		JOIN fabrication_job fj ON fj.fabrication_job_id = ia.fabrication_job_id
-		LEFT JOIN employee oe ON oe.employee_id = fj.job_owner_id
+		LEFT JOIN employee oe ON oe.employee_id = fj.job_owner_id AND oe.employee_deleted_at IS NULL
 		LEFT JOIN users ou ON ou.id = oe.employee_user_id
 		WHERE ia.install_appointment_uuid = $1 AND fj.fabrication_job_deleted_at IS NULL`, uuid).Scan(&apptID, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -159,7 +162,7 @@ func OwnerAndCrew(ctx context.Context, q Querier, uuid string) (string, []string
 		SELECT e.employee_user_id::text
 		FROM install_appointment_crew iac
 		JOIN employee e ON e.employee_id = iac.employee_id
-		WHERE iac.install_appointment_id = $1 AND e.employee_user_id IS NOT NULL
+		WHERE iac.install_appointment_id = $1 AND e.employee_user_id IS NOT NULL AND e.employee_deleted_at IS NULL
 		ORDER BY e.employee_id`, apptID)
 	if err != nil {
 		return "", nil, fmt.Errorf("load appointment crew users: %w", err)

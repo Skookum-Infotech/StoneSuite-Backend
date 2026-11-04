@@ -17,7 +17,7 @@ const (
 	concurrentWriters = 20
 )
 
-func allVisible(string) bool { return true }
+func allVisible(context.Context, Querier, string) bool { return true }
 
 func createInput(jobUUID string, empID int, start, end string) CreateInput {
 	return CreateInput{
@@ -61,7 +61,7 @@ func TestCreate_SoftConflictThenAck(t *testing.T) {
 	assert.Equal(t, first.Appointment.ID, ce.Conflicts[0].AppointmentUUID)
 
 	// Hidden conflicts are redacted to type, employee and times.
-	_, err = Create(ctx, pool, loc, time.Now(), in, owner, func(string) bool { return false })
+	_, err = Create(ctx, pool, loc, time.Now(), in, owner, func(context.Context, Querier, string) bool { return false })
 	require.ErrorAs(t, err, &ce)
 	require.Len(t, ce.Conflicts, 1)
 	assert.Equal(t, ConflictCrew, ce.Conflicts[0].Type)
@@ -87,7 +87,7 @@ func TestCreate_SoftConflictThenAck(t *testing.T) {
 	in.StartLocal, in.EndLocal = createDay+"T09:00", createDay+"T11:00"
 	_, jobUUID3 := seedJob(t, pool, owner)
 	in.FabricationJobUUID = jobUUID3
-	third, err := Create(ctx, pool, loc, time.Now(), in, owner, func(string) bool { return false })
+	third, err := Create(ctx, pool, loc, time.Now(), in, owner, func(context.Context, Querier, string) bool { return false })
 	require.NoError(t, err)
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT conflicts_acknowledged::text FROM install_appointment_history WHERE install_appointment_history_id=$1`,

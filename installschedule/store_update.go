@@ -12,7 +12,7 @@ import (
 
 // Update patches a scheduled appointment (now is the caller's clock), returning a *ConflictError on
 // unacknowledged overlaps and a *StaleVersionError when in.ExpectedVersion is out of date.
-func Update(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now time.Time, uuid string, in UpdateInput, actorEmployeeID int, canSee func(string) bool) (*ChangeResult, error) {
+func Update(ctx context.Context, pool *pgxpool.Pool, loc *time.Location, now time.Time, uuid string, in UpdateInput, actorEmployeeID int, canSee CanSeeFunc) (*ChangeResult, error) {
 	// Crew is validated here, before any lock is taken; planUpdate relies on it.
 	var newCrewIDs []int
 	if in.Crew != nil {

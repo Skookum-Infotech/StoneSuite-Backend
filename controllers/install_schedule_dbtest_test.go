@@ -133,7 +133,7 @@ func (e *isEnv) appt(jobUUID string, actorEmp int, start, end string, crew ...in
 		}
 		in.Crew = append(in.Crew, installschedule.CrewInput{EmployeeID: c, Role: role})
 	}
-	res, err := installschedule.Create(context.Background(), e.pool, loc, time.Now(), in, actorEmp, func(string) bool { return true })
+	res, err := installschedule.Create(context.Background(), e.pool, loc, time.Now(), in, actorEmp, func(context.Context, installschedule.Querier, string) bool { return true })
 	require.NoError(e.t, err)
 	return res.Appointment
 }

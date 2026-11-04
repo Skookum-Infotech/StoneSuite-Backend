@@ -25,14 +25,14 @@ func (h *InstallScheduleOps) ListForJob(w http.ResponseWriter, r *http.Request) 
 	}
 	items, err := installschedule.ListForJob(r.Context(), c.pool, jobUUID)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	if c.scope != authz.ScopeAll {
 		visible := c.canSee(r.Context())
 		kept := make([]installschedule.Appointment, 0, len(items))
 		for _, a := range items {
-			if visible(a.ID) {
+			if visible(r.Context(), c.pool, a.ID) {
 				kept = append(kept, a)
 			}
 		}

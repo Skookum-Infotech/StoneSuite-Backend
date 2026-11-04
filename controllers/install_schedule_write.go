@@ -90,7 +90,7 @@ func (h *InstallScheduleOps) authJobForCreate(w http.ResponseWriter, r *http.Req
 	}
 	decision, err := authz.Check(r.Context(), c.pool, c.identityID, authz.ResourceInstallation, authz.ActionRead)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Permission check failed.")
+		installFail(w, http.StatusInternalServerError, installCodeInternal, msgInstallPermCheck, nil)
 		return false
 	}
 	if !decision.Allowed {
@@ -117,7 +117,7 @@ func (h *InstallScheduleOps) authJobForCreate(w http.ResponseWriter, r *http.Req
 	if decision.Scope != authz.ScopeAll {
 		allowed, aerr := recordInScope(r.Context(), c.pool, decision.Scope, c.identityID, job.OwnerUserID)
 		if aerr != nil {
-			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			installFail(w, http.StatusInternalServerError, installCodeInternal, msgInstallPermCheck, nil)
 			return false
 		}
 		if !allowed {
@@ -154,7 +154,7 @@ func (h *InstallScheduleOps) Create(w http.ResponseWriter, r *http.Request) {
 	loc := h.location(r.Context(), c.pool)
 	res, err := installschedule.Create(r.Context(), c.pool, loc, h.now(), in, empID, c.canSee(r.Context()))
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	status := http.StatusCreated
@@ -195,7 +195,7 @@ func (h *InstallScheduleOps) Update(w http.ResponseWriter, r *http.Request) {
 	loc := h.location(r.Context(), c.pool)
 	res, err := installschedule.Update(r.Context(), c.pool, loc, h.now(), uuid, in, empID, c.canSee(r.Context()))
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	h.finishChange(w, r, c, userID, empID, res)
@@ -214,7 +214,7 @@ func (h *InstallScheduleOps) Cancel(w http.ResponseWriter, r *http.Request) {
 	empID, userID := h.actorIDs(r, c)
 	res, err := installschedule.Cancel(r.Context(), c.pool, uuid, body.ExpectedVersion, body.Reason, empID, userID)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	h.finishChange(w, r, c, userID, empID, res)
@@ -233,7 +233,7 @@ func (h *InstallScheduleOps) Complete(w http.ResponseWriter, r *http.Request) {
 	empID, userID := h.actorIDs(r, c)
 	res, err := installschedule.Complete(r.Context(), c.pool, uuid, body.ExpectedVersion, empID, h.now(), userID)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	h.finishChange(w, r, c, userID, empID, res)

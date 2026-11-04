@@ -112,7 +112,7 @@ func TestUpdate_ConflictAckAndRedaction(t *testing.T) {
 	b := bookAt(t, pool, jobB, emp, owner, "12:00", "14:00")
 
 	in := UpdateInput{StartLocal: strPtr(createDay + "T09:00"), EndLocal: strPtr(createDay + "T13:00"), ExpectedVersion: b.Version}
-	_, err := Update(ctx, pool, loc, time.Now(), b.ID, in, owner, func(string) bool { return false })
+	_, err := Update(ctx, pool, loc, time.Now(), b.ID, in, owner, func(context.Context, Querier, string) bool { return false })
 	var ce *ConflictError
 	require.ErrorAs(t, err, &ce)
 	require.Len(t, ce.Conflicts, 1)
@@ -120,7 +120,7 @@ func TestUpdate_ConflictAckAndRedaction(t *testing.T) {
 	assert.Empty(t, ce.Conflicts[0].JobNumber)
 
 	in.AcknowledgeConflicts = true
-	res, err := Update(ctx, pool, loc, time.Now(), b.ID, in, owner, func(string) bool { return false })
+	res, err := Update(ctx, pool, loc, time.Now(), b.ID, in, owner, func(context.Context, Querier, string) bool { return false })
 	require.NoError(t, err)
 	var acked string
 	require.NoError(t, pool.QueryRow(ctx,

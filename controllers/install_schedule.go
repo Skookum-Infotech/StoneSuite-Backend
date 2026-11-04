@@ -79,7 +79,7 @@ func (h *InstallScheduleOps) authInstallAny(w http.ResponseWriter, r *http.Reque
 	for _, action := range actions {
 		decision, err := authz.Check(r.Context(), pool, payload.ID, resource, action)
 		if err != nil {
-			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			installFail(w, http.StatusInternalServerError, installCodeInternal, msgInstallPermCheck, nil)
 			return nil, false
 		}
 		if decision.Allowed {
@@ -123,13 +123,13 @@ func (h *InstallScheduleOps) authAppt(w http.ResponseWriter, r *http.Request, ac
 	}
 	owner, crew, err := installschedule.OwnerAndCrew(r.Context(), c.pool, uuid)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return nil, "", false
 	}
 	if c.scope != authz.ScopeAll {
 		allowed, err := c.inApptScope(r.Context(), owner, crew)
 		if err != nil {
-			fail(w, http.StatusInternalServerError, "Permission check failed.")
+			installFail(w, http.StatusInternalServerError, installCodeInternal, msgInstallPermCheck, nil)
 			return nil, "", false
 		}
 		if !allowed {
@@ -149,24 +149,30 @@ func validUUID(s string) bool {
 }
 
 // canSee builds the conflict-redaction check: may the caller see that other appointment under their scope.
-func (c *installCaller) canSee(ctx context.Context) func(string) bool {
+// The caller's users.id is resolved once here; the returned func queries through the transaction it is handed.
+func (c *installCaller) canSee(ctx context.Context) installschedule.CanSeeFunc {
 	if c.scope == authz.ScopeAll {
-		return func(string) bool { return true }
+		return func(context.Context, installschedule.Querier, string) bool { return true }
+	}
+	uid, err := workflow.UserIDByIdentity(ctx, c.pool, c.identityID)
+	if err != nil {
+		slog.WarnContext(ctx, "install schedule: caller user not resolved for visibility checks", "error", err)
+		uid = ""
 	}
 	cache := map[string]bool{}
-	return func(uuid string) bool {
+	return func(ctx context.Context, q installschedule.Querier, uuid string) bool {
+		if uid == "" {
+			return false
+		}
 		if v, ok := cache[uuid]; ok {
 			return v
 		}
-		owner, crew, err := installschedule.OwnerAndCrew(ctx, c.pool, uuid)
-		visible := false
-		if err == nil {
-			visible, err = c.inApptScope(ctx, owner, crew)
-		}
+		owner, crew, err := installschedule.OwnerAndCrew(ctx, q, uuid)
 		if err != nil {
-			slog.WarnContext(ctx, "install schedule: conflict visibility check failed", "error", err)
-			visible = false
+			slog.WarnContext(ctx, "install schedule: visibility check failed", "error", err)
+			return false
 		}
+		visible := (owner != "" && owner == uid) || slices.Contains(crew, uid)
 		cache[uuid] = visible
 		return visible
 	}
@@ -188,6 +194,7 @@ func (h *InstallScheduleOps) location(ctx context.Context, pool *pgxpool.Pool) *
 func (h *InstallScheduleOps) actorIDs(r *http.Request, c *installCaller) (int, string) {
 	empID := resolveEmployeeID(r, c.identityID)
 	if empID == 0 {
+		slog.WarnContext(r.Context(), "install schedule: actor employee not resolved; attributing history to system employee", "identity", c.identityID)
 		empID = installSystemEmployeeID
 	}
 	userID, err := workflow.UserIDByIdentity(r.Context(), c.pool, c.identityID)
@@ -226,7 +233,7 @@ func (h *InstallScheduleOps) Feed(w http.ResponseWriter, r *http.Request) {
 	loc := h.location(r.Context(), c.pool)
 	items, truncated, err := installschedule.Feed(r.Context(), c.pool, loc, string(c.scope), c.identityID, req)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -242,7 +249,7 @@ func (h *InstallScheduleOps) CrewOptions(w http.ResponseWriter, r *http.Request)
 	}
 	opts, err := installschedule.CrewOptions(r.Context(), c.pool)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "crew": opts})
@@ -256,7 +263,7 @@ func (h *InstallScheduleOps) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	appt, err := installschedule.Get(r.Context(), c.pool, uuid)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "appointment": appt})
@@ -270,7 +277,7 @@ func (h *InstallScheduleOps) History(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := installschedule.History(r.Context(), c.pool, uuid)
 	if err != nil {
-		writeInstallError(w, err)
+		writeInstallError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "history": rows})

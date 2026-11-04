@@ -64,7 +64,7 @@ func lockScope(ctx context.Context, tx pgx.Tx, jobID int, employeeIDs []int) err
 // It returns the client-facing list (conflicts canSee rejects are redacted to type, employee and times,
 // and the list is capped at ConflictListCap), the count of conflicts beyond the cap, and every
 // conflict unredacted and uncapped for the audit trail. now decides which completed visits still count.
-func findConflicts(ctx context.Context, tx pgx.Tx, now time.Time, jobID int, iv Interval, employeeIDs []int, excludeApptID int, canSee func(apptUUID string) bool) ([]Conflict, int, []Conflict, error) {
+func findConflicts(ctx context.Context, tx pgx.Tx, now time.Time, jobID int, iv Interval, employeeIDs []int, excludeApptID int, canSee CanSeeFunc) ([]Conflict, int, []Conflict, error) {
 	lowerBound := iv.Start.Add(-(MaxDuration + SpanSlack))
 	var all []Conflict
 
@@ -111,7 +111,7 @@ func findConflicts(ctx context.Context, tx pgx.Tx, now time.Time, jobID int, iv 
 		if len(shown) >= ConflictListCap {
 			break
 		}
-		if canSee == nil || !canSee(c.AppointmentUUID) {
+		if canSee == nil || !canSee(ctx, tx, c.AppointmentUUID) {
 			c.AppointmentUUID, c.JobNumber = "", ""
 		}
 		shown = append(shown, c)

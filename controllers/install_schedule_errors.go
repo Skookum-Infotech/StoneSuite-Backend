@@ -27,6 +27,7 @@ const (
 const (
 	msgInstallNotFound      = "Install appointment not found."
 	msgInstallJobNotFound   = "Fabrication job not found."
+	msgInstallPermCheck     = "Permission check failed."
 	msgInstallInternal      = "Something went wrong. Please try again."
 	msgInstallBadBody       = "Invalid request body."
 	msgInstallBodyTooLarge  = "Request body too large."
@@ -47,7 +48,7 @@ func installFail(w http.ResponseWriter, status int, code, msg string, extra map[
 }
 
 // writeInstallError maps installschedule sentinels and typed errors to the plan's error envelope (§5.4).
-func writeInstallError(w http.ResponseWriter, err error) {
+func writeInstallError(w http.ResponseWriter, r *http.Request, err error) {
 	var (
 		conflict *installschedule.ConflictError
 		stale    *installschedule.StaleVersionError
@@ -81,7 +82,7 @@ func writeInstallError(w http.ResponseWriter, err error) {
 		installFail(w, http.StatusBadRequest, installCodeInvalidInput,
 			fmt.Sprintf("Invalid %s: %s.", invalid.Field, invalid.Message), map[string]any{"field": invalid.Field})
 	default:
-		slog.Error("install schedule request failed", "error", err)
+		slog.ErrorContext(r.Context(), "install schedule request failed", "error", err)
 		installFail(w, http.StatusInternalServerError, installCodeInternal, msgInstallInternal, nil)
 	}
 }

@@ -63,8 +63,10 @@ func newISEnv(t *testing.T) *isEnv {
 	mux.HandleFunc("POST "+isBasePath+"/{uuid}/complete", ops.Complete)
 	mux.HandleFunc("GET "+isBasePath+"/{uuid}/history", ops.History)
 	mux.HandleFunc("GET /api/tenant/fabrication-jobs/{uuid}/install-appointments", ops.ListForJob)
+	router := tenancy.NewRouter(nil)
+	t.Cleanup(router.Close) // release the tenant pool this env opened
 	return &isEnv{t: t, pool: pool, cp: cp, tenantID: tenant.ID,
-		handler: tenancy.NewResolver(cp, tenancy.NewRouter(nil)).Middleware(mux)}
+		handler: tenancy.NewResolver(cp, router).Middleware(mux)}
 }
 
 // caller seeds an identity holding grants, linked to a fresh employee.

@@ -82,11 +82,11 @@ func Feed(ctx context.Context, q Querier, loc *time.Location, scope, actorIdenti
 		n := len(args)
 		where = append(where, fmt.Sprintf(`(
 			EXISTS (SELECT 1 FROM employee oe JOIN users ou ON ou.id = oe.employee_user_id
-			        WHERE oe.employee_id = fj.job_owner_id AND ou.identity_id = $%[1]d)
+			        WHERE oe.employee_id = fj.job_owner_id AND oe.employee_deleted_at IS NULL AND ou.identity_id = $%[1]d)
 			OR EXISTS (SELECT 1 FROM install_appointment_crew sc
 			           JOIN employee se ON se.employee_id = sc.employee_id
 			           JOIN users su ON su.id = se.employee_user_id
-			           WHERE sc.install_appointment_id = ia.install_appointment_id AND su.identity_id = $%[1]d))`, n))
+			           WHERE sc.install_appointment_id = ia.install_appointment_id AND se.employee_deleted_at IS NULL AND su.identity_id = $%[1]d))`, n))
 	}
 	args = append(args, feedRowCap+1)
 	items, err := collect(ctx, q, apptSelect+" WHERE "+strings.Join(where, " AND ")+

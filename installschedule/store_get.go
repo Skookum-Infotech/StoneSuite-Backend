@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -48,6 +49,7 @@ func scanAppt(row pgx.Row) (int, *Appointment, error) {
 func fillLocal(a *Appointment) {
 	loc, err := time.LoadLocation(a.Timezone)
 	if err != nil {
+		slog.Warn("install appointment has unknown timezone; formatting in UTC", "timezone", a.Timezone, "appointment", a.ID, "error", err)
 		loc = time.UTC
 	}
 	a.StartLocal = a.StartsAt.In(loc).Format(layoutLocalOut)
@@ -123,7 +125,7 @@ func collect(ctx context.Context, q Querier, sql string, args ...any) ([]Appoint
 
 // Get loads one appointment with its crew by uuid.
 func Get(ctx context.Context, q Querier, uuid string) (*Appointment, error) {
-	id, a, err := scanAppt(q.QueryRow(ctx, apptSelect+` WHERE ia.install_appointment_uuid = $1`, uuid))
+	id, a, err := scanAppt(q.QueryRow(ctx, apptSelect+` WHERE ia.install_appointment_uuid = $1 AND fj.fabrication_job_deleted_at IS NULL`, uuid))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -146,7 +148,7 @@ func OwnerAndCrew(ctx context.Context, q Querier, uuid string) (string, []string
 		JOIN fabrication_job fj ON fj.fabrication_job_id = ia.fabrication_job_id
 		LEFT JOIN employee oe ON oe.employee_id = fj.job_owner_id
 		LEFT JOIN users ou ON ou.id = oe.employee_user_id
-		WHERE ia.install_appointment_uuid = $1`, uuid).Scan(&apptID, &owner)
+		WHERE ia.install_appointment_uuid = $1 AND fj.fabrication_job_deleted_at IS NULL`, uuid).Scan(&apptID, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, ErrNotFound
 	}

@@ -136,6 +136,12 @@ func TestFeed_WindowAndScope(t *testing.T) {
 	canc := time.Date(2031, 5, 13, 8, 0, 0, 0, loc)
 	seedAppt(t, pool, jobID, canc, canc.Add(4*time.Hour), true)
 
+	// Boundaries: window is [2031-05-01 00:00, 2031-06-01 00:00) local.
+	winStart := time.Date(2031, 5, 1, 0, 0, 0, 0, loc)
+	winEnd := time.Date(2031, 6, 1, 0, 0, 0, 0, loc)
+	seedAppt(t, pool, jobID, winStart.Add(-2*time.Hour), winStart, false) // ends exactly at winStart
+	seedAppt(t, pool, jobID, winEnd, winEnd.Add(2*time.Hour), false)      // starts exactly at winEnd
+
 	req := FeedRequest{From: "2031-05-01", To: "2031-05-31"}
 
 	items, truncated, err := Feed(ctx, pool, loc, scopeAllTest, "", req)
@@ -187,7 +193,7 @@ func TestFeed_WindowAndScope(t *testing.T) {
 
 	list, err := ListForJob(ctx, pool, jobUUID)
 	require.NoError(t, err)
-	assert.Len(t, list, 3)
+	assert.Len(t, list, 5)
 }
 
 func TestFeed_Truncates(t *testing.T) {
@@ -228,4 +234,22 @@ func TestCrewOptions_ExcludesSystemAndInactive(t *testing.T) {
 	assert.NotContains(t, ids, inactiveEmp)
 	require.Contains(t, ids, activeEmp)
 	assert.True(t, ids[activeEmp].HasLogin)
+}
+
+func TestGet_SoftDeletedJob(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	loc := chicagoLoc(t)
+	_, _, ownerEmp := seedUserEmployee(t, pool, "softdel")
+	jobID, _ := seedJob(t, pool, ownerEmp)
+	s := time.Date(2033, 5, 10, 8, 0, 0, 0, loc)
+	id := seedAppt(t, pool, jobID, s, s.Add(time.Hour), false)
+	_, err := pool.Exec(ctx, `UPDATE fabrication_job SET fabrication_job_deleted_at = now(), fabrication_job_deleted_by = 1
+		WHERE fabrication_job_id = $1`, jobID)
+	require.NoError(t, err)
+
+	_, err = Get(ctx, pool, id)
+	assert.ErrorIs(t, err, ErrNotFound)
+	_, _, err = OwnerAndCrew(ctx, pool, id)
+	assert.ErrorIs(t, err, ErrNotFound)
 }

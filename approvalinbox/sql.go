@@ -157,6 +157,10 @@ LEFT JOIN users ou ON ou.id = oe.employee_user_id
 	}
 	if scope == ScopeMine {
 		sb.WriteString(` AND ` + isApproverExpr + ` AND NOT ` + signedByCallerExpr)
+	} else if !m.src.OwnOnly {
+		// $1 is always bound; Postgres rejects a statement with an unreferenced parameter
+		// (SQLSTATE 42P18), so scope=all references it with a typed always-true test.
+		sb.WriteString(` AND ` + pEmployee + `::int IS NOT NULL`)
 	}
 	return m.replacer().Replace(sb.String())
 }

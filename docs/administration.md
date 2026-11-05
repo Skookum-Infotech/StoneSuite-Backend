@@ -56,8 +56,7 @@ rather than skipping approval. A super admin can approve it in the meantime,
 and all active super admins are emailed that it is waiting. To fix it for good,
 add a new approver on the workflow's Approval Chain section.
 
-Everything waiting on an approver is collected in one place, the Approvals inbox
-(`GET /api/tenant/approvals/inbox`): oldest first, across all document types,
+Everything waiting on an approver is collected in one place, the Approvals inbox: oldest first, across all document types,
 limited to records that person can still sign and is allowed to open. The
 dashboard's Needs Approval count equals the inbox total, so it drops once someone
 has signed a record or if they cannot read that module.

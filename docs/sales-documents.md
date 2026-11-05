@@ -251,7 +251,7 @@ approvers; if none of a status's approvers are still active, the record waits
 for a super admin to approve it. See `administration.md` for how approval
 chains are set up.
 
-The Approvals inbox (Approvals in the sidebar, `GET /api/tenant/approvals/inbox`)
+The Approvals inbox (Approvals in the sidebar)
 lists everything waiting for your sign-off across every document type that has an
 approval chain, oldest first. It only shows records you are an active approver for
 and have not already signed, in modules you are allowed to read, so every row opens.

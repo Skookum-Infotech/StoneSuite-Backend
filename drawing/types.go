@@ -21,6 +21,8 @@ type PieceEdge struct {
 	Code           string   `json:"code,omitempty"`
 	OverhangMm     *float64 `json:"overhangMm,omitempty"`
 	SplashHeightMm *float64 `json:"splashHeightMm,omitempty"`
+	// WaterfallHeightMm is a panel dropping from this side.
+	WaterfallHeightMm *float64 `json:"waterfallHeightMm,omitempty"`
 }
 
 // Seam is a straight join line between two points on a piece.
@@ -74,6 +76,15 @@ type Note struct {
 	PieceID string `json:"pieceId,omitempty"`
 }
 
+// Dimension is a manual measurement between two points, in the area's world
+// millimetres. OffsetMm pushes the drawn line away from the measured points.
+type Dimension struct {
+	ID       string  `json:"id"`
+	From     Point   `json:"from"`
+	To       Point   `json:"to"`
+	OffsetMm float64 `json:"offsetMm,omitempty"`
+}
+
 // Area is one tab's worth of pieces, cabinets, and notes.
 type Area struct {
 	ID        string    `json:"id"`
@@ -83,6 +94,8 @@ type Area struct {
 	Pieces    []Piece   `json:"pieces"`
 	Cabinets  [][]Point `json:"cabinets"`
 	Notes     []Note    `json:"notes"`
+	// Dimensions are manual measurements; absent on older drawings.
+	Dimensions []Dimension `json:"dimensions,omitempty"`
 }
 
 // UpdatedBy identifies who last saved a Drawing or Drawing version.

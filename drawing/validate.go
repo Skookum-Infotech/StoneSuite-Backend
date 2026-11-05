@@ -1,6 +1,10 @@
 package drawing
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+	"unicode/utf8"
+)
 
 // Spec §6 "Backend contract" caps: closed outlines, positive area,
 // <=200 pieces per area, <=20 areas.
@@ -9,6 +13,13 @@ const (
 	maxPiecesPerArea   = 200
 	maxCutoutsPerPiece = 100
 	minOutlinePoints   = 3
+	maxNotesPerArea    = 200
+	maxDimsPerArea     = 200
+	maxNoteTextRunes   = 500
+	maxEdgeCodeRunes   = 16
+	// maxEdgeHeightMm bounds overhang / backsplash / waterfall heights; it is
+	// the frontend's MAX_DIMENSION_MM.
+	maxEdgeHeightMm = 30000.0
 )
 
 // allowedCutoutTypes / allowedCutoutShapes mirror the frontend's CutoutType and
@@ -40,6 +51,51 @@ func Validate(d Drawing) error {
 				return err
 			}
 		}
+		if err := validateAnnotations(area); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAnnotations(area Area) error {
+	if len(area.Notes) > maxNotesPerArea {
+		return fmt.Errorf("drawing: area %q has %d notes, exceeds the %d-note limit", area.ID, len(area.Notes), maxNotesPerArea)
+	}
+	for _, n := range area.Notes {
+		if utf8.RuneCountInString(n.Text) > maxNoteTextRunes {
+			return fmt.Errorf("drawing: area %q note %q is longer than %d characters", area.ID, n.ID, maxNoteTextRunes)
+		}
+	}
+	if len(area.Dimensions) > maxDimsPerArea {
+		return fmt.Errorf("drawing: area %q has %d dimensions, exceeds the %d-dimension limit", area.ID, len(area.Dimensions), maxDimsPerArea)
+	}
+	for _, d := range area.Dimensions {
+		if d.From == d.To {
+			return fmt.Errorf("drawing: area %q dimension %q measures between identical points", area.ID, d.ID)
+		}
+	}
+	return nil
+}
+
+func validateEdges(piece Piece) error {
+	seen := map[int]bool{}
+	for _, e := range piece.Edges {
+		if e.Index < 0 || e.Index >= len(piece.Outline) {
+			return fmt.Errorf("drawing: piece %q has edge settings for side %d, which does not exist", piece.ID, e.Index)
+		}
+		if seen[e.Index] {
+			return fmt.Errorf("drawing: piece %q has two sets of edge settings for side %d", piece.ID, e.Index)
+		}
+		seen[e.Index] = true
+		if utf8.RuneCountInString(e.Code) > maxEdgeCodeRunes {
+			return fmt.Errorf("drawing: piece %q side %d has an edge code longer than %d characters", piece.ID, e.Index, maxEdgeCodeRunes)
+		}
+		for name, v := range map[string]*float64{"overhang": e.OverhangMm, "backsplash height": e.SplashHeightMm, "waterfall height": e.WaterfallHeightMm} {
+			if v != nil && (*v < 0 || *v > maxEdgeHeightMm || math.IsNaN(*v)) {
+				return fmt.Errorf("drawing: piece %q side %d has an invalid %s", piece.ID, e.Index, name)
+			}
+		}
 	}
 	return nil
 }
@@ -59,6 +115,9 @@ func validatePiece(piece Piece) error {
 	}
 	if len(piece.Cutouts) > maxCutoutsPerPiece {
 		return fmt.Errorf("drawing: piece %q has %d cutouts, exceeds the %d-cutout limit", piece.ID, len(piece.Cutouts), maxCutoutsPerPiece)
+	}
+	if err := validateEdges(piece); err != nil {
+		return err
 	}
 	for _, cutout := range piece.Cutouts {
 		if err := validateCutout(piece.ID, cutout); err != nil {

@@ -233,7 +233,7 @@ func buildPage(q pageQuery) (string, []any, error) {
 		branches = append(branches, m.pageBranch(b, q.Scope))
 	}
 	var sb strings.Builder
-	sb.WriteString("WITH inbox AS (\n" + strings.Join(branches, "UNION ALL\n") + ")\n")
+	sb.WriteString("WITH inbox AS (\n" + strings.Join(branches, "\nUNION ALL\n") + ")\n")
 	sb.WriteString(`SELECT workflow_key, uuid, entered_at, number, status_code, status_name, owner_name,
   party_name, amount, required_approvals, approved_count, is_approver
 FROM inbox
@@ -260,6 +260,6 @@ func buildCount(sources []Source, scope Scope, employeeID int) (string, []any, e
 		branches = append(branches, m.countBranch(b, scope))
 	}
 	sql := "SELECT workflow_key, COUNT(*)::int, MIN(entered_at) FROM (\n" +
-		strings.Join(branches, "UNION ALL\n") + ") c GROUP BY workflow_key"
+		strings.Join(branches, "\nUNION ALL\n") + ") c GROUP BY workflow_key"
 	return sql, b.args, nil
 }

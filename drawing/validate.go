@@ -136,19 +136,19 @@ func validateCutout(pieceID string, c Cutout) error {
 	if !allowedCutoutShapes[c.Shape] {
 		return fmt.Errorf("drawing: piece %q cutout %q has an unknown shape %q", pieceID, c.ID, c.Shape)
 	}
-	switch {
-	case c.Shape == "round":
+	switch c.Shape {
+	case "round":
 		if !positive(c.DiameterMm) {
 			return fmt.Errorf("drawing: piece %q cutout %q needs a diameter above zero", pieceID, c.ID)
 		}
-	case c.Shape == "polygon":
+	case "polygon":
 		if len(c.Outline) < minOutlinePoints || polygonAreaMm2(c.Outline) <= 0 {
 			return fmt.Errorf("drawing: piece %q cutout %q needs a custom outline with area", pieceID, c.ID)
 		}
 	default:
 		// "rect", or a legacy cutout with no shape: sized by width x depth, or a
 		// bare diameter (what the original data model offered for outlets).
-		if !(positive(c.WidthMm) && positive(c.DepthMm)) && !positive(c.DiameterMm) {
+		if (!positive(c.WidthMm) || !positive(c.DepthMm)) && !positive(c.DiameterMm) {
 			return fmt.Errorf("drawing: piece %q cutout %q needs a width and depth above zero", pieceID, c.ID)
 		}
 	}

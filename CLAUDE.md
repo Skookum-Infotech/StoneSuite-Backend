@@ -113,6 +113,10 @@ These apply while editing *other* packages, so they stay here:
 6. **`GET /api/healthz`** liveness, **`GET /api/readyz`** readiness (control-plane DB ping), **`GET /api/metrics`** Prometheus.
 7. **Error tracking + log shipping are optional + graceful** (`SENTRY_DSN`, `AXIOM_TOKEN`+`AXIOM_DATASET`). The log shipper must never call `slog` (infinite loop).
 
+### Approvals Inbox
+1. **One predicate, two consumers.** `approvalinbox` (`GET /api/tenant/approvals/inbox`) lists what is waiting on the caller and `approvalinbox.Count` feeds the dashboard "Needs Approval" tile from the same SQL builder -- never hand-roll a second pending-approval count.
+2. **Inbox identifiers come only from the `approvalchain` registry + `approvalinbox` metadata, all values `$n`.** `scope=all` is super-admin only (403 + `permission_denied`, `context=approval_inbox_all`); modules the caller cannot `read` are dropped, never an error.
+
 ### Code Quality
 1. **No magic strings or numbers.** Constants for anything > 1.
 2. **Errors are wrapped with context.**

@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-653 endpoints across 7 surfaces, read from `main.go`.
+654 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 553 |
+| staff token + tenant | 554 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 552 endpoints
+## `tenant` — 553 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -414,6 +414,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/anomalies` | staff token + tenant | `anomalyOps.List` |
 | `POST` | `/api/tenant/anomalies/scan` | staff token + tenant | `anomalyOps.ScanNow` |
 | `PATCH` | `/api/tenant/anomalies/{uuid}` | staff token + tenant | `anomalyOps.UpdateStatus` |
+
+### approvals
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/approvals/inbox` | staff token + tenant | `approvalInboxOps.List` |
 
 ### audit
 

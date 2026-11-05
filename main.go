@@ -630,6 +630,9 @@ func main() {
 		mux.Handle("GET /api/tenant/automation/deliveries", tenantChain(automationDeliveryOps.List))
 		anomalyOps := controllers.NewAnomalyOps(automation.NewAnomalyScan(automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL}), previewTZ)
 		mux.Handle("GET /api/tenant/anomalies", tenantChain(anomalyOps.List))
+		// Approvals inbox: records waiting for the caller's sign-off across every approvalchain module.
+		approvalInboxOps := controllers.NewApprovalInboxOps()
+		mux.Handle("GET /api/tenant/approvals/inbox", tenantChain(approvalInboxOps.List))
 		mux.Handle("POST /api/tenant/anomalies/scan", tenantChain(anomalyOps.ScanNow))
 		mux.Handle("PATCH /api/tenant/anomalies/{uuid}", tenantChain(anomalyOps.UpdateStatus))
 

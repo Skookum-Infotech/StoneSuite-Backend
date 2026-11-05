@@ -30,14 +30,23 @@ type Seam struct {
 }
 
 // Cutout is a sink/cooktop/outlet/faucet/custom opening in a piece.
+//
+// Center and Outline are in the piece's own local coordinates. Every field
+// the frontend can send must be listed here: encoding/json silently drops
+// anything it has no field for, which would lose it on the next save.
 type Cutout struct {
-	ID         string   `json:"id"`
-	Type       string   `json:"type"`
-	Center     Point    `json:"center"`
-	WidthMm    *float64 `json:"widthMm,omitempty"`
-	DepthMm    *float64 `json:"depthMm,omitempty"`
-	DiameterMm *float64 `json:"diameterMm,omitempty"`
-	Label      string   `json:"label,omitempty"`
+	ID              string   `json:"id"`
+	Type            string   `json:"type"`
+	Shape           string   `json:"shape,omitempty"`
+	Center          Point    `json:"center"`
+	WidthMm         *float64 `json:"widthMm,omitempty"`
+	DepthMm         *float64 `json:"depthMm,omitempty"`
+	DiameterMm      *float64 `json:"diameterMm,omitempty"`
+	RotationDeg     *float64 `json:"rotationDeg,omitempty"`
+	Outline         []Point  `json:"outline,omitempty"`
+	InventoryItemID string   `json:"inventoryItemId,omitempty"`
+	EdgeCode        string   `json:"edgeCode,omitempty"`
+	Label           string   `json:"label,omitempty"`
 }
 
 // Piece is one countertop piece within an Area.
@@ -45,9 +54,10 @@ type Piece struct {
 	ID               string      `json:"id"`
 	Label            string      `json:"label"`
 	Shape            string      `json:"shape"`
+	Kind             string      `json:"kind,omitempty"`
 	Outline          []Point     `json:"outline"`
 	Position         Point       `json:"position"`
-	RotationDeg      int         `json:"rotationDeg"`
+	RotationDeg      float64     `json:"rotationDeg"`
 	ThicknessMm      float64     `json:"thicknessMm"`
 	CornerRadiusMm   *float64    `json:"cornerRadiusMm,omitempty"`
 	SalesOrderLineID string      `json:"salesOrderLineId,omitempty"`

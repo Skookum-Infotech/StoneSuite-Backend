@@ -251,6 +251,14 @@ approvers; if none of a status's approvers are still active, the record waits
 for a super admin to approve it. See `administration.md` for how approval
 chains are set up.
 
+The Approvals inbox (Approvals in the sidebar)
+lists everything waiting for your sign-off across every document type that has an
+approval chain, oldest first. It only shows records you are an active approver for
+and have not already signed, in modules you are allowed to read, so every row opens.
+Each row says how many sign-offs are in (for example 1 of 2). Approving or rejecting
+still happens on the record's own page. A super admin can switch the inbox to all
+pending records. The dashboard's Needs Approval tile shows the same number.
+
 ## Sending a document by email
 
 On a Quote, Estimate, Sales Order, or Invoice, use the Send to Customer

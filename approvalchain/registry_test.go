@@ -110,6 +110,7 @@ func TestRegistry_ApprovalNotificationScope(t *testing.T) {
 		"vendor_payment": true, "expense": true, "installation": true,
 		"vendor_credit": true, "bin_transfer": true,
 	}
+	inboxOnly := map[string]bool{"estimate": true, "quote": true, "sales_order": true}
 	for key, cfg := range registry {
 		t.Run(key, func(t *testing.T) {
 			if inScope[key] {
@@ -132,6 +133,15 @@ func TestRegistry_ApprovalNotificationScope(t *testing.T) {
 			}
 			if cfg.Resource != "" {
 				t.Errorf("%q is not approval-notification in-scope but Resource = %q, want empty", key, cfg.Resource)
+			}
+			// Estimate/Quote/Sales Order carry Owner/Number columns for the approvals inbox only
+			// (approvalinbox); with DisplayName empty they stay notification-dead. Every other
+			// out-of-scope entry must still have both blank.
+			if inboxOnly[key] {
+				if cfg.Record.OwnerColumn == "" || cfg.Record.NumberColumn == "" {
+					t.Errorf("%q must carry Record.OwnerColumn and NumberColumn for the approvals inbox", key)
+				}
+				return
 			}
 			if cfg.Record.OwnerColumn != "" {
 				t.Errorf("%q is not approval-notification in-scope but Record.OwnerColumn = %q, want empty", key, cfg.Record.OwnerColumn)

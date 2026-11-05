@@ -47,3 +47,4 @@ separate deployed service, `stonesuite-notify` (its own repo, shares this app's
    (signed, raw bytes, `recordemail` limits) and the backend copies it into the tenant's R2 bucket
    (`record_email_attachment`). Staff attachments on a reply are multipart, 5 MB total
    (`recordemail.ReplyMaxTotalBytes`, mirrored in the web app's `lib/recordEmail.ts`).
+7. **A new registry key needs approvals-inbox metadata.** `approvalinbox/meta.go` holds one `Meta` per key (`Label`, `Resource`, `Domain`, `RouteModule`, optional `AmountColumn`/`PartyNameColumn`) and the module needs `Record.OwnerColumn`/`NumberColumn`; `TestMetaCoversRegistry` fails otherwise. Setting those columns does NOT switch on notifications -- `DisplayName`/`Resource` still gate that (see rule 1).

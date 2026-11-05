@@ -128,6 +128,10 @@ var registry = map[string]ModuleConfig{
 			UpdatedAtColumn: "estimate_updated_at", UpdatedByColumn: "estimate_updated_by",
 			RecordVersionColumn: "estimate_record_version", DeletedAtColumn: "estimate_deleted_at",
 			CreatedAtColumn: "estimate_created_at",
+			// Read by approvalinbox only. DisplayName/Resource stay unset on purpose: setting
+			// them would switch on approval notifications, stuck-approval reminders and the
+			// self-approval anomaly for this module -- a separate decision.
+			OwnerColumn: "estimate_owner_id", NumberColumn: "estimate_number",
 		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
@@ -140,6 +144,10 @@ var registry = map[string]ModuleConfig{
 			UpdatedAtColumn: "quote_updated_at", UpdatedByColumn: "quote_updated_by",
 			RecordVersionColumn: "quote_record_version", DeletedAtColumn: "quote_deleted_at",
 			CreatedAtColumn: "quote_created_at",
+			// Read by approvalinbox only. DisplayName/Resource stay unset on purpose: setting
+			// them would switch on approval notifications, stuck-approval reminders and the
+			// self-approval anomaly for this module -- a separate decision.
+			OwnerColumn: "quote_owner_id", NumberColumn: "quote_number",
 		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
@@ -152,6 +160,10 @@ var registry = map[string]ModuleConfig{
 			UpdatedAtColumn: "sales_order_updated_at", UpdatedByColumn: "sales_order_updated_by",
 			RecordVersionColumn: "sales_order_record_version", DeletedAtColumn: "sales_order_deleted_at",
 			CreatedAtColumn: "sales_order_created_at",
+			// Read by approvalinbox only. DisplayName/Resource stay unset on purpose: setting
+			// them would switch on approval notifications, stuck-approval reminders and the
+			// self-approval anomaly for this module -- a separate decision.
+			OwnerColumn: "sales_order_owner_id", NumberColumn: "sales_order_number",
 		},
 		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},

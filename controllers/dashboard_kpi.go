@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/approvalinbox"
 	"stonesuite-backend/authz"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/invoice"
@@ -57,13 +57,12 @@ func deltaPct(current, prior float64) *int {
 	return &pct
 }
 
-// approvalModuleCounter counts one approval-chain module's pending records
-// that are actually routed to the caller -- see approvalModuleCountAndOldest
-// for the real implementation and dashboard_kpi_test.go for the fake used in
-// tests. eligible reports whether the caller is a configured approver of
-// this module at all (or a super admin), independent of whether count is
-// currently 0 -- see buildNeedsApproval's doc comment for why that
-// distinction matters.
+// approvalModuleCounter counts one source's pending records that are actually
+// routed to the caller -- see inboxCountAndOldest and crmPendingCountAndOldest
+// for the real implementations and dashboard_kpi_test.go for the fake used in
+// tests. eligible reports whether the caller is a configured approver for this
+// source at all (or a super admin), independent of whether count is currently
+// 0 -- see buildNeedsApproval's doc comment for why that distinction matters.
 type approvalModuleCounter func(key string) (count int, oldest *time.Time, eligible bool, err error)
 
 // buildNeedsApproval sums pending-approval counts across every given
@@ -72,18 +71,14 @@ type approvalModuleCounter func(key string) (count int, oldest *time.Time, eligi
 // injected (mirrors buildPipelineMix in dashboard_pipeline.go) so this is
 // testable without a real tenant pool.
 //
-// Authorization here is approver-table membership (mirrors
-// approvalchain/engine.go's isConfiguredApprover, which is what actually
-// gates the real Approve action), NOT generic RBAC resource read/scope. An
-// earlier version of this metric gated on authz.Check(resource,
-// ActionRead) + scope=own filtering by *ownership* -- which is wrong for an
-// approval queue: a manager approving requisitions they didn't create holds
-// no ownership over them, and many tenants grant "approve" without a
-// separate broad "read", so that version could show zero pending items to
-// a manager who genuinely had some, or (if scope=all) show every pending
-// record in the tenant regardless of whether the caller was actually the
-// configured approver for it. Root-caused via /debug: "manager role sees no
-// Needs Approval tile at all."
+// The approvalchain source is approvalinbox.Count, the exact predicate behind the
+// approvals inbox list: the caller is an active approver for the record's current
+// status, has not already signed it, and may read the module (a module they cannot
+// read is excluded, since its record would 404 on open). It still does NOT filter by
+// record ownership -- a manager approving requisitions they didn't create holds no
+// ownership over them (the earlier "manager role sees no Needs Approval tile"
+// incident). Release note: the number can drop for some users versus the old
+// approver-table-only count, which included already-signed and unreadable records.
 //
 // anyEligible is true when the caller is a configured approver (or super
 // admin) for at least one of keys, even if every one of those currently has
@@ -107,73 +102,25 @@ func buildNeedsApproval(keys []string, countAndOldest approvalModuleCounter) (to
 	return total, oldest, anyEligible, nil
 }
 
-// approvalModuleCountAndOldest counts key's pending-approval records that
-// are actually routed to employeeID -- they're listed as an active approver
-// for that record's *current status* in the module's approver table (the
-// same (record_type_id, record_status_id, approver_employee_id, is_active)
-// shape isConfiguredApprover checks; approvalchain/engine.go's
-// isConfiguredApprover) -- or, when isSuperAdmin, every pending record
-// unfiltered (mirrors engine.Approve's own isApprover||callerIsSuperAdmin
-// override). Table/column names come from approvalchain's registry
-// (backend-controlled constants, never client input), matching the
-// string-built-but-parameterized pattern already used throughout this
-// codebase's search stores.
-func approvalModuleCountAndOldest(ctx context.Context, pool *pgxpool.Pool, key string, employeeID int, isSuperAdmin bool) (int, *time.Time, bool, error) {
-	cfg, ok := approvalchain.ForWorkflowKey(key)
-	if !ok {
-		return 0, nil, false, fmt.Errorf("dashboard kpi: %q not in approvalchain registry", key)
-	}
-	r := cfg.Record
+// registryApprovalsKey is the synthetic key buildNeedsApproval uses for every approvalchain
+// module at once: approvalinbox counts them in a single statement, with the same predicate the
+// approvals inbox lists, so the tile always equals the inbox total.
+const registryApprovalsKey = "approvals"
 
-	if isSuperAdmin {
-		q := fmt.Sprintf(`SELECT COUNT(*), MIN(%s) FROM %s WHERE %s = 'pending' AND %s IS NULL`,
-			r.CreatedAtColumn, r.Table, r.ApprovalStatusColumn, r.DeletedAtColumn)
-		var n int
-		var oldest *time.Time
-		if err := pool.QueryRow(ctx, q).Scan(&n, &oldest); err != nil {
-			return 0, nil, false, fmt.Errorf("count pending %s: %w", key, err)
-		}
-		if n == 0 {
-			oldest = nil
-		}
-		return n, oldest, true, nil
+// inboxCountAndOldest is buildNeedsApproval's approvalchain branch. Scope is the caller's own
+// queue ("mine": an active approver for the record's current status who has not yet signed,
+// on a module they may read), or "all" for a super admin, preserving the super-admin meaning
+// of the tile. eligible says whether the tile is meaningful for the caller even at zero.
+func inboxCountAndOldest(ctx context.Context, pool *pgxpool.Pool, caller approvalinbox.Caller) (int, *time.Time, bool, error) {
+	scope := approvalinbox.ScopeMine
+	if caller.IsSuperAdmin {
+		scope = approvalinbox.ScopeAll
 	}
-
-	recordTypeID, err := approvalchain.RecordTypeIDByCode(ctx, pool, cfg.RecordTypeCode)
+	counts, eligible, err := approvalinbox.Count(ctx, pool, caller, scope)
 	if err != nil {
-		return 0, nil, false, fmt.Errorf("resolve record type for %s: %w", key, err)
+		return 0, nil, false, fmt.Errorf("count approval inbox: %w", err)
 	}
-
-	// eligible = is employeeID configured as an active approver for AT LEAST
-	// one gate of this module, regardless of current pending count -- lets
-	// the caller distinguish "0, caught up" from "not an approver here".
-	var eligible bool
-	if err := pool.QueryRow(ctx, fmt.Sprintf(
-		`SELECT EXISTS(SELECT 1 FROM %s WHERE record_type_id = $1 AND approver_employee_id = $2 AND is_active)`,
-		cfg.ApproverTable), recordTypeID, employeeID).Scan(&eligible); err != nil {
-		return 0, nil, false, fmt.Errorf("check approver eligibility for %s: %w", key, err)
-	}
-	if !eligible {
-		return 0, nil, false, nil
-	}
-
-	q := fmt.Sprintf(`
-		SELECT COUNT(*), MIN(t.%s)
-		FROM %s t
-		JOIN %s ap ON ap.record_type_id = $1 AND ap.record_status_id = t.%s
-			AND ap.approver_employee_id = $2 AND ap.is_active
-		WHERE t.%s = 'pending' AND t.%s IS NULL`,
-		r.CreatedAtColumn, r.Table, cfg.ApproverTable, r.StatusColumn,
-		r.ApprovalStatusColumn, r.DeletedAtColumn)
-	var n int
-	var oldest *time.Time
-	if err := pool.QueryRow(ctx, q, recordTypeID, employeeID).Scan(&n, &oldest); err != nil {
-		return 0, nil, false, fmt.Errorf("count pending %s: %w", key, err)
-	}
-	if n == 0 {
-		oldest = nil
-	}
-	return n, oldest, true, nil
+	return counts.Total, counts.Oldest, eligible, nil
 }
 
 // crmPendingCountAndOldest is buildNeedsApproval's CRM (lead/prospect/
@@ -405,19 +352,20 @@ func (h *DashboardUIOps) KpiStrip(w http.ResponseWriter, r *http.Request) {
 	}
 	employeeID, foundEmployee := workflow.EmployeeIDByIdentity(ctx, pool, payload.ID)
 	if foundEmployee || isSuperAdmin {
-		// "crm" is a synthetic key alongside approvalchain.Keys(): CRM
+		// "crm" is a synthetic key alongside the registry one: CRM
 		// (lead/prospect/customer) approval is a separate mechanism
 		// entirely (crm_workflow_approver, not <module>_approver) that the
 		// approvalchain registry explicitly excludes -- see
 		// crmPendingCountAndOldest's doc comment.
-		keys := append([]string{"crm"}, approvalchain.Keys()...)
+		keys := []string{"crm", registryApprovalsKey}
+		caller := approvalinbox.Caller{IdentityID: payload.ID, EmployeeID: employeeID, IsSuperAdmin: isSuperAdmin}
 		total, oldest, anyEligible, err := buildNeedsApproval(
 			keys,
 			func(key string) (int, *time.Time, bool, error) {
 				if key == "crm" {
 					return crmPendingCountAndOldest(ctx, st, pool, payload.ID)
 				}
-				return approvalModuleCountAndOldest(ctx, pool, key, employeeID, isSuperAdmin)
+				return inboxCountAndOldest(ctx, pool, caller)
 			},
 		)
 		if err != nil {

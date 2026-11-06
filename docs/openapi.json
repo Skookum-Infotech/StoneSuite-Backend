@@ -20306,6 +20306,68 @@
         ]
       }
     },
+    "/api/tenant/reports/finance/account-lines": {
+      "get": {
+        "operationId": "get_tenant_reports_finance_account_lines",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.AccountLines",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/finance/profit-loss": {
+      "get": {
+        "operationId": "get_tenant_reports_finance_profit_loss",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.ProfitAndLoss",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/reports/inventory/low-stock": {
       "get": {
         "operationId": "get_tenant_reports_inventory_low_stock",

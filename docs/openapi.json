@@ -20089,6 +20089,99 @@
         ]
       }
     },
+    "/api/tenant/reports/crm/funnel": {
+      "get": {
+        "operationId": "get_tenant_reports_crm_funnel",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.ConversionFunnel",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/crm/lead-sources": {
+      "get": {
+        "operationId": "get_tenant_reports_crm_lead_sources",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.LeadSources",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/crm/stale": {
+      "get": {
+        "operationId": "get_tenant_reports_crm_stale",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.StaleRecords",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/reports/sales/by-customer": {
       "get": {
         "operationId": "get_tenant_reports_sales_by_customer",

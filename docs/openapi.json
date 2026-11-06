@@ -20089,6 +20089,130 @@
         ]
       }
     },
+    "/api/tenant/reports/sales/by-customer": {
+      "get": {
+        "operationId": "get_tenant_reports_sales_by_customer",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.SalesByCustomer",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/sales/by-item": {
+      "get": {
+        "operationId": "get_tenant_reports_sales_by_item",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.SalesByItem",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/sales/records": {
+      "get": {
+        "operationId": "get_tenant_reports_sales_records",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.SalesRecords",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/sales/trend": {
+      "get": {
+        "operationId": "get_tenant_reports_sales_trend",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.SalesTrend",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/requisitions": {
       "get": {
         "operationId": "get_tenant_requisitions",

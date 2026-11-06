@@ -742,6 +742,14 @@ func main() {
 		mux.Handle("GET /api/tenant/dashboard/widgets/ar-outstanding/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.ArOutstanding))))
 		mux.Handle("GET /api/tenant/dashboard/widgets/accounting-snapshot/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.AccountingSnapshot))))
 
+		// Reports module (Reports > Sales, ...): read-only aggregate endpoints,
+		// each gated by its own report_<module>:read grant (see reports_sales.go).
+		reportsOps := controllers.NewReportsOps()
+		mux.Handle("GET /api/tenant/reports/sales/by-customer", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesByCustomer))))
+		mux.Handle("GET /api/tenant/reports/sales/by-item", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesByItem))))
+		mux.Handle("GET /api/tenant/reports/sales/trend", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesTrend))))
+		mux.Handle("GET /api/tenant/reports/sales/records", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesRecords))))
+
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))

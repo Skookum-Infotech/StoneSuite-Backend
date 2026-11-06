@@ -20182,6 +20182,130 @@
         ]
       }
     },
+    "/api/tenant/reports/inventory/low-stock": {
+      "get": {
+        "operationId": "get_tenant_reports_inventory_low_stock",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.LowStock",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/inventory/movement": {
+      "get": {
+        "operationId": "get_tenant_reports_inventory_movement",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.StockMovement",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/inventory/slabs": {
+      "get": {
+        "operationId": "get_tenant_reports_inventory_slabs",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.SlabAvailability",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/inventory/stock": {
+      "get": {
+        "operationId": "get_tenant_reports_inventory_stock",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.StockOnHand",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/reports/purchases/ap-aging": {
       "get": {
         "operationId": "get_tenant_reports_purchases_ap_aging",

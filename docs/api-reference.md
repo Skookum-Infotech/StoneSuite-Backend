@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-661 endpoints across 7 surfaces, read from `main.go`.
+665 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 561 |
+| staff token + tenant | 565 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 560 endpoints
+## `tenant` — 564 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -996,6 +996,10 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/reports/crm/funnel` | staff token + tenant | `reportsOps.ConversionFunnel` |
 | `GET` | `/api/tenant/reports/crm/lead-sources` | staff token + tenant | `reportsOps.LeadSources` |
 | `GET` | `/api/tenant/reports/crm/stale` | staff token + tenant | `reportsOps.StaleRecords` |
+| `GET` | `/api/tenant/reports/purchases/ap-aging` | staff token + tenant | `reportsOps.APAging` |
+| `GET` | `/api/tenant/reports/purchases/by-item` | staff token + tenant | `reportsOps.PurchasesByItem` |
+| `GET` | `/api/tenant/reports/purchases/by-vendor` | staff token + tenant | `reportsOps.PurchasesByVendor` |
+| `GET` | `/api/tenant/reports/purchases/open-pos` | staff token + tenant | `reportsOps.OpenPurchaseOrders` |
 | `GET` | `/api/tenant/reports/sales/by-customer` | staff token + tenant | `reportsOps.SalesByCustomer` |
 | `GET` | `/api/tenant/reports/sales/by-item` | staff token + tenant | `reportsOps.SalesByItem` |
 | `GET` | `/api/tenant/reports/sales/records` | staff token + tenant | `reportsOps.SalesRecords` |

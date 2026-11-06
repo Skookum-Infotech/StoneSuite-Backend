@@ -20182,6 +20182,130 @@
         ]
       }
     },
+    "/api/tenant/reports/purchases/ap-aging": {
+      "get": {
+        "operationId": "get_tenant_reports_purchases_ap_aging",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.APAging",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/purchases/by-item": {
+      "get": {
+        "operationId": "get_tenant_reports_purchases_by_item",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.PurchasesByItem",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/purchases/by-vendor": {
+      "get": {
+        "operationId": "get_tenant_reports_purchases_by_vendor",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.PurchasesByVendor",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/purchases/open-pos": {
+      "get": {
+        "operationId": "get_tenant_reports_purchases_open_pos",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.OpenPurchaseOrders",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/reports/sales/by-customer": {
       "get": {
         "operationId": "get_tenant_reports_sales_by_customer",

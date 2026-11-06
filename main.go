@@ -752,6 +752,10 @@ func main() {
 		mux.Handle("GET /api/tenant/reports/crm/funnel", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.ConversionFunnel))))
 		mux.Handle("GET /api/tenant/reports/crm/lead-sources", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.LeadSources))))
 		mux.Handle("GET /api/tenant/reports/crm/stale", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.StaleRecords))))
+		mux.Handle("GET /api/tenant/reports/purchases/by-vendor", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.PurchasesByVendor))))
+		mux.Handle("GET /api/tenant/reports/purchases/by-item", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.PurchasesByItem))))
+		mux.Handle("GET /api/tenant/reports/purchases/open-pos", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OpenPurchaseOrders))))
+		mux.Handle("GET /api/tenant/reports/purchases/ap-aging", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.APAging))))
 
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.

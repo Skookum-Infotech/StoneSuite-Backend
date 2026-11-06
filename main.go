@@ -742,6 +742,31 @@ func main() {
 		mux.Handle("GET /api/tenant/dashboard/widgets/ar-outstanding/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.ArOutstanding))))
 		mux.Handle("GET /api/tenant/dashboard/widgets/accounting-snapshot/data", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(dashboardUI.AccountingSnapshot))))
 
+		// Reports module (Reports > Sales, ...): read-only aggregate endpoints,
+		// each gated by its own report_<module>:read grant (see reports_sales.go).
+		reportsOps := controllers.NewReportsOps()
+		mux.Handle("GET /api/tenant/reports/sales/by-customer", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesByCustomer))))
+		mux.Handle("GET /api/tenant/reports/sales/by-item", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesByItem))))
+		mux.Handle("GET /api/tenant/reports/sales/trend", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesTrend))))
+		mux.Handle("GET /api/tenant/reports/sales/records", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SalesRecords))))
+		mux.Handle("GET /api/tenant/reports/crm/funnel", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.ConversionFunnel))))
+		mux.Handle("GET /api/tenant/reports/crm/lead-sources", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.LeadSources))))
+		mux.Handle("GET /api/tenant/reports/crm/stale", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.StaleRecords))))
+		mux.Handle("GET /api/tenant/reports/purchases/by-vendor", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.PurchasesByVendor))))
+		mux.Handle("GET /api/tenant/reports/purchases/by-item", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.PurchasesByItem))))
+		mux.Handle("GET /api/tenant/reports/purchases/open-pos", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OpenPurchaseOrders))))
+		mux.Handle("GET /api/tenant/reports/purchases/ap-aging", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.APAging))))
+		mux.Handle("GET /api/tenant/reports/inventory/stock", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.StockOnHand))))
+		mux.Handle("GET /api/tenant/reports/inventory/slabs", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SlabAvailability))))
+		mux.Handle("GET /api/tenant/reports/inventory/low-stock", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.LowStock))))
+		mux.Handle("GET /api/tenant/reports/inventory/movement", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.StockMovement))))
+		mux.Handle("GET /api/tenant/reports/calendar/upcoming-installs", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.UpcomingInstalls))))
+		mux.Handle("GET /api/tenant/reports/calendar/overdue", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OverdueActivities))))
+		mux.Handle("GET /api/tenant/reports/calendar/on-time", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OnTimeCompletion))))
+		mux.Handle("GET /api/tenant/reports/calendar/lead-time", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OrderToInstallLeadTime))))
+		mux.Handle("GET /api/tenant/reports/finance/profit-loss", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.ProfitAndLoss))))
+		mux.Handle("GET /api/tenant/reports/finance/account-lines", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.AccountLines))))
+
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
 		mux.Handle("GET /api/tenant/users/me/permissions", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(rbac.MyPermissions))))

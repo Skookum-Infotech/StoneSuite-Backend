@@ -33,6 +33,16 @@ const (
 	ResourceCompanyProfile Resource = "company_profile" // tenant's own company name/address (Configuration -> Company Info)
 	ResourceAudit          Resource = "audit"           // audit log
 
+	// Reports module: one read-only resource per sub-module, so a role can be
+	// given Sales reports without CRM reports. The scope on the grant narrows
+	// the report to the caller's own records (all|team|own), like any list.
+	ResourceReportCRM       Resource = "report_crm"
+	ResourceReportSales     Resource = "report_sales"
+	ResourceReportPurchases Resource = "report_purchases"
+	ResourceReportInventory Resource = "report_inventory"
+	ResourceReportCalendar  Resource = "report_calendar"
+	ResourceReportFinance   Resource = "report_finance"
+
 	// ResourceAutomation governs automation rules (reminders, escalations),
 	// their delivery log and the tenant kill switch.
 	ResourceAutomation Resource = "automation"
@@ -466,6 +476,13 @@ var catalog = []Permission{
 	{ResourceAutomation, ActionConfigure},
 
 	{ResourceAudit, ActionRead},
+
+	{ResourceReportCRM, ActionRead},
+	{ResourceReportSales, ActionRead},
+	{ResourceReportPurchases, ActionRead},
+	{ResourceReportInventory, ActionRead},
+	{ResourceReportCalendar, ActionRead},
+	{ResourceReportFinance, ActionRead},
 
 	{ResourceImport, ActionRead},
 

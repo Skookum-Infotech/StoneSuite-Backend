@@ -83,6 +83,23 @@ var scheduleCatalog = []scheduleActivityDef{
 	{ActivityInstallation, "Installation", "Installation"},
 }
 
+// CatalogActivity is one activity of the order schedule, for callers outside
+// this package (the Reports module) that need the planner's own names.
+type CatalogActivity struct {
+	Code     string
+	Name     string
+	Sequence int // 1-based position in plan order
+}
+
+// CatalogActivities lists every schedule activity in plan order.
+func CatalogActivities() []CatalogActivity {
+	out := make([]CatalogActivity, len(scheduleCatalog))
+	for i, d := range scheduleCatalog {
+		out[i] = CatalogActivity{Code: d.Code, Name: d.Name, Sequence: i + 1}
+	}
+	return out
+}
+
 // scheduleActivityByCode indexes scheduleCatalog by code.
 func scheduleActivityByCode(code string) (def scheduleActivityDef, sequence int, ok bool) {
 	for i, d := range scheduleCatalog {

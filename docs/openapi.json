@@ -20089,6 +20089,130 @@
         ]
       }
     },
+    "/api/tenant/reports/calendar/lead-time": {
+      "get": {
+        "operationId": "get_tenant_reports_calendar_lead_time",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.OrderToInstallLeadTime",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/calendar/on-time": {
+      "get": {
+        "operationId": "get_tenant_reports_calendar_on_time",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.OnTimeCompletion",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/calendar/overdue": {
+      "get": {
+        "operationId": "get_tenant_reports_calendar_overdue",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.OverdueActivities",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/reports/calendar/upcoming-installs": {
+      "get": {
+        "operationId": "get_tenant_reports_calendar_upcoming_installs",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "reportsOps.UpcomingInstalls",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/reports/crm/funnel": {
       "get": {
         "operationId": "get_tenant_reports_crm_funnel",

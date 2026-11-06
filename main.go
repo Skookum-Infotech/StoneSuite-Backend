@@ -760,6 +760,10 @@ func main() {
 		mux.Handle("GET /api/tenant/reports/inventory/slabs", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.SlabAvailability))))
 		mux.Handle("GET /api/tenant/reports/inventory/low-stock", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.LowStock))))
 		mux.Handle("GET /api/tenant/reports/inventory/movement", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.StockMovement))))
+		mux.Handle("GET /api/tenant/reports/calendar/upcoming-installs", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.UpcomingInstalls))))
+		mux.Handle("GET /api/tenant/reports/calendar/overdue", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OverdueActivities))))
+		mux.Handle("GET /api/tenant/reports/calendar/on-time", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OnTimeCompletion))))
+		mux.Handle("GET /api/tenant/reports/calendar/lead-time", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OrderToInstallLeadTime))))
 
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.

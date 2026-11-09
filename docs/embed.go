@@ -32,6 +32,7 @@ import "embed"
 //go:embed fabrication.md
 //go:embed install-schedule.md
 //go:embed accounting.md
+//go:embed reports.md
 //go:embed import.md
 //go:embed customer-portal.md
 //go:embed administration.md

@@ -766,6 +766,15 @@ func main() {
 		mux.Handle("GET /api/tenant/reports/calendar/lead-time", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.OrderToInstallLeadTime))))
 		mux.Handle("GET /api/tenant/reports/finance/profit-loss", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.ProfitAndLoss))))
 		mux.Handle("GET /api/tenant/reports/finance/account-lines", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.AccountLines))))
+		// Custom Reports: build, run, save and share reports over a fixed catalog of sources.
+		mux.Handle("GET /api/tenant/reports/custom/catalog", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomCatalog))))
+		mux.Handle("POST /api/tenant/reports/custom/run", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomRun))))
+		mux.Handle("GET /api/tenant/reports/custom", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomList))))
+		mux.Handle("POST /api/tenant/reports/custom", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomCreate))))
+		mux.Handle("GET /api/tenant/reports/custom/{uuid}", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomGet))))
+		mux.Handle("PUT /api/tenant/reports/custom/{uuid}", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomUpdate))))
+		mux.Handle("DELETE /api/tenant/reports/custom/{uuid}", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomDelete))))
+		mux.Handle("POST /api/tenant/reports/custom/{uuid}/copy", middleware.RequireAuth(resolver.Middleware(http.HandlerFunc(reportsOps.CustomCopy))))
 
 		// Tenant-scoped user management. Method+path patterns are more specific
 		// than the catch-all /api/tenant/users/ below and take precedence.
@@ -1814,6 +1823,9 @@ func main() {
 		}
 		mux.Handle("POST /api/tenant/ai/ask", aiChain(aiOps.Ask))
 		mux.Handle("POST /api/tenant/ai/ask/stream", aiChain(aiOps.AskStream))
+		// Custom Reports plain-English box: same Ollama, same switches and rate
+		// limits as the assistant; returns a report definition for the builder, never data.
+		mux.Handle("POST /api/tenant/reports/custom/interpret", aiChain(aiOps.InterpretCustomReport))
 		mux.Handle("POST /api/tenant/ai/reindex", tenantChain(aiOps.Reindex))
 		mux.Handle("POST /api/tenant/ai/warm", warmChain(aiOps.Warm))
 		mux.Handle("POST /api/platform/ai/reindex-help", middleware.RequireAuth(http.HandlerFunc(aiOps.ReindexHelp)))

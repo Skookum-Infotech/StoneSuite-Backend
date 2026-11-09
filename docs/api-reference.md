@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-675 endpoints across 7 surfaces, read from `main.go`.
+684 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 575 |
+| staff token + tenant | 584 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 24 |
 | staff token | 21 |
@@ -372,7 +372,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 
-## `tenant` — 574 endpoints
+## `tenant` — 583 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -1000,6 +1000,15 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `GET` | `/api/tenant/reports/crm/funnel` | staff token + tenant | `reportsOps.ConversionFunnel` |
 | `GET` | `/api/tenant/reports/crm/lead-sources` | staff token + tenant | `reportsOps.LeadSources` |
 | `GET` | `/api/tenant/reports/crm/stale` | staff token + tenant | `reportsOps.StaleRecords` |
+| `GET` | `/api/tenant/reports/custom` | staff token + tenant | `reportsOps.CustomList` |
+| `POST` | `/api/tenant/reports/custom` | staff token + tenant | `reportsOps.CustomCreate` |
+| `GET` | `/api/tenant/reports/custom/catalog` | staff token + tenant | `reportsOps.CustomCatalog` |
+| `POST` | `/api/tenant/reports/custom/interpret` | staff token + tenant | `aiOps.InterpretCustomReport` |
+| `POST` | `/api/tenant/reports/custom/run` | staff token + tenant | `reportsOps.CustomRun` |
+| `DELETE` | `/api/tenant/reports/custom/{uuid}` | staff token + tenant | `reportsOps.CustomDelete` |
+| `GET` | `/api/tenant/reports/custom/{uuid}` | staff token + tenant | `reportsOps.CustomGet` |
+| `PUT` | `/api/tenant/reports/custom/{uuid}` | staff token + tenant | `reportsOps.CustomUpdate` |
+| `POST` | `/api/tenant/reports/custom/{uuid}/copy` | staff token + tenant | `reportsOps.CustomCopy` |
 | `GET` | `/api/tenant/reports/finance/account-lines` | staff token + tenant | `reportsOps.AccountLines` |
 | `GET` | `/api/tenant/reports/finance/profit-loss` | staff token + tenant | `reportsOps.ProfitAndLoss` |
 | `GET` | `/api/tenant/reports/inventory/low-stock` | staff token + tenant | `reportsOps.LowStock` |

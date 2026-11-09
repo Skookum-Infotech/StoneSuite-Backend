@@ -10429,3 +10429,22 @@ CREATE TABLE IF NOT EXISTS install_appointment_history (
     CONSTRAINT chk_iah_reason_len CHECK (reason IS NULL OR char_length(reason) <= 500)
 );
 CREATE INDEX IF NOT EXISTS idx_iah_appt_at ON install_appointment_history (install_appointment_id, at DESC);
+
+-- ---------------------------------------------------------------------
+-- Custom Reports: a saved report is a JSON definition (source, columns,
+-- filters, one group-by, totals, sort, chart), never SQL. Private to its
+-- owner unless shared with the workspace.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS custom_report (
+    custom_report_id          SERIAL       PRIMARY KEY,
+    custom_report_uuid        UUID         NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    custom_report_name        VARCHAR(120) NOT NULL,
+    custom_report_definition  JSONB        NOT NULL,
+    custom_report_shared      BOOLEAN      NOT NULL DEFAULT FALSE,
+    custom_report_owner_id    INTEGER      NOT NULL REFERENCES employee(employee_id),
+    custom_report_created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    custom_report_updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    custom_report_deleted_at  TIMESTAMP        NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_report_owner ON custom_report (custom_report_owner_id) WHERE custom_report_deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_custom_report_shared ON custom_report (custom_report_shared) WHERE custom_report_deleted_at IS NULL;

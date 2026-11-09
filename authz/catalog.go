@@ -43,6 +43,12 @@ const (
 	ResourceReportCalendar  Resource = "report_calendar"
 	ResourceReportFinance   Resource = "report_finance"
 
+	// ResourceCustomReport governs the Custom Reports builder: read = open and
+	// run reports, create = save, edit, share and delete your own. It never
+	// widens data access: every source also needs its module's report_* grant,
+	// and rows are scoped by that grant.
+	ResourceCustomReport Resource = "custom_report"
+
 	// ResourceAutomation governs automation rules (reminders, escalations),
 	// their delivery log and the tenant kill switch.
 	ResourceAutomation Resource = "automation"
@@ -483,6 +489,9 @@ var catalog = []Permission{
 	{ResourceReportInventory, ActionRead},
 	{ResourceReportCalendar, ActionRead},
 	{ResourceReportFinance, ActionRead},
+
+	{ResourceCustomReport, ActionRead},
+	{ResourceCustomReport, ActionCreate},
 
 	{ResourceImport, ActionRead},
 

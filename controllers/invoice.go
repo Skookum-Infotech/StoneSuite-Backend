@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/invoice"
 	"stonesuite-backend/middleware"
@@ -128,7 +129,7 @@ func (h *InvoiceOps) Get(w http.ResponseWriter, r *http.Request) {
 		invoiceFail(w, err, "Failed to load invoice.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindInvoice, uuid)})
 }
 
 // Approve POST /api/tenant/invoices/{uuid}/approve — approval sign-off (AD-8).

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -192,7 +193,7 @@ func (h *QuoteOps) Get(w http.ResponseWriter, r *http.Request) {
 		quoteFail(w, err, "Failed to load quote.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "quote": est, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "quote": est, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindQuote, est.ID)})
 }
 
 // Update PATCH /api/tenant/quotes/{uuid}

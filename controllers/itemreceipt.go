@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/itemreceipt"
 	"stonesuite-backend/middleware"
@@ -189,11 +190,11 @@ func (h *ItemReceiptOps) Create(w http.ResponseWriter, r *http.Request) {
 
 // Get GET /api/tenant/item-receipts/{uuid}
 func (h *ItemReceiptOps) Get(w http.ResponseWriter, r *http.Request) {
-	_, _, ir, ok := h.authIRByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
+	pool, identityID, ir, ok := h.authIRByUUID(w, r, r.PathValue("uuid"), authz.ActionRead)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "itemReceipt": ir})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "itemReceipt": ir, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindItemReceipt, r.PathValue("uuid"))})
 }
 
 // Update PATCH /api/tenant/item-receipts/{uuid}

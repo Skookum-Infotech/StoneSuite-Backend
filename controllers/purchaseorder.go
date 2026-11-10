@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/purchaseorder"
@@ -200,7 +201,7 @@ func (h *PurchaseOrderOps) Get(w http.ResponseWriter, r *http.Request) {
 		poFail(w, err, "Failed to load purchase order.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": po, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "purchaseOrder": po, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindPurchaseOrd, r.PathValue("uuid"))})
 }
 
 // Update PATCH /api/tenant/purchase-orders/{uuid}

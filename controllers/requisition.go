@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -196,7 +197,7 @@ func (h *RequisitionOps) Get(w http.ResponseWriter, r *http.Request) {
 		reqnFail(w, err, "Failed to load requisition.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "requisition": reqn, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "requisition": reqn, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindRequisition, r.PathValue("uuid"))})
 }
 
 // Update PATCH /api/tenant/requisitions/{uuid}

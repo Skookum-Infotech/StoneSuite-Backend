@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -198,7 +199,7 @@ func (h *VendorBillOps) Get(w http.ResponseWriter, r *http.Request) {
 		vbFail(w, err, "Failed to load vendor bill.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": bill, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorBill": bill, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindVendorBill, r.PathValue("uuid"))})
 }
 
 // Update PATCH /api/tenant/vendor-bills/{uuid}

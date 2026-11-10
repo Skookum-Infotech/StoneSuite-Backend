@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/fabrication"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -246,7 +247,7 @@ func (h *FabricationOps) Get(w http.ResponseWriter, r *http.Request) {
 		fjFail(w, err, "Failed to load fabrication job.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindFabrication, job.ID)})
 }
 
 // Update PATCH /api/tenant/fabrication-jobs/{uuid}

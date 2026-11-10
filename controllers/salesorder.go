@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/query"
@@ -208,7 +209,7 @@ func (h *SalesOrderOps) Get(w http.ResponseWriter, r *http.Request) {
 		soFail(w, err, "Failed to load sales order.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindSalesOrder, order.ID)})
 }
 
 // Update PATCH /api/tenant/sales-orders/{uuid}

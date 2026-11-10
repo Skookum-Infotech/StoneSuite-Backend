@@ -11,6 +11,7 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/creditmemo"
 	"stonesuite-backend/dberr"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
@@ -269,7 +270,7 @@ func (h *RefundOps) Get(w http.ResponseWriter, r *http.Request) {
 		refundFail(w, err, "Failed to load refund.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindRefund, uuid)})
 }
 
 // Approve POST /api/tenant/refunds/{uuid}/approve — approval sign-off (AD-8).

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/models"
@@ -185,7 +186,7 @@ func (h *VendorPaymentOps) Get(w http.ResponseWriter, r *http.Request) {
 		vendorPaymentFail(w, err, "Failed to load vendor payment.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp, "approval": info})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "vendorPayment": vp, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindVendorPay, r.PathValue("uuid"))})
 }
 
 // Update handles PATCH /api/tenant/vendor-payments/{uuid}.

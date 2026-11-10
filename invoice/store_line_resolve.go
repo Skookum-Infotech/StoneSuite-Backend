@@ -86,7 +86,7 @@ func resolveLine(ctx context.Context, pool *pgxpool.Pool, in InvoiceLineInput, h
 
 	// Length x width x slabs, when given, IS the quantity: derived here so a
 	// stale client can never store one that disagrees with its dimensions.
-	sized, dimMsg := linedim.Resolve(linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: unitOr(in.DimensionUnit, rl.itemDimUnit)}, rl.unitCode)
+	sized, dimMsg := linedim.Resolve(linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: unitOr(in.DimensionUnit, rl.itemDimUnit), Thickness: in.Thickness}, rl.unitCode)
 	if dimMsg != "" {
 		return resolvedLine{}, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, dimMsg)}
 	}

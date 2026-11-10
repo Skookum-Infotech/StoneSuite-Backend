@@ -47,6 +47,9 @@ type LineInput struct {
 	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
 	// ft, m). Blank takes the item's unit, then inches.
 	DimensionUnit string `json:"dimensionUnit"`
+	// Thickness is the thickness of one slab, in DimensionUnit. Optional and
+	// descriptive: it never enters the quantity. Only area-unit lines accept it.
+	Thickness *float64 `json:"thickness"`
 }
 
 // estimateFields is the header payload shared by create and update (everything
@@ -133,6 +136,8 @@ type Line struct {
 	Width         *float64 `json:"width,omitempty"`
 	Slabs         *int     `json:"slabs,omitempty"`
 	DimensionUnit string   `json:"dimensionUnit,omitempty"`
+	// Thickness is the thickness of one slab, in DimensionUnit, when stated.
+	Thickness *float64 `json:"thickness,omitempty"`
 }
 
 // Estimate is the full API response for an estimate header (+ lines, when

@@ -396,7 +396,7 @@ const itemSelect = `
 	       ei.quantity, ei.unit_price, ei.discount_percent, ei.tax_percent,
 	       ei.line_subtotal, ei.line_discount, ei.line_tax, ei.line_total,
 	       ei.kit_uuid::text, ei.kit_name,
-	       ei.dim_length, ei.dim_width, ei.slabs, ei.dim_unit
+	       ei.dim_length, ei.dim_width, ei.slabs, ei.dim_unit, ei.dim_thickness
 	FROM estimate_item ei
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = ei.inventory_item_id
 	WHERE ei.estimate_id = $1 AND ei.item_deleted_at IS NULL
@@ -410,7 +410,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
 		&l.KitID, &l.KitName,
-		&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit,
+		&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit, &l.Thickness,
 	)
 	return l, err
 }

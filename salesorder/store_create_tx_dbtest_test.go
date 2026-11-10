@@ -4,14 +4,11 @@ package salesorder
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"stonesuite-backend/inventory"
 )
 
 // seedUnstockedItem inserts a stock-checked item with nothing on hand.
@@ -44,11 +41,14 @@ func TestCreateInTx_DefersTheStockCheckOnlyWhenAsked(t *testing.T) {
 	in.InstallDate = installIn(5)
 	in.Items = []LineInput2{{LineNumber: 1, InventoryItemUUID: itemUUID, Quantity: 1}}
 
-	// The staff path still refuses an order for stock that is not there.
-	_, err := Create(ctx, pool, in, 1)
-	var shortage *inventory.StockShortageError
-	if !errors.As(err, &shortage) {
-		t.Fatalf("Create with no stock: err = %v, want a *StockShortageError", err)
+	// The staff path saves an order for stock that is not there, holding it as a
+	// backorder and reporting the gap.
+	staff, err := Create(ctx, pool, in, 1)
+	if err != nil {
+		t.Fatalf("Create with no stock: %v", err)
+	}
+	if short, err := StockShortages(ctx, pool, staff.ID); err != nil || len(short) != 1 || short[0].Short != 1 {
+		t.Fatalf("shortages = %+v (err %v), want the one line short by 1", short, err)
 	}
 
 	tx, err := pool.Begin(ctx)

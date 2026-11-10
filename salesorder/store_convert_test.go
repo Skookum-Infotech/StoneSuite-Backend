@@ -100,32 +100,25 @@ func TestConvertFromQuote_UnknownQuote(t *testing.T) {
 	}
 }
 
-// A quote becomes an order under the same stock rules as one entered by hand.
-func TestConvertFromQuote_RefusedWhenStockIsShort(t *testing.T) {
+// A quote becomes an order under the same stock rules as one entered by hand:
+// short stock does not stop the conversion, it is reported.
+func TestConvertFromQuote_ConvertsWhenStockIsShort(t *testing.T) {
 	pool := testPool(t)
 	custUUID, itemUUID := seedCustomerAndItem(t, pool)
 	q := seedQuoteWithLine(t, pool, custUUID, itemUUID) // asks for 2
 	giveStock(t, pool, itemUUID, 1)
 
-	_, created, err := ConvertFromQuote(context.Background(), pool, q.ID, 1)
+	order, created, err := ConvertFromQuote(context.Background(), pool, q.ID, 1)
+	if err != nil || !created {
+		t.Fatalf("ConvertFromQuote: created=%v err=%v", created, err)
+	}
 
-	short := shortageOf(t, err)
-	if created || short[0].Requested != 2 || short[0].Available != 1 || short[0].Short != 1 {
-		t.Errorf("created=%v shortage=%+v, want refused: requested 2 available 1 short 1", created, short[0])
+	short := shortagesOf(t, pool, order.ID)
+	if len(short) != 1 || short[0].Requested != 2 || short[0].Available != 1 || short[0].Short != 1 {
+		t.Errorf("shortages = %+v, want requested 2 available 1 short 1", short)
 	}
-	// Refused means no order and no conversion record: the quote can convert later.
-	var conversions int
-	if err := pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM quote_conversion WHERE quote_id = (SELECT quote_id FROM quote WHERE quote_uuid = $1)`,
-		q.ID).Scan(&conversions); err != nil {
-		t.Fatal(err)
-	}
-	if conversions != 0 {
-		t.Errorf("quote_conversion rows = %d after a refused conversion, want 0", conversions)
-	}
-	giveStock(t, pool, itemUUID, 10)
-	if _, created, err := ConvertFromQuote(context.Background(), pool, q.ID, 1); err != nil || !created {
-		t.Fatalf("converting after restocking: created=%v err=%v", created, err)
+	if got := held(t, pool, order.ID, itemUUID); got != 2 {
+		t.Errorf("converted order holds %v, want the full 2", got)
 	}
 }
 
@@ -143,9 +136,9 @@ func TestConvertFromQuote_ReservesTheStockItNeeds(t *testing.T) {
 	if got := held(t, pool, order.ID, itemUUID); got != 2 {
 		t.Errorf("converted order holds %v, want 2", got)
 	}
-	// One is left, so a second order for 2 is refused.
-	_, err = Create(context.Background(), pool, orderFor(seedCustomer(t, pool), lines(line{itemUUID, 2})), 1)
-	if got := shortageOf(t, err)[0].Available; got != 1 {
-		t.Errorf("available = %v after the conversion, want 1", got)
+	// One is left, so a second order for 2 is short by 1.
+	second := mustCreate(t, pool, seedCustomer(t, pool), lines(line{itemUUID, 2}))
+	if short := shortagesOf(t, pool, second.ID); len(short) != 1 || short[0].Available != 1 {
+		t.Errorf("shortages = %+v after the conversion, want available 1", short)
 	}
 }

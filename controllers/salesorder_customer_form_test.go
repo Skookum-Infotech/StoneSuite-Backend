@@ -55,8 +55,6 @@ func TestCustomerOrderFormFail_MapsEachFailureToItsStatus(t *testing.T) {
 			http.StatusBadRequest, "at most 150"},
 		{"the sales order refused a value", salesorder.ClientError{Msg: "Line 2: unit price cannot be negative."},
 			http.StatusBadRequest, "unit price"},
-		{"stock the order cannot have", &inventory.StockShortageError{},
-			http.StatusConflict, ""},
 		{"anything else is ours", errors.New("connection reset"),
 			http.StatusInternalServerError, "Failed to update the customer order form."},
 	}

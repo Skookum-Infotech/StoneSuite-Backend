@@ -34,7 +34,7 @@ func TestEdgeSQL_ValidAgainstSchema(t *testing.T) {
 		_, err := l.Hop(ctx, e, []int32{-1})
 		require.NoError(t, err, "%s to %s", e.from, e.to)
 	}
-	for _, st := range stageTables {
+	for _, st := range allStages {
 		_, err := loadStage(ctx, pool, st, []int32{-1}, "", Access{Allowed: true})
 		require.NoError(t, err, "stage %s", st.kind)
 	}

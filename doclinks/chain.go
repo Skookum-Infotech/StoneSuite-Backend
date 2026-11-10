@@ -1,5 +1,6 @@
-// Package doclinks resolves the end-to-end document chain a sales record belongs
-// to (Quote, Sales Order, Fabrication, Invoice, Payment, Refund) so every detail
+// Package doclinks resolves the end-to-end document chain a record belongs to:
+// sales (Quote, Sales Order, Fabrication, Invoice, Payment, Refund) or purchases
+// (Requisition, Purchase Order, Receiving, Vendor Bill, Vendor Payment) so every detail
 // page can return the same read-only `workflow` block. The chain is computed on
 // read from foreign keys that already exist; nothing is stored.
 //
@@ -23,6 +24,12 @@ const (
 	KindPayment     Kind = "payment"
 	KindCreditMemo  Kind = "creditMemo" // bridge only: never a stage, links refunds to invoices
 	KindRefund      Kind = "refund"
+
+	KindRequisition Kind = "requisition"
+	KindPurchaseOrd Kind = "purchaseOrder"
+	KindItemReceipt Kind = "receiving"
+	KindVendorBill  Kind = "vendorBill"
+	KindVendorPay   Kind = "vendorPayment"
 )
 
 // maxChainNodes bounds the walk so a pathological tenant cannot make one detail
@@ -65,6 +72,12 @@ var upEdges = []edge{
 	{KindInvoice, KindSalesOrder, `SELECT invoice_sales_order_id FROM invoice WHERE invoice_id = ANY($1) AND invoice_sales_order_id IS NOT NULL`},
 	{KindFabrication, KindSalesOrder, `SELECT sales_order_id FROM fabrication_job WHERE fabrication_job_id = ANY($1)`},
 	{KindSalesOrder, KindQuote, `SELECT quote_id FROM quote_conversion WHERE sales_order_id = ANY($1)`},
+
+	// Purchases
+	{KindVendorPay, KindVendorBill, `SELECT vendor_bill_id FROM vendor_payment_application WHERE vendor_payment_id = ANY($1) AND application_deleted_at IS NULL`},
+	{KindVendorBill, KindPurchaseOrd, `SELECT vendor_bill_purchase_order_id FROM vendor_bill WHERE vendor_bill_id = ANY($1) AND vendor_bill_purchase_order_id IS NOT NULL`},
+	{KindItemReceipt, KindPurchaseOrd, `SELECT purchase_order_id FROM item_receipt WHERE item_receipt_id = ANY($1)`},
+	{KindPurchaseOrd, KindRequisition, `SELECT requisition_id FROM requisition_conversion WHERE purchase_order_id = ANY($1)`},
 }
 
 // downEdges lead from a parent to the records raised from it.
@@ -82,6 +95,12 @@ var downEdges = []edge{
 	{KindPayment, KindCreditMemo, `SELECT credit_memo_id FROM credit_memo WHERE credit_memo_source_payment_id = ANY($1) AND credit_memo_deleted_at IS NULL`},
 	{KindCreditMemo, KindRefund, `SELECT refund_id FROM refund WHERE refund_credit_memo_id = ANY($1) AND refund_deleted_at IS NULL
 		UNION SELECT refund_id FROM refund_application WHERE credit_memo_id = ANY($1) AND application_deleted_at IS NULL`},
+
+	// Purchases
+	{KindRequisition, KindPurchaseOrd, `SELECT purchase_order_id FROM requisition_conversion WHERE requisition_id = ANY($1)`},
+	{KindPurchaseOrd, KindItemReceipt, `SELECT item_receipt_id FROM item_receipt WHERE purchase_order_id = ANY($1) AND item_receipt_deleted_at IS NULL`},
+	{KindPurchaseOrd, KindVendorBill, `SELECT vendor_bill_id FROM vendor_bill WHERE vendor_bill_purchase_order_id = ANY($1) AND vendor_bill_deleted_at IS NULL`},
+	{KindVendorBill, KindVendorPay, `SELECT vendor_payment_id FROM vendor_payment_application WHERE vendor_bill_id = ANY($1) AND application_deleted_at IS NULL`},
 }
 
 // Walk returns every document in the flow of the viewed record: up to the roots,

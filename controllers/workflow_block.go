@@ -20,6 +20,11 @@ var flowResources = map[doclinks.Kind]authz.Resource{
 	doclinks.KindInvoice:     authz.ResourceInvoice,
 	doclinks.KindPayment:     authz.ResourcePayment,
 	doclinks.KindRefund:      authz.ResourceRefund,
+	doclinks.KindRequisition: authz.ResourceRequisition,
+	doclinks.KindPurchaseOrd: authz.ResourcePurchaseOrder,
+	doclinks.KindItemReceipt: authz.ResourceItemReceipt,
+	doclinks.KindVendorBill:  authz.ResourceVendorBill,
+	doclinks.KindVendorPay:   authz.ResourceVendorPayment,
 }
 
 // workflowVisibility turns the caller's read grants into per-stage access, so

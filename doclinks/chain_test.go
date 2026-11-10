@@ -111,3 +111,43 @@ func TestEdges_AllSQLUsesParameterOnly(t *testing.T) {
 		assert.NotContains(t, e.sql, "$2", "%s to %s", e.from, e.to)
 	}
 }
+
+// purchaseFlow: requisition 1 -> PO 10 -> receipts 20/21, bill 30 -> payment 40.
+func purchaseFlow() fakeLoader {
+	m := map[[2]Kind]map[int32][]int32{}
+	link(m, KindRequisition, 1, KindPurchaseOrd, 10)
+	link(m, KindPurchaseOrd, 10, KindItemReceipt, 20)
+	link(m, KindPurchaseOrd, 10, KindItemReceipt, 21)
+	link(m, KindPurchaseOrd, 10, KindVendorBill, 30)
+	link(m, KindVendorBill, 30, KindVendorPay, 40)
+	link(m, KindPurchaseOrd, 10, KindRequisition, 1)
+	link(m, KindItemReceipt, 20, KindPurchaseOrd, 10)
+	link(m, KindItemReceipt, 21, KindPurchaseOrd, 10)
+	link(m, KindVendorBill, 30, KindPurchaseOrd, 10)
+	link(m, KindVendorPay, 40, KindVendorBill, 30)
+	return fakeLoader{m}
+}
+
+func TestWalk_PurchaseFlowFromEveryRecord(t *testing.T) {
+	want := map[Kind][]int32{
+		KindRequisition: {1}, KindPurchaseOrd: {10}, KindItemReceipt: {20, 21}, KindVendorBill: {30}, KindVendorPay: {40},
+	}
+	for _, s := range []struct {
+		kind Kind
+		id   int32
+	}{{KindRequisition, 1}, {KindPurchaseOrd, 10}, {KindItemReceipt, 21}, {KindVendorBill, 30}, {KindVendorPay, 40}} {
+		chain, err := Walk(context.Background(), purchaseFlow(), s.kind, s.id)
+		require.NoError(t, err)
+		for kind, ids := range want {
+			assert.Equal(t, ids, sorted(chain.ids(kind)), "%s from %s", kind, s.kind)
+		}
+		assert.Empty(t, chain.ids(KindSalesOrder), "purchase flow never touches sales kinds")
+	}
+}
+
+func TestFlowOf_PicksStagesByKind(t *testing.T) {
+	assert.Equal(t, KindRequisition, flowOf(KindVendorPay)[0].kind)
+	assert.Equal(t, KindQuote, flowOf(KindRefund)[0].kind)
+	assert.Len(t, flowOf(KindInvoice), 6)
+	assert.Len(t, flowOf(KindItemReceipt), 5)
+}

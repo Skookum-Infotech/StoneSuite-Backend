@@ -56,7 +56,7 @@ type table struct {
 	name, idCol, uuidCol, numCol, statusCol, owner, deleted string
 }
 
-var stageTables = []table{
+var salesStages = []table{
 	{KindQuote, "quote", "quote_id", "quote_uuid", "quote_number", "quote_status", "quote_owner_id", "quote_deleted_at"},
 	{KindSalesOrder, "sales_order", "sales_order_id", "sales_order_uuid", "sales_order_number", "sales_order_status", "sales_order_owner_id", "sales_order_deleted_at"},
 	{KindFabrication, "fabrication_job", "fabrication_job_id", "fabrication_job_uuid", "fabrication_job_number", "fabrication_job_status", "job_owner_id", "fabrication_job_deleted_at"},
@@ -65,8 +65,30 @@ var stageTables = []table{
 	{KindRefund, "refund", "refund_id", "refund_uuid", "refund_number", "refund_status", "refund_owner_id", "refund_deleted_at"},
 }
 
+// purchaseStages: a requisition has no owner column, its requester is the scope owner.
+var purchaseStages = []table{
+	{KindRequisition, "requisition", "requisition_id", "requisition_uuid", "requisition_number", "requisition_status", "requisition_requested_by_id", "requisition_deleted_at"},
+	{KindPurchaseOrd, "purchase_order", "purchase_order_id", "purchase_order_uuid", "purchase_order_number", "purchase_order_status", "purchase_order_owner_id", "purchase_order_deleted_at"},
+	{KindItemReceipt, "item_receipt", "item_receipt_id", "item_receipt_uuid", "item_receipt_number", "item_receipt_status", "item_receipt_owner_id", "item_receipt_deleted_at"},
+	{KindVendorBill, "vendor_bill", "vendor_bill_id", "vendor_bill_uuid", "vendor_bill_number", "vendor_bill_status", "vendor_bill_owner_id", "vendor_bill_deleted_at"},
+	{KindVendorPay, "vendor_payment", "vendor_payment_id", "vendor_payment_uuid", "vendor_payment_number", "vendor_payment_status", "vendor_payment_owner_id", "vendor_payment_deleted_at"},
+}
+
+// allStages is every table the package reads.
+var allStages = append(append([]table{}, salesStages...), purchaseStages...)
+
+// flowOf returns the stage list of the flow a kind belongs to.
+func flowOf(k Kind) []table {
+	for _, t := range purchaseStages {
+		if t.kind == k {
+			return purchaseStages
+		}
+	}
+	return salesStages
+}
+
 func tableOf(k Kind) (table, bool) {
-	for _, t := range stageTables {
+	for _, t := range allStages {
 		if t.kind == k {
 			return t, true
 		}
@@ -114,8 +136,9 @@ func Resolve(ctx context.Context, q Querier, kind Kind, uuid, viewerUserID strin
 	if err != nil {
 		return Block{}, err
 	}
-	block := Block{Stages: make([]Stage, 0, len(stageTables))}
-	for _, st := range stageTables {
+	flow := flowOf(kind)
+	block := Block{Stages: make([]Stage, 0, len(flow))}
+	for _, st := range flow {
 		stage, err := loadStage(ctx, q, st, chain.ids(st.kind), viewerUserID, vis[st.kind])
 		if err != nil {
 			return Block{}, err

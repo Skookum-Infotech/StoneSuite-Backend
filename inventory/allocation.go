@@ -40,10 +40,15 @@ type Shortage struct {
 	Name     string `json:"name"`
 	UnitCode string `json:"unitCode"`
 	// Requested is what the order still needs; Available is what is free for it
-	// (never negative); Short is the difference.
+	// in stock (never negative). Of the rest, OnOrder is covered by purchase
+	// orders already sent to a vendor (still to arrive) and Short is what nothing
+	// covers yet: what a new purchase order should be for.
 	Requested float64 `json:"requested"`
 	Available float64 `json:"available"`
+	OnOrder   float64 `json:"onOrder"`
 	Short     float64 `json:"short"`
+	// PurchaseOrders are the numbers of the sent purchase orders bringing OnOrder.
+	PurchaseOrders []string `json:"purchaseOrders"`
 }
 
 func trimQty(v float64) string {

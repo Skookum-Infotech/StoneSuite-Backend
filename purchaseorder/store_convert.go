@@ -15,11 +15,42 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/companylocation"
+	"stonesuite-backend/companyprofile"
 )
 
 // ErrRequisitionNotFound is returned when the source requisition uuid
 // matches no live row.
 var ErrRequisitionNotFound = errors.New("requisition not found")
+
+// defaultShipTo mirrors the frontend's purchaseOrderShipToDefaults.ts: the
+// tenant's default Location (Configuration -> Company Info -> Locations)
+// when one is set, else its Company Info shipping address, else empty. That
+// helper only runs on the Add Purchase Order page, which a requisition
+// conversion never visits, so the same default is applied here instead —
+// otherwise a converted PO's Ship To comes back blank. State/country are
+// left unset, same as that helper: they're free text on both Location and
+// CompanyProfile, not the *_id lookups ShipTo.StateID/CountryID expect.
+func defaultShipTo(ctx context.Context, pool *pgxpool.Pool) AddressInput {
+	if locations, err := companylocation.List(ctx, pool); err == nil {
+		for _, l := range locations {
+			if l.IsDefault {
+				return AddressInput{
+					Name: l.Name, AddrLine1: l.Address.Line1, AddrLine2: l.Address.Line2,
+					SuiteUnit: l.Address.Suite, City: l.Address.City, Zip: l.Address.Zip, Phone: l.Phone,
+				}
+			}
+		}
+	}
+	if profile, err := companyprofile.Get(ctx, pool); err == nil && strings.TrimSpace(profile.CompanyName) != "" {
+		return AddressInput{
+			Name: profile.CompanyName, AddrLine1: profile.ShippingAddress.Line1, AddrLine2: profile.ShippingAddress.Line2,
+			SuiteUnit: profile.ShippingAddress.Suite, City: profile.ShippingAddress.City, Zip: profile.ShippingAddress.Zip,
+		}
+	}
+	return AddressInput{}
+}
 
 // requisitionSnapshot is the subset of a source requisition's header the
 // convert path copies verbatim.
@@ -220,7 +251,7 @@ func ConvertFromRequisition(ctx context.Context, pool *pgxpool.Pool, requisition
 		{"purchase_order_custom_fields", src.customFields, ""},
 		{"purchase_order_created_by", nullableInt(actorEmployeeID), ""},
 	}
-	cv = append(cv, addrColVals(AddressInput{})...)
+	cv = append(cv, addrColVals(defaultShipTo(ctx, pool))...)
 
 	insertSQL, insertArgs := buildInsert("purchase_order", cv, "purchase_order_id, purchase_order_uuid")
 	var internalID int

@@ -69,3 +69,9 @@ func ValidateTransition(fromCode, toCode string) error {
 // SentStatusCode is the status a purchase order holds once it has been sent to
 // the vendor.
 const SentStatusCode = "SENT"
+
+// SentStatusLabel is SentStatusCode's `lkp_record_status` label (PORD,
+// record_type 13) — used to show "Sent to Vendor" on the PDF attached to the
+// email that moves an order there, before that move is actually committed
+// (see controllers/purchaseorder_transition.go).
+const SentStatusLabel = "Sent to Vendor"

@@ -189,10 +189,19 @@ func (h *DocumentOps) preflightRecordSend(ctx context.Context, pool *pgxpool.Poo
 // generic-endpoint sendDisabled gate: it is for callers that own the
 // authorization and the moment of sending (PO "Send to Vendor"). It returns
 // the document_sends row id and the email outcome (see deliver).
-func (h *DocumentOps) sendRecord(ctx context.Context, pool *pgxpool.Pool, tenant *tenancy.Tenant, identityID, ownerUserID, recordID, workflowKey string, req sendDocRequest) (string, services.EmailOutcome, *sendError) {
+//
+// statusOverride, when non-empty, replaces the loaded document's own Status
+// label before it is rendered -- for a caller sending the email BEFORE
+// committing the status move it names (so the PDF still reads correctly)
+// rather than after. Pass "" to use the record's own live status, as every
+// other caller does.
+func (h *DocumentOps) sendRecord(ctx context.Context, pool *pgxpool.Pool, tenant *tenancy.Tenant, identityID, ownerUserID, recordID, workflowKey string, req sendDocRequest, statusOverride string) (string, services.EmailOutcome, *sendError) {
 	doc, meta, serr := h.loadRecordDoc(ctx, pool, tenant, recordID, workflowKey)
 	if serr != nil {
 		return "", services.EmailOutcome{}, serr
+	}
+	if statusOverride != "" {
+		doc.Status = statusOverride
 	}
 	p, serr := prepareSend(tenant.ID, recordID, doc, meta, req)
 	if serr != nil {

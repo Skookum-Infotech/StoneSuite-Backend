@@ -6,7 +6,6 @@ import (
 
 	"stonesuite-backend/dberr"
 	"stonesuite-backend/idempotency"
-	"stonesuite-backend/inventory"
 	"stonesuite-backend/query"
 	"stonesuite-backend/salesorder"
 )
@@ -15,11 +14,6 @@ import (
 func soFail(w http.ResponseWriter, err error, serverMsg string) {
 	if status, ok := approvalRejectStatus(err); ok {
 		fail(w, status, err.Error())
-		return
-	}
-	var shortage *inventory.StockShortageError
-	if errors.As(err, &shortage) {
-		writeStockShortage(w, shortage)
 		return
 	}
 	switch {

@@ -10448,3 +10448,11 @@ CREATE TABLE IF NOT EXISTS custom_report (
 );
 CREATE INDEX IF NOT EXISTS idx_custom_report_owner ON custom_report (custom_report_owner_id) WHERE custom_report_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_custom_report_shared ON custom_report (custom_report_shared) WHERE custom_report_deleted_at IS NULL;
+
+-- A sales line's slab thickness, in the line's own dim_unit (like dim_length /
+-- dim_width). Optional and descriptive: it never enters the quantity. Estimate,
+-- quote, sales order and invoice lines carry it, and conversion copies it.
+ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);

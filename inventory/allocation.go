@@ -6,7 +6,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 // stockEpsilon is half a unit at the DECIMAL(14,3) scale every quantity is
@@ -31,32 +30,25 @@ type ReserveLine struct {
 	Quantity    float64
 }
 
-// Shortage is one item an order asks for more of than is free.
+// Shortage is one item an order holds more of than the stock can cover. It does
+// not stop the order: the order is saved and reserves the full quantity (a
+// backorder), and the shortfall is reported so the screen can warn that
+// delivery may be delayed and offer to order the rest (see OrderShortages).
 type Shortage struct {
 	ItemID   string `json:"itemId"` // inventory_item_uuid
 	SKU      string `json:"sku"`
 	Name     string `json:"name"`
 	UnitCode string `json:"unitCode"`
 	// Requested is what the order still needs; Available is what is free for it
-	// (never negative); Short is the difference.
+	// in stock (never negative). Of the rest, OnOrder is covered by purchase
+	// orders already sent to a vendor (still to arrive) and Short is what nothing
+	// covers yet: what a new purchase order should be for.
 	Requested float64 `json:"requested"`
 	Available float64 `json:"available"`
+	OnOrder   float64 `json:"onOrder"`
 	Short     float64 `json:"short"`
-}
-
-// StockShortageError is returned when an order asks for more than is free. It is
-// not a ClientError: the controller answers it with a structured 409 the screen
-// turns into a "not enough stock" dialog, not a bare message.
-type StockShortageError struct {
-	Shortages []Shortage
-}
-
-func (e *StockShortageError) Error() string {
-	parts := make([]string, 0, len(e.Shortages))
-	for _, s := range e.Shortages {
-		parts = append(parts, fmt.Sprintf("%s (need %s, %s available)", s.SKU, trimQty(s.Requested), trimQty(s.Available)))
-	}
-	return "Not enough stock for: " + strings.Join(parts, "; ") + "."
+	// PurchaseOrders are the numbers of the sent purchase orders bringing OnOrder.
+	PurchaseOrders []string `json:"purchaseOrders"`
 }
 
 func trimQty(v float64) string {
@@ -92,10 +84,10 @@ func ReleaseOrder(ctx context.Context, tx pgx.Tx, orderID int) error {
 	return nil
 }
 
-// ReserveOrder checks that the order's lines can be covered by free stock and,
-// if so, replaces the order's reservation with one matching those lines. If any
-// line cannot be covered it returns a *StockShortageError naming every short
-// item and leaves the transaction to be rolled back by the caller.
+// ReserveOrder replaces the order's reservation with one matching its lines. It
+// never refuses an order for want of stock: a line asking for more than is free
+// still reserves its full quantity, so the hold doubles as the backorder, and
+// OrderShortages reports what the stock cannot cover.
 //
 // It is called on create and again on every edit, and so REPLACES rather than
 // adds: the order's old reservation is released first, which is what lets an
@@ -130,47 +122,14 @@ func ReserveOrder(ctx context.Context, tx pgx.Tx, orderID int, lines []ReserveLi
 		return err
 	}
 
-	requested := map[int]float64{}
 	var counted []int
 	for _, id := range ids {
 		if items[id].counted() {
 			counted = append(counted, id)
 		}
 	}
-	for _, l := range lines {
-		if items[l.ItemID].counted() {
-			requested[l.ItemID] += l.Quantity
-		}
-	}
 	if len(counted) == 0 {
 		return nil
-	}
-
-	onHand, held, err := stockPosition(ctx, tx, counted)
-	if err != nil {
-		return err
-	}
-	var short []Shortage
-	for _, id := range counted {
-		need := requested[id] - carried[id]
-		if need < 0 {
-			need = 0
-		}
-		free := onHand[id] - held[id]
-		if free < 0 {
-			free = 0
-		}
-		if need > free+stockEpsilon {
-			it := items[id]
-			short = append(short, Shortage{
-				ItemID: it.uuid, SKU: it.sku, Name: it.name, UnitCode: it.unitCode,
-				Requested: roundTo(need, areaScale), Available: roundTo(free, areaScale),
-				Short: roundTo(need-free, areaScale),
-			})
-		}
-	}
-	if len(short) > 0 {
-		return &StockShortageError{Shortages: short}
 	}
 
 	fallbackWh := 0

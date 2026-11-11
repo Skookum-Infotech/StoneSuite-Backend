@@ -48,7 +48,7 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit, Thickness: in.Thickness}
 		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
@@ -145,13 +145,13 @@ func insertLines(ctx context.Context, tx pgx.Tx, estimateInternalID int, lines [
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20, $21,$22,$23,$24)`,
+				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit, dim_thickness
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19,$20, $21,$22,$23,$24,$25)`,
 			estimateInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID), kitUUID, kitName, l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(),
+			nullableInt(actorEmployeeID), kitUUID, kitName, l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(), l.dims.Thickness,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

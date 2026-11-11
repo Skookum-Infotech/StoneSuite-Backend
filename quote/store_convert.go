@@ -46,6 +46,7 @@ type estimateSourceLine struct {
 	width               *float64
 	slabs               *int
 	dimUnit             string
+	thickness           *float64
 }
 
 // loadEstimateSourceLines loads a live estimate's lines by its internal id.
@@ -56,7 +57,7 @@ func loadEstimateSourceLines(ctx context.Context, tx pgx.Tx, estimateInternalID 
 		       quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 		       line_subtotal, line_discount, line_tax, line_total,
 		       kit_uuid::text, kit_name,
-		       dim_length, dim_width, slabs, dim_unit
+		       dim_length, dim_width, slabs, dim_unit, dim_thickness
 		FROM estimate_item
 		WHERE estimate_id = $1 AND item_deleted_at IS NULL
 		ORDER BY line_number`, estimateInternalID)
@@ -73,7 +74,7 @@ func loadEstimateSourceLines(ctx context.Context, tx pgx.Tx, estimateInternalID 
 			&l.quantity, &l.unitPrice, &l.discountPercent, &l.taxRateID, &l.taxPercent,
 			&l.money.Subtotal, &l.money.Discount, &l.money.Tax, &l.money.Total,
 			&l.kitUUID, &l.kitName,
-			&l.length, &l.width, &l.slabs, &l.dimUnit,
+			&l.length, &l.width, &l.slabs, &l.dimUnit, &l.thickness,
 		); err != nil {
 			return nil, fmt.Errorf("scan estimate line: %w", err)
 		}
@@ -98,13 +99,13 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, quoteInternalID int, l
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit
-			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19, $20,$21, $22,$23,$24,$25)`,
+				item_created_by, kit_uuid, kit_name, dim_length, dim_width, slabs, dim_unit, dim_thickness
+			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19, $20,$21, $22,$23,$24,$25,$26)`,
 			quoteInternalID, l.lineNumber, l.inventoryItemID, l.internalID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
-			nullableInt(actorEmployeeID), l.kitUUID, l.kitName, l.length, l.width, l.slabs, l.dimUnit,
+			nullableInt(actorEmployeeID), l.kitUUID, l.kitName, l.length, l.width, l.slabs, l.dimUnit, l.thickness,
 		)
 		if err != nil {
 			return fmt.Errorf("insert converted quote item: %w", err)

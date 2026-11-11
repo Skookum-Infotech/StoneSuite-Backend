@@ -26,3 +26,25 @@ func SizeText(length, width *float64, slabs *int, unit string) string {
 	}
 	return text
 }
+
+// SizeTextThick is SizeText with the slab thickness added between the size and
+// the count: "120 × 60 in · 3 in thick · 2 slabs". A line that states no
+// thickness prints exactly as SizeText does.
+func SizeTextThick(length, width, thickness *float64, slabs *int, unit string) string {
+	if thickness == nil {
+		return SizeText(length, width, slabs, unit)
+	}
+	if unit == "" {
+		unit = "in"
+	}
+	thick := fmt.Sprintf("%s %s thick", trimNum(*thickness), unit)
+	sizeOnly := SizeText(length, width, nil, unit)
+	text := thick
+	if sizeOnly != "" {
+		text = sizeOnly + " · " + thick
+	}
+	if slabs != nil {
+		text += " · " + SizeText(nil, nil, slabs, unit)
+	}
+	return text
+}

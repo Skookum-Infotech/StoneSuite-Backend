@@ -15,6 +15,8 @@ name: Backend CI
 # The floor is go1.26.10: the first release carrying the Oct 2026 standard-
 # library security fixes (GO-2026-6599 .. GO-2026-6617). Go 1.25 has no
 # backport, so govulncheck fails on every go1.25.x -- 1.25.14 included.
+# Now go1.26.11, for GO-2026-6859 (net/http MaxBytesReader header race,
+# Nov 2026).
 # Keep the Dockerfile builder image on the same version, or the shipped
 # binary carries the vulnerable stdlib while CI is green.
 on:
@@ -35,7 +37,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: go.sum
       # Deterministic and zero-cost. Catches the formatting drift that
       # copy-cloning a module produces -- e.g. quote/types.go's struct tags
@@ -154,7 +156,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: go.sum
 
       # --single-transaction is REQUIRED, not tidiness: it matches what the Go
@@ -231,7 +233,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: go.sum
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -246,12 +248,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: go.sum
       # Pinned, not @latest, so a new scanner release can't change what this
       # job reports underneath an unrelated PR. x/vuln v1.8.0 raised its own
       # go directive to go1.26.0, which the old go1.25.13 pin couldn't build
-      # (an install error, not a real vulnerability); the go1.26.10 pin above
+      # (an install error, not a real vulnerability); the go1.26.x pin above
       # can, so moving past v1.7.0 is possible now. Bump this deliberately
       # alongside the pinned Go version, not automatically.
       - name: Run govulncheck

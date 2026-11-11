@@ -116,14 +116,14 @@ func onHand(t *testing.T, pool *pgxpool.Pool, itemUUID string) float64 {
 	return v
 }
 
-// shortageOf unwraps the stock-shortage error, failing if err is anything else.
-func shortageOf(t *testing.T, err error) []inventory.Shortage {
+// shortagesOf is what the saved order holds that stock cannot cover.
+func shortagesOf(t *testing.T, pool *pgxpool.Pool, orderUUID string) []inventory.Shortage {
 	t.Helper()
-	var se *inventory.StockShortageError
-	if !errors.As(err, &se) {
-		t.Fatalf("err = %v (%T), want *inventory.StockShortageError", err, err)
+	short, err := StockShortages(context.Background(), pool, orderUUID)
+	if err != nil {
+		t.Fatalf("StockShortages: %v", err)
 	}
-	return se.Shortages
+	return short
 }
 
 func mustCreate(t *testing.T, pool *pgxpool.Pool, cust string, items []LineInput2) *Order {
@@ -148,14 +148,14 @@ func orderCount(t *testing.T, pool *pgxpool.Pool, custUUID string) int {
 
 // ---- the check ---------------------------------------------------------------
 
-func TestCreate_RefusedWhenStockIsShort(t *testing.T) {
+func TestCreate_SavesAShortOrder_AndReportsTheGap(t *testing.T) {
 	pool := testPool(t)
 	cust := seedCustomer(t, pool)
 	item := seedItem(t, pool, "quantity", true, 10)
 
-	_, err := Create(context.Background(), pool, orderFor(cust, lines(line{item, 12})), 1)
+	o := mustCreate(t, pool, cust, lines(line{item, 12}))
 
-	short := shortageOf(t, err)
+	short := shortagesOf(t, pool, o.ID)
 	if len(short) != 1 {
 		t.Fatalf("shortages = %+v, want one", short)
 	}
@@ -164,41 +164,53 @@ func TestCreate_RefusedWhenStockIsShort(t *testing.T) {
 		t.Errorf("shortage = %+v, want item %s requested 12 available 10 short 2", s, item)
 	}
 	if s.SKU == "" || s.Name == "" || s.UnitCode != "EA" {
-		t.Errorf("shortage must carry what the dialog shows: %+v", s)
+		t.Errorf("shortage must carry what the warning shows: %+v", s)
 	}
-	// Refused means nothing was saved and nothing is held.
-	if n := orderCount(t, pool, cust); n != 0 {
-		t.Errorf("%d order(s) saved for a refused create, want 0", n)
+	// Saved, holding the full quantity as a backorder; nothing leaves stock yet.
+	if n := orderCount(t, pool, cust); n != 1 {
+		t.Errorf("%d order(s) saved, want 1", n)
+	}
+	if got := held(t, pool, o.ID, item); got != 12 {
+		t.Errorf("holds %v, want the full 12", got)
 	}
 	if got := onHand(t, pool, item); got != 10 {
 		t.Errorf("on hand = %v, want 10 untouched", got)
 	}
 }
 
-func TestCreate_ReservesWhatItNeeds_AndTheNextOrderSeesIt(t *testing.T) {
+func TestCreate_ACoveredOrderIsNotShort(t *testing.T) {
+	pool := testPool(t)
+	item := seedItem(t, pool, "quantity", true, 10)
+
+	o := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 10}))
+
+	if short := shortagesOf(t, pool, o.ID); len(short) != 0 {
+		t.Errorf("shortages = %+v, want none for an order the stock covers", short)
+	}
+}
+
+func TestCreate_FirstComeFirstServed(t *testing.T) {
 	pool := testPool(t)
 	item := seedItem(t, pool, "quantity", true, 10)
 
 	a := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 6}))
-	if got := held(t, pool, a.ID, item); got != 6 {
-		t.Fatalf("order A holds %v, want 6", got)
+	// Only 4 are free for the next order.
+	b := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 5}))
+	if short := shortagesOf(t, pool, b.ID); len(short) != 1 || short[0].Requested != 5 || short[0].Available != 4 || short[0].Short != 1 {
+		t.Errorf("order B shortages = %+v, want requested 5 available 4 short 1", short)
 	}
-
-	// Only 4 are free now: another order cannot promise the same stone.
-	_, err := Create(context.Background(), pool, orderFor(seedCustomer(t, pool), lines(line{item, 5})), 1)
-	short := shortageOf(t, err)
-	if short[0].Requested != 5 || short[0].Available != 4 || short[0].Short != 1 {
-		t.Errorf("shortage = %+v, want requested 5 available 4 short 1", short[0])
+	// Nothing is left for a third, and the later orders never make A look short.
+	c := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 1}))
+	if short := shortagesOf(t, pool, c.ID); len(short) != 1 || short[0].Available != 0 || short[0].Short != 1 {
+		t.Errorf("order C shortages = %+v, want available 0 short 1", short)
 	}
-
-	b := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 4}))
-	if got := held(t, pool, b.ID, item); got != 4 {
-		t.Errorf("order B holds %v, want 4", got)
+	if short := shortagesOf(t, pool, a.ID); len(short) != 0 {
+		t.Errorf("order A shortages = %+v, want none: it came first", short)
 	}
-	// Everything is spoken for now.
-	_, err = Create(context.Background(), pool, orderFor(seedCustomer(t, pool), lines(line{item, 1})), 1)
-	if got := shortageOf(t, err)[0].Available; got != 0 {
-		t.Errorf("available = %v, want 0", got)
+	// Restocking covers them in turn.
+	giveStock(t, pool, item, 12)
+	if short := shortagesOf(t, pool, c.ID); len(short) != 0 {
+		t.Errorf("order C shortages after restocking = %+v, want none", short)
 	}
 }
 
@@ -207,10 +219,10 @@ func TestCreate_AddsUpLinesForTheSameItem(t *testing.T) {
 	item := seedItem(t, pool, "quantity", true, 10)
 
 	// Two lines of 6 are each fine alone; together they ask for 12.
-	_, err := Create(context.Background(), pool, orderFor(seedCustomer(t, pool), lines(line{item, 6}, line{item, 6})), 1)
+	o := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 6}, line{item, 6}))
 
-	if got := shortageOf(t, err)[0]; got.Requested != 12 || got.Available != 10 {
-		t.Errorf("shortage = %+v, want requested 12 (both lines) available 10", got)
+	if short := shortagesOf(t, pool, o.ID); len(short) != 1 || short[0].Requested != 12 || short[0].Available != 10 {
+		t.Errorf("shortages = %+v, want requested 12 (both lines) available 10", short)
 	}
 }
 
@@ -220,10 +232,9 @@ func TestCreate_NamesEveryShortItem(t *testing.T) {
 	shortA := seedItem(t, pool, "quantity", true, 1)
 	shortB := seedItem(t, pool, "serialized", true, 0)
 
-	_, err := Create(context.Background(), pool, orderFor(seedCustomer(t, pool),
-		lines(line{enough, 5}, line{shortA, 3}, line{shortB, 2})), 1)
+	o := mustCreate(t, pool, seedCustomer(t, pool), lines(line{enough, 5}, line{shortA, 3}, line{shortB, 2}))
 
-	short := shortageOf(t, err)
+	short := shortagesOf(t, pool, o.ID)
 	got := map[string]inventory.Shortage{}
 	for _, s := range short {
 		got[s.ItemID] = s
@@ -257,15 +268,20 @@ func TestCreate_DoesNotCheckFreeTextOrUntrackedLines(t *testing.T) {
 	if n != 0 {
 		t.Errorf("%d reservation row(s), want none", n)
 	}
+	if short := shortagesOf(t, pool, order.ID); len(short) != 0 {
+		t.Errorf("shortages = %+v, want none", short)
+	}
 }
 
 func TestCreate_AlwaysChecksASlabItem_EvenIfTrackingWasSwitchedOff(t *testing.T) {
 	pool := testPool(t)
 	slab := seedItem(t, pool, "serialized", false, 0)
 
-	_, err := Create(context.Background(), pool, orderFor(seedCustomer(t, pool), lines(line{slab, 1})), 1)
+	o := mustCreate(t, pool, seedCustomer(t, pool), lines(line{slab, 1}))
 
-	shortageOf(t, err)
+	if short := shortagesOf(t, pool, o.ID); len(short) != 1 {
+		t.Errorf("shortages = %+v, want the slab item listed", short)
+	}
 }
 
 // ---- editing, cancelling, deleting -------------------------------------------
@@ -288,32 +304,35 @@ func TestUpdate_RewritesTheReservation_WithoutCompetingWithItself(t *testing.T) 
 		t.Errorf("holds %v after raising to 9, want 9 (rewritten, not stacked)", got)
 	}
 
-	// 11 is more than exists: refused, and the earlier hold and lines are intact.
-	shortageOf(t, update(11))
-	if got := held(t, pool, o.ID, item); got != 9 {
-		t.Errorf("holds %v after a refused edit, want the earlier 9", got)
+	// 11 is more than exists: saved anyway, holding 11 and short by 1.
+	if err := update(11); err != nil {
+		t.Fatalf("Update to 11: %v", err)
 	}
-	back, err := Get(context.Background(), pool, o.ID)
-	if err != nil {
-		t.Fatal(err)
+	if got := held(t, pool, o.ID, item); got != 11 {
+		t.Errorf("holds %v after raising to 11, want 11", got)
 	}
-	if back.Items[0].Quantity != 9 {
-		t.Errorf("line quantity = %v after a refused edit, want 9", back.Items[0].Quantity)
+	if short := shortagesOf(t, pool, o.ID); len(short) != 1 || short[0].Short != 1 {
+		t.Errorf("shortages = %+v, want short by 1", short)
 	}
 
 	// Lowering it frees stock for others.
 	if err := update(3); err != nil {
 		t.Fatalf("Update to 3: %v", err)
 	}
-	mustCreate(t, pool, other, lines(line{item, 7}))
+	next := mustCreate(t, pool, other, lines(line{item, 7}))
+	if short := shortagesOf(t, pool, next.ID); len(short) != 0 {
+		t.Errorf("shortages = %+v, want none: lowering to 3 left 7 free", short)
+	}
 }
 
 func TestCancel_ReleasesTheReservation(t *testing.T) {
 	pool := testPool(t)
 	item := seedItem(t, pool, "quantity", true, 10)
 	o := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 10}))
-	if _, err := Create(context.Background(), pool, orderFor(seedCustomer(t, pool), lines(line{item, 1})), 1); err == nil {
-		t.Fatal("stock is fully reserved, a second order should be refused")
+	// Stock is fully reserved, so a second order is short.
+	second := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 1}))
+	if short := shortagesOf(t, pool, second.ID); len(short) != 1 {
+		t.Fatalf("shortages = %+v, want the second order short while the first holds everything", short)
 	}
 
 	if _, err := Transition(context.Background(), pool, o.ID, "CANC", 1); err != nil {
@@ -323,7 +342,9 @@ func TestCancel_ReleasesTheReservation(t *testing.T) {
 	if got := held(t, pool, o.ID, item); got != 0 {
 		t.Errorf("a cancelled order still holds %v", got)
 	}
-	mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 10}))
+	if short := shortagesOf(t, pool, second.ID); len(short) != 0 {
+		t.Errorf("shortages = %+v after the cancel, want none: the stock is free again", short)
+	}
 }
 
 func TestSoftDelete_ReleasesTheReservation(t *testing.T) {
@@ -335,7 +356,10 @@ func TestSoftDelete_ReleasesTheReservation(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 10}))
+	next := mustCreate(t, pool, seedCustomer(t, pool), lines(line{item, 10}))
+	if short := shortagesOf(t, pool, next.ID); len(short) != 0 {
+		t.Errorf("shortages = %+v, want none: the deleted order's stock is free again", short)
+	}
 }
 
 // ---- filling ------------------------------------------------------------------

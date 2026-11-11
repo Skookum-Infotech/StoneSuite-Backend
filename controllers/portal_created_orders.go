@@ -26,10 +26,6 @@ const customerNotActiveMessage = "Your account can't place or change orders righ
 // whose Sales Order staff have already moved on from Draft.
 const orderLockedMessage = "This order is now being processed and can't be changed here. Please contact us."
 
-// orderStockMessage is what a customer sees when a change would need material
-// that is not free: staff, not the customer, can sort that out.
-const orderStockMessage = "Some of the materials on this order aren't available right now. Please contact us."
-
 // PortalCreatedOrderOps serves the customer portal's "Created Orders": the
 // countertop order form a customer files, the list of what they have filed, and
 // changing an order while its Sales Order is still a draft.
@@ -190,7 +186,6 @@ func submitterOf(sess *portal.Session) orderform.Submitter {
 // log.
 func createdOrderErrorResponse(err error) (status int, message string, serverFault bool) {
 	var invalid *orderform.ValidationError
-	var shortage *inventory.StockShortageError
 	switch {
 	case errors.As(err, &invalid):
 		return http.StatusBadRequest, invalid.Message, false
@@ -201,8 +196,6 @@ func createdOrderErrorResponse(err error) (status int, message string, serverFau
 		return http.StatusConflict, orderLockedMessage, false
 	case errors.Is(err, orderform.ErrCustomerNotActive):
 		return http.StatusConflict, customerNotActiveMessage, false
-	case errors.As(err, &shortage):
-		return http.StatusConflict, orderStockMessage, false
 	case salesorder.IsClientError(err), inventory.IsClientError(err):
 		return http.StatusBadRequest, err.Error(), false
 	default:

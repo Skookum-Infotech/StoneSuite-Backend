@@ -38,7 +38,7 @@ const editLineSelect = `
 	       COALESCE(soi.unit_code, ''), soi.quantity, soi.unit_price, soi.discount_percent,
 	       soi.tax_rate_id, soi.tax_percent, soi.warehouse_id,
 	       COALESCE(soi.kit_uuid::text, ''), COALESCE(soi.kit_name, ''),
-	       soi.dim_length, soi.dim_width, soi.slabs, COALESCE(soi.dim_unit, '')
+	       soi.dim_length, soi.dim_width, soi.slabs, COALESCE(soi.dim_unit, ''), soi.dim_thickness
 	FROM sales_order_item soi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = soi.inventory_item_id
 	WHERE soi.sales_order_id = $1 AND soi.item_deleted_at IS NULL
@@ -101,7 +101,7 @@ func loadEditLines(ctx context.Context, tx pgx.Tx, orderInternalID int) ([]LineI
 			&l.Quantity, &l.UnitPrice, &l.DiscountPercent,
 			&l.TaxRateID, &taxPercent, &l.WarehouseID,
 			&l.KitUUID, &l.KitName,
-			&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit); err != nil {
+			&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit, &l.Thickness); err != nil {
 			return nil, fmt.Errorf("scan sales order line for edit: %w", err)
 		}
 		l.TaxPercent = &taxPercent

@@ -3,9 +3,9 @@ package purchaseorder
 // receipt_rollup.go — AD-4: derive the header receiving status from per-line
 // ordered vs. received quantities. Pure; built and tested now so the future
 // Item Receipt module can drive SENT → PART → RCVD automatically after it
-// posts qty_received updates. Nothing in this module calls it from a public
-// endpoint yet — PART/RCVD remain manually reachable via transition for
-// tenants operating without receipts.
+// posts qty_received updates. PART/RCVD also remain manually reachable via
+// transition for tenants operating without receipts. paid_rollup.go uses this
+// to work out where an order belongs when it stops being Paid.
 
 // LineReceipt is one line's ordered vs. received quantity.
 type LineReceipt struct {

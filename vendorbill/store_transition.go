@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/purchaseorder"
 )
 
 // Transition moves a live vendor bill to toStatusCode, validating the move
@@ -128,6 +129,12 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 		if err := settleOnPaid(ctx, tx, uuid, actorEmployeeID); err != nil {
 			return nil, err
 		}
+	}
+	// The purchase order behind this bill reads Paid only while every live bill
+	// against it does, so any move this bill makes — onto Paid, off it, or out
+	// of the count altogether via Void — can change where the order belongs.
+	if err := purchaseorder.ApplyBillPaymentRollup(ctx, tx, internalID, actorEmployeeID); err != nil {
+		return nil, err
 	}
 	// Any move takes the bill out of the state a Reject left it in.
 	if err := approvalchain.ClearRejection(ctx, tx, recordTypeID, internalID); err != nil {

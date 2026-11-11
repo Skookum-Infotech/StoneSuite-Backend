@@ -13,8 +13,11 @@ import (
 // vendor's invoice for a first delivery can be entered before the order is
 // complete; Closed is included because a short-closed order still owes for
 // what did arrive. (A Closed order with nothing received has nothing to bill
-// -- planConversion reports that.)
-var convertibleStatuses = map[string]bool{"PART": true, "RCVD": true, "CLSD": true}
+// -- planConversion reports that.) Paid is included for the same reason as
+// Partially Received: an order paid for its first delivery still owes for the
+// next one, and raising that bill takes the order back off Paid
+// (purchaseorder.ApplyBillPaymentRollup).
+var convertibleStatuses = map[string]bool{"PART": true, "RCVD": true, "CLSD": true, "PAID": true}
 
 // IsConvertibleStatus reports whether a purchase order in statusCode may be
 // converted to a vendor bill.

@@ -50,7 +50,8 @@ func resolveMethod(ctx context.Context, pool *pgxpool.Pool, methodID int) error 
 // + snapshots the vendor (fixed at creation, spec AD-14), validates the
 // payment method and custom fields, inserts the row, assigns the VPAY
 // document number post-insert, and writes a 'create' history row. New
-// payments start at DRFT, with applied_total 0 and unapplied_amount equal to
+// payments start at DRFT — or at PINI when the request already applies money
+// to a bill — with applied_total 0 and unapplied_amount equal to
 // the full amount. Any inline in.Applications run in that same transaction via
 // applyTx, so a failing application leaves no payment behind and a retry
 // cannot create a second one. A non-empty IdempotencyKey makes a retried
@@ -93,7 +94,15 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 	if err != nil {
 		return nil, err
 	}
-	draftStatusID, err := statusIDByCode(ctx, pool, typeID, "DRFT")
+	// A payment recorded against a bill starts at PINI ("Payment Initiated"):
+	// the money is committed to that bill but has not gone out, and the bill
+	// reads the same until the payment is completed. A payment created on its
+	// own, with nothing applied yet, is still a plain draft.
+	startCode := "DRFT"
+	if len(in.Applications) > 0 {
+		startCode = PaymentInitiatedStatusCode
+	}
+	startStatusID, err := statusIDByCode(ctx, pool, typeID, startCode)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +151,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 			$12,0,$12,'none',
 			$13,$14,$15,$15
 		) RETURNING vendor_payment_id, vendor_payment_uuid`,
-		typeID, draftStatusID, vendorID, vendorName,
+		typeID, startStatusID, vendorID, vendorName,
 		in.MethodID, in.ReferenceNumber, in.PaymentDate,
 		in.ScheduledDate, in.CurrencyID,
 		in.Memo, in.InternalNotes,
@@ -159,7 +168,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorPaymentInput
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO vendor_payment_history (vendor_payment_id, from_status_id, to_status_id, action, actor_employee_id)
-		VALUES ($1, NULL, $2, 'create', $3)`, newID, draftStatusID, nullableInt(actorEmployeeID)); err != nil {
+		VALUES ($1, NULL, $2, 'create', $3)`, newID, startStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert vendor payment create history: %w", err)
 	}
 

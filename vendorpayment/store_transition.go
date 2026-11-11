@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/vendorbill"
 )
 
@@ -24,6 +25,13 @@ import (
 // reversed, and every live vendor_payment_refund on it is soft-deleted (moot
 // once its application is reversed), in the same transaction — mirroring
 // payment.Transition's VOID cascade (spec AD-8).
+//
+// Moving to PAID ("Complete Payment") cascades the other way: the money the
+// payment has applied stops being in flight, so every bill it is applied to is
+// re-derived (Payment Initiated -> Paid, or Partially Paid if it is still owed
+// something), and each of those bills' purchase orders is re-derived in turn —
+// an order reads Paid once every live bill against it does. A VOID runs that
+// same order rollup, which puts a paid order back on its receiving status.
 func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string, actorEmployeeID int) (*VendorPayment, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -80,27 +88,23 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		return nil, ClientError{Msg: "Unknown target status: " + toStatusCode}
 	}
 
-	if toStatusCode == "VOID" {
-		// ORDER BY vendor_bill_id fixes a global lock order across bills so two
-		// concurrent VOID cascades touching the same two bills can't lock them
-		// in opposite orders and deadlock.
-		rows, err := tx.Query(ctx, `SELECT vendor_bill_id FROM vendor_payment_application WHERE vendor_payment_id = $1 AND application_deleted_at IS NULL ORDER BY vendor_bill_id`, internalID)
+	// Bills whose settlement this move changes: every bill this payment has
+	// live applications against. Completing the payment turns its applications
+	// into real money; voiding it takes them away again. Either way the bills
+	// — and the purchase orders behind them — are re-derived further down.
+	var settledBillIDs []int
+	if toStatusCode == PaidStatusCode || toStatusCode == "VOID" {
+		settledBillIDs, err = liveApplicationBillIDs(ctx, tx, internalID)
 		if err != nil {
-			return nil, fmt.Errorf("list live vendor payment applications: %w", err)
+			return nil, err
 		}
-		var billInternalIDs []int
-		for rows.Next() {
-			var bid int
-			if err := rows.Scan(&bid); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan application vendor bill id: %w", err)
-			}
-			billInternalIDs = append(billInternalIDs, bid)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("list live vendor payment applications: %w", err)
-		}
+	}
+
+	if toStatusCode == "VOID" {
+		// settledBillIDs is ordered by vendor_bill_id, which fixes a global lock
+		// order across bills so two concurrent VOID cascades touching the same
+		// two bills can't lock them in opposite orders and deadlock.
+		billInternalIDs := settledBillIDs
 
 		for _, billInternalID := range billInternalIDs {
 			li, err := vendorbill.LockForUpdateByID(ctx, tx, billInternalID)
@@ -192,6 +196,29 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 		return nil, err
 	}
 
+	// Completing the payment is what actually settles its bills: re-derive each
+	// one now that this payment reads PAID, so a bill that was "Payment
+	// Initiated" lands on Paid (or Partially Paid, if it is still owed money).
+	// A VOID has already recomputed them above, with its applications reversed.
+	if toStatusCode == PaidStatusCode {
+		for _, billInternalID := range settledBillIDs {
+			li, err := vendorbill.LockForUpdateByID(ctx, tx, billInternalID)
+			if err != nil {
+				return nil, err
+			}
+			if err := vendorbill.RecomputeBalance(ctx, tx, li, "apply", actorEmployeeID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Then the purchase order behind each of those bills: it reads Paid once
+	// every live bill against it does (purchaseorder.ApplyBillPaymentRollup).
+	for _, billInternalID := range settledBillIDs {
+		if err := purchaseorder.ApplyBillPaymentRollup(ctx, tx, billInternalID, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := auditTx(ctx, tx, auditTransition, id, nil, employeeExtra(actorEmployeeID)); err != nil {
 		return nil, err
 	}
@@ -200,6 +227,32 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, id, toStatusCode string
 	}
 	notifyTransition(ctx, pool, id, internalID, typeID, toStatusID, toStatusCode, requiredHere, approvalStatus, targetApprovers, actorEmployeeID)
 	return Get(ctx, pool, id)
+}
+
+// liveApplicationBillIDs lists the bills a payment has live applications
+// against, ascending by internal id — a fixed lock order, so two cascades
+// touching the same bills can never take them in opposite orders and deadlock.
+func liveApplicationBillIDs(ctx context.Context, tx pgx.Tx, paymentInternalID int) ([]int, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT vendor_bill_id FROM vendor_payment_application
+		WHERE vendor_payment_id = $1 AND application_deleted_at IS NULL
+		ORDER BY vendor_bill_id`, paymentInternalID)
+	if err != nil {
+		return nil, fmt.Errorf("list live vendor payment applications: %w", err)
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var bid int
+		if err := rows.Scan(&bid); err != nil {
+			return nil, fmt.Errorf("scan application vendor bill id: %w", err)
+		}
+		out = append(out, bid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list live vendor payment applications: %w", err)
+	}
+	return out, nil
 }
 
 // notifyTransition best-effort-notifies approvers/owner around a manual

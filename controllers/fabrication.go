@@ -44,10 +44,12 @@ import (
 //	POST   /api/tenant/fabrication-jobs/{uuid}/pieces            — add a piece (before Cutting only)
 //	PATCH  /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid} — edit a piece (before Cutting only)
 //	DELETE /api/tenant/fabrication-jobs/{uuid}/pieces/{pieceUuid} — remove a piece (before Cutting only)
-type FabricationOps struct{}
+type FabricationOps struct {
+	cp *tenancy.ControlPlane
+}
 
 // NewFabricationOps constructs the handler group.
-func NewFabricationOps() *FabricationOps { return &FabricationOps{} }
+func NewFabricationOps(cp *tenancy.ControlPlane) *FabricationOps { return &FabricationOps{cp: cp} }
 
 // authFJ resolves JWT + tenant pool + the installation:<action> grant for
 // requests with no specific record yet (list/search/create).

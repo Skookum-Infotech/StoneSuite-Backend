@@ -2,10 +2,15 @@ package controllers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
 	"stonesuite-backend/idempotency"
+	"stonesuite-backend/invoice"
 	"stonesuite-backend/payment"
 )
 
@@ -30,6 +35,7 @@ func (h *PaymentOps) Transition(w http.ResponseWriter, r *http.Request) {
 		paymentFail(w, err, "Failed to transition payment.")
 		return
 	}
+	notifyCustomerStatus(r.Context(), h.cp, identityID, p.Customer.ID, custResPayment, p.StatusCode, custDisplayPayment, p.Number, p.Amount, id)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
 }
 
@@ -78,7 +84,25 @@ func (h *PaymentOps) Apply(w http.ResponseWriter, r *http.Request) {
 		paymentFail(w, err, "Failed to apply payment.")
 		return
 	}
+	h.notifyPaymentApplied(r, pool, identityID, p, req)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "payment": p})
+}
+
+// notifyPaymentApplied best-effort-emails the payment's customer that a payment
+// was received, and the invoice's customer when the invoice became part-paid or paid.
+func (h *PaymentOps) notifyPaymentApplied(r *http.Request, pool *pgxpool.Pool, identityID string, p *payment.Payment, req payApplyRequest) {
+	ctx := r.Context()
+	ev := customerReceivedCopy().event(customerEventReceived, custResPayment, custDisplayPayment, p.Number, p.ID, req.Amount, time.Now())
+	notifyCustomerEvent(ctx, h.cp, identityID, p.Customer.ID, ev)
+	inv, err := invoice.Get(ctx, pool, req.InvoiceUUID)
+	if err != nil {
+		slog.WarnContext(ctx, "customer notify: load invoice after payment apply failed", "invoiceId", req.InvoiceUUID, "error", err)
+		return
+	}
+	if inv.StatusCode != invoiceStatusPart && inv.StatusCode != invoiceStatusPaid {
+		return
+	}
+	notifyCustomerStatus(ctx, h.cp, identityID, inv.Customer.ID, custResInvoice, inv.StatusCode, custDisplayInvoice, inv.Number, inv.GrandTotal, req.InvoiceUUID)
 }
 
 type payUnapplyRequest struct {

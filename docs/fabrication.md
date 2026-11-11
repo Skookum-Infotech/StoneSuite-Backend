@@ -31,6 +31,11 @@ also be put On Hold or Cancelled. If approvers are configured, a job waits
 for sign-off before it can leave the Templating status or the QC Pending
 status.
 
+Customers with an active portal login are emailed whenever their job changes
+stage, including when it is put On Hold, resumed, or Cancelled, and when they
+approve the template. Draft is never emailed, and customers marked Do Not
+Contact are never emailed.
+
 ## Job site, schedule, and assignment
 
 A job's detail page has a Job Site section (site contact, address, and

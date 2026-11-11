@@ -54,7 +54,7 @@ type InstallScheduleOps struct {
 
 // NewInstallScheduleOps constructs the handler group; fallbackTZ (nil means UTC) is used when the tenant has no valid timezone.
 func NewInstallScheduleOps(fallbackTZ *time.Location) *InstallScheduleOps {
-	return &InstallScheduleOps{fallbackTZ: fallbackTZ, now: time.Now, jobs: NewFabricationOps()}
+	return &InstallScheduleOps{fallbackTZ: fallbackTZ, now: time.Now, jobs: NewFabricationOps(nil)} // jobs is used only for auth; it sends no customer email, so no control plane
 }
 
 // installCaller is the authenticated caller's tenant pool, identity and granted scope.

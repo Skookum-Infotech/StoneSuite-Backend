@@ -182,5 +182,6 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete estimate: %w", err)
 	}
+	notifyDeleted(ctx, pool, uuid, internalID, actorEmployeeID)
 	return nil
 }

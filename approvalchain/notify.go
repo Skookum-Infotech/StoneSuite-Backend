@@ -231,7 +231,7 @@ func deletedRecipients(actor contact, actorOK bool, owner contact, ownerOK bool)
 	if actorOK {
 		actors = []contact{actor}
 	}
-	if ownerOK && !(actorOK && owner.UserID == actor.UserID) {
+	if ownerOK && (!actorOK || owner.UserID != actor.UserID) {
 		owners = []contact{owner}
 	}
 	return actors, owners

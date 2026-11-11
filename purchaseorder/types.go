@@ -52,6 +52,12 @@ type LineInput struct {
 	// DimensionUnit is the one unit length, width and thickness are measured in
 	// (mm, cm, in, ft, m). Blank takes the item's unit, then inches.
 	DimensionUnit string `json:"dimensionUnit"`
+
+	// KitUUID / KitName say the line was added from a kit, so the document groups
+	// it under that kit's heading. A label only: nothing about the line's pricing,
+	// stock or conversion depends on them (see package kitref).
+	KitUUID string `json:"kitUuid"`
+	KitName string `json:"kitName"`
 }
 
 // purchaseOrderFields is the header payload shared by create and update
@@ -146,6 +152,12 @@ type Line struct {
 	// SlabsOnOrder is how many of this line's slabs are still On Order in
 	// Inventory -- minted when the order was sent, not yet arrived on a receipt.
 	SlabsOnOrder int `json:"slabsOnOrder,omitempty"`
+
+	// KitID / KitName are set on a line that was added from a kit: the kit's uuid
+	// and the name it had at the time. Consecutive lines with the same KitID are
+	// one group under one heading.
+	KitID   *string `json:"kitId,omitempty"`
+	KitName string  `json:"kitName,omitempty"`
 }
 
 // PurchaseOrder is the full API response for a purchase order header (+

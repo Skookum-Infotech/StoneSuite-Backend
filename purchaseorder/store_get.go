@@ -114,7 +114,7 @@ const itemSelect = `
 	       COALESCE(ii.inventory_item_tracking, ''),
 	       poi.expected_slabs,
 	       poi.dim_length, poi.dim_width, poi.dim_unit,
-	       poi.dim_thickness,
+	       poi.dim_thickness, poi.kit_uuid::text, poi.kit_name,
 	       COALESCE((
 	           SELECT COUNT(*)
 	           FROM item_receipt_line irl
@@ -143,7 +143,7 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.QtyReceived, &l.QtyBilled, &l.UnitPrice, &l.DiscountPercent, &l.TaxPercent,
 		&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
-		&l.Tracking, &l.ExpectedSlabs, &l.Length, &l.Width, &l.DimensionUnit, &l.Thickness, &l.SlabsReceived,
+		&l.Tracking, &l.ExpectedSlabs, &l.Length, &l.Width, &l.DimensionUnit, &l.Thickness, &l.KitID, &l.KitName, &l.SlabsReceived,
 		&l.SlabsOnOrder,
 	)
 	return l, err

@@ -10456,3 +10456,20 @@ ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2
 ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
 ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
 ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+
+-- A requisition / vendor bill line's slab thickness, in the line's own dim_unit
+-- (like dim_length / dim_width). Optional and descriptive: it never enters the
+-- quantity. Requisition -> PO and PO -> bill conversion copy it.
+ALTER TABLE requisition_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+ALTER TABLE vendor_bill_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+
+-- Kit heading on purchases lines, exactly as on sales lines: a line added from a
+-- kit remembers the kit's uuid and the name it had at the time. No foreign key on
+-- purpose (the label outlives the kit). Requisition -> PO and PO -> bill
+-- conversion copy it.
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE requisition_item    ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE requisition_item    ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE vendor_bill_item    ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE vendor_bill_item    ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';

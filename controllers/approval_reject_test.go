@@ -17,7 +17,7 @@ import (
 func TestRejectHandlers_RequireAuth(t *testing.T) {
 	handlers := map[string]http.HandlerFunc{
 		"estimate":       NewEstimateOps().Reject,
-		"quote":          NewQuoteOps().Reject,
+		"quote":          NewQuoteOps(nil).Reject,
 		"sales order":    NewSalesOrderOps(nil).Reject,
 		"invoice":        NewInvoiceOps(nil).Reject,
 		"purchase order": NewPurchaseOrderOps().Reject,
@@ -25,7 +25,7 @@ func TestRejectHandlers_RequireAuth(t *testing.T) {
 		"vendor bill":    NewVendorBillOps().Reject,
 		"vendor payment": NewVendorPaymentOps().Reject,
 		"payment":        NewPaymentOps(nil).Reject,
-		"credit memo":    NewCreditMemoOps().Reject,
+		"credit memo":    NewCreditMemoOps(nil).Reject,
 		"refund":         NewRefundOps(nil).Reject,
 		"vendor credit":  NewVendorCreditOps().Reject,
 		"bin transfer":   NewBinTransferOps().Reject,

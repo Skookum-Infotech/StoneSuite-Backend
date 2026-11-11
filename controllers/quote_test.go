@@ -13,7 +13,7 @@ import (
 )
 
 func TestQuoteOps_RequiresAuth(t *testing.T) {
-	h := NewQuoteOps()
+	h := NewQuoteOps(nil)
 	handlers := map[string]http.HandlerFunc{
 		"Create":     h.Create,
 		"Get":        h.Get,

@@ -48,6 +48,7 @@ func (h *CreditMemoOps) Transition(w http.ResponseWriter, r *http.Request) {
 		creditMemoFail(w, err, "Failed to transition credit memo.")
 		return
 	}
+	notifyCustomerStatus(r.Context(), h.cp, identityID, cm.Customer.ID, custResCreditMemo, cm.StatusCode, custDisplayCreditMemo, cm.Number, cm.GrandTotal, id)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }
 
@@ -95,6 +96,11 @@ func (h *CreditMemoOps) Apply(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		creditMemoFail(w, err, "Failed to apply credit memo.")
 		return
+	}
+	// Only a fully applied memo reaches APPL; a partial apply leaves it APPV, so
+	// the "credit applied" email must not go out while a balance remains.
+	if cm.StatusCode == creditMemoStatusApplied {
+		notifyCustomerStatus(r.Context(), h.cp, identityID, cm.Customer.ID, custResCreditMemo, creditMemoStatusApplied, custDisplayCreditMemo, cm.Number, req.Amount, id)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/inventory"
 )
 
@@ -69,6 +70,16 @@ func Cancel(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeI
 	if err != nil {
 		return nil, err
 	}
+	// Approver counts feed the post-commit notification, same as Transition.
+	approverTable := moduleConfig().ApproverTable
+	requiredHere, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, st.statusID)
+	if err != nil {
+		return nil, err
+	}
+	targetApprovers, err := approvalchain.ActiveApproverCount(ctx, tx, approverTable, recordTypeID, cancID)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE fabrication_job SET
 			fabrication_job_status = $2, job_cancel_requested_at = NULL, job_held_from_status_id = NULL,
@@ -81,6 +92,7 @@ func Cancel(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeI
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit cancel: %w", err)
 	}
+	notifyTransition(ctx, pool, uuid, st.internalID, recordTypeID, cancID, StatusCancelled, requiredHere, st.approvalStatus, targetApprovers, actorEmployeeID)
 	return Get(ctx, pool, uuid)
 }
 

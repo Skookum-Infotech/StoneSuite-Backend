@@ -267,6 +267,22 @@ customer's email on file. A confirmation dialog shows who it will be sent to
 before it goes out, so you can double-check the recipient before the email
 leaves StoneSuite.
 
+## Automatic status emails to customers
+
+StoneSuite also emails the customer on its own when a document reaches a
+milestone. Sales Orders: Open, Partially Fulfilled, Fulfilled, and Cancelled
+(and a notice if the order is deleted, but only when the customer could see it
+in their portal). Quotes: when sent, and when approved. Invoices: Sent,
+Partially Paid, Paid, Void, and Overdue. Payments: when deposited, and again on
+each invoice a payment is applied to. Refunds: when sent. Credit Memos: when
+approved and when applied.
+
+Only customers with an active portal login receive these emails, and they go
+to that login's address. A customer marked Do Not Contact is never emailed, and
+neither is a customer with no portal login or a suspended or revoked one. The
+email links to the document in the customer portal. These are separate from
+Send to Customer, which you trigger yourself.
+
 ## Exporting a document as a PDF
 
 Every sales document — Estimate, Quote, Sales Order, Invoice, Payment,

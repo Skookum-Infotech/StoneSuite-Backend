@@ -56,6 +56,16 @@ func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, interna
 	})
 }
 
+// notifyDeleted best-effort-notifies the actor (and the owner, if different)
+// that a sales order was deleted. Call only after the soft delete has committed.
+func notifyDeleted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	approvalchain.NotifyDeleted(ctx, pool, approvalchain.EventContext{
+		Table: salesOrderTable, IDColumn: salesOrderIDColumn, NumberColumn: salesOrderNumberColumn, OwnerColumn: salesOrderOwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: salesOrderResource, DisplayName: salesOrderDisplayName, RecordUUID: uuid,
+	})
+}
+
 // NotifyOrderFormSubmitted best-effort-emails an order's owner that a customer's
 // portal order-form submission created it. There is no staff actor on this
 // path, so the owner is the only recipient; an ownerless order is skipped.

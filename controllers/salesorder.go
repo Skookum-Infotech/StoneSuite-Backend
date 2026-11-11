@@ -191,7 +191,8 @@ func (h *SalesOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditSOMeta(r, pool, identityID, "create", order.ID, nil, order, soCreateExtraMeta(order))
-	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "salesOrder": order})
+	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "salesOrder": order,
+		"stockShortages": orderStockShortages(r, pool, order.ID)})
 }
 
 // ---- single record ------------------------------------------------------------
@@ -212,7 +213,9 @@ func (h *SalesOrderOps) Get(w http.ResponseWriter, r *http.Request) {
 		soFail(w, err, "Failed to load sales order.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order, "approval": info, "workflow": workflowBlockFor(r, pool, identityID, doclinks.KindSalesOrder, order.ID)})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order, "approval": info,
+		"workflow":       workflowBlockFor(r, pool, identityID, doclinks.KindSalesOrder, order.ID),
+		"stockShortages": orderStockShortages(r, pool, order.ID)})
 }
 
 // Update PATCH /api/tenant/sales-orders/{uuid}
@@ -236,7 +239,8 @@ func (h *SalesOrderOps) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditSO(r, pool, identityID, "update", uuid, before, after)
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": after})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": after,
+		"stockShortages": orderStockShortages(r, pool, uuid)})
 }
 
 // Delete DELETE /api/tenant/sales-orders/{uuid}

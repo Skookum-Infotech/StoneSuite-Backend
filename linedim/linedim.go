@@ -108,6 +108,10 @@ type Input struct {
 	// Unit is the line's dimension unit as sent, or the item's when the client
 	// sent none. Blank resolves to DefaultUnit.
 	Unit string
+	// Thickness is the thickness of one slab, in Unit. Optional and descriptive:
+	// it never enters the quantity, and does not count towards IsZero (a line
+	// that states only a thickness has nothing to derive).
+	Thickness *float64
 }
 
 // IsZero reports whether the client sent none of length, width or slabs.
@@ -124,13 +128,16 @@ type Dims struct {
 	Length *float64
 	Width  *float64
 	Slabs  *int
-	// Unit is the unit Length and Width are measured in; "" when the line has none.
+	// Unit is the unit Length, Width and Thickness are measured in; "" when the
+	// line has none.
 	Unit string
+	// Thickness is the thickness of one slab, in Unit; nil when not stated.
+	Thickness *float64
 }
 
 // IsZero reports whether the line carries no dimensions.
 func (d Dims) IsZero() bool {
-	return d.Length == nil && d.Width == nil && d.Slabs == nil
+	return d.Length == nil && d.Width == nil && d.Slabs == nil && d.Thickness == nil
 }
 
 // StoredUnit is the value to write to the unit column: the line's unit, or the
@@ -164,10 +171,30 @@ type Result struct {
 //     once converted to centimetres.
 //   - slabs must be a whole number from 1 to MaxSlabs.
 //   - any of the three needs an area unit (SQFT / SQM) on the line.
+//   - an optional thickness (same unit, area-unit lines only, up to 1 m) is
+//     validated and carried along; it never changes the quantity.
 //   - length + width present: quantity = round3(length x width x slabs, in the
 //     area unit), with slabs defaulting to 1 when blank. The assumed 1 is NOT
 //     written back — a blank slab count stays blank.
 func Resolve(in Input, areaUnit string) (Result, string) {
+	res, msg := resolveSize(in, areaUnit)
+	if msg != "" || in.Thickness == nil {
+		return res, msg
+	}
+	// Thickness rides along with the size: same unit, same area-unit rule.
+	t, unit, tMsg := ResolveThickness(*in.Thickness, in.Unit, areaUnit)
+	if tMsg != "" {
+		return Result{}, tMsg
+	}
+	res.Dims.Thickness = &t
+	if res.Dims.Unit == "" {
+		res.Dims.Unit = unit
+	}
+	return res, ""
+}
+
+// resolveSize is Resolve without the thickness: length, width and slabs.
+func resolveSize(in Input, areaUnit string) (Result, string) {
 	if in.IsZero() {
 		return Result{}, ""
 	}

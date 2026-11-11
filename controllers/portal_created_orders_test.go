@@ -31,8 +31,6 @@ func TestCreatedOrderErrorResponse(t *testing.T) {
 			http.StatusNotFound, "Order not found.", false},
 		{"staff moved the draft on", orderform.ErrNotEditable,
 			http.StatusConflict, orderLockedMessage, false},
-		{"a change that needs stock nobody has", fmt.Errorf("update: %w", &inventory.StockShortageError{}),
-			http.StatusConflict, orderStockMessage, false},
 		{"sales order refused a value", salesorder.ClientError{Msg: "Line 2: unit price cannot be negative."},
 			http.StatusBadRequest, "Line 2: unit price cannot be negative.", false},
 		{"catalogue refused a name", inventory.ClientError{Msg: "A kit name is required."},

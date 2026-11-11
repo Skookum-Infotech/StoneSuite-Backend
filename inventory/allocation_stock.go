@@ -35,9 +35,14 @@ func lockItems(ctx context.Context, tx pgx.Tx, ids []int) (map[int]stockedItem, 
 	return out, rows.Err()
 }
 
-// stockPosition is the on-hand and the still-held quantity of each item. Called
-// after the order's own reservation is released, so "held" is other orders' only.
-func stockPosition(ctx context.Context, tx pgx.Tx, ids []int) (onHand, held map[int]float64, err error) {
+// rowQuerier is what stockPosition reads through: a transaction or the pool.
+type rowQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// stockPosition is the on-hand (less slabs still awaiting or failing inspection)
+// and the still-held quantity of each item, across every open order.
+func stockPosition(ctx context.Context, tx rowQuerier, ids []int) (onHand, held map[int]float64, err error) {
 	onHand, held = map[int]float64{}, map[int]float64{}
 	rows, err := tx.Query(ctx, `
 		SELECT stock.inventory_item_id, GREATEST(COALESCE(SUM(stock.quantity_on_hand), 0) - COALESCE((

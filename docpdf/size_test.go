@@ -31,6 +31,32 @@ func TestSizeText(t *testing.T) {
 	}
 }
 
+func TestSizeTextThick(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	n := func(v int) *int { return &v }
+	tests := []struct {
+		name                     string
+		length, width, thickness *float64
+		slabs                    *int
+		unit                     string
+		want                     string
+	}{
+		{"no thickness prints as SizeText", f(120), f(60), nil, n(2), "in", "120 × 60 in · 2 slabs"},
+		{"size, thickness and slabs", f(120), f(60), f(3), n(2), "in", "120 × 60 in · 3 in thick · 2 slabs"},
+		{"thickness without a size", nil, nil, f(1.25), nil, "cm", "1.25 cm thick"},
+		{"thickness with a count only", nil, nil, f(2), n(1), "cm", "2 cm thick · 1 slab"},
+		{"a missing unit reads as inches", f(120), f(60), f(3), nil, "", "120 × 60 in · 3 in thick"},
+		{"nothing", nil, nil, nil, nil, "in", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SizeTextThick(tt.length, tt.width, tt.thickness, tt.slabs, tt.unit); got != tt.want {
+				t.Errorf("SizeTextThick() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDrawLineTable_SizeLineAddsOneDescriptionRow(t *testing.T) {
 	plain, _ := endY(PrintableDoc{Lines: []PrintLine{kitLine(""), kitLine("")}})
 	sized := kitLine("")

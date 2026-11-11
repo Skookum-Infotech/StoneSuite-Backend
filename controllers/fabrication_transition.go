@@ -32,6 +32,7 @@ func (h *FabricationOps) Transition(w http.ResponseWriter, r *http.Request) {
 			fjFail(w, err, "Failed to cancel fabrication job.")
 			return
 		}
+		h.notifyJobStatus(r, identityID, job)
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job})
 		return
 	}
@@ -40,6 +41,7 @@ func (h *FabricationOps) Transition(w http.ResponseWriter, r *http.Request) {
 		fjFail(w, err, "Failed to apply transition.")
 		return
 	}
+	h.notifyJobStatus(r, identityID, job)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job})
 }
 
@@ -55,6 +57,7 @@ func (h *FabricationOps) Hold(w http.ResponseWriter, r *http.Request) {
 		fjFail(w, err, "Failed to place job on hold.")
 		return
 	}
+	h.notifyJobStatus(r, identityID, job)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job})
 }
 
@@ -71,6 +74,7 @@ func (h *FabricationOps) Resume(w http.ResponseWriter, r *http.Request) {
 		fjFail(w, err, "Failed to resume job.")
 		return
 	}
+	h.notifyJobStatus(r, identityID, job)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job})
 }
 
@@ -78,7 +82,7 @@ func (h *FabricationOps) Resume(w http.ResponseWriter, r *http.Request) {
 // sign-off at the current gate (TAPV/QCPS). A non-approver gets 403.
 func (h *FabricationOps) Approve(w http.ResponseWriter, r *http.Request) {
 	uuid := r.PathValue("uuid")
-	pool, identityID, _, ok := h.authFJByUUID(w, r, uuid, authz.ActionTransition)
+	pool, identityID, before, ok := h.authFJByUUID(w, r, uuid, authz.ActionTransition)
 	if !ok {
 		return
 	}
@@ -95,5 +99,13 @@ func (h *FabricationOps) Approve(w http.ResponseWriter, r *http.Request) {
 		fjFail(w, err, "Failed to approve fabrication job.")
 		return
 	}
+	if job.StatusCode != before.StatusCode {
+		h.notifyJobStatus(r, identityID, job)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "fabricationJob": job})
+}
+
+// notifyJobStatus best-effort-emails the job's customer about its new status.
+func (h *FabricationOps) notifyJobStatus(r *http.Request, identityID string, job *fabrication.Job) {
+	notifyCustomerStatus(r.Context(), h.cp, identityID, job.Customer.ID, custResFabricationJob, job.StatusCode, "Fabrication Job", job.Number, 0, job.ID)
 }

@@ -168,6 +168,17 @@ func notifyTransition(ctx context.Context, pool *pgxpool.Pool, uuid string, inte
 	}
 }
 
+// notifyDeleted best-effort-notifies the actor (and owner) that a vendor bill
+// was soft-deleted. Call only after the delete has committed.
+func notifyDeleted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	cfg := moduleConfig()
+	approvalchain.NotifyDeleted(ctx, pool, approvalchain.EventContext{
+		Table: cfg.Record.Table, IDColumn: cfg.Record.IDColumn, NumberColumn: cfg.Record.NumberColumn, OwnerColumn: cfg.Record.OwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
+}
+
 // notifyCreated best-effort-notifies the actor who created a new vendor bill
 // that the creation succeeded.
 func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {

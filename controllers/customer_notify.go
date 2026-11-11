@@ -3,7 +3,6 @@ package controllers
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"stonesuite-backend/crmstore"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
 )
@@ -33,46 +31,17 @@ import (
 // docs/superpowers/specs/2026-09-10-customer-portal-approval-notifications-design.md
 // §2).
 func notifyCustomerApproved(ctx context.Context, cp *tenancy.ControlPlane, actorIdentityID, customerUUID, resource, displayName, number string, amount float64, recordUUID string) {
-	tenant, err := tenancy.TenantFromContext(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "customer notify: no tenant in context, skipping", "resource", resource, "recordId", recordUUID)
-		return
-	}
-	pool, err := tenancy.PoolFromContext(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "customer notify: no tenant pool in context, skipping", "resource", resource, "recordId", recordUUID)
-		return
-	}
-	if customerOptedOut(ctx, crmstore.CustomerDoNotContact, pool, customerUUID, resource, recordUUID) {
-		return
-	}
-	invite, err := cp.PortalInviteForCustomer(ctx, tenant.ID, customerUUID)
-	if errors.Is(err, tenancy.ErrPortalInviteNotFound) {
-		return
-	}
-	if err != nil {
-		slog.ErrorContext(ctx, "customer notify: resolve portal invite failed", "resource", resource, "recordId", recordUUID, "error", err)
-		return
-	}
-	active, err := cp.PortalLinkActive(ctx, invite.IdentityID, tenant.ID)
-	if err != nil {
-		slog.ErrorContext(ctx, "customer notify: check portal link active failed", "resource", resource, "recordId", recordUUID, "error", err)
-		return
-	}
-	if !active {
-		return
-	}
-	identity, err := cp.IdentityByID(ctx, invite.IdentityID)
-	if err != nil {
-		slog.ErrorContext(ctx, "customer notify: resolve identity failed", "resource", resource, "recordId", recordUUID, "error", err)
-		return
-	}
-	err = services.SendNotification(ctx, buildCustomerApprovedNotification(tenant.ID, actorIdentityID,
-		services.RecipientTarget{UserID: identity.ID, Email: identity.Email, Name: identity.FullName},
-		customerApproval{Resource: resource, DisplayName: displayName, Number: number, Amount: amount, RecordUUID: recordUUID, ApprovedAt: time.Now()}))
-	if err != nil {
-		slog.ErrorContext(ctx, "customer notify: send notification failed", "resource", resource, "recordId", recordUUID, "error", err)
-	}
+	subject := fmt.Sprintf("Your %s %s", displayName, number)
+	kind := strings.ToLower(displayName)
+	notifyCustomerEvent(ctx, cp, actorIdentityID, customerUUID, customerEvent{
+		Resource: resource, DisplayName: displayName, Number: number, RecordUUID: recordUUID,
+		EventSuffix: customerEventApproved, Badge: custApprovedBadge,
+		Heading: subject, HeadingAccent: custApprovedVerb + ".",
+		Subtitle: custApprovedSubtle,
+		Body: fmt.Sprintf(
+			"Your %s %s has been approved. You can view the approved %s in your customer portal anytime.", kind, number, kind),
+		DateLabel: custApprovedDate, Amount: amount, OccurredAt: time.Now(), Icon: services.IconDocCheck,
+	})
 }
 
 // customerOptedOut reports whether the customer approval email must be skipped

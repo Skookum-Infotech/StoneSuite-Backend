@@ -65,6 +65,19 @@ approval, for example) the button goes away and the order shows that it is being
 processed — the customer is asked to contact you for further changes. A customer
 whose status is not Active cannot change an order either.
 
+## Emails a customer receives
+
+A customer with an active portal login is emailed as their documents progress:
+Sales Orders being confirmed, fulfilled, or cancelled, Quotes and Invoices
+being sent, Invoices being paid, voided, or overdue, Payments received, Refunds
+issued, Credit Memos approved or applied, and each stage of their fabrication
+job. See "Automatic status emails to customers" in Sales Documents for the full
+list. A customer marked Do Not Contact is never emailed.
+
+When a customer submits an order from Created Orders, they also get a
+confirmation email, sent to the address they are signed in with, with a link
+back to their Created Orders list.
+
 ## Multiple workspaces
 
 If the same person has portal access to more than one of your customers (or

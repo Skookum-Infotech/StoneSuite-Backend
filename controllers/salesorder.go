@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -13,6 +15,7 @@ import (
 	"stonesuite-backend/doclinks"
 	"stonesuite-backend/idempotency"
 	"stonesuite-backend/middleware"
+	"stonesuite-backend/portal"
 	"stonesuite-backend/query"
 	"stonesuite-backend/salesorder"
 	"stonesuite-backend/tenancy"
@@ -248,7 +251,21 @@ func (h *SalesOrderOps) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditSODelete(r, pool, identityID, uuid, before)
+	if soVisibleToCustomer(before.StatusCode) {
+		notifyCustomerEvent(r.Context(), h.cp, identityID, before.Customer.ID,
+			customerDeletedCopy().event(customerEventDeleted, custResSalesOrder, soDisplayName, before.Number, uuid, before.GrandTotal, time.Now()))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Sales order deleted."})
+}
+
+// soDisplayName is the customer-facing document name used in sales order emails.
+const soDisplayName = "Sales Order"
+
+// soVisibleToCustomer reports whether a sales order in statusCode is shown in
+// the customer portal, i.e. whether the customer knew of it before a delete.
+func soVisibleToCustomer(statusCode string) bool {
+	vis, ok := portal.Visible(portal.ModuleSalesOrder)
+	return ok && slices.Contains(vis.StatusCodes, statusCode)
 }
 
 // Transition POST /api/tenant/sales-orders/{uuid}/transition  body {"toStatusCode":"..."}
@@ -271,6 +288,7 @@ func (h *SalesOrderOps) Transition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditSO(r, pool, identityID, "transition", uuid, nil, order)
+	notifyCustomerStatus(r.Context(), h.cp, identityID, order.Customer.ID, custResSalesOrder, order.StatusCode, soDisplayName, order.Number, order.GrandTotal, uuid)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "salesOrder": order})
 }
 

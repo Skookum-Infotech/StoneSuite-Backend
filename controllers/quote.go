@@ -35,10 +35,15 @@ import (
 //	POST   /api/tenant/quotes/{uuid}/approve       — approval sign-off
 //	POST   /api/tenant/quotes/{uuid}/convert       — convert to a Sales Order
 //	GET    /api/tenant/quotes/{uuid}/audit         — audit trail
-type QuoteOps struct{}
+type QuoteOps struct {
+	cp *tenancy.ControlPlane
+}
 
 // NewQuoteOps constructs the handler group.
-func NewQuoteOps() *QuoteOps { return &QuoteOps{} }
+func NewQuoteOps(cp *tenancy.ControlPlane) *QuoteOps { return &QuoteOps{cp: cp} }
+
+// quoteDisplayName is the customer-facing document kind for quote emails.
+const quoteDisplayName = "Quote"
 
 // authQuote resolves JWT + tenant pool + the quote:<action> RBAC grant
 // for requests with no specific record yet (list/search/create).
@@ -251,6 +256,7 @@ func (h *QuoteOps) Transition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditQuote(r, pool, identityID, "transition", uuid, nil, est)
+	notifyCustomerStatus(r.Context(), h.cp, identityID, est.Customer.ID, custResQuote, est.StatusCode, quoteDisplayName, est.Number, est.GrandTotal, uuid)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "quote": est})
 }
 
@@ -275,6 +281,9 @@ func (h *QuoteOps) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditQuote(r, pool, identityID, "approve", uuid, nil, est)
+	if approvalFinalized(est.StatusCode) {
+		notifyCustomerApproved(r.Context(), h.cp, identityID, est.Customer.ID, custResQuote, quoteDisplayName, est.Number, est.GrandTotal, uuid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "quote": est})
 }
 

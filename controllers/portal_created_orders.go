@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/orderform"
 	"stonesuite-backend/portal"
 	"stonesuite-backend/salesorder"
+	"stonesuite-backend/services"
 )
 
 // maxCreatedOrderBodyBytes bounds an order request: twenty areas with their
@@ -29,6 +30,9 @@ const orderLockedMessage = "This order is now being processed and can't be chang
 // orderStockMessage is what a customer sees when a change would need material
 // that is not free: staff, not the customer, can sort that out.
 const orderStockMessage = "Some of the materials on this order aren't available right now. Please contact us."
+
+// portalOrderDisplayName is the customer-facing name of a placed order.
+const portalOrderDisplayName = "Order"
 
 // PortalCreatedOrderOps serves the customer portal's "Created Orders": the
 // countertop order form a customer files, the list of what they have filed, and
@@ -118,7 +122,25 @@ func (h *PortalCreatedOrderOps) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	auditPortalOrder(r, pool, identityID, "create", res)
+	notifyPortalOrderSubmitted(r, pool, identityID, sess, res)
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "order": res.Form})
+}
+
+// notifyPortalOrderSubmitted best-effort-emails the submitting portal user a
+// confirmation that their order was received. Failures are logged only.
+func notifyPortalOrderSubmitted(r *http.Request, pool *pgxpool.Pool, identityID string, sess *portal.Session, res *orderform.Result) {
+	order, err := salesorder.Get(r.Context(), pool, res.SalesOrderUUID)
+	if err != nil {
+		slog.WarnContext(r.Context(), "portal created order: confirmation email skipped",
+			"salesOrder", res.SalesOrderUUID, "error", err)
+		return
+	}
+	ev := customerSubmittedCopy().event(customerEventSubmitted, custResSalesOrder, portalOrderDisplayName,
+		order.Number, res.SalesOrderUUID, order.GrandTotal, time.Now())
+	// A draft Sales Order is hidden from the portal, so link to Created Orders.
+	ev.LinkOverride = custLinkCreatedOrders
+	notifyCustomerEventTo(r.Context(), identityID, sess.CustomerUUID,
+		services.RecipientTarget{UserID: identityID, Email: sess.Email, Name: sess.FullName}, ev)
 }
 
 // Update PUT /api/portal/created-orders/{id}

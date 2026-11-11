@@ -223,3 +223,14 @@ func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, interna
 		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
 	})
 }
+
+// notifyDeleted best-effort-notifies the actor who deleted a refund, and its
+// owner, that the soft delete succeeded.
+func notifyDeleted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	cfg := moduleConfig()
+	approvalchain.NotifyDeleted(ctx, pool, approvalchain.EventContext{
+		Table: cfg.Record.Table, IDColumn: cfg.Record.IDColumn, NumberColumn: cfg.Record.NumberColumn, OwnerColumn: cfg.Record.OwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
+}

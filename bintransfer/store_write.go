@@ -252,7 +252,19 @@ func Delete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmployeeI
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete bin transfer: %w", err)
 	}
+	notifyDeleted(ctx, pool, uuid, cur.id, actorEmployeeID)
 	return nil
+}
+
+// notifyDeleted best-effort-notifies the actor (and owner) that a bin transfer
+// was soft-deleted. Call only after the delete has committed.
+func notifyDeleted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	cfg := moduleConfig()
+	approvalchain.NotifyDeleted(ctx, pool, approvalchain.EventContext{
+		Table: cfg.Record.Table, IDColumn: cfg.Record.IDColumn, NumberColumn: cfg.Record.NumberColumn, OwnerColumn: cfg.Record.OwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
 }
 
 // notifyCreated best-effort-notifies the actor that the request was raised.

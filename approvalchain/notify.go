@@ -178,6 +178,65 @@ func NotifyCreated(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
 		actor.UserID, ec, noteCreated, []contact{actor})
 }
 
+// NotifyDeleted best-effort-notifies the actor who deleted a record, and its
+// owner when that is a different user, that the record was deleted. The
+// record is soft-deleted, so its number is still readable. Links point at the
+// module list, not the removed record. Same no-op/failure semantics as
+// NotifyCreated.
+func NotifyDeleted(ctx context.Context, pool *pgxpool.Pool, ec EventContext) {
+	if ec.DisplayName == "" {
+		return
+	}
+	tenant, err := tenancy.TenantFromContext(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "approvalchain: no tenant in context, skipping deleted notification", "resource", ec.Resource, "recordId", ec.RecordUUID)
+		return
+	}
+	actor, actorOK, err := actorContact(ctx, pool, ec.ActorEmployeeID)
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: resolve actor for deleted notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
+		return
+	}
+	var owner contact
+	ownerOK := false
+	if ec.OwnerColumn != "" {
+		owner, ownerOK, err = ownerContact(ctx, pool, ec.Table, ec.IDColumn, ec.OwnerColumn, ec.InternalID)
+		if err != nil {
+			slog.ErrorContext(ctx, "approvalchain: resolve owner for deleted notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
+			ownerOK = false
+		}
+	}
+	actors, owners := deletedRecipients(actor, actorOK, owner, ownerOK)
+	if len(actors) == 0 && len(owners) == 0 {
+		return
+	}
+	facts, err := fetchFacts(ctx, pool, ec)
+	if err != nil {
+		slog.ErrorContext(ctx, "approvalchain: resolve record number for deleted notification failed", "resource", ec.Resource, "recordId", ec.RecordUUID, "error", err)
+		return
+	}
+	actorUserID := resolveActorUserID(ctx, pool, ec.ActorEmployeeID)
+	eventType := ec.Resource + ".deleted"
+	if len(actors) > 0 {
+		sendApprovalNotification(ctx, tenant.ID, eventType, facts, actorUserID, ec, noteDeleted, actors)
+	}
+	if len(owners) > 0 {
+		sendApprovalNotification(ctx, tenant.ID, eventType, facts, actorUserID, ec, noteDeletedOwner, owners)
+	}
+}
+
+// deletedRecipients splits the deleted-event audience into the actor copy and
+// the owner copy, dropping the owner when it is the same user as the actor.
+func deletedRecipients(actor contact, actorOK bool, owner contact, ownerOK bool) (actors, owners []contact) {
+	if actorOK {
+		actors = []contact{actor}
+	}
+	if ownerOK && !(actorOK && owner.UserID == actor.UserID) {
+		owners = []contact{owner}
+	}
+	return actors, owners
+}
+
 // ActorCreated describes a record that has no approval workflow (a CRM task,
 // an inventory item) whose creator gets a plain confirmation email. Unlike
 // EventContext it carries no table/number facts: the title and body are

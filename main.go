@@ -1443,7 +1443,7 @@ func main() {
 		// tracking a stone order through 16 shop-floor statuses with serialized
 		// slab allocation, a 16-step checklist, and dual approval gates. Guarded
 		// by installation:*; slab routes additionally require inventory_item:*.
-		fj := controllers.NewFabricationOps()
+		fj := controllers.NewFabricationOps(cp)
 		mux.Handle("GET /api/tenant/fabrication-jobs", tenantChain(fj.List))
 		mux.Handle("POST /api/tenant/fabrication-jobs/search", tenantChain(fj.Search))
 		mux.Handle("POST /api/tenant/fabrication-jobs", tenantChain(fj.Create))
@@ -1532,7 +1532,7 @@ func main() {
 
 		// Quote: dedicated v2 relational module (header + line items + approval),
 		// a sibling of Estimate — not served through the generic JSONB router.
-		quo := controllers.NewQuoteOps()
+		quo := controllers.NewQuoteOps(cp)
 		mux.Handle("GET /api/tenant/quotes", tenantChain(quo.List))
 		mux.Handle("POST /api/tenant/quotes/search", tenantChain(quo.Search))
 		mux.Handle("POST /api/tenant/quotes", tenantChain(quo.Create))
@@ -1745,7 +1745,7 @@ func main() {
 		// the non-cash half of an invoice's balance_due — payment_application
 		// remains the cash half (spec
 		// docs/superpowers/specs/2026-07-15-credit-memo-module-design.md).
-		cmOps := controllers.NewCreditMemoOps()
+		cmOps := controllers.NewCreditMemoOps(cp)
 		mux.Handle("GET /api/tenant/credit-memos", tenantChain(cmOps.List))
 		mux.Handle("POST /api/tenant/credit-memos/search", tenantChain(cmOps.Search))
 		mux.Handle("POST /api/tenant/credit-memos", tenantChain(cmOps.Create))

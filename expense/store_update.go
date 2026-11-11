@@ -110,13 +110,14 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	var internalID int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT rs.record_status_code
+		SELECT exp.expense_id, rs.record_status_code
 		FROM expense exp JOIN lkp_record_status rs ON rs.record_status_id = exp.expense_status
 		WHERE exp.expense_uuid = $1 AND exp.expense_deleted_at IS NULL
 		FOR UPDATE OF exp`, uuid,
-	).Scan(&statusCode)
+	).Scan(&internalID, &statusCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -137,5 +138,6 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete expense: %w", err)
 	}
+	notifyDeleted(ctx, pool, uuid, internalID, actorEmployeeID)
 	return nil
 }

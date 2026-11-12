@@ -14,6 +14,26 @@ forget your password, use the "Forgot password" link on the sign-in page to
 reset it by email. A new teammate signs in for the first time by accepting
 an email invitation an administrator sent them.
 
+### Signed in on one browser at a time
+
+Each StoneSuite user licence is for one person, so your account can be signed
+in on only one browser at a time (your organization's StoneSuite provider can
+turn this off for a workspace). Several tabs in the same browser are fine.
+
+If you sign in on another computer, phone or browser while your account is
+still in use somewhere else, StoneSuite tells you which device is signed in
+and when it was last active, and asks whether to end that session and continue
+here. Choose **Continue** to sign in here, or **Cancel** to stay signed out.
+If the other session has not been used for a while, you are signed in without
+being asked.
+
+The browser whose session was ended shows a message that your account was
+signed in on another computer, with a 30-second countdown. Nothing can be
+changed or saved during the countdown, so finish or note anything unsaved
+right away. At 0:00 that browser signs out and returns to the sign-in page.
+If you did not sign in elsewhere yourself, sign in again and change your
+password.
+
 ## The sidebar and navigation areas
 
 The left sidebar is how you move around StoneSuite. It's organized into

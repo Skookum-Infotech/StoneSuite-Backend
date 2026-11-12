@@ -54,6 +54,11 @@ type Tenant struct {
 	// this tenant's database; empty until the first boot migration records it.
 	SchemaHash string
 
+	// SingleSessionEnforced limits each staff identity of this tenant to one
+	// live browser session (per-user licensing). Always false for the
+	// platform-owner tenant.
+	SingleSessionEnforced bool
+
 	// DesignVersion selects the CRM data design (DesignV1 / DesignV2).
 	DesignVersion string
 

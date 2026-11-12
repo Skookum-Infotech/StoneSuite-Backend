@@ -146,7 +146,7 @@ func TestCustomerPortalOps_CreateNote_RejectsStaffToken(t *testing.T) {
 	tenantID := seedSAMLTestTenant(t, cp)
 	identity, err := cp.CreateIdentity(context.Background(), tenantID, fmt.Sprintf("staff-%d@example.com", time.Now().UnixNano()), "", "Staff User", true)
 	require.NoError(t, err)
-	staffToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", nil, time.Hour)
+	staffToken, err := generateTenantJWT(tenantClaims{identityID: identity.ID, email: identity.Email, tenantID: identity.TenantID}, time.Hour)
 	require.NoError(t, err)
 
 	chain := customerPortalChain(cp)

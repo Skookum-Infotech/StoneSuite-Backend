@@ -422,7 +422,9 @@ func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
 	// replaced, not the one about to be minted) — see
 	// authz.EffectiveGrantsForRole's doc comment.
 	accessibleResources := resolveAccessibleResources(r.Context(), pool, payload.ID, activeRoleID)
-	token, err := generateTenantJWT(payload.ID, payload.Email, payload.TenantID, activeRoleID, accessibleResources, d)
+	token, err := generateTenantJWT(tenantClaims{identityID: payload.ID, email: payload.Email,
+		tenantID: payload.TenantID, activeRoleID: activeRoleID, sessionID: payload.SessionID,
+		accessibleResources: accessibleResources}, d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return

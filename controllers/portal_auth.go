@@ -277,7 +277,7 @@ func (h *PortalAuthOps) Refresh(w http.ResponseWriter, r *http.Request) {
 // Logout revokes the refresh token and clears the session cookies.
 // Path: POST /api/portal/auth/logout
 func (h *PortalAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
-	revokeSessionOnLogout(w, r, h.CP)
+	revokeSessionOnLogout(w, r, h.CP, nil)
 }
 
 // ---- credential setup / reset ----------------------------------------------

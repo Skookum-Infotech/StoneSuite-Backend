@@ -3,6 +3,7 @@
 package controllers
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -98,6 +99,9 @@ func TestTenantOps_Logout_ReplayDoesNotRevokeOtherSessions_DB(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
+	// Two concurrent sessions of one user: the single-session rule is off here.
+	_, err := cp.UpdateTenantSessionPolicy(context.Background(), tenant.ID, tenancy.SessionPolicyPatch{Enforced: new(bool)})
+	require.NoError(t, err)
 	identity, _ := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
 
 	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}

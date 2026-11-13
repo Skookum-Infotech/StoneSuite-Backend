@@ -43,6 +43,10 @@ func newRevocationFixture(t *testing.T) *revocationFixture {
 	require.NoError(t, err)
 	t.Cleanup(cpPool.Close)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
+	// These tests model one user signed in on several devices at once, which
+	// the single-session rule (on by default) would refuse.
+	_, err = cp.UpdateTenantSessionPolicy(context.Background(), tenant.ID, tenancy.SessionPolicyPatch{Enforced: new(bool)})
+	require.NoError(t, err)
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, revocationTestPassword)
 	return &revocationFixture{
 		h: &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}, cpPool: cpPool,

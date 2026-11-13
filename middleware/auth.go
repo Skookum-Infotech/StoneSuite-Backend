@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"stonesuite-backend/config"
@@ -36,7 +37,15 @@ type UserContextPayload struct {
 	UserID       string
 	ActiveRoleID string
 	Kind         string
+	// SessionID is the `sid` claim: the auth_sessions row of this sign-in.
+	// Empty for tokens minted before sessions existed and for portal tokens.
+	SessionID string
+	// IssuedAt is the token's iat claim; zero when absent.
+	IssuedAt time.Time
 }
+
+// SessionIDClaim is the JWT claim carrying the auth session id.
+const SessionIDClaim = "sid"
 
 const (
 	// KindPortal is the `kind` JWT claim carried by customer-portal tokens.
@@ -143,6 +152,11 @@ func RequireAuth(next http.Handler) http.Handler {
 		userID, _ := claims["user_id"].(string)
 		activeRoleID, _ := claims["active_role_id"].(string)
 		kind, _ := claims["kind"].(string)
+		sessionID, _ := claims[SessionIDClaim].(string)
+		var issuedAt time.Time
+		if iat, iatErr := claims.GetIssuedAt(); iatErr == nil && iat != nil {
+			issuedAt = iat.Time
+		}
 
 		// Structural containment of portal sessions.
 		//
@@ -192,6 +206,8 @@ func RequireAuth(next http.Handler) http.Handler {
 			UserID:       userID,
 			ActiveRoleID: activeRoleID,
 			Kind:         kind,
+			SessionID:    sessionID,
+			IssuedAt:     issuedAt,
 		}
 
 		ctx := context.WithValue(r.Context(), UserContextKey, ctxPayload)

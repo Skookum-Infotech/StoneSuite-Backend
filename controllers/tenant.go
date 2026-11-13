@@ -46,6 +46,15 @@ type TenantOps struct {
 	CF          storage.CFClientIface
 	R2          *storage.Client
 	CORSOrigins []string
+	// Sessions is the single-session guard whose cache sign-ins and logouts
+	// invalidate; nil is allowed (the cache then just expires on its own).
+	Sessions *tenancy.SessionGuard
+}
+
+// WithSessionGuard wires the single-session guard. Returns h for chaining.
+func (h *TenantOps) WithSessionGuard(g *tenancy.SessionGuard) *TenantOps {
+	h.Sessions = g
+	return h
 }
 
 // NewTenantOps constructs the handler group.
@@ -193,6 +202,15 @@ func setupLink(token string) string {
 // resetLink is the public URL where any user resets a forgotten password.
 func resetLink(token string) string { return frontendBase() + "/auth/reset-password?token=" + token }
 
+// tenantClaims is what a staff access token carries.
+type tenantClaims struct {
+	identityID, email, tenantID string
+	activeRoleID                string
+	accessibleResources         []string
+	// sessionID becomes the sid claim (see auth_sessions); "" omits it.
+	sessionID string
+}
+
 // generateTenantJWT signs an access token for identityID. activeRoleID is
 // optional: when set (see SwitchRole), the token carries an active_role_id
 // claim that narrows authz checks to that one role; empty means all of the
@@ -201,19 +219,22 @@ func resetLink(token string) string { return frontendBase() + "/auth/reset-passw
 // accessible_resources claim stonesuite-notify's bell/feed filters by (see
 // resolveAccessibleResources) — nil/empty means unrestricted, unchanged from
 // before this claim existed.
-func generateTenantJWT(identityID, email, tenantID, activeRoleID string, accessibleResources []string, d time.Duration) (string, error) {
+func generateTenantJWT(c tenantClaims, d time.Duration) (string, error) {
 	claims := jwt.MapClaims{
-		"id":        identityID,
-		"email":     email,
-		"tenant_id": tenantID,
+		"id":        c.identityID,
+		"email":     c.email,
+		"tenant_id": c.tenantID,
 		"exp":       time.Now().Add(d).Unix(),
 		"iat":       time.Now().Unix(),
 	}
-	if activeRoleID != "" {
-		claims["active_role_id"] = activeRoleID
+	if c.activeRoleID != "" {
+		claims["active_role_id"] = c.activeRoleID
 	}
-	if len(accessibleResources) > 0 {
-		claims["accessible_resources"] = accessibleResources
+	if len(c.accessibleResources) > 0 {
+		claims["accessible_resources"] = c.accessibleResources
+	}
+	if c.sessionID != "" {
+		claims[middleware.SessionIDClaim] = c.sessionID
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(config.AppConfig.JWTSecret))
@@ -494,10 +515,13 @@ func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 			"id": t.ID, "slug": t.Slug, "displayName": t.DisplayName,
 			"status": t.Status, "migrationStatus": t.MigrationStatus,
 			"dbName": t.DBName, "createdAt": t.CreatedAt,
-			"hardDeleteAfter": t.HardDeleteAfter,
-			"metadata":        meta,
-			"isPlatformOwner": t.IsPlatformOwner,
-			"r2Bucket":        t.R2Bucket,
+			"hardDeleteAfter":         t.HardDeleteAfter,
+			"metadata":                meta,
+			"isPlatformOwner":         t.IsPlatformOwner,
+			"r2Bucket":                t.R2Bucket,
+			"singleSessionEnforced":   t.SingleSessionEnforced,
+			"takeoverCooldownMinutes": t.TakeoverCooldownMinutes,
+			"takeoverDailyCap":        t.TakeoverDailyCap,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tenants": out})
@@ -844,6 +868,9 @@ type loginAttempt struct {
 	// codeVerified is set once the emailed sign-in code has been checked
 	// (MFAVerify), so completeLogin mints the session instead of asking again.
 	codeVerified bool
+	// takeover is set once the user confirmed ending their other session
+	// (SessionTakeover), so the single-session gate replaces it without asking.
+	takeover bool
 }
 
 // completeLogin runs everything between a verified password and a session:
@@ -872,12 +899,16 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 	loginFailed := false
 	displayName := identity.FullName
 	var pool *pgxpool.Pool
+	tenantEnforced := false
+	var limits tenancy.TakeoverLimits
 	if identity.TenantID != "" {
 		tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID)
 		if tErr != nil {
 			fail(w, http.StatusInternalServerError, "Login failed.")
 			return
 		}
+		tenantEnforced = tenant.SingleSessionEnforced
+		limits = limitsFor(tenant)
 		// A workspace that cannot be served (suspended, deleted, unprovisioned,
 		// under maintenance) must not get a session at all: skipping this check
 		// used to mint a token with no grants, so the user landed on an empty
@@ -925,16 +956,6 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 		return
 	}
 
-	// Remember-me lengthens the refresh token only: the access token cannot be
-	// revoked, so it is always short-lived (see accessTokenLifetime).
-	d := accessTokenLifetime()
-	accessibleResources := resolveAccessibleResources(r.Context(), pool, identity.ID, "")
-	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", accessibleResources, d)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to sign token.")
-		return
-	}
-
 	// Surface platform-admin status so the frontend can gate owner-only UI
 	// (e.g. customer onboarding). Non-fatal if the lookup fails — default false.
 	isPlatformAdmin, err := h.CP.IsPlatformAdmin(r.Context(), identity.ID)
@@ -942,8 +963,30 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 		isPlatformAdmin = false
 	}
 
+	// One live session per licensed user: may answer 409 active_session and
+	// stop here until the user confirms ending the other browser's session.
+	sid, done := beginSession(w, r, h.CP, sessionStart{
+		identity: identity, rememberMe: at.rememberMe, takeover: at.takeover, guard: h.Sessions,
+		enforced: singleSessionApplies(tenantEnforced, isPlatformAdmin, false),
+		limits:   limits, tenantID: identity.TenantID, pool: pool,
+	})
+	if done {
+		return
+	}
+
+	// Remember-me lengthens the refresh token only: the access token cannot be
+	// revoked, so it is always short-lived (see accessTokenLifetime).
+	d := accessTokenLifetime()
+	accessibleResources := resolveAccessibleResources(r.Context(), pool, identity.ID, "")
+	token, err := generateTenantJWT(tenantClaims{identityID: identity.ID, email: identity.Email,
+		tenantID: identity.TenantID, sessionID: sid, accessibleResources: accessibleResources}, d)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to sign token.")
+		return
+	}
+
 	// Issue refresh token (DB-backed, rotated on every use).
-	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID, at.rememberMe)
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID, sid, at.rememberMe)
 	if err != nil {
 		// Non-fatal: session still works without a refresh token; user will
 		// just need to re-login when the access token expires.
@@ -1041,7 +1084,7 @@ func (h *TenantOps) tryPortalLogin(w http.ResponseWriter, r *http.Request, ident
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return true
 	}
-	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID, false)
+	refreshRaw, refreshExpiry, err := issueRefreshToken(r.Context(), h.CP, identity.ID, "", false)
 	if err != nil {
 		log.Printf("warn: failed to issue portal refresh token for identity %s: %v", identity.ID, err)
 		refreshRaw = ""
@@ -1152,7 +1195,7 @@ func (h *TenantOps) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // Logout revokes the refresh token (final, no grace) and clears both auth cookies. Path: POST /api/auth/logout
 func (h *TenantOps) Logout(w http.ResponseWriter, r *http.Request) {
-	revokeSessionOnLogout(w, r, h.CP)
+	revokeSessionOnLogout(w, r, h.CP, h.Sessions)
 }
 
 // RefreshSession issues a new access + refresh token pair given a valid refresh
@@ -1203,12 +1246,14 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	// token with this handler.
 	var pool *pgxpool.Pool
 	var activeRoleID string
+	tenantEnforced := false
 	if identity.TenantID != "" {
 		tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID)
 		if tErr != nil {
 			fail(w, http.StatusInternalServerError, "Failed to refresh session.")
 			return
 		}
+		tenantEnforced = tenant.SingleSessionEnforced
 		if !tenant.Servable() && h.refuseUnservableRefresh(w, r, identity, tenant) {
 			return
 		}
@@ -1247,6 +1292,13 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A replaced or logged-out session may not be refreshed; a pre-session
+	// token is adopted into a new session (see refreshSessionID).
+	sid, adopted, ok := h.refreshSessionID(w, r, identity, rec, tenantEnforced)
+	if !ok {
+		return
+	}
+
 	// Mint a new access token.
 	d := accessTokenLifetime()
 	// activeRoleID preserves whatever role the caller had selected (see the
@@ -1256,7 +1308,9 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	// aggregate of every assigned role made an explicit "switch to a
 	// restricted role" selection unreliable in practice.
 	accessibleResources := resolveAccessibleResources(r.Context(), pool, identity.ID, activeRoleID)
-	newToken, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, activeRoleID, accessibleResources, d)
+	newToken, err := generateTenantJWT(tenantClaims{identityID: identity.ID, email: identity.Email,
+		tenantID: identity.TenantID, activeRoleID: activeRoleID, sessionID: sid,
+		accessibleResources: accessibleResources}, d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return
@@ -1270,6 +1324,11 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		refreshTokenFailed(w, r, h.CP, err, hash, "refresh_token_reused")
 		return
+	}
+	if adopted {
+		if aErr := h.CP.AttachRefreshTokenSession(r.Context(), tenancy.HashRefreshToken(refreshRaw), sid); aErr != nil {
+			slog.Error("refresh: attach adopted session", "identity", identity.ID, "error", aErr)
+		}
 	}
 
 	accessExpiry := time.Now().Add(d)
@@ -1726,7 +1785,15 @@ func (h *TenantOps) Activate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		d = time.Hour
 	}
-	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", nil, d)
+	// The platform owner is exempt from the single-session rule, but the token
+	// still gets a session so logout and the session guard treat it like any
+	// other sign-in.
+	sid, done := beginSession(w, r, h.CP, sessionStart{identity: identity, guard: h.Sessions})
+	if done {
+		return
+	}
+	token, err := generateTenantJWT(tenantClaims{identityID: identity.ID, email: identity.Email,
+		tenantID: identity.TenantID, sessionID: sid}, d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return

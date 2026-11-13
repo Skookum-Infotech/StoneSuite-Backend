@@ -663,3 +663,111 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS schema_hash TEXT NOT NULL DEFAULT '
 -- rows default to NOW(), i.e. immediately claimable, as before.
 ALTER TABLE async_jobs ADD COLUMN IF NOT EXISTS run_after TIMESTAMPTZ NOT NULL DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_async_jobs_status_run_after ON async_jobs(status, run_after);
+
+-- ── auth_sessions (single active session per user) ─────────────────────
+-- One row per browser sign-in. The access JWT carries its id as the `sid`
+-- claim and every refresh token of that sign-in points at it, so the session
+-- keeps one id across refresh rotations. A tenant with single_session_enforced
+-- allows each staff identity one live session: signing in elsewhere asks to
+-- end it (takeover). The replaced session gets replaced_at/ends_at -- a short
+-- handover window in which its browser shows a countdown and may only read --
+-- and is refused outright once ends_at passes. ended_at marks a logout.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    identity_id   UUID         NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_seen_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    user_agent    TEXT         NOT NULL DEFAULT '',
+    ip            TEXT         NOT NULL DEFAULT '',
+    device_label  TEXT         NOT NULL DEFAULT '',
+    replaced_at   TIMESTAMPTZ,
+    replaced_by   UUID,
+    ends_at       TIMESTAMPTZ,
+    ended_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_identity_live
+    ON auth_sessions(identity_id) WHERE ended_at IS NULL AND replaced_at IS NULL;
+
+-- Guarded so a warm boot (column already there) takes no ACCESS EXCLUSIVE lock
+-- on refresh_tokens, which sits on every login and refresh.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'refresh_tokens'
+                     AND column_name = 'session_id') THEN
+        ALTER TABLE refresh_tokens ADD COLUMN session_id UUID REFERENCES auth_sessions(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+-- Partial: every token minted before sessions existed has no session_id.
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON refresh_tokens(session_id) WHERE session_id IS NOT NULL;
+
+-- Single-use ticket a second browser redeems at POST /api/auth/session/takeover
+-- after the user confirms "end the other session and continue here". Minted
+-- only once the full sign-in (password + emailed code / SSO) has succeeded, so
+-- redeeming it needs no second password. Only the SHA-256 hash is stored.
+CREATE TABLE IF NOT EXISTS auth_session_takeover_tickets (
+    token_hash   TEXT         PRIMARY KEY,
+    identity_id  UUID         NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+    remember_me  BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at   TIMESTAMPTZ  NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_session_takeover_expires ON auth_session_takeover_tickets(expires_at);
+
+-- Per-customer switch for the single-session rule (license enforcement). On by
+-- default; the platform-owner tenant is always exempt, re-asserted every boot.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'tenants'
+                     AND column_name = 'single_session_enforced') THEN
+        ALTER TABLE tenants ADD COLUMN single_session_enforced BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+END $$;
+UPDATE tenants SET single_session_enforced = FALSE WHERE is_platform_owner = TRUE AND single_session_enforced = TRUE;
+
+-- Why a session was replaced: 'confirmed' (the user confirmed ending it from
+-- another browser), 'idle' (replaced without asking), 'adopted_legacy' (a
+-- pre-session token was refreshed) or 'policy' (the rule was switched on).
+-- Moves counted toward the per-customer cooldown and daily cap below: every
+-- 'confirmed' one, plus 'idle'/'adopted_legacy' ones that replaced a session
+-- used within the previous 2 hours (tenancy.MoveRecency).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'auth_sessions'
+                     AND column_name = 'replaced_reason') THEN
+        ALTER TABLE auth_sessions ADD COLUMN replaced_reason TEXT;
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_identity_replaced
+    ON auth_sessions(identity_id, replaced_at) WHERE replaced_at IS NOT NULL;
+
+-- Per-customer takeover limits, set by a platform admin on the customer's
+-- Settings tab: minutes a user must wait between moving their sign-in to
+-- another device, and how many such moves are allowed in 24 hours (after which
+-- moving is blocked for the day and the customer's administrators are
+-- emailed). 0 turns either limit off.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'tenants'
+                     AND column_name = 'takeover_cooldown_minutes') THEN
+        ALTER TABLE tenants ADD COLUMN takeover_cooldown_minutes INT NOT NULL DEFAULT 5;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'tenants'
+                     AND column_name = 'takeover_daily_cap') THEN
+        ALTER TABLE tenants ADD COLUMN takeover_daily_cap INT NOT NULL DEFAULT 5;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tenants_takeover_cooldown_chk'
+                   AND conrelid = 'tenants'::regclass) THEN
+        ALTER TABLE tenants ADD CONSTRAINT tenants_takeover_cooldown_chk
+            CHECK (takeover_cooldown_minutes BETWEEN 0 AND 1440);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tenants_takeover_daily_cap_chk'
+                   AND conrelid = 'tenants'::regclass) THEN
+        ALTER TABLE tenants ADD CONSTRAINT tenants_takeover_daily_cap_chk
+            CHECK (takeover_daily_cap BETWEEN 0 AND 100);
+    END IF;
+END $$;

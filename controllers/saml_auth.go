@@ -21,6 +21,14 @@ type SAMLAuthOps struct {
 	cp     *tenancy.ControlPlane
 	router *tenancy.Router
 	cipher *secret.Cipher
+	// sessions is the single-session guard (see TenantOps.Sessions); may be nil.
+	sessions *tenancy.SessionGuard
+}
+
+// WithSessionGuard wires the single-session guard. Returns h for chaining.
+func (h *SAMLAuthOps) WithSessionGuard(g *tenancy.SessionGuard) *SAMLAuthOps {
+	h.sessions = g
+	return h
 }
 
 // NewSAMLAuthOps constructs the SAML auth handler group.

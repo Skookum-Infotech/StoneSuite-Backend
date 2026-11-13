@@ -378,6 +378,14 @@ func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, "Authentication required.")
 		return
 	}
+	// A staff token from before sessions existed must not be re-minted here:
+	// switching role every hour would keep it alive outside the single-session
+	// rule. 401 makes the client refresh, which adopts it into a session.
+	if payload.SessionID == "" && payload.Kind != middleware.KindPortal {
+		logSecurityEvent(r, "switch_role_sessionless_token", "identity", payload.ID)
+		failWithCode(w, http.StatusUnauthorized, "Please sign in again.", tenancy.CodeSessionRefreshRequired)
+		return
+	}
 	pool, err := tenancy.PoolFromContext(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Tenant database not resolved.")
@@ -422,7 +430,9 @@ func (h *RBACOps) SwitchRole(w http.ResponseWriter, r *http.Request) {
 	// replaced, not the one about to be minted) — see
 	// authz.EffectiveGrantsForRole's doc comment.
 	accessibleResources := resolveAccessibleResources(r.Context(), pool, payload.ID, activeRoleID)
-	token, err := generateTenantJWT(payload.ID, payload.Email, payload.TenantID, activeRoleID, accessibleResources, d)
+	token, err := generateTenantJWT(tenantClaims{identityID: payload.ID, email: payload.Email,
+		tenantID: payload.TenantID, activeRoleID: activeRoleID, sessionID: payload.SessionID,
+		accessibleResources: accessibleResources}, d)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to sign token.")
 		return

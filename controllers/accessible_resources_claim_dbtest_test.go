@@ -99,6 +99,7 @@ func TestRBACOps_SwitchRole_MintsAccessibleResourcesForNewRole_DB(t *testing.T) 
 	payload := middleware.UserContextPayload{
 		ID: identity.ID, Email: identity.Email, TenantID: tenant.ID,
 		UserID: user.ID, ActiveRoleID: oldRoleID,
+		SessionID: "switch-role-test-session", // a signed-in session; sid-less tokens are refused
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/tenant/auth/switch-role",
 		jsonBody(t, map[string]any{"roleId": newRoleID}))

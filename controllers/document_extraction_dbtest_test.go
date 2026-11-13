@@ -42,7 +42,7 @@ func newDocExtractDBEnv(t *testing.T) *docExtractDBEnv {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	e := &docExtractDBEnv{pool: pool, resolver: tenancy.NewResolver(cp, tenancy.NewRouter(nil)), tenantID: tenant.ID}
+	e := &docExtractDBEnv{pool: pool, resolver: tenancy.NewResolver(cp, newTestRouter(t)), tenantID: tenant.ID}
 	e.identityA, e.userA = seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	e.identityB, e.userB = seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	for _, u := range []*userstore.User{e.userA, e.userB} {

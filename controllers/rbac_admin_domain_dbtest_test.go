@@ -74,7 +74,7 @@ func TestRBACOps_UserRoles_SuperAdminDomainGate_DB(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	rbacOps := NewRBACOps()
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	grantUpdatePermission := func(actorUserID string) {
 		roleID := seedRBACTestRole(t, pool, "role-updater", authz.Grant{

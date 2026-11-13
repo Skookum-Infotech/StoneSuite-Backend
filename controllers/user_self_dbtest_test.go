@@ -27,8 +27,8 @@ func TestUserOps_UpdateMyProfile_DB(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	ops := NewUserOps(cp, tenancy.NewRouter(nil))
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	ops := NewUserOps(cp, newTestRouter(t))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 	ctx := context.Background()
 
 	// A role-less member, and a second one who must never be touched.

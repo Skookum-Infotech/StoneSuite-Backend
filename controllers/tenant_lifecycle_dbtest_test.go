@@ -49,7 +49,7 @@ func newLifecycleHarness(t *testing.T) *lifecycleHarness {
 	require.True(t, isAdmin, "the seeded identity must pass the platform-admin check, or every test below is vacuous")
 
 	return &lifecycleHarness{
-		h:       &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)},
+		h:       &TenantOps{CP: cp, Router: newTestRouter(t)},
 		cp:      cp,
 		adminID: admin.ID,
 	}

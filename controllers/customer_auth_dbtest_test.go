@@ -111,7 +111,7 @@ func TestCustomerAuthOps_Login_HappyPath_DB(t *testing.T) {
 	email := fmt.Sprintf("customer-%d@example.com", time.Now().UnixNano())
 	seedActiveCustomerIdentity(t, pool, custID, email, "correct-password")
 
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/login", loginBody(tenant.Slug, email, "correct-password"))
 	rec := httptest.NewRecorder()
 	h.Login(rec, req)
@@ -144,7 +144,7 @@ func TestCustomerAuthOps_Login_WrongPassword_DB(t *testing.T) {
 	email := fmt.Sprintf("customer-%d@example.com", time.Now().UnixNano())
 	seedActiveCustomerIdentity(t, pool, custID, email, "correct-password")
 
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/login", loginBody(tenant.Slug, email, "wrong-password"))
 	rec := httptest.NewRecorder()
 	h.Login(rec, req)
@@ -158,7 +158,7 @@ func TestCustomerAuthOps_Login_WrongPassword_DB(t *testing.T) {
 func TestCustomerAuthOps_Login_UnknownTenant_DB(t *testing.T) {
 	withTestJWTSecret(t)
 	cp := newSAMLTestControlPlane(t)
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/login", loginBody("no-such-tenant-slug", "a@example.com", "whatever"))
 	rec := httptest.NewRecorder()
@@ -184,7 +184,7 @@ func TestCustomerAuthOps_Login_DisabledAccount_DB(t *testing.T) {
 	_, err := pool.Exec(context.Background(), `UPDATE customer_identities SET status = 'disabled' WHERE email = $1`, email)
 	require.NoError(t, err)
 
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/login", loginBody(tenant.Slug, email, "correct-password"))
 	rec := httptest.NewRecorder()
 	h.Login(rec, req)
@@ -203,7 +203,7 @@ func TestCustomerAuthOps_AcceptInvite_HappyPath_DB(t *testing.T) {
 	token := fmt.Sprintf("invite-token-%d", time.Now().UnixNano())
 	seedInvitedCustomerIdentity(t, pool, custID, email, token, time.Now().Add(time.Hour))
 
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 	body := strings.NewReader(fmt.Sprintf(`{"tenantSlug":%q,"token":%q,"password":"a-new-password"}`, tenant.Slug, token))
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/accept-invite", body)
 	rec := httptest.NewRecorder()
@@ -228,7 +228,7 @@ func TestCustomerAuthOps_AcceptInvite_ExpiredToken_DB(t *testing.T) {
 	token := fmt.Sprintf("invite-token-%d", time.Now().UnixNano())
 	seedInvitedCustomerIdentity(t, pool, custID, email, token, time.Now().Add(-time.Hour))
 
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 	body := strings.NewReader(fmt.Sprintf(`{"tenantSlug":%q,"token":%q,"password":"a-new-password"}`, tenant.Slug, token))
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/accept-invite", body)
 	rec := httptest.NewRecorder()
@@ -252,7 +252,7 @@ func TestCustomerAuthOps_AcceptInvite_HashedToken_DB(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 
 	t.Run("stored hash is not a working token", func(t *testing.T) {
 		custID := seedCustomerRecord(t, pool)

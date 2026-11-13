@@ -37,19 +37,54 @@ func TestShouldPromptTakeover(t *testing.T) {
 	tests := []struct {
 		name  string
 		other *tenancy.AuthSession
-		own   string
 		want  bool
 	}{
-		{"no other session", nil, "", false},
-		{"other browser in use", recent, "", true},
-		{"other browser in use, this one has its own", recent, "mine", true},
-		{"same browser signing in again", recent, "other", false},
-		{"seen exactly at the window", edge, "", true},
-		{"idle past the window: replaced silently", stale, "", false},
+		{"no other session", nil, false},
+		{"other browser in use", recent, true},
+		{"seen exactly at the window", edge, true},
+		{"idle past the window: replaced silently", stale, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, shouldPromptTakeover(tt.other, tt.own, now))
+			assert.Equal(t, tt.want, shouldPromptTakeover(tt.other, now))
+		})
+	}
+}
+
+func TestCooldownMessage(t *testing.T) {
+	tests := []struct {
+		wait time.Duration
+		want string
+	}{
+		{30 * time.Second, "Your account was just signed in on another device. Try again in 1 minute."},
+		{90 * time.Second, "Your account was just signed in on another device. Try again in 2 minutes."},
+		{5 * time.Minute, "Your account was just signed in on another device. Try again in 5 minutes."},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, cooldownMessage(tt.wait))
+	}
+}
+
+func TestSessionPolicyRequestValidate(t *testing.T) {
+	b := func(v bool) *bool { return &v }
+	n := func(v int) *int { return &v }
+	tests := []struct {
+		name string
+		req  sessionPolicyRequest
+		ok   bool
+	}{
+		{"empty", sessionPolicyRequest{}, false},
+		{"switch only", sessionPolicyRequest{Enforced: b(false)}, true},
+		{"numbers at the bounds", sessionPolicyRequest{TakeoverCooldownMinutes: n(0), TakeoverDailyCap: n(100)}, true},
+		{"max cooldown", sessionPolicyRequest{TakeoverCooldownMinutes: n(1440)}, true},
+		{"cooldown too long", sessionPolicyRequest{TakeoverCooldownMinutes: n(1441)}, false},
+		{"negative cooldown", sessionPolicyRequest{TakeoverCooldownMinutes: n(-1)}, false},
+		{"cap too high", sessionPolicyRequest{TakeoverDailyCap: n(101)}, false},
+		{"negative cap", sessionPolicyRequest{TakeoverDailyCap: n(-1)}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.ok, tt.req.validate() == "")
 		})
 	}
 }

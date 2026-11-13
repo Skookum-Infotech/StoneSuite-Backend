@@ -42,6 +42,29 @@ type SessionGuard struct {
 	sessions sessionLoader
 	cache    *cache.TTLCache[string, *AuthSession]
 	now      func() time.Time
+	// legacyCutoff: a staff token with no session id issued at or after this
+	// instant is refused. Every sign-in path mints a session id since the
+	// single-session release, so such a token can only be a pre-release one
+	// kept alive some other way. Zero disables the check.
+	legacyCutoff time.Time
+}
+
+// WithLegacyCutoff sets the instant after which staff tokens must carry a
+// session id. Returns g for chaining.
+func (g *SessionGuard) WithLegacyCutoff(t time.Time) *SessionGuard {
+	g.legacyCutoff = t
+	return g
+}
+
+// CodeSessionRefreshRequired marks a token that predates sessions: the client
+// refreshes, which adopts it into a session, and retries.
+const CodeSessionRefreshRequired = "session_refresh_required"
+
+// legacyTokenAllowed reports whether a token without a session id may pass:
+// portal tokens always (sessions are a staff concept); staff tokens only when
+// issued before cutoff (zero cutoff = always).
+func legacyTokenAllowed(kind string, issuedAt, cutoff time.Time) bool {
+	return kind == middleware.KindPortal || cutoff.IsZero() || issuedAt.Before(cutoff)
 }
 
 // NewSessionGuard builds a guard over the control plane's auth sessions.
@@ -92,8 +115,24 @@ func isReadMethod(method string) bool {
 // session must never be able to write just because the lookup failed, but an
 // outage must not lock everyone out of reading either.
 func (g *SessionGuard) check(w http.ResponseWriter, r *http.Request, p middleware.UserContextPayload) bool {
-	if g == nil || p.SessionID == "" {
+	if g == nil {
 		return true
+	}
+	if p.SessionID == "" {
+		if legacyTokenAllowed(p.Kind, p.IssuedAt, g.legacyCutoff) {
+			return true
+		}
+		slog.Warn("security event",
+			slog.String("security_event", "sessionless_token_refused"),
+			slog.String("request_id", middleware.RequestIDFromContext(r.Context())),
+			slog.String("identity", p.ID),
+		)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(models.APIResponse{
+			Success: false, Message: "Please sign in again.", Code: CodeSessionRefreshRequired,
+		})
+		return false
 	}
 	s, err := g.cache.GetOrLoad(p.SessionID, func() (*AuthSession, error) {
 		return g.sessions.SessionByID(r.Context(), p.SessionID)

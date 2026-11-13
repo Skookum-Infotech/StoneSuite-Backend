@@ -725,3 +725,49 @@ BEGIN
     END IF;
 END $$;
 UPDATE tenants SET single_session_enforced = FALSE WHERE is_platform_owner = TRUE AND single_session_enforced = TRUE;
+
+-- Why a session was replaced: 'confirmed' (the user confirmed ending it from
+-- another browser), 'idle' (replaced without asking), 'adopted_legacy' (a
+-- pre-session token was refreshed) or 'policy' (the rule was switched on).
+-- Moves counted toward the per-customer cooldown and daily cap below: every
+-- 'confirmed' one, plus 'idle'/'adopted_legacy' ones that replaced a session
+-- used within the previous 2 hours (tenancy.MoveRecency).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'auth_sessions'
+                     AND column_name = 'replaced_reason') THEN
+        ALTER TABLE auth_sessions ADD COLUMN replaced_reason TEXT;
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_identity_replaced
+    ON auth_sessions(identity_id, replaced_at) WHERE replaced_at IS NOT NULL;
+
+-- Per-customer takeover limits, set by a platform admin on the customer's
+-- Settings tab: minutes a user must wait between moving their sign-in to
+-- another device, and how many such moves are allowed in 24 hours (after which
+-- moving is blocked for the day and the customer's administrators are
+-- emailed). 0 turns either limit off.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'tenants'
+                     AND column_name = 'takeover_cooldown_minutes') THEN
+        ALTER TABLE tenants ADD COLUMN takeover_cooldown_minutes INT NOT NULL DEFAULT 5;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'tenants'
+                     AND column_name = 'takeover_daily_cap') THEN
+        ALTER TABLE tenants ADD COLUMN takeover_daily_cap INT NOT NULL DEFAULT 5;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tenants_takeover_cooldown_chk'
+                   AND conrelid = 'tenants'::regclass) THEN
+        ALTER TABLE tenants ADD CONSTRAINT tenants_takeover_cooldown_chk
+            CHECK (takeover_cooldown_minutes BETWEEN 0 AND 1440);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tenants_takeover_daily_cap_chk'
+                   AND conrelid = 'tenants'::regclass) THEN
+        ALTER TABLE tenants ADD CONSTRAINT tenants_takeover_daily_cap_chk
+            CHECK (takeover_daily_cap BETWEEN 0 AND 100);
+    END IF;
+END $$;

@@ -272,18 +272,29 @@ func (c *ControlPlane) RotateRefreshToken(ctx context.Context, oldHash, newHash 
 	return &rec, nil
 }
 
-// RevokeAllRefreshTokens revokes every active refresh token for an identity:
-// every session on every device ends. Used on token reuse, deactivation and
+// RevokeAllRefreshTokens revokes every active refresh token for an identity,
+// and ends its auth sessions: every session on every device ends. Used on token reuse, deactivation and
 // suspension. Tokens revoked here have no live successor, so a replay inside
 // RefreshRotationGrace is refused by RotateRefreshToken too.
 func (c *ControlPlane) RevokeAllRefreshTokens(ctx context.Context, identityID string) error {
-	_, err := c.pool.Exec(ctx,
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("revoke all refresh tokens: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	if _, err := tx.Exec(ctx,
 		`UPDATE refresh_tokens SET revoked_at = NOW()
 		 WHERE identity_id = $1 AND revoked_at IS NULL`,
 		identityID,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("revoke all refresh tokens for identity %s: %w", identityID, err)
+	}
+	// The sessions those tokens belonged to end with them.
+	if _, err := tx.Exec(ctx, endIdentitySessionsSQL, identityID, ""); err != nil {
+		return fmt.Errorf("revoke all refresh tokens: end sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("revoke all refresh tokens: commit: %w", err)
 	}
 	return nil
 }

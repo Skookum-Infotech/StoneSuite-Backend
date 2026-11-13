@@ -515,11 +515,13 @@ func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 			"id": t.ID, "slug": t.Slug, "displayName": t.DisplayName,
 			"status": t.Status, "migrationStatus": t.MigrationStatus,
 			"dbName": t.DBName, "createdAt": t.CreatedAt,
-			"hardDeleteAfter":       t.HardDeleteAfter,
-			"metadata":              meta,
-			"isPlatformOwner":       t.IsPlatformOwner,
-			"r2Bucket":              t.R2Bucket,
-			"singleSessionEnforced": t.SingleSessionEnforced,
+			"hardDeleteAfter":         t.HardDeleteAfter,
+			"metadata":                meta,
+			"isPlatformOwner":         t.IsPlatformOwner,
+			"r2Bucket":                t.R2Bucket,
+			"singleSessionEnforced":   t.SingleSessionEnforced,
+			"takeoverCooldownMinutes": t.TakeoverCooldownMinutes,
+			"takeoverDailyCap":        t.TakeoverDailyCap,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tenants": out})
@@ -898,6 +900,7 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 	displayName := identity.FullName
 	var pool *pgxpool.Pool
 	tenantEnforced := false
+	var limits tenancy.TakeoverLimits
 	if identity.TenantID != "" {
 		tenant, tErr := h.CP.TenantByID(r.Context(), identity.TenantID)
 		if tErr != nil {
@@ -905,6 +908,7 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 			return
 		}
 		tenantEnforced = tenant.SingleSessionEnforced
+		limits = limitsFor(tenant)
 		// A workspace that cannot be served (suspended, deleted, unprovisioned,
 		// under maintenance) must not get a session at all: skipping this check
 		// used to mint a token with no grants, so the user landed on an empty
@@ -964,6 +968,7 @@ func (h *TenantOps) completeLogin(w http.ResponseWriter, r *http.Request, identi
 	sid, done := beginSession(w, r, h.CP, sessionStart{
 		identity: identity, rememberMe: at.rememberMe, takeover: at.takeover, guard: h.Sessions,
 		enforced: singleSessionApplies(tenantEnforced, isPlatformAdmin, false),
+		limits:   limits, tenantID: identity.TenantID, pool: pool,
 	})
 	if done {
 		return

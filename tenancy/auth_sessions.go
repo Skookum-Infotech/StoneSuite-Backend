@@ -20,6 +20,15 @@ const (
 	SessionEnded = "ended"
 )
 
+// Why a session was replaced (auth_sessions.replaced_reason). Only
+// ReplaceConfirmed counts toward a customer's takeover cooldown and daily cap.
+const (
+	ReplaceConfirmed = "confirmed"      // the user confirmed ending it from another browser
+	ReplaceIdle      = "idle"           // it was not in use; replaced without asking
+	ReplaceLegacy    = "adopted_legacy" // a pre-session token was refreshed
+	ReplacePolicy    = "policy"         // the rule was switched on; never a move
+)
+
 // sessionTouchInterval bounds how often last_seen_at is written per session.
 const sessionTouchInterval = time.Minute
 
@@ -116,16 +125,23 @@ func (c *ControlPlane) LiveSessionFor(ctx context.Context, identityID string) (*
 }
 
 // ReplaceSessions marks every other live session of identityID as replaced by
-// keepID, ending after grace. Returns the ids it replaced. Their refresh
-// tokens are left alone: RefreshSession refuses any token whose session is not
-// active, which keeps the reuse detector (revoke-all) from firing on them.
-func (c *ControlPlane) ReplaceSessions(ctx context.Context, identityID, keepID string, grace time.Duration) ([]string, error) {
-	rows, err := c.pool.Query(ctx,
+// keepID for reason (see the Replace* constants), ending after grace. Returns
+// the ids it replaced. Their refresh tokens are left alone: RefreshSession
+// refuses any token whose session is not active, which keeps the reuse
+// detector (revoke-all) from firing on them. Sign-ins use StartSession, which
+// calls this inside its per-identity lock.
+func (c *ControlPlane) ReplaceSessions(ctx context.Context, identityID, keepID string, grace time.Duration, reason string) ([]string, error) {
+	return replaceSessions(ctx, c.pool, identityID, keepID, grace, reason)
+}
+
+// replaceSessions is ReplaceSessions on any querier (pool or transaction).
+func replaceSessions(ctx context.Context, q sessionQuerier, identityID, keepID string, grace time.Duration, reason string) ([]string, error) {
+	rows, err := q.Query(ctx,
 		`UPDATE auth_sessions
-		 SET replaced_at = NOW(), replaced_by = $2,
+		 SET replaced_at = NOW(), replaced_by = $2, replaced_reason = $4,
 		     ends_at = NOW() + $3::bigint * INTERVAL '1 millisecond'
 		 WHERE identity_id = $1 AND id <> $2 AND ended_at IS NULL AND replaced_at IS NULL
-		 RETURNING id`, identityID, keepID, grace.Milliseconds())
+		 RETURNING id`, identityID, keepID, grace.Milliseconds(), reason)
 	if err != nil {
 		return nil, fmt.Errorf("replace auth sessions: %w", err)
 	}
@@ -194,28 +210,3 @@ func (c *ControlPlane) ConsumeTakeoverTicket(ctx context.Context, tokenHash stri
 	}
 	return identityID, rememberMe, nil
 }
-
-// SetTenantSingleSession turns the single-session rule on or off for a
-// customer tenant. The platform-owner tenant is always exempt: turning it on
-// there returns ErrPlatformOwnerExempt.
-func (c *ControlPlane) SetTenantSingleSession(ctx context.Context, tenantID string, enforced bool) error {
-	defer c.forgetTenant(tenantID)
-	var isOwner bool
-	err := c.pool.QueryRow(ctx,
-		`UPDATE tenants SET single_session_enforced = ($2 AND NOT is_platform_owner), updated_at = NOW()
-		 WHERE id = $1 RETURNING is_platform_owner`, tenantID, enforced).Scan(&isOwner)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrTenantNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("set tenant single session: %w", err)
-	}
-	if isOwner && enforced {
-		return ErrPlatformOwnerExempt
-	}
-	return nil
-}
-
-// ErrPlatformOwnerExempt is returned when a rule the platform-owner tenant is
-// always exempt from is switched on for it.
-var ErrPlatformOwnerExempt = errors.New("platform-owner tenant is exempt")

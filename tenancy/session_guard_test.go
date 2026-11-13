@@ -176,3 +176,72 @@ func TestSessionGuardRequire(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyTokenAllowed(t *testing.T) {
+	cutoff := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		kind     string
+		issuedAt time.Time
+		cutoff   time.Time
+		want     bool
+	}{
+		{"staff, issued before the cutoff", "", cutoff.Add(-time.Minute), cutoff, true},
+		{"staff, issued after the cutoff", "", cutoff.Add(time.Minute), cutoff, false},
+		{"staff, issued at the cutoff", "", cutoff, cutoff, false},
+		{"portal is exempt", middleware.KindPortal, cutoff.Add(time.Hour), cutoff, true},
+		{"no cutoff configured", "", cutoff.Add(time.Hour), time.Time{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, legacyTokenAllowed(tt.kind, tt.issuedAt, tt.cutoff))
+		})
+	}
+}
+
+func TestSessionGuardRefusesSessionlessTokenAfterCutoff(t *testing.T) {
+	g := newSessionGuard(&fakeSessions{}).WithLegacyCutoff(time.Now().Add(-time.Hour))
+	rec := httptest.NewRecorder()
+	ok := g.check(rec, httptest.NewRequest(http.MethodGet, "/api/tenant/x", nil),
+		middleware.UserContextPayload{ID: "i", IssuedAt: time.Now()})
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	var body models.APIResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, CodeSessionRefreshRequired, body.Code)
+}
+
+func TestTakeoverRefusal(t *testing.T) {
+	now := time.Now()
+	ago := func(d time.Duration) *time.Time { t := now.Add(-d); return &t }
+	defaults := TakeoverLimits{Cooldown: 5 * time.Minute, DailyCap: 5}
+	tests := []struct {
+		name     string
+		limits   TakeoverLimits
+		hist     TakeoverHistory
+		wantCode string
+		wantWait time.Duration
+	}{
+		{"first move today", defaults, TakeoverHistory{}, "", 0},
+		{"inside the cooldown", defaults, TakeoverHistory{Count: 1, Last: ago(2 * time.Minute)}, CodeTakeoverCooldown, 3 * time.Minute},
+		{"cooldown just over", defaults, TakeoverHistory{Count: 1, Last: ago(5 * time.Minute)}, "", 0},
+		{"one under the cap", defaults, TakeoverHistory{Count: 4, Last: ago(time.Hour)}, "", 0},
+		{"at the cap", defaults, TakeoverHistory{Count: 5, Last: ago(time.Hour)}, CodeTakeoverLimit, 0},
+		{"cap beats cooldown", defaults, TakeoverHistory{Count: 5, Last: ago(time.Minute)}, CodeTakeoverLimit, 0},
+		{"limits off", TakeoverLimits{}, TakeoverHistory{Count: 50, Last: ago(time.Second)}, "", 0},
+		{"custom: cap 1", TakeoverLimits{DailyCap: 1}, TakeoverHistory{Count: 1, Last: ago(time.Hour)}, CodeTakeoverLimit, 0},
+		{"custom: 2-minute wait", TakeoverLimits{Cooldown: 2 * time.Minute}, TakeoverHistory{Count: 1, Last: ago(time.Minute)}, CodeTakeoverCooldown, time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TakeoverRefusal(tt.limits, tt.hist, now)
+			if tt.wantCode == "" {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantCode, got.Code)
+			assert.InDelta(t, tt.wantWait.Seconds(), got.RetryAfter.Seconds(), 1)
+		})
+	}
+}

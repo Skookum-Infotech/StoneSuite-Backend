@@ -210,6 +210,16 @@ func main() {
 		}
 		tenantRouter = tenancy.NewRouterWithTimeouts(dsnResolver, dbSessionTimeouts()) // nil resolver -> PlainDSNResolver
 		sessionGuard = tenancy.NewSessionGuard(cp)
+		// Staff tokens without a session id predate the single-session
+		// release; refuse any issued after sessions began plus a margin
+		// longer than any access token's lifetime.
+		epochCtx, cancelEpoch := context.WithTimeout(context.Background(), legacyCutoffLookupTimeout)
+		if epoch, err := cp.SessionsEpoch(epochCtx); err != nil {
+			slog.Warn("session guard: no legacy-token cutoff", "error", err)
+		} else {
+			sessionGuard.WithLegacyCutoff(epoch.Add(legacyTokenCutoffMargin))
+		}
+		cancelEpoch()
 		resolver = tenancy.NewResolver(cp, tenantRouter).WithMigrationGate(migrationGate).
 			WithSessionGuard(sessionGuard)
 
@@ -2087,6 +2097,12 @@ func seedPlatformOwner(ctx context.Context, cp *tenancy.ControlPlane) {
 
 	printSetupToken(ctx, cp, identity.ID, email)
 }
+
+// Single-session legacy-token cutoff (see tenancy.SessionGuard.WithLegacyCutoff).
+const (
+	legacyTokenCutoffMargin   = 2 * time.Hour
+	legacyCutoffLookupTimeout = 10 * time.Second
+)
 
 const (
 	// setupTokenPrintEnv opts a production boot in to printing the first-time

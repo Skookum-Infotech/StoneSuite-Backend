@@ -100,7 +100,8 @@ func TestTenantOps_Logout_ReplayDoesNotRevokeOtherSessions_DB(t *testing.T) {
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	// Two concurrent sessions of one user: the single-session rule is off here.
-	require.NoError(t, cp.SetTenantSingleSession(context.Background(), tenant.ID, false))
+	_, err := cp.UpdateTenantSessionPolicy(context.Background(), tenant.ID, tenancy.SessionPolicyPatch{Enforced: new(bool)})
+	require.NoError(t, err)
 	identity, _ := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
 
 	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}

@@ -41,7 +41,7 @@ func (h *TenantOps) refreshSessionID(w http.ResponseWriter, r *http.Request, ide
 		isPlatformAdmin = false
 	}
 	sid, done := beginSession(w, r, h.CP, sessionStart{
-		identity: identity, takeover: true, reason: replaceReasonLegacy, guard: h.Sessions,
+		identity: identity, takeover: true, reason: tenancy.ReplaceLegacy, guard: h.Sessions,
 		enforced: singleSessionApplies(tenantEnforced, isPlatformAdmin, false),
 	})
 	if done {

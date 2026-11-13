@@ -34,6 +34,16 @@ right away. At 0:00 that browser signs out and returns to the sign-in page.
 If you did not sign in elsewhere yourself, sign in again and change your
 password.
 
+Moving your sign-in to another device has limits your organization's
+StoneSuite provider sets for each workspace. By default you must wait 5
+minutes between moves, and you can move it up to 5 times in a day. Past the
+daily limit, moving is blocked until the next day and your workspace
+administrators receive an email. Signing out normally, or a session that was
+not used for a while, does not count as a move.
+
+For security, StoneSuite keeps the browser type
+and network address of each sign-in for 90 days after it ends.
+
 ## The sidebar and navigation areas
 
 The left sidebar is how you move around StoneSuite. It's organized into

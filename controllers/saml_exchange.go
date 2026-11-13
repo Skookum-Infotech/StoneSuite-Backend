@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/config"
+	"stonesuite-backend/tenancy"
 )
 
 // samlExchangeRequest is the POST /api/auth/saml/exchange payload: the
@@ -58,9 +59,11 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 	// before this login code was minted).
 	var pool *pgxpool.Pool
 	tenantEnforced := false
+	var limits tenancy.TakeoverLimits
 	if identity.TenantID != "" {
 		if tenant, tErr := h.cp.TenantByID(ctx, identity.TenantID); tErr == nil && tenant.Servable() {
 			tenantEnforced = tenant.SingleSessionEnforced
+			limits = limitsFor(tenant)
 			if p, pErr := h.router.PoolFor(ctx, tenant); pErr == nil {
 				pool = p
 			}
@@ -77,6 +80,7 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 	// confirmed at POST /api/auth/session/takeover, like a password sign-in.
 	sid, done := beginSession(w, r, h.cp, sessionStart{
 		identity: identity, guard: h.sessions,
+		limits: limits, tenantID: identity.TenantID, pool: pool,
 		enforced: singleSessionApplies(tenantEnforced, isPlatformAdmin, false),
 	})
 	if done {

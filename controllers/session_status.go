@@ -15,6 +15,9 @@ func sessionStatusResponse(s *tenancy.AuthSession, replacedBy *tenancy.AuthSessi
 	out := map[string]any{"success": true, "status": s.Status(now)}
 	if s.EndsAt != nil {
 		out["endsAt"] = s.EndsAt.UnixMilli()
+		// Relative too: the browser counts down from this, so a wrong clock
+		// on the user's computer cannot cut the countdown short.
+		out["endsInMs"] = max(int64(0), s.EndsAt.Sub(now).Milliseconds())
 	}
 	if s.ReplacedAt != nil {
 		by := map[string]any{"at": s.ReplacedAt.UnixMilli(), "deviceLabel": ""}

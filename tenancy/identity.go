@@ -132,6 +132,9 @@ func (c *ControlPlane) ConsumePasswordToken(ctx context.Context, identityID, raw
 		identityID); err != nil {
 		return fmt.Errorf("consume password token: revoke sessions: %w", err)
 	}
+	if _, err := tx.Exec(ctx, endIdentitySessionsSQL, identityID, ""); err != nil {
+		return fmt.Errorf("consume password token: end sessions: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("consume password token: commit: %w", err)
 	}
@@ -214,6 +217,9 @@ func (c *ControlPlane) SetIdentityPasswordRevokingSessions(ctx context.Context, 
 		identityID, keepTokenHash); err != nil {
 		return fmt.Errorf("set identity password: revoke sessions: %w", err)
 	}
+	if _, err := tx.Exec(ctx, endIdentitySessionsSQL, identityID, keepTokenHash); err != nil {
+		return fmt.Errorf("set identity password: end sessions: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("set identity password: commit: %w", err)
 	}
@@ -282,3 +288,13 @@ func (c *ControlPlane) LinkSSOIdentity(ctx context.Context, identityID, ssoProvi
 	}
 	return nil
 }
+
+// endIdentitySessionsSQL marks every live auth session of identity $1 ended,
+// except the one the refresh token hashed $2 belongs to ("" spares none). Run
+// alongside each revoke-all of refresh tokens, so a session whose tokens were
+// revoked is not later mistaken for one still in use (the "already signed in
+// elsewhere" prompt) and its access token stops passing the session guard.
+const endIdentitySessionsSQL = `UPDATE auth_sessions SET ended_at = NOW()
+	WHERE identity_id = $1 AND ended_at IS NULL
+	  AND id NOT IN (SELECT session_id FROM refresh_tokens
+	                 WHERE token_hash = $2 AND session_id IS NOT NULL)`

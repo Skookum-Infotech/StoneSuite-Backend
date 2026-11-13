@@ -156,6 +156,9 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		// challenge token is the credential, and a challenge dies after
 		// mfa.MaxAttempts wrong codes.
 		"POST /api/auth/mfa/verify": true, "POST /api/auth/mfa/resend": true,
+		// Confirms "end my other session" after a completed sign-in; gated by a
+		// single-use ticket only that sign-in received, and rate-limited.
+		"POST /api/auth/session/takeover": true,
 
 		// SAML: the IdP and the browser reach these unauthenticated by design.
 		"POST /api/auth/saml/discover": true, "POST /api/auth/saml/exchange": true,

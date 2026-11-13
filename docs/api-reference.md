@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-684 endpoints across 7 surfaces, read from `main.go`.
+687 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -12,8 +12,8 @@
 |---|---:|
 | staff token + tenant | 584 |
 | portal token + tenant | 32 |
-| none (rate-limited) | 24 |
-| staff token | 21 |
+| none (rate-limited) | 25 |
+| staff token | 23 |
 | none | 18 |
 | portal token | 3 |
 | customer token | 2 |
@@ -40,6 +40,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `GET` | `/api/auth/saml/{provider}/logout-response` | no rate limit |
 | `GET` | `/api/auth/saml/{provider}/metadata` | no rate limit |
 | `GET` | `/api/auth/saml/{provider}/sp-info` | no rate limit |
+| `POST` | `/api/auth/session/takeover` | rate-limited per IP |
 | `ANY` | `/api/auth/tenant-login` | rate-limited per IP |
 | `POST` | `/api/customer/auth/accept-invite` | rate-limited per IP |
 | `POST` | `/api/customer/auth/login` | rate-limited per IP |
@@ -93,7 +94,7 @@ Liveness, readiness and metrics. No credential.
 | `POST` | `/api/internal/email/inbound` | none (rate-limited) | `recordEmailOps.Inbound` |
 | `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | none (rate-limited) | `recordEmailOps.InboundAttachment` |
 
-## `auth` — 22 endpoints
+## `auth` — 24 endpoints
 
 Staff sign-in, session rotation, password reset and SAML SSO.
 
@@ -157,6 +158,13 @@ Staff sign-in, session rotation, password reset and SAML SSO.
 | `GET` | `/api/auth/saml/{provider}/logout-response` | none | `samlAuth.LogoutResponse` |
 | `GET` | `/api/auth/saml/{provider}/metadata` | none | `samlAuth.Metadata` |
 | `GET` | `/api/auth/saml/{provider}/sp-info` | none | `samlAuth.SPInfo` |
+
+### session
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/auth/session` | staff token | `tenantOps.SessionStatus` |
+| `POST` | `/api/auth/session/takeover` | none (rate-limited) | `tenantOps.SessionTakeover` |
 
 ### tenant-login
 
@@ -315,7 +323,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 18 endpoints
+## `platform` — 19 endpoints
 
 Platform-admin operations across tenants.
 
@@ -371,6 +379,7 @@ Platform-admin operations across tenants.
 | `ANY` | `/api/platform/tenants/` | staff token | `tenantOps.TenantLifecycle` |
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
+| `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
 
 ## `tenant` — 583 endpoints
 

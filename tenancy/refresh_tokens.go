@@ -42,7 +42,10 @@ func (e *RefreshTokenReusedError) Is(target error) bool { return target == ErrRe
 type RefreshTokenRecord struct {
 	ID         string
 	IdentityID string
-	ExpiresAt  time.Time
+	// SessionID is the auth_sessions row this token belongs to; empty for a
+	// token minted before sessions existed, or for a portal session.
+	SessionID string
+	ExpiresAt time.Time
 	// GraceReplay is set by RotateRefreshToken when the rotated token had
 	// already been rotated and its successor was replaced (see there).
 	GraceReplay bool
@@ -58,10 +61,16 @@ func HashRefreshToken(raw string) string {
 // CreateRefreshToken persists a new refresh token. tokenHash must be the
 // SHA-256 hex digest of the raw token (use HashRefreshToken).
 func (c *ControlPlane) CreateRefreshToken(ctx context.Context, identityID, tokenHash string, expiresAt time.Time) error {
+	return c.CreateSessionRefreshToken(ctx, identityID, "", tokenHash, expiresAt)
+}
+
+// CreateSessionRefreshToken is CreateRefreshToken for a token that belongs to
+// the auth session sessionID ("" stores none). Rotation carries it forward.
+func (c *ControlPlane) CreateSessionRefreshToken(ctx context.Context, identityID, sessionID, tokenHash string, expiresAt time.Time) error {
 	_, err := c.pool.Exec(ctx,
-		`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at)
-		 VALUES ($1, $2, $3)`,
-		identityID, tokenHash, expiresAt,
+		`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at, session_id)
+		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`,
+		identityID, tokenHash, expiresAt, sessionID,
 	)
 	if err != nil {
 		return fmt.Errorf("create refresh token: %w", err)
@@ -98,11 +107,11 @@ func (c *ControlPlane) RefreshTokenByHash(ctx context.Context, tokenHash string)
 	var rec RefreshTokenRecord
 	var revokedAt *time.Time
 	err := c.pool.QueryRow(ctx,
-		`SELECT id, identity_id, expires_at, revoked_at
+		`SELECT id, identity_id, COALESCE(session_id::text, ''), expires_at, revoked_at
 		 FROM refresh_tokens
 		 WHERE token_hash = $1`,
 		tokenHash,
-	).Scan(&rec.ID, &rec.IdentityID, &rec.ExpiresAt, &revokedAt)
+	).Scan(&rec.ID, &rec.IdentityID, &rec.SessionID, &rec.ExpiresAt, &revokedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRefreshTokenNotFound
@@ -202,12 +211,13 @@ func (c *ControlPlane) RotateRefreshToken(ctx context.Context, oldHash, newHash 
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
 
 	var identityID string
+	var sessionID *string
 	var expiresAt, createdAt time.Time
 	var revokedAt *time.Time
 	err = tx.QueryRow(ctx,
-		`SELECT identity_id, expires_at, created_at, revoked_at
+		`SELECT identity_id, session_id::text, expires_at, created_at, revoked_at
 		 FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE`, oldHash,
-	).Scan(&identityID, &expiresAt, &createdAt, &revokedAt)
+	).Scan(&identityID, &sessionID, &expiresAt, &createdAt, &revokedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrRefreshTokenNotFound
 	}
@@ -220,11 +230,14 @@ func (c *ControlPlane) RotateRefreshToken(ctx context.Context, oldHash, newHash 
 	lifetime := rotationLifetime(expiresAt.Sub(createdAt), fallback, max)
 
 	rec := RefreshTokenRecord{IdentityID: identityID}
+	if sessionID != nil {
+		rec.SessionID = *sessionID
+	}
 	if revokedAt == nil {
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at)
-			 VALUES ($1, $2, NOW() + $3::bigint * INTERVAL '1 second')
-			 RETURNING id, expires_at`, identityID, newHash, int64(lifetime/time.Second),
+			`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at, session_id)
+			 VALUES ($1, $2, NOW() + $3::bigint * INTERVAL '1 second', $4)
+			 RETURNING id, expires_at`, identityID, newHash, int64(lifetime/time.Second), sessionID,
 		).Scan(&rec.ID, &rec.ExpiresAt); err != nil {
 			return nil, fmt.Errorf("rotate refresh token: insert: %w", err)
 		}
@@ -246,9 +259,9 @@ func (c *ControlPlane) RotateRefreshToken(ctx context.Context, oldHash, newHash 
 		rec.GraceReplay = true
 		rec.ExpiresAt = revokedAt.Add(lifetime)
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at, created_at)
-			 VALUES ($1, $2, $3, $4)
-			 RETURNING id`, identityID, newHash, rec.ExpiresAt, *revokedAt,
+			`INSERT INTO refresh_tokens (identity_id, token_hash, expires_at, created_at, session_id)
+			 VALUES ($1, $2, $3, $4, $5)
+			 RETURNING id`, identityID, newHash, rec.ExpiresAt, *revokedAt, sessionID,
 		).Scan(&rec.ID); err != nil {
 			return nil, fmt.Errorf("rotate refresh token: insert replacement: %w", err)
 		}
@@ -259,18 +272,42 @@ func (c *ControlPlane) RotateRefreshToken(ctx context.Context, oldHash, newHash 
 	return &rec, nil
 }
 
-// RevokeAllRefreshTokens revokes every active refresh token for an identity:
-// every session on every device ends. Used on token reuse, deactivation and
+// RevokeAllRefreshTokens revokes every active refresh token for an identity,
+// and ends its auth sessions: every session on every device ends. Used on token reuse, deactivation and
 // suspension. Tokens revoked here have no live successor, so a replay inside
 // RefreshRotationGrace is refused by RotateRefreshToken too.
 func (c *ControlPlane) RevokeAllRefreshTokens(ctx context.Context, identityID string) error {
-	_, err := c.pool.Exec(ctx,
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("revoke all refresh tokens: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+	if _, err := tx.Exec(ctx,
 		`UPDATE refresh_tokens SET revoked_at = NOW()
 		 WHERE identity_id = $1 AND revoked_at IS NULL`,
 		identityID,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("revoke all refresh tokens for identity %s: %w", identityID, err)
+	}
+	// The sessions those tokens belonged to end with them.
+	if _, err := tx.Exec(ctx, endIdentitySessionsSQL, identityID, ""); err != nil {
+		return fmt.Errorf("revoke all refresh tokens: end sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("revoke all refresh tokens: commit: %w", err)
+	}
+	return nil
+}
+
+// AttachRefreshTokenSession assigns a session to a token minted before
+// sessions existed (session_id NULL), so a legacy sign-in is adopted into the
+// single-session rule on its first refresh. A token that already has a
+// session is left unchanged.
+func (c *ControlPlane) AttachRefreshTokenSession(ctx context.Context, tokenHash, sessionID string) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE refresh_tokens SET session_id = $2
+		 WHERE token_hash = $1 AND session_id IS NULL`, tokenHash, sessionID); err != nil {
+		return fmt.Errorf("attach refresh token session: %w", err)
 	}
 	return nil
 }

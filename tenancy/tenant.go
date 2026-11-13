@@ -54,6 +54,17 @@ type Tenant struct {
 	// this tenant's database; empty until the first boot migration records it.
 	SchemaHash string
 
+	// SingleSessionEnforced limits each staff identity of this tenant to one
+	// live browser session (per-user licensing). Always false for the
+	// platform-owner tenant.
+	SingleSessionEnforced bool
+	// TakeoverCooldownMinutes is how long a user must wait between moving
+	// their sign-in to another device; 0 = no wait.
+	TakeoverCooldownMinutes int
+	// TakeoverDailyCap is how many such moves are allowed in 24 hours; 0 =
+	// unlimited.
+	TakeoverDailyCap int
+
 	// DesignVersion selects the CRM data design (DesignV1 / DesignV2).
 	DesignVersion string
 

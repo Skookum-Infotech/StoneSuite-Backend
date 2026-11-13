@@ -128,7 +128,8 @@ const tenantColumns = `
 	COALESCE(db_name, ''), COALESCE(db_connection_ref, ''), region,
 	schema_version, migration_status, COALESCE(design_version, 'v2'),
 	deleted_at, hard_delete_after, created_at, updated_at,
-	COALESCE(metadata::text, '{}'), COALESCE(r2_bucket, ''), schema_hash`
+	COALESCE(metadata::text, '{}'), COALESCE(r2_bucket, ''), schema_hash, single_session_enforced,
+	takeover_cooldown_minutes, takeover_daily_cap`
 
 func scanTenant(row pgx.Row) (*Tenant, error) {
 	var t Tenant
@@ -137,7 +138,8 @@ func scanTenant(row pgx.Row) (*Tenant, error) {
 		&t.DBName, &t.DBConnectionRef, &t.Region,
 		&t.SchemaVersion, &t.MigrationStatus, &t.DesignVersion,
 		&t.DeletedAt, &t.HardDeleteAfter, &t.CreatedAt, &t.UpdatedAt,
-		&t.Metadata, &t.R2Bucket, &t.SchemaHash,
+		&t.Metadata, &t.R2Bucket, &t.SchemaHash, &t.SingleSessionEnforced,
+		&t.TakeoverCooldownMinutes, &t.TakeoverDailyCap,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrTenantNotFound

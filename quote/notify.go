@@ -54,6 +54,16 @@ func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, interna
 	})
 }
 
+// notifyDeleted best-effort-notifies the actor (and the owner, if different)
+// that a quote was deleted. Call only after the soft delete has committed.
+func notifyDeleted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	approvalchain.NotifyDeleted(ctx, pool, approvalchain.EventContext{
+		Table: quoteTable, IDColumn: quoteIDColumn, NumberColumn: quoteNumberColumn, OwnerColumn: quoteOwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: quoteResource, DisplayName: quoteDisplayName, RecordUUID: uuid,
+	})
+}
+
 // notifyApproved best-effort-notifies a quote's owner once it's approved
 // (quorum met or a super-admin override).
 func notifyApproved(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, approverEmployeeID int) {

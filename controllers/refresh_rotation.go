@@ -52,13 +52,14 @@ func refreshTokenLifetime(rememberMe bool) time.Duration {
 
 // issueRefreshToken generates a random raw token, hashes it, persists it, and
 // returns the raw value (for the cookie) plus the expiry time.
-func issueRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, identityID string, rememberMe bool) (string, time.Time, error) {
+// sessionID is the auth session the token belongs to ("" for none, e.g. portal).
+func issueRefreshToken(ctx context.Context, cp *tenancy.ControlPlane, identityID, sessionID string, rememberMe bool) (string, time.Time, error) {
 	raw, err := randomToken()
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generate refresh token: %w", err)
 	}
 	expiry := time.Now().Add(refreshTokenLifetime(rememberMe))
-	if err := cp.CreateRefreshToken(ctx, identityID, tenancy.HashRefreshToken(raw), expiry); err != nil {
+	if err := cp.CreateSessionRefreshToken(ctx, identityID, sessionID, tenancy.HashRefreshToken(raw), expiry); err != nil {
 		return "", time.Time{}, err
 	}
 	return raw, expiry, nil
@@ -148,8 +149,9 @@ func rotateRefreshToken(r *http.Request, cp *tenancy.ControlPlane, oldHash strin
 // sessions) rather than a reuse. It clears the auth cookies and writes the
 // response. A delete failure answers 500 success:false: the cookies are still cleared, but the
 // client must not be told the server-side session ended when it did not.
-func revokeSessionOnLogout(w http.ResponseWriter, r *http.Request, cp *tenancy.ControlPlane) {
+func revokeSessionOnLogout(w http.ResponseWriter, r *http.Request, cp *tenancy.ControlPlane, guard *tenancy.SessionGuard) {
 	if cookie, err := r.Cookie("refresh_token"); err == nil && cookie.Value != "" {
+		endSessionForRefreshToken(r, cp, guard, tenancy.HashRefreshToken(cookie.Value))
 		if err := cp.DeleteRefreshToken(r.Context(), tenancy.HashRefreshToken(cookie.Value)); err != nil {
 			slog.Error("logout: delete refresh token", "error", err)
 			clearAuthCookies(w)

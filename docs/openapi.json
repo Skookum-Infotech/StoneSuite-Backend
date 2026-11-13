@@ -712,6 +712,63 @@
         ]
       }
     },
+    "/api/auth/session": {
+      "get": {
+        "operationId": "get_auth_session",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "tenantOps.SessionStatus",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/session/takeover": {
+      "post": {
+        "operationId": "post_auth_session_takeover",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "tenantOps.SessionTakeover",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/tenant-login": {
       "get": {
         "operationId": "get_auth_tenant_login",
@@ -2076,6 +2133,47 @@
           }
         ],
         "summary": "tenantOps.RepairBucketCORS",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/tenants/{id}/single-session": {
+      "put": {
+        "operationId": "put_platform_tenants_id_single_session",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "tenantOps.SetSingleSession",
         "tags": [
           "platform"
         ]

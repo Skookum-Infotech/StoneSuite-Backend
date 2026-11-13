@@ -37,6 +37,7 @@ func (h *RefundOps) Transition(w http.ResponseWriter, r *http.Request) {
 		refundFail(w, err, "Failed to transition refund.")
 		return
 	}
+	notifyCustomerStatus(r.Context(), h.cp, identityID, rf.Customer.ID, custResRefund, rf.StatusCode, custDisplayRefund, rf.Number, rf.Amount, id)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "refund": rf})
 }
 

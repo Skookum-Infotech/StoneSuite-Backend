@@ -128,6 +128,9 @@ func main() {
 	// routed to that tenant's isolated database. Until then, legacy routes work
 	// unchanged so existing functionality is not disrupted during the migration.
 	var resolver *tenancy.Resolver
+	// sessionGuard refuses requests from sessions another sign-in replaced
+	// (single active session per licensed user); nil without a control plane.
+	var sessionGuard *tenancy.SessionGuard
 	// migrationGate 503s requests for tenants still migrating at boot; bootStale
 	// is that set; ragRescan is signalled (non-blocking) as each tenant finishes.
 	migrationGate := tenancy.NewMigrationGate()
@@ -206,7 +209,19 @@ func main() {
 			log.Println("Tenant DSN encryption: disabled (plaintext DSNs — development only).")
 		}
 		tenantRouter = tenancy.NewRouterWithTimeouts(dsnResolver, dbSessionTimeouts()) // nil resolver -> PlainDSNResolver
-		resolver = tenancy.NewResolver(cp, tenantRouter).WithMigrationGate(migrationGate)
+		sessionGuard = tenancy.NewSessionGuard(cp)
+		// Staff tokens without a session id predate the single-session
+		// release; refuse any issued after sessions began plus a margin
+		// longer than any access token's lifetime.
+		epochCtx, cancelEpoch := context.WithTimeout(context.Background(), legacyCutoffLookupTimeout)
+		if epoch, err := cp.SessionsEpoch(epochCtx); err != nil {
+			slog.Warn("session guard: no legacy-token cutoff", "error", err)
+		} else {
+			sessionGuard.WithLegacyCutoff(epoch.Add(legacyTokenCutoffMargin))
+		}
+		cancelEpoch()
+		resolver = tenancy.NewResolver(cp, tenantRouter).WithMigrationGate(migrationGate).
+			WithSessionGuard(sessionGuard)
 
 		// Durable job queue (async_jobs table): backs tenant provisioning and
 		// future long-running work (e.g. workflow transition actions).
@@ -303,7 +318,7 @@ func main() {
 		}
 
 		tenantOps = controllers.NewTenantOps(cp, provisioner, tenantRouter, jobQueue).
-			WithCFClient(cfClient, corsOrigins)
+			WithCFClient(cfClient, corsOrigins).WithSessionGuard(sessionGuard)
 		userOps = controllers.NewUserOps(cp, tenantRouter)
 		portalAuthOps = controllers.NewPortalAuthOps(cp, tenantRouter)
 		portalAccessOps = controllers.NewPortalAccessOps(cp, tenantRouter)
@@ -399,7 +414,12 @@ func main() {
 		mux.Handle("POST /api/auth/identify", authRateLimiter.PerIPFunc(tenantOps.Identify))
 		mux.Handle("POST /api/auth/refresh", refreshRateLimiter.PerIPFunc(tenantOps.RefreshSession))
 		mux.HandleFunc("POST /api/auth/logout", tenantOps.Logout)
-		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(http.HandlerFunc(tenantOps.ChangePassword)))
+		// Single active session per licensed user: confirm ending the other
+		// browser's session (public, rate-limited like sign-in), and the status a
+		// replaced browser polls to show its countdown.
+		mux.Handle("POST /api/auth/session/takeover", authRateLimiter.PerIPFunc(tenantOps.SessionTakeover))
+		mux.Handle("GET /api/auth/session", middleware.RequireAuth(http.HandlerFunc(tenantOps.SessionStatus)))
+		mux.Handle("POST /api/auth/change-password", middleware.RequireAuth(sessionGuard.Require(http.HandlerFunc(tenantOps.ChangePassword))))
 		mux.Handle("POST /api/auth/forgot-password", authRateLimiter.PerIPFunc(tenantOps.ForgotPassword))
 		mux.HandleFunc("GET /api/auth/reset-password/{token}", tenantOps.ValidateResetToken)
 		mux.Handle("POST /api/auth/reset-password", authRateLimiter.PerIPFunc(tenantOps.ResetPassword))
@@ -409,9 +429,9 @@ func main() {
 		mux.Handle("POST /api/auth/mfa/verify", authRateLimiter.PerIPFunc(tenantOps.MFAVerify))
 		mux.Handle("POST /api/auth/mfa/resend", authRateLimiter.PerIPFunc(tenantOps.MFAResend))
 		mux.Handle("GET /api/auth/mfa", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFAStatus)))
-		mux.Handle("POST /api/auth/mfa/enable/start", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFAEnableStart)))
-		mux.Handle("POST /api/auth/mfa/enable/confirm", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFAEnableConfirm)))
-		mux.Handle("POST /api/auth/mfa/disable", middleware.RequireAuth(http.HandlerFunc(tenantOps.MFADisable)))
+		mux.Handle("POST /api/auth/mfa/enable/start", middleware.RequireAuth(sessionGuard.Require(http.HandlerFunc(tenantOps.MFAEnableStart))))
+		mux.Handle("POST /api/auth/mfa/enable/confirm", middleware.RequireAuth(sessionGuard.Require(http.HandlerFunc(tenantOps.MFAEnableConfirm))))
+		mux.Handle("POST /api/auth/mfa/disable", middleware.RequireAuth(sessionGuard.Require(http.HandlerFunc(tenantOps.MFADisable))))
 
 		// Public: self-service onboarding (fill form → approval → set password).
 		mux.HandleFunc("/api/onboarding/form-schema", tenantOps.FormSchema)
@@ -426,6 +446,7 @@ func main() {
 		mux.Handle("POST /api/platform/activate", authRateLimiter.PerIPFunc(tenantOps.Activate))
 
 		// Platform-admin: tenant management (auth required; admin checked inside).
+		mux.Handle("PUT /api/platform/tenants/{id}/single-session", middleware.RequireAuth(http.HandlerFunc(tenantOps.SetSingleSession)))
 		mux.Handle("POST /api/platform/tenants/{id}/repair-cors", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucketCORS)))
 		mux.Handle("POST /api/platform/tenants/{id}/repair-bucket", middleware.RequireAuth(http.HandlerFunc(tenantOps.RepairBucket)))
 		mux.Handle("/api/platform/invites", middleware.RequireAuth(http.HandlerFunc(tenantOps.InviteCustomer)))
@@ -822,7 +843,7 @@ func main() {
 		// SAML authentication flow: metadata/initiate/acs/exchange are public
 		// (rate-limited by IP, same as tenant-login); logout requires the JWT
 		// already issued by exchange, so it goes through the full tenantChain.
-		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher)
+		samlAuth := controllers.NewSAMLAuthOps(cp, tenantOps.Router, cipher).WithSessionGuard(sessionGuard)
 		mux.Handle("GET /api/auth/saml/{provider}/metadata", http.HandlerFunc(samlAuth.Metadata))
 		mux.Handle("GET /api/auth/saml/{provider}/sp-info", http.HandlerFunc(samlAuth.SPInfo))
 		mux.Handle("POST /api/auth/saml/discover", authRateLimiter.PerIPFunc(samlAuth.Discover))
@@ -1443,7 +1464,7 @@ func main() {
 		// tracking a stone order through 16 shop-floor statuses with serialized
 		// slab allocation, a 16-step checklist, and dual approval gates. Guarded
 		// by installation:*; slab routes additionally require inventory_item:*.
-		fj := controllers.NewFabricationOps()
+		fj := controllers.NewFabricationOps(cp)
 		mux.Handle("GET /api/tenant/fabrication-jobs", tenantChain(fj.List))
 		mux.Handle("POST /api/tenant/fabrication-jobs/search", tenantChain(fj.Search))
 		mux.Handle("POST /api/tenant/fabrication-jobs", tenantChain(fj.Create))
@@ -1532,7 +1553,7 @@ func main() {
 
 		// Quote: dedicated v2 relational module (header + line items + approval),
 		// a sibling of Estimate — not served through the generic JSONB router.
-		quo := controllers.NewQuoteOps()
+		quo := controllers.NewQuoteOps(cp)
 		mux.Handle("GET /api/tenant/quotes", tenantChain(quo.List))
 		mux.Handle("POST /api/tenant/quotes/search", tenantChain(quo.Search))
 		mux.Handle("POST /api/tenant/quotes", tenantChain(quo.Create))
@@ -1745,7 +1766,7 @@ func main() {
 		// the non-cash half of an invoice's balance_due — payment_application
 		// remains the cash half (spec
 		// docs/superpowers/specs/2026-07-15-credit-memo-module-design.md).
-		cmOps := controllers.NewCreditMemoOps()
+		cmOps := controllers.NewCreditMemoOps(cp)
 		mux.Handle("GET /api/tenant/credit-memos", tenantChain(cmOps.List))
 		mux.Handle("POST /api/tenant/credit-memos/search", tenantChain(cmOps.Search))
 		mux.Handle("POST /api/tenant/credit-memos", tenantChain(cmOps.Create))
@@ -2076,6 +2097,12 @@ func seedPlatformOwner(ctx context.Context, cp *tenancy.ControlPlane) {
 
 	printSetupToken(ctx, cp, identity.ID, email)
 }
+
+// Single-session legacy-token cutoff (see tenancy.SessionGuard.WithLegacyCutoff).
+const (
+	legacyTokenCutoffMargin   = 2 * time.Hour
+	legacyCutoffLookupTimeout = 10 * time.Second
+)
 
 const (
 	// setupTokenPrintEnv opts a production boot in to printing the first-time

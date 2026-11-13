@@ -30,6 +30,7 @@ func (h *InvoiceOps) Transition(w http.ResponseWriter, r *http.Request) {
 		invoiceFail(w, err, "Failed to transition invoice.")
 		return
 	}
+	notifyCustomerStatus(r.Context(), h.cp, identityID, inv.Customer.ID, custResInvoice, inv.StatusCode, custDisplayInvoice, inv.Number, inv.GrandTotal, id)
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})
 }
 
@@ -65,6 +66,9 @@ func (h *InvoiceOps) RecordPayment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		invoiceFail(w, err, "Failed to record payment.")
 		return
+	}
+	if inv.StatusCode == invoiceStatusPart || inv.StatusCode == invoiceStatusPaid {
+		notifyCustomerStatus(r.Context(), h.cp, identityID, inv.Customer.ID, custResInvoice, inv.StatusCode, custDisplayInvoice, inv.Number, inv.GrandTotal, id)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "invoice": inv})
 }

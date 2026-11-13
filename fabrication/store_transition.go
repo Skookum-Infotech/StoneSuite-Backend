@@ -173,6 +173,17 @@ func notifyCreated(ctx context.Context, pool *pgxpool.Pool, uuid string, interna
 	})
 }
 
+// notifyDeleted best-effort-notifies the actor and owner that a fabrication
+// job was deleted. Call only after the soft delete has committed.
+func notifyDeleted(ctx context.Context, pool *pgxpool.Pool, uuid string, internalID, actorEmployeeID int) {
+	cfg := moduleConfig()
+	approvalchain.NotifyDeleted(ctx, pool, approvalchain.EventContext{
+		Table: cfg.Record.Table, IDColumn: cfg.Record.IDColumn, NumberColumn: cfg.Record.NumberColumn, OwnerColumn: cfg.Record.OwnerColumn,
+		InternalID: internalID, ActorEmployeeID: actorEmployeeID,
+		Resource: cfg.Resource, DisplayName: cfg.DisplayName, RecordUUID: uuid,
+	})
+}
+
 // Hold places a live, non-terminal job on hold, recording the status it was in
 // so Resume can restore it. HOLD→HOLD is rejected (it would overwrite the
 // held-from status and strand the job — spec §1.2).

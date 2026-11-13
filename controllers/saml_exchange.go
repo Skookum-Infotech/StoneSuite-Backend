@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/config"
+	"stonesuite-backend/tenancy"
 )
 
 // samlExchangeRequest is the POST /api/auth/saml/exchange payload: the
@@ -57,18 +58,16 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 	// enrichment, not the identity/session trust check (already done by ACS
 	// before this login code was minted).
 	var pool *pgxpool.Pool
+	tenantEnforced := false
+	var limits tenancy.TakeoverLimits
 	if identity.TenantID != "" {
 		if tenant, tErr := h.cp.TenantByID(ctx, identity.TenantID); tErr == nil && tenant.Servable() {
+			tenantEnforced = tenant.SingleSessionEnforced
+			limits = limitsFor(tenant)
 			if p, pErr := h.router.PoolFor(ctx, tenant); pErr == nil {
 				pool = p
 			}
 		}
-	}
-	accessibleResources := resolveAccessibleResources(ctx, pool, identity.ID, "")
-	token, err := generateTenantJWT(identity.ID, identity.Email, identity.TenantID, "", accessibleResources, d)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to sign token.")
-		return
 	}
 
 	// Non-fatal, exactly like TenantLogin: default false on lookup failure.
@@ -77,10 +76,29 @@ func (h *SAMLAuthOps) Exchange(w http.ResponseWriter, r *http.Request) {
 		isPlatformAdmin = false
 	}
 
+	// Single-session gate, as in TenantLogin: a 409 active_session here is
+	// confirmed at POST /api/auth/session/takeover, like a password sign-in.
+	sid, done := beginSession(w, r, h.cp, sessionStart{
+		identity: identity, guard: h.sessions,
+		limits: limits, tenantID: identity.TenantID, pool: pool,
+		enforced: singleSessionApplies(tenantEnforced, isPlatformAdmin, false),
+	})
+	if done {
+		return
+	}
+
+	accessibleResources := resolveAccessibleResources(ctx, pool, identity.ID, "")
+	token, err := generateTenantJWT(tenantClaims{identityID: identity.ID, email: identity.Email,
+		tenantID: identity.TenantID, sessionID: sid, accessibleResources: accessibleResources}, d)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to sign token.")
+		return
+	}
+
 	// Non-fatal, exactly like TenantLogin: the session still works without a
 	// refresh token, the caller just re-authenticates when the access token
 	// expires.
-	refreshRaw, refreshExpiry, err := issueRefreshToken(ctx, h.cp, identity.ID, false)
+	refreshRaw, refreshExpiry, err := issueRefreshToken(ctx, h.cp, identity.ID, sid, false)
 	if err != nil {
 		slog.Warn("saml exchange: failed to issue refresh token",
 			slog.String("identity_id", identity.ID), slog.String("error", err.Error()))

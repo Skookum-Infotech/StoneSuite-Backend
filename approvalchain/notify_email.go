@@ -26,6 +26,7 @@ type approvalNote struct {
 	Lead      string // email opening sentence, see above
 	DateLabel string // details-box date row label; empty omits the row
 	Reason    string // footer "You're receiving this because ..."
+	ListLink  bool   // link to the module's list page instead of the record (it no longer exists)
 }
 
 var (
@@ -59,6 +60,18 @@ var (
 		Lead:      "%s was created successfully. You can open the record anytime to continue working on it.",
 		DateLabel: "Created On", Reason: "you created this record.",
 	}
+	noteDeleted = approvalNote{
+		Badge: "Deleted", Verb: "was deleted", Body: "Deleted.", CTAVerb: "View",
+		Icon: services.IconDocArrow, Subtitle: "This record has been removed.",
+		Lead:      "%s was deleted. It is no longer available, but you can open the list to see the remaining records.",
+		DateLabel: "Deleted On", Reason: "you deleted this record.", ListLink: true,
+	}
+	noteDeletedOwner = approvalNote{
+		Badge: "Deleted", Verb: "was deleted", Body: "Deleted.", CTAVerb: "View",
+		Icon: services.IconDocArrow, Subtitle: "This record has been removed.",
+		Lead:      "%s was deleted. It is no longer available, but you can open the list to see the remaining records.",
+		DateLabel: "Deleted On", Reason: "you own this record.", ListLink: true,
+	}
 )
 
 // recordFacts is what the email's details box shows about the record.
@@ -74,6 +87,9 @@ type recordFacts struct {
 func buildApprovalNotification(tenantID, eventType, actorUserID string, facts recordFacts, ec EventContext, note approvalNote, contacts []contact) services.NotificationRequest {
 	subject := fmt.Sprintf("%s %s", ec.DisplayName, facts.Number)
 	link := resourceRoute(ec.Resource, ec.RecordUUID)
+	if note.ListLink {
+		link = listRoute(ec.Resource)
+	}
 	details := []services.Detail{{Label: ec.DisplayName + " Number", Value: facts.Number}}
 	if facts.Amount != "" {
 		details = append(details, services.Detail{Label: "Amount", Value: facts.Amount})

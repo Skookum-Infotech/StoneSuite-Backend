@@ -19,9 +19,13 @@ import (
 	"stonesuite-backend/tenancy"
 )
 
-type CreditMemoOps struct{}
+type CreditMemoOps struct {
+	cp *tenancy.ControlPlane
+}
 
-func NewCreditMemoOps() *CreditMemoOps { return &CreditMemoOps{} }
+// NewCreditMemoOps constructs the handler group; cp resolves the customer's
+// portal login for status emails.
+func NewCreditMemoOps(cp *tenancy.ControlPlane) *CreditMemoOps { return &CreditMemoOps{cp: cp} }
 
 func (h *CreditMemoOps) authCreditMemo(w http.ResponseWriter, r *http.Request, action authz.Action) (*pgxpool.Pool, string, authz.Scope, bool) {
 	payload, err := middleware.GetUserFromContext(r.Context())
@@ -255,6 +259,9 @@ func (h *CreditMemoOps) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 		creditMemoFail(w, err, "Failed to approve credit memo.")
 		return
+	}
+	if approvalFinalized(cm.StatusCode) {
+		notifyCustomerApproved(r.Context(), h.cp, identityID, cm.Customer.ID, custResCreditMemo, custDisplayCreditMemo, cm.Number, cm.GrandTotal, uuid)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "creditMemo": cm})
 }

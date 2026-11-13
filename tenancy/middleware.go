@@ -20,9 +20,10 @@ const (
 
 // Resolver wires the control plane and pool router into HTTP middleware.
 type Resolver struct {
-	cp     *ControlPlane
-	router *Router
-	gate   *MigrationGate
+	cp       *ControlPlane
+	router   *Router
+	gate     *MigrationGate
+	sessions *SessionGuard
 }
 
 // NewResolver builds a Resolver from a control plane and router.
@@ -56,6 +57,9 @@ func (rs *Resolver) Middleware(next http.Handler) http.Handler {
 		}
 		if payload.TenantID == "" {
 			writeErr(w, http.StatusForbidden, "Token is not scoped to a tenant.")
+			return
+		}
+		if !rs.sessions.check(w, r, payload) {
 			return
 		}
 

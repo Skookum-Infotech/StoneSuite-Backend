@@ -59,7 +59,7 @@ func TestTenantOps_Login_MintsAccessibleResourcesClaim_DB(t *testing.T) {
 	})
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleID))
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
 		"email": identity.Email, "password": "correct-password",
 	}))
@@ -94,7 +94,7 @@ func TestRBACOps_SwitchRole_MintsAccessibleResourcesForNewRole_DB(t *testing.T) 
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, newRoleID))
 
 	rbacOps := NewRBACOps()
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	payload := middleware.UserContextPayload{
 		ID: identity.ID, Email: identity.Email, TenantID: tenant.ID,

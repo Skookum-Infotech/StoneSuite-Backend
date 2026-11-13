@@ -9,19 +9,28 @@ import (
 var ErrInvalidTransition = errors.New("invalid purchase order status transition")
 
 // allowedTransitions maps a status code to the set of codes reachable from it
-// (spec AD-5). Terminal states (CLSD, CANC) map to an empty set. There is no
-// RJCT status seeded for PORD — rework/rejection is expressed as PAPV → DRFT
-// (recall) or APPV → DRFT (revise). CANC is only reachable before any
-// receiving; once goods have arrived (PART), the order can only be
-// short-closed (→ CLSD), never cancelled.
+// (spec AD-5). Terminal states (CANC, and CLSD bar its paid end) map to an
+// empty set. There is no RJCT status seeded for PORD — rework/rejection is
+// expressed as PAPV → DRFT (recall) or APPV → DRFT (revise). CANC is only
+// reachable before any receiving; once goods have arrived (PART), the order
+// can only be short-closed (→ CLSD), never cancelled.
+//
+// PAID is normally derived, not requested: paid_rollup.go moves an order there
+// once every vendor bill against it is paid. It stays in the map so a super
+// admin can correct state by hand (NonAdminMayTransitionTo keeps it off every
+// other caller's list), and so a paid order can still be closed.
 var allowedTransitions = map[string]map[string]bool{
 	"DRFT": {"PAPV": true, "CANC": true},
 	"PAPV": {"APPV": true, "DRFT": true, "CANC": true},
 	"APPV": {"SENT": true, "DRFT": true, "CANC": true},
-	"SENT": {"PART": true, "RCVD": true, "CLSD": true, "CANC": true},
-	"PART": {"RCVD": true, "CLSD": true},
-	"RCVD": {"CLSD": true},
-	"CLSD": {},
+	"SENT": {"PART": true, "RCVD": true, "PAID": true, "CLSD": true, "CANC": true},
+	"PART": {"RCVD": true, "PAID": true, "CLSD": true},
+	"RCVD": {"PAID": true, "CLSD": true},
+	// A paid order is not a dead end: more goods can still arrive against a
+	// part-received one, so the receiving statuses stay reachable (by a super
+	// admin, or by the rollup when a new bill is raised).
+	"PAID": {"PART": true, "RCVD": true, "CLSD": true},
+	"CLSD": {"PAID": true},
 	"CANC": {},
 }
 
@@ -69,3 +78,9 @@ func ValidateTransition(fromCode, toCode string) error {
 // SentStatusCode is the status a purchase order holds once it has been sent to
 // the vendor.
 const SentStatusCode = "SENT"
+
+// SentStatusLabel is SentStatusCode's `lkp_record_status` label (PORD,
+// record_type 13) — used to show "Sent to Vendor" on the PDF attached to the
+// email that moves an order there, before that move is actually committed
+// (see controllers/purchaseorder_transition.go).
+const SentStatusLabel = "Sent to Vendor"

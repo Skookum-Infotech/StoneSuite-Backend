@@ -24,7 +24,7 @@ import (
 // the same token shape production requests would carry.
 func loginAndGetToken(t *testing.T, cp *tenancy.ControlPlane, tenantSlug, email, password string) string {
 	t.Helper()
-	h := NewCustomerAuthOps(cp, tenancy.NewRouter(nil))
+	h := NewCustomerAuthOps(cp, newTestRouter(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/auth/login", loginBody(tenantSlug, email, password))
 	rec := httptest.NewRecorder()
 	h.Login(rec, req)
@@ -39,8 +39,8 @@ func loginAndGetToken(t *testing.T, cp *tenancy.ControlPlane, tenantSlug, email,
 
 // customerPortalChain mirrors main.go's customerChain (minus rate limiting,
 // which isn't under test here): RequireCustomerAuth -> tenancy resolution.
-func customerPortalChain(cp *tenancy.ControlPlane) func(http.HandlerFunc) http.Handler {
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+func customerPortalChain(t *testing.T, cp *tenancy.ControlPlane) func(http.HandlerFunc) http.Handler {
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 	return func(h http.HandlerFunc) http.Handler {
 		return middleware.RequireCustomerAuth(resolver.CustomerMiddleware(h))
 	}
@@ -57,7 +57,7 @@ func TestCustomerPortalOps_CreateNote_And_ListMyNotes_DB(t *testing.T) {
 	seedActiveCustomerIdentity(t, pool, custID, email, "correct-password")
 	token := loginAndGetToken(t, cp, tenant.Slug, email, "correct-password")
 
-	chain := customerPortalChain(cp)
+	chain := customerPortalChain(t, cp)
 	portal := NewCustomerPortalOps()
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/customer/notes", strings.NewReader(`{"body":"I have an issue with X."}`))
@@ -101,7 +101,7 @@ func TestCustomerPortalOps_ListMyNotes_NeverCrossesCustomers(t *testing.T) {
 	seedActiveCustomerIdentity(t, pool, custB, emailB, "password-b")
 	tokenB := loginAndGetToken(t, cp, tenant.Slug, emailB, "password-b")
 
-	chain := customerPortalChain(cp)
+	chain := customerPortalChain(t, cp)
 	portal := NewCustomerPortalOps()
 
 	submit := func(token, body string) {
@@ -149,7 +149,7 @@ func TestCustomerPortalOps_CreateNote_RejectsStaffToken(t *testing.T) {
 	staffToken, err := generateTenantJWT(tenantClaims{identityID: identity.ID, email: identity.Email, tenantID: identity.TenantID}, time.Hour)
 	require.NoError(t, err)
 
-	chain := customerPortalChain(cp)
+	chain := customerPortalChain(t, cp)
 	portal := NewCustomerPortalOps()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/customer/notes", strings.NewReader(`{"body":"should never land"}`))

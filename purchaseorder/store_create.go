@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/idempotency"
+	"stonesuite-backend/kitref"
 	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
@@ -33,7 +34,8 @@ type resolvedLine struct {
 	length          *float64
 	width           *float64
 	thickness       *float64
-	dimUnit         string // the unit length, width and thickness are measured in; "" = not stated
+	dimUnit         string     // the unit length, width and thickness are measured in; "" = not stated
+	kit             kitref.Ref // the kit the line was added from; zero for none
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -53,6 +55,11 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
+		// The kit a line was added from is a heading label only (see package kitref).
+		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+		if kitMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
+		}
 		// The slab count on a sized line is the existing expected-slabs field.
 		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Unit: in.DimensionUnit}
 		if !dimIn.IsZero() {
@@ -154,6 +161,7 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 		if err := validateTotals(fmt.Sprintf("total of line %d", in.LineNumber), rl.money.Total); err != nil {
 			return nil, err
 		}
+		rl.kit = kit
 		out = append(out, rl)
 	}
 	return out, nil
@@ -187,19 +195,22 @@ func insertLines(ctx context.Context, tx pgx.Tx, poInternalID int, lines []resol
 		if dimUnit == "" {
 			dimUnit = linedim.DefaultUnit
 		}
+		kitUUID, kitName := l.kit.Args()
 		_, err := tx.Exec(ctx, `
 			INSERT INTO purchase_order_item (
 				purchase_order_id, line_number, inventory_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, expected_slabs, dim_length, dim_width, dim_unit, dim_thickness
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19, $20,$21,$22,$23)`,
+				item_created_by, expected_slabs, dim_length, dim_width, dim_unit, dim_thickness,
+				kit_uuid, kit_name
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $19, $20,$21,$22,$23, $24,$25)`,
 			poInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
 			nullableInt(actorEmployeeID), l.expectedSlabs, l.length, l.width, dimUnit, l.thickness,
+			kitUUID, kitName,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

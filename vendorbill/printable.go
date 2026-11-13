@@ -20,7 +20,7 @@ func ToPrintable(vb VendorBill, seller docpdf.Seller) docpdf.PrintableDoc {
 			SKU: it.SKU, Name: it.ItemName, Description: it.Description, UnitCode: it.UnitCode,
 			Quantity: it.Quantity, UnitPrice: it.UnitPrice, DiscountPercent: it.DiscountPercent,
 			TaxPercent: it.TaxPercent, LineTotal: it.LineTotal,
-			Size: docpdf.SizeText(it.Length, it.Width, it.Slabs, it.DimensionUnit),
+			Size: docpdf.SizeTextThick(it.Length, it.Width, it.Thickness, it.Slabs, it.DimensionUnit),
 		})
 	}
 	return docpdf.PrintableDoc{

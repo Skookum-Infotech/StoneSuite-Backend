@@ -25,7 +25,7 @@ func TestTenantOps_RefreshSession_ReplayInsideGraceKeepsSession_DB(t *testing.T)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	identity, _ := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 
 	loginRec := httptest.NewRecorder()
 	h.TenantLogin(loginRec, httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
@@ -61,7 +61,7 @@ func TestTenantOps_Logout_RefreshAfterLogoutIsRefused_DB(t *testing.T) {
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	identity, _ := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 
 	loginRec := httptest.NewRecorder()
 	h.TenantLogin(loginRec, httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
@@ -104,7 +104,7 @@ func TestTenantOps_Logout_ReplayDoesNotRevokeOtherSessions_DB(t *testing.T) {
 	require.NoError(t, err)
 	identity, _ := seedRBACTestIdentity(t, cp, pool, tenant.ID, "correct-password")
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 
 	login := func() *http.Cookie {
 		rec := httptest.NewRecorder()

@@ -12,7 +12,19 @@ import (
 
 // PayableStatuses are the only vendor bill statuses that accept a new
 // settlement. A bill must be approved before anything can be paid against it.
-var PayableStatuses = map[string]bool{"APPV": true, "PART": true, "ODUE": true}
+// PINI is payable too: a bill whose balance is only partly covered by an
+// in-flight payment must still accept a second one for the rest.
+var PayableStatuses = map[string]bool{"APPV": true, "PART": true, "ODUE": true, "PINI": true}
+
+// PaymentInitiatedStatusCode is the status a vendor bill holds while money has
+// been recorded against it through a vendor payment that has not been
+// completed yet — committed, but not gone out.
+const PaymentInitiatedStatusCode = "PINI"
+
+// paymentPaidStatusCode is the vendor *payment* status that makes its
+// applications real money rather than money in flight (vendorpayment's own
+// PAID — distinct from this package's paidStatusCode, the bill's).
+const paymentPaidStatusCode = "PAID"
 
 // Locked is a row-locked live vendor bill, loaded inside a transaction by
 // LockForUpdate. It carries the two inputs to the AP balance identity so
@@ -89,17 +101,26 @@ func LockForUpdateByID(ctx context.Context, tx pgx.Tx, internalID int) (Locked, 
 // DeriveStatus re-derives a vendor bill's status purely from what has been
 // settled against it, where settled = amount_paid + credit_total (AD-7).
 //
+// pending is the part of that total which came from vendor payments that have
+// not been completed yet. Any pending money means PINI ("Payment Initiated"):
+// the bill is not Paid or even Partially Paid on money that has not actually
+// left, however much of the balance it covers. Once the payment is completed
+// its share stops being pending and the bill settles the usual way — PAID at a
+// zero balance, PART while any is still owed.
+//
 // This intentionally does NOT go through CanTransition: that map is for
 // user-directed transitions and has no path back out of PAID, or from PART
 // to APPV -- moves an unapply legitimately needs.
-func DeriveStatus(currentCode string, settled, grandTotal float64) string {
+func DeriveStatus(currentCode string, settled, grandTotal, pending float64) string {
 	balanceDue := grandTotal - settled
 	switch {
+	case pending > 0.005:
+		return PaymentInitiatedStatusCode
 	case balanceDue <= 0.005:
 		return "PAID"
 	case settled > 0.005:
 		return "PART"
-	case currentCode == "PART" || currentCode == "PAID":
+	case currentCode == "PART" || currentCode == "PAID" || currentCode == PaymentInitiatedStatusCode:
 		return "APPV" // fully unapplied back to zero
 	default:
 		return currentCode
@@ -116,19 +137,26 @@ func DeriveStatus(currentCode string, settled, grandTotal float64) string {
 // balance_due and status from that combined total, and writes a
 // vendor_bill_history row -- all inside tx.
 func RecomputeBalance(ctx context.Context, tx pgx.Tx, l Locked, action string, actorEmployeeID int) error {
-	var billPayments, applied, refunded, creditTotal float64
+	var billPayments, applied, pendingApplied, refunded, creditTotal float64
 	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM vendor_bill_payment
 		WHERE vendor_bill_id = $1 AND deleted_at IS NULL`,
 		l.InternalID).Scan(&billPayments); err != nil {
 		return fmt.Errorf("sum vendor bill payments: %w", err)
 	}
+	// Split by whether the paying payment has been completed: an application
+	// from a payment that is not PAID yet is money in flight, which holds the
+	// bill at PINI instead of settling it (see DeriveStatus). The bill-owned
+	// vendor_bill_payment ledger and vendor credits have no such in-flight
+	// stage — a row there is settled money the moment it exists.
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(vpa.application_amount), 0)
+		SELECT COALESCE(SUM(vpa.application_amount), 0),
+		       COALESCE(SUM(CASE WHEN rs.record_status_code <> $2 THEN vpa.application_amount ELSE 0 END), 0)
 		FROM vendor_payment_application vpa
 		JOIN vendor_payment vp ON vp.vendor_payment_id = vpa.vendor_payment_id
+		JOIN lkp_record_status rs ON rs.record_status_id = vp.vendor_payment_status
 		WHERE vpa.vendor_bill_id = $1 AND vpa.application_deleted_at IS NULL AND vp.vendor_payment_deleted_at IS NULL`,
-		l.InternalID).Scan(&applied); err != nil {
+		l.InternalID, paymentPaidStatusCode).Scan(&applied, &pendingApplied); err != nil {
 		return fmt.Errorf("sum vendor payment applications: %w", err)
 	}
 	if err := tx.QueryRow(ctx, `
@@ -152,10 +180,17 @@ func RecomputeBalance(ctx context.Context, tx pgx.Tx, l Locked, action string, a
 		amountPaid = 0
 	}
 	creditTotal = round2(creditTotal)
+	// Refunds are not attributed to one application, so cap the in-flight
+	// share at what is still recorded as paid: a fully refunded in-flight
+	// payment must not hold the bill at PINI.
+	pendingApplied = round2(pendingApplied)
+	if pendingApplied > amountPaid {
+		pendingApplied = amountPaid
+	}
 
 	updated := Locked{GrandTotal: l.GrandTotal, AmountPaid: amountPaid, CreditTotal: creditTotal}
 	balanceDue := updated.BalanceDue()
-	toCode := DeriveStatus(l.StatusCode, updated.settled(), l.GrandTotal)
+	toCode := DeriveStatus(l.StatusCode, updated.settled(), l.GrandTotal, pendingApplied)
 
 	var vbTypeID int
 	if err := tx.QueryRow(ctx, `SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'VBIL'`).Scan(&vbTypeID); err != nil {

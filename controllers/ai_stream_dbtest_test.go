@@ -148,7 +148,7 @@ func TestAIOpsAskStream_DirectCountRouteEndToEnd(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-count", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
@@ -186,7 +186,7 @@ func TestAIOpsAskStream_UnknownConversationIs404BeforeAnyStreaming(t *testing.T)
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-404", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
@@ -208,7 +208,7 @@ func TestAIOpsAskStream_PersistsTurnOnlyOnDone(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-persist", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
@@ -260,7 +260,7 @@ func TestAIOpsAskStream_WorksThroughRealGlobalChain(t *testing.T) {
 	pool, dsn := testCustomerTenantPool(t)
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-global-chain", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
@@ -293,7 +293,7 @@ func TestAIOpsAskStream_RealRagRouteEndToEnd(t *testing.T) {
 	cp := newSAMLTestControlPlane(t)
 	cpPool := testCPPool(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-rag-route", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
@@ -340,7 +340,7 @@ func TestAIOpsAskStream_LLMFailureEmitsErrorEvent(t *testing.T) {
 	cp := newSAMLTestControlPlane(t)
 	cpPool := testCPPool(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-llm-failure", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})
@@ -377,7 +377,7 @@ func TestAIOpsAskStream_CtxDoneEmitsErrorEvent(t *testing.T) {
 	cp := newSAMLTestControlPlane(t)
 	cpPool := testCPPool(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw")
 	roleID := seedRBACTestRole(t, pool, "ai-stream-ctx-done", authz.Grant{Resource: authz.ResourceLead, Action: authz.ActionRead, Scope: authz.ScopeAll})

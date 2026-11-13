@@ -10456,3 +10456,41 @@ ALTER TABLE estimate_item    ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2
 ALTER TABLE quote_item       ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
 ALTER TABLE sales_order_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
 ALTER TABLE invoice_item     ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+
+-- A requisition / vendor bill line's slab thickness, in the line's own dim_unit
+-- (like dim_length / dim_width). Optional and descriptive: it never enters the
+-- quantity. Requisition -> PO and PO -> bill conversion copy it.
+ALTER TABLE requisition_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+ALTER TABLE vendor_bill_item ADD COLUMN IF NOT EXISTS dim_thickness DECIMAL(10,2) NULL CHECK (dim_thickness IS NULL OR dim_thickness > 0);
+
+-- Kit heading on purchases lines, exactly as on sales lines: a line added from a
+-- kit remembers the kit's uuid and the name it had at the time. No foreign key on
+-- purpose (the label outlives the kit). Requisition -> PO and PO -> bill
+-- conversion copy it.
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE purchase_order_item ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE requisition_item    ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE requisition_item    ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE vendor_bill_item    ADD COLUMN IF NOT EXISTS kit_uuid UUID NULL;
+ALTER TABLE vendor_bill_item    ADD COLUMN IF NOT EXISTS kit_name VARCHAR(100) NOT NULL DEFAULT '';
+
+-- The AP payment flow's two new states (vendorbill/balance.go,
+-- vendorpayment/transitions.go). Recording money against a vendor bill puts
+-- both the bill and its payment at PINI ("Payment Initiated"): the money is
+-- committed but has not left yet. Completing the payment moves it to PAID --
+-- which replaces SENT as a vendor payment's end state -- settles the bill
+-- (PAID, or PART while a balance remains) and marks a purchase order PAID
+-- once every live bill raised against it is paid. PORD had no paid status at
+-- all before this; SENT rows are left in place for payments already on them.
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'PINI', 'Payment Initiated', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VBIL'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'PINI', 'Payment Initiated', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'VPAY'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'PORD'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;

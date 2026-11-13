@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/idempotency"
+	"stonesuite-backend/purchaseorder"
 )
 
 // Create inserts a new vendor bill (header + lines) inside one transaction:
@@ -173,6 +174,15 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	}
 
 	writeHistory(ctx, tx, internalID, "create", nil, &draftStatusID, actorEmployeeID)
+
+	// A brand-new bill is unpaid, so an order that had reached Paid (every bill
+	// against it settled) is not paid any more — raising this one takes it back
+	// to where its goods put it.
+	if poID != nil {
+		if err := purchaseorder.ApplyBillPaymentRollup(ctx, tx, internalID, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := auditTx(ctx, tx, auditCreate, newUUID, nil, duplicateExtra(dupUUID)); err != nil {
 		return nil, err

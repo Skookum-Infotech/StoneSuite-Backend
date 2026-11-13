@@ -72,7 +72,7 @@ func TestGlobalSearchOps_Search_DB(t *testing.T) {
 	_, err = vendors.Create(context.Background(), pool, vendorIn, 1)
 	require.NoError(t, err)
 
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 	gsOps := NewGlobalSearchOps()
 
 	doSearch := func(t *testing.T, identityID, q string) *httptest.ResponseRecorder {

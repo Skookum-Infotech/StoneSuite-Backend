@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"stonesuite-backend/kitref"
 	"stonesuite-backend/linedim"
 	"stonesuite-backend/workflow"
 )
@@ -33,6 +34,7 @@ type resolvedLine struct {
 	taxPercent            float64
 	money                 LineMoney
 	dims                  linedim.Dims
+	kit                   kitref.Ref // the kit the line was added from; zero for none
 }
 
 // resolveLines validates and resolves every input line against the catalog
@@ -52,7 +54,12 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			return nil, ClientError{Msg: fmt.Sprintf("Duplicate line number %d.", in.LineNumber)}
 		}
 		seenLine[in.LineNumber] = true
-		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit}
+		// The kit a line was added from is a heading label only (see package kitref).
+		kit, kitMsg := kitref.Normalize(in.KitUUID, in.KitName)
+		if kitMsg != "" {
+			return nil, ClientError{Msg: fmt.Sprintf("Line %d: %s", in.LineNumber, kitMsg)}
+		}
+		dimIn := linedim.Input{Length: in.Length, Width: in.Width, Slabs: in.Slabs, Unit: in.DimensionUnit, Thickness: in.Thickness}
 		if in.Quantity <= 0 && !dimIn.HasArea() {
 			return nil, ClientError{Msg: fmt.Sprintf("Line %d: quantity must be greater than zero.", in.LineNumber)}
 		}
@@ -126,6 +133,7 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 			Quantity: rl.quantity, UnitPrice: rl.unitPrice,
 			DiscountPercent: rl.discountPercent, TaxPercent: rl.taxPercent,
 		})
+		rl.kit = kit
 		out = append(out, rl)
 	}
 	return out, nil
@@ -137,20 +145,23 @@ func resolveLines(ctx context.Context, q workflow.Querier, items []LineInput, he
 // path (store_convert.go) has its own separate insert.
 func insertLines(ctx context.Context, tx pgx.Tx, vbInternalID int, lines []resolvedLine, actorEmployeeID int) error {
 	for _, l := range lines {
+		kitUUID, kitName := l.kit.Args()
 		_, err := tx.Exec(ctx, `
 			INSERT INTO vendor_bill_item (
 				vendor_bill_id, line_number, inventory_item_id, purchase_order_item_id,
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, dim_length, dim_width, slabs, dim_unit
-			) VALUES ($1,$2,$3,$19, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $20,$21,$22,$23)`,
+				item_created_by, dim_length, dim_width, slabs, dim_unit, dim_thickness,
+				kit_uuid, kit_name
+			) VALUES ($1,$2,$3,$19, $4,$5,$6,$7,$8, $9,$10,$11,$12,$13, $14,$15,$16,$17, $18, $20,$21,$22,$23,$24, $25,$26)`,
 			vbInternalID, l.lineNumber, l.inventoryItemID,
 			l.name, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			l.money.Subtotal, l.money.Discount, l.money.Tax, l.money.Total,
 			nullableInt(actorEmployeeID), l.purchaseOrderItemID,
-			l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(),
+			l.dims.Length, l.dims.Width, l.dims.Slabs, l.dims.StoredUnit(), l.dims.Thickness,
+			kitUUID, kitName,
 		)
 		if err != nil {
 			if isForeignKeyViolation(err) {

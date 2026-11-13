@@ -29,7 +29,7 @@ func internalIDByUUID(ctx context.Context, pool *pgxpool.Pool, id string) (int, 
 }
 
 // Update edits non-monetary fields only (spec AD-12: amount is immutable
-// post-creation). Allowed only while the payment is DRFT or PAPV. The payment
+// post-creation). Allowed only while the payment is DRFT, PINI or PAPV. The payment
 // row is locked FOR UPDATE before the version and status checks, so both judge
 // the state the write will land on.
 func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorPaymentInput, actorEmployeeID int) (*VendorPayment, error) {
@@ -66,8 +66,10 @@ func Update(ctx context.Context, pool *pgxpool.Pool, id string, in UpdateVendorP
 	if err := checkExpectedVersion(in.ExpectedVersion, currentVersion); err != nil {
 		return nil, err
 	}
-	if lp.statusCode != "DRFT" && lp.statusCode != "PAPV" {
-		return nil, ClientError{Msg: "Only a draft or pending-approval vendor payment can be edited."}
+	// PINI is the bill-initiated equivalent of DRFT, so it edits the same way:
+	// nothing has actually been paid out yet.
+	if lp.statusCode != "DRFT" && lp.statusCode != "PAPV" && lp.statusCode != PaymentInitiatedStatusCode {
+		return nil, ClientError{Msg: "Only a draft, payment-initiated or pending-approval vendor payment can be edited."}
 	}
 	// Captured under the row lock so the audit "old" value is the row this
 	// update actually replaces.

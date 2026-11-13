@@ -15,11 +15,42 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"stonesuite-backend/companylocation"
+	"stonesuite-backend/companyprofile"
 )
 
 // ErrRequisitionNotFound is returned when the source requisition uuid
 // matches no live row.
 var ErrRequisitionNotFound = errors.New("requisition not found")
+
+// defaultShipTo mirrors the frontend's purchaseOrderShipToDefaults.ts: the
+// tenant's default Location (Configuration -> Company Info -> Locations)
+// when one is set, else its Company Info shipping address, else empty. That
+// helper only runs on the Add Purchase Order page, which a requisition
+// conversion never visits, so the same default is applied here instead —
+// otherwise a converted PO's Ship To comes back blank. State/country are
+// left unset, same as that helper: they're free text on both Location and
+// CompanyProfile, not the *_id lookups ShipTo.StateID/CountryID expect.
+func defaultShipTo(ctx context.Context, pool *pgxpool.Pool) AddressInput {
+	if locations, err := companylocation.List(ctx, pool); err == nil {
+		for _, l := range locations {
+			if l.IsDefault {
+				return AddressInput{
+					Name: l.Name, AddrLine1: l.Address.Line1, AddrLine2: l.Address.Line2,
+					SuiteUnit: l.Address.Suite, City: l.Address.City, Zip: l.Address.Zip, Phone: l.Phone,
+				}
+			}
+		}
+	}
+	if profile, err := companyprofile.Get(ctx, pool); err == nil && strings.TrimSpace(profile.CompanyName) != "" {
+		return AddressInput{
+			Name: profile.CompanyName, AddrLine1: profile.ShippingAddress.Line1, AddrLine2: profile.ShippingAddress.Line2,
+			SuiteUnit: profile.ShippingAddress.Suite, City: profile.ShippingAddress.City, Zip: profile.ShippingAddress.Zip,
+		}
+	}
+	return AddressInput{}
+}
 
 // requisitionSnapshot is the subset of a source requisition's header the
 // convert path copies verbatim.
@@ -47,6 +78,9 @@ type requisitionSourceLine struct {
 	width               *float64
 	slabs               *int // becomes the PO line's expected slabs
 	dimUnit             string
+	thickness           *float64 // slab thickness, in dimUnit, carried over
+	kitUUID             *string  // the kit heading the line sits under, carried over
+	kitName             string
 }
 
 // loadRequisitionSourceLines loads a live requisition's lines by its internal id.
@@ -55,7 +89,8 @@ func loadRequisitionSourceLines(ctx context.Context, tx pgx.Tx, requisitionInter
 		SELECT requisition_item_uuid, line_number, inventory_item_id,
 		       item_name, sku, description, unit_id, COALESCE(unit_code,''),
 		       quantity, estimated_unit_price,
-		       dim_length, dim_width, slabs, dim_unit
+		       dim_length, dim_width, slabs, dim_unit, dim_thickness,
+		       kit_uuid::text, kit_name
 		FROM requisition_item
 		WHERE requisition_id = $1 AND item_deleted_at IS NULL
 		ORDER BY line_number`, requisitionInternalID)
@@ -70,7 +105,8 @@ func loadRequisitionSourceLines(ctx context.Context, tx pgx.Tx, requisitionInter
 			&l.uuid, &l.lineNumber, &l.inventoryItemID,
 			&l.itemName, &l.sku, &l.desc, &l.unitID, &l.unitCode,
 			&l.quantity, &l.unitPrice,
-			&l.length, &l.width, &l.slabs, &l.dimUnit,
+			&l.length, &l.width, &l.slabs, &l.dimUnit, &l.thickness,
+			&l.kitUUID, &l.kitName,
 		); err != nil {
 			return nil, fmt.Errorf("scan requisition line: %w", err)
 		}
@@ -105,14 +141,16 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, poInternalID int, line
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, expected_slabs, dim_length, dim_width, dim_unit
-			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,0,$11, $12,$13,$14,$15, $16, $17,$18,$19,$20)
+				item_created_by, expected_slabs, dim_length, dim_width, dim_unit, dim_thickness,
+				kit_uuid, kit_name
+			) VALUES ($1,$2,$3, $4,$5,$6,$7,$8, $9,$10,0,$11, $12,$13,$14,$15, $16, $17,$18,$19,$20,$21, $22,$23)
 			RETURNING purchase_order_item_uuid`,
 			poInternalID, l.lineNumber, l.inventoryItemID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.quantity, l.unitPrice, headerTaxPercent,
 			money.Subtotal, money.Discount, money.Tax, money.Total,
-			nullableInt(actorEmployeeID), l.slabs, l.length, l.width, l.dimUnit,
+			nullableInt(actorEmployeeID), l.slabs, l.length, l.width, l.dimUnit, l.thickness,
+			l.kitUUID, l.kitName,
 		).Scan(&newLineUUID)
 		if err != nil {
 			return nil, fmt.Errorf("insert converted purchase order item: %w", err)
@@ -213,7 +251,7 @@ func ConvertFromRequisition(ctx context.Context, pool *pgxpool.Pool, requisition
 		{"purchase_order_custom_fields", src.customFields, ""},
 		{"purchase_order_created_by", nullableInt(actorEmployeeID), ""},
 	}
-	cv = append(cv, addrColVals(AddressInput{})...)
+	cv = append(cv, addrColVals(defaultShipTo(ctx, pool))...)
 
 	insertSQL, insertArgs := buildInsert("purchase_order", cv, "purchase_order_id, purchase_order_uuid")
 	var internalID int

@@ -15,16 +15,33 @@ func TestTransitions(t *testing.T) {
 		{"PAPV", "DRFT", true},
 		{"PAPV", "VOID", true},
 		{"PAPV", "SCHD", false},
-		{"PAPV", "SENT", false},
+		{"PAPV", "PAID", false},
 		{"APPV", "SCHD", true},
-		{"APPV", "SENT", true},
+		{"APPV", "PAID", true},
 		{"APPV", "VOID", true},
 		{"APPV", "PAPV", false},
 		{"APPV", "DRFT", false},
-		{"SCHD", "SENT", true},
+		{"SCHD", "PAID", true},
 		{"SCHD", "VOID", true},
 		{"SCHD", "APPV", false},
 		{"SCHD", "DRFT", false},
+		// A payment recorded against a bill starts at PINI and otherwise moves
+		// exactly like a draft.
+		{"PINI", "PAPV", true},
+		{"PINI", "VOID", true},
+		{"PINI", "PAID", false},
+		{"PINI", "SCHD", false},
+		// Completing a payment is the end of its life; voiding it is the only
+		// way back out.
+		{"PAID", "VOID", true},
+		{"PAID", "SCHD", false},
+		{"PAID", "APPV", false},
+		// Sent ("dispatched") still works exactly as before — the scheduler's
+		// daily tick still reaches it — and Complete Payment reaches Paid
+		// straight from Approved or Scheduled too, not only from Sent.
+		{"APPV", "SENT", true},
+		{"SCHD", "SENT", true},
+		{"SENT", "PAID", true},
 		{"SENT", "VOID", true},
 		{"SENT", "SCHD", false},
 		{"SENT", "APPV", false},

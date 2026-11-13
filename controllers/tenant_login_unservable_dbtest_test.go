@@ -41,7 +41,7 @@ func newLoginFixture(t *testing.T) *loginFixture {
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	identity, _ := seedRBACTestIdentity(t, cp, pool, tenant.ID, loginTestPassword)
 	return &loginFixture{
-		h:        &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)},
+		h:        &TenantOps{CP: cp, Router: newTestRouter(t)},
 		cp:       cp,
 		tenant:   tenant,
 		identity: identity,

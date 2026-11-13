@@ -58,8 +58,8 @@ func newInviteTestEnv(t *testing.T) *inviteTestEnv {
 		cp:       cp,
 		pool:     pool,
 		tenant:   tenant,
-		ops:      NewUserOps(cp, tenancy.NewRouter(nil)),
-		resolver: tenancy.NewResolver(cp, tenancy.NewRouter(nil)),
+		ops:      NewUserOps(cp, newTestRouter(t)),
+		resolver: tenancy.NewResolver(cp, newTestRouter(t)),
 		payload: middleware.UserContextPayload{
 			ID: identity.ID, Email: identity.Email,
 			TenantID: tenant.ID, UserID: user.ID,

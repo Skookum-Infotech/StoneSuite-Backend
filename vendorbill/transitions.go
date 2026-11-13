@@ -10,15 +10,16 @@ var ErrInvalidTransition = errors.New("invalid vendor bill status transition")
 
 // allowedTransitions maps a status code to the set of codes reachable from it
 // (AD-5) -- invoice's machine minus SENT, since a bill is received rather
-// than sent. Terminal states (PAID, VOID) map to an empty set. PART/PAID are
-// normally reached by DeriveStatus (balance.go), not this map; they remain
+// than sent. Terminal states (PAID, VOID) map to an empty set. PINI/PART/PAID
+// are normally reached by DeriveStatus (balance.go), not this map; they remain
 // here so an operator can correct state manually.
 var allowedTransitions = map[string]map[string]bool{
 	"DRFT": {"PAPV": true, "VOID": true},
 	"PAPV": {"APPV": true, "DRFT": true, "VOID": true},
-	"APPV": {"PART": true, "PAID": true, "ODUE": true, "VOID": true},
-	"PART": {"PAID": true, "ODUE": true, "VOID": true},
-	"ODUE": {"PART": true, "PAID": true, "VOID": true},
+	"APPV": {"PINI": true, "PART": true, "PAID": true, "ODUE": true, "VOID": true},
+	"PINI": {"PART": true, "PAID": true, "ODUE": true, "VOID": true},
+	"PART": {"PINI": true, "PAID": true, "ODUE": true, "VOID": true},
+	"ODUE": {"PINI": true, "PART": true, "PAID": true, "VOID": true},
 	"PAID": {},
 	"VOID": {},
 }

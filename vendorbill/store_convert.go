@@ -106,6 +106,12 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, vbInternalID int, line
 		if l.billQty == l.quantity && l.length != nil && l.width != nil {
 			length, width, slabs, unit = l.length, l.width, l.slabs, l.dimUnit
 		}
+		// Thickness never enters the quantity, so it describes even a partial
+		// bill's slabs; it is measured in the order line's unit.
+		thickness := l.thickness
+		if thickness != nil && l.dimUnit != "" {
+			unit = l.dimUnit
+		}
 		var newLineUUID string
 		err := tx.QueryRow(ctx, `
 			INSERT INTO vendor_bill_item (
@@ -113,14 +119,16 @@ func insertConvertedLines(ctx context.Context, tx pgx.Tx, vbInternalID int, line
 				item_name, sku, description, unit_id, unit_code,
 				quantity, unit_price, discount_percent, tax_rate_id, tax_percent,
 				line_subtotal, line_discount, line_tax, line_total,
-				item_created_by, dim_length, dim_width, slabs, dim_unit
-			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19, $20,$21,$22,$23)
+				item_created_by, dim_length, dim_width, slabs, dim_unit, dim_thickness,
+				kit_uuid, kit_name
+			) VALUES ($1,$2,$3,$4, $5,$6,$7,$8,$9, $10,$11,$12,$13,$14, $15,$16,$17,$18, $19, $20,$21,$22,$23,$24, $25,$26)
 			RETURNING vendor_bill_item_uuid`,
 			vbInternalID, i+1, l.inventoryItemID, l.internalID,
 			l.itemName, l.sku, l.desc, l.unitID, l.unitCode,
 			l.billQty, l.unitPrice, l.discountPercent, l.taxRateID, l.taxPercent,
 			money.Subtotal, money.Discount, money.Tax, money.Total,
-			nullableInt(actorEmployeeID), length, width, slabs, unit,
+			nullableInt(actorEmployeeID), length, width, slabs, unit, thickness,
+			l.kitUUID, l.kitName,
 		).Scan(&newLineUUID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("insert converted vendor bill item: %w", err)

@@ -49,7 +49,7 @@ func newAITestEnv(t *testing.T, grants ...authz.Grant) *aiTestEnv {
 	}
 	llm := &rag.FakeStreamingLLM{Reply: "See [1].", Tokens: []string{"See ", "[1]."}}
 	return &aiTestEnv{
-		pool: pool, resolver: tenancy.NewResolver(cp, tenancy.NewRouter(nil)),
+		pool: pool, resolver: tenancy.NewResolver(cp, newTestRouter(t)),
 		tenantID: tenant.ID, identity: identity, user: user,
 		h: NewAIOps(testCPPool(t), fakeEmbedder{}, llm, nil, nil),
 	}

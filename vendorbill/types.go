@@ -50,6 +50,14 @@ type Line struct {
 	// DimensionUnit is the one unit length and width are measured in (mm, cm, in,
 	// ft, m). Blank takes the item's unit, then inches.
 	DimensionUnit string `json:"dimensionUnit,omitempty"`
+	// Thickness is the thickness of one slab, in DimensionUnit, when stated.
+	Thickness *float64 `json:"thickness,omitempty"`
+
+	// KitID / KitName are set on a line that was added from a kit: the kit's uuid
+	// and the name it had at the time. Consecutive lines with the same KitID are
+	// one group under one heading.
+	KitID   *string `json:"kitId,omitempty"`
+	KitName string  `json:"kitName,omitempty"`
 }
 
 // LineInput is one line of a create/update request. PurchaseOrderItemID is the
@@ -76,6 +84,15 @@ type LineInput struct {
 	Width         *float64 `json:"width,omitempty"`
 	Slabs         *int     `json:"slabs,omitempty"`
 	DimensionUnit string   `json:"dimensionUnit,omitempty"`
+	// Thickness is the thickness of one slab, in DimensionUnit. Optional and
+	// descriptive: it never enters the quantity. Only area-unit lines accept it.
+	Thickness *float64 `json:"thickness,omitempty"`
+
+	// KitUUID / KitName say the line was added from a kit, so the document groups
+	// it under that kit's heading. A label only: nothing about the line's pricing,
+	// stock or conversion depends on them (see package kitref).
+	KitUUID string `json:"kitUuid,omitempty"`
+	KitName string `json:"kitName,omitempty"`
 }
 
 // BillPayment is one live vendor_bill_payment row (AD-7).

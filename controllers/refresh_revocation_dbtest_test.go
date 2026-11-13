@@ -49,7 +49,7 @@ func newRevocationFixture(t *testing.T) *revocationFixture {
 	require.NoError(t, err)
 	identity, user := seedRBACTestIdentity(t, cp, pool, tenant.ID, revocationTestPassword)
 	return &revocationFixture{
-		h: &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}, cpPool: cpPool,
+		h: &TenantOps{CP: cp, Router: newTestRouter(t)}, cpPool: cpPool,
 		pool: pool, identity: identity, user: user,
 	}
 }

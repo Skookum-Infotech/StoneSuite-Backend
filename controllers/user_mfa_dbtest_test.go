@@ -44,7 +44,7 @@ func newAdminMFAFixture(t *testing.T) *adminMFAFixture {
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	ctx := context.Background()
-	router := tenancy.NewRouter(nil)
+	router := newTestRouter(t)
 
 	adminIdentity, admin := seedRBACTestIdentity(t, cp, pool, tenant.ID, "pw-admin")
 	saRole, err := authz.SeedSuperAdmin(ctx, pool)

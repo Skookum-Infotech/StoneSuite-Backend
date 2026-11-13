@@ -49,7 +49,7 @@ func fabricateAs(t *testing.T, grants ...authz.Grant) *httptest.ResponseRecorder
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/tenant/sales-orders/{uuid}/fabricate", NewFabricationOps(cp).Fabricate)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/tenant/sales-orders/"+order.ID+"/fabricate", strings.NewReader("{}"))
 	payload := middleware.UserContextPayload{ID: identity.ID, TenantID: tenant.ID}

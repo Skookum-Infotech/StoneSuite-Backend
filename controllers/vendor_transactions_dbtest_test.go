@@ -94,7 +94,7 @@ func TestVendorTransactions_IDOR_DB(t *testing.T) {
 	cp := newSAMLTestControlPlane(t)
 	tenant := seedServableCustomerTestTenant(t, cp, dsn)
 	ops := NewVendorTransactionsOps(nil, nil)
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 	ctx := context.Background()
 
 	grant := func(res authz.Resource, scope authz.Scope) authz.Grant {

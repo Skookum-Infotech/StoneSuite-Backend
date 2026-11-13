@@ -81,7 +81,7 @@ func TestTenantOps_Login_ReturnsGrants_DB(t *testing.T) {
 	})
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleID))
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
 		"email": identity.Email, "password": "correct-password",
 	}))
@@ -119,7 +119,7 @@ func TestRBACOps_SwitchRole_ReturnsRoleScopedGrants_DB(t *testing.T) {
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, newRoleID))
 
 	rbacOps := NewRBACOps()
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 
 	// Simulate a request authenticated with the OLD role already active --
 	// mirrors what RequireAuth would have injected from a real token minted
@@ -169,7 +169,7 @@ func TestTenantOps_RefreshSession_ReturnsAggregateGrants_DB(t *testing.T) {
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleA))
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleB))
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
 		"email": identity.Email, "password": "correct-password",
@@ -223,7 +223,7 @@ func TestTenantOps_RefreshSession_PreservesHeldActiveRole_DB(t *testing.T) {
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleA))
 	require.NoError(t, authz.AssignRole(context.Background(), pool, user.ID, roleB))
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
 		"email": identity.Email, "password": "correct-password",
@@ -276,7 +276,7 @@ func TestTenantOps_RefreshSession_IgnoresUnheldActiveRole_DB(t *testing.T) {
 		Resource: authz.ResourceRole, Action: authz.ActionDelete, Scope: authz.ScopeAll,
 	})
 
-	h := &TenantOps{CP: cp, Router: tenancy.NewRouter(nil)}
+	h := &TenantOps{CP: cp, Router: newTestRouter(t)}
 
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/tenant-login", jsonBody(t, map[string]any{
 		"email": identity.Email, "password": "correct-password",

@@ -37,7 +37,7 @@ func callMyPermissions(t *testing.T, cp *tenancy.ControlPlane, tenantID string, 
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
 
 	rec := httptest.NewRecorder()
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 	resolver.Middleware(http.HandlerFunc(NewRBACOps().MyPermissions)).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -123,7 +123,7 @@ func TestRBACOps_MyPermissions_RolesNotNarrowedByActiveRole_DB(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/tenant/users/me/permissions", nil)
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
 	rec := httptest.NewRecorder()
-	resolver := tenancy.NewResolver(cp, tenancy.NewRouter(nil))
+	resolver := tenancy.NewResolver(cp, newTestRouter(t))
 	resolver.Middleware(http.HandlerFunc(NewRBACOps().MyPermissions)).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)

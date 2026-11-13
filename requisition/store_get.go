@@ -95,7 +95,8 @@ const itemSelect = `
 	       ii.inventory_item_uuid,
 	       ri.sku, ri.item_name, ri.description, COALESCE(ri.unit_code,''),
 	       ri.quantity, ri.estimated_unit_price, ri.estimated_amount,
-	       ri.dim_length, ri.dim_width, ri.slabs, ri.dim_unit
+	       ri.dim_length, ri.dim_width, ri.slabs, ri.dim_unit, ri.dim_thickness,
+	       ri.kit_uuid::text, ri.kit_name
 	FROM requisition_item ri
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = ri.inventory_item_id
 	WHERE ri.requisition_id = $1 AND ri.item_deleted_at IS NULL
@@ -107,7 +108,8 @@ func scanLine(row pgx.Rows) (Line, error) {
 		&l.ID, &l.LineNumber, &l.InventoryItemID,
 		&l.SKU, &l.ItemName, &l.Description, &l.UnitCode,
 		&l.Quantity, &l.EstimatedUnitPrice, &l.EstimatedAmount,
-		&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit,
+		&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit, &l.Thickness,
+		&l.KitID, &l.KitName,
 	)
 	return l, err
 }

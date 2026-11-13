@@ -102,7 +102,8 @@ const lineSelect = `
 	       vbi.sku, vbi.item_name, vbi.description, vbi.unit_id, vbi.unit_code,
 	       vbi.quantity, vbi.unit_price, vbi.discount_percent, vbi.tax_rate_id, vbi.tax_percent,
 	       vbi.line_subtotal, vbi.line_discount, vbi.line_tax, vbi.line_total,
-	       vbi.dim_length, vbi.dim_width, vbi.slabs, vbi.dim_unit
+	       vbi.dim_length, vbi.dim_width, vbi.slabs, vbi.dim_unit, vbi.dim_thickness,
+	       vbi.kit_uuid::text, vbi.kit_name
 	FROM vendor_bill_item vbi
 	LEFT JOIN inventory_item ii ON ii.inventory_item_id = vbi.inventory_item_id
 	LEFT JOIN purchase_order_item poi ON poi.purchase_order_item_id = vbi.purchase_order_item_id
@@ -123,7 +124,8 @@ func loadLines(ctx context.Context, q workflow.Querier, internalID int) ([]Line,
 			&l.SKU, &l.ItemName, &l.Description, &l.UnitID, &l.UnitCode,
 			&l.Quantity, &l.UnitPrice, &l.DiscountPercent, &l.TaxRateID, &l.TaxPercent,
 			&l.LineSubtotal, &l.LineDiscount, &l.LineTax, &l.LineTotal,
-			&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit); err != nil {
+			&l.Length, &l.Width, &l.Slabs, &l.DimensionUnit, &l.Thickness,
+			&l.KitID, &l.KitName); err != nil {
 			return nil, fmt.Errorf("scan vendor bill line: %w", err)
 		}
 		if invItemUUID != "" {

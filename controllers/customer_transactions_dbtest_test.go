@@ -80,7 +80,7 @@ func callCustomerTx(t *testing.T, cp *tenancy.ControlPlane, handler http.Handler
 	payload := middleware.UserContextPayload{ID: identityID, TenantID: tenantID, UserID: userID}
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, payload))
 	rec := httptest.NewRecorder()
-	tenancy.NewResolver(cp, tenancy.NewRouter(nil)).Middleware(handler).ServeHTTP(rec, req)
+	tenancy.NewResolver(cp, newTestRouter(t)).Middleware(handler).ServeHTTP(rec, req)
 	return rec
 }
 

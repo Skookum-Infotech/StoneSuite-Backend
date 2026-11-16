@@ -32,6 +32,9 @@ const (
 	ResourceSSOConfig      Resource = "sso_config"      // per-tenant SSO settings
 	ResourceCompanyProfile Resource = "company_profile" // tenant's own company name/address (Configuration -> Company Info)
 	ResourceAudit          Resource = "audit"           // audit log
+	// ResourceSubscription governs the tenant's own Subscription page: plan
+	// and usage (R2 storage + AI tokens). Read-only for now.
+	ResourceSubscription Resource = "subscription"
 
 	// Reports module: one read-only resource per sub-module, so a role can be
 	// given Sales reports without CRM reports. The scope on the grant narrows
@@ -471,6 +474,8 @@ var catalog = []Permission{
 
 	{ResourceCompanyProfile, ActionRead},
 	{ResourceCompanyProfile, ActionConfigure},
+
+	{ResourceSubscription, ActionRead},
 
 	{ResourceDashboardWidget, ActionRead},
 	{ResourceDashboardWidget, ActionConfigure},

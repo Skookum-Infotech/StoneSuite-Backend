@@ -26,6 +26,7 @@ import (
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/safego"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/usage"
 )
 
 // ragMaintenanceInterval is how often tenants are rescanned for new ones and
@@ -140,6 +141,12 @@ func (c *IndexCoordinator) CatchUpAll(ctx context.Context) {
 func newChatClient() *ollama.LLMClient {
 	return ollama.NewLLMClient(config.AppConfig.OllamaBaseURL, config.AppConfig.AIChatModel).
 		WithKeepAlive(config.AppConfig.AIKeepAlive)
+}
+
+// newMeteredChatClient wraps the shared chat client so every call's tokens are
+// recorded against the tenant on its context (see package usage).
+func newMeteredChatClient(rec *usage.Recorder) *usage.MeteredLLM {
+	return usage.NewMeteredLLM(newChatClient(), config.AppConfig.AIChatModel, rec)
 }
 
 func newDocEmbedder() *ollama.Embedder {

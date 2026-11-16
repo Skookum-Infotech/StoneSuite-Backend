@@ -293,7 +293,9 @@ const maxListResponseBytes = 10 * 1024 * 1024
 
 // listPage is one parsed ListObjectsV2 response.
 type listPage struct {
-	keys      []string
+	keys []string
+	// bytes is the summed Size of every object on the page (see BucketUsage).
+	bytes     int64
 	truncated bool
 	nextToken string
 }
@@ -389,7 +391,8 @@ func (c *Client) listPage(ctx context.Context, continuationToken string) (listPa
 		IsTruncated           bool   `xml:"IsTruncated"`
 		NextContinuationToken string `xml:"NextContinuationToken"`
 		Contents              []struct {
-			Key string `xml:"Key"`
+			Key  string `xml:"Key"`
+			Size int64  `xml:"Size"`
 		} `xml:"Contents"`
 	}
 	if err := xml.NewDecoder(io.LimitReader(resp.Body, maxListResponseBytes)).Decode(&out); err != nil {
@@ -398,6 +401,7 @@ func (c *Client) listPage(ctx context.Context, continuationToken string) (listPa
 	page := listPage{truncated: out.IsTruncated, nextToken: out.NextContinuationToken}
 	for _, obj := range out.Contents {
 		page.keys = append(page.keys, obj.Key)
+		page.bytes += obj.Size
 	}
 	return page, nil
 }

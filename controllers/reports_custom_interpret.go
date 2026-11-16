@@ -14,6 +14,7 @@ import (
 	"stonesuite-backend/authz"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/reports"
+	"stonesuite-backend/usage"
 )
 
 // maxInterpretPromptBytes bounds the plain-English request, matching the
@@ -113,6 +114,7 @@ func (h *AIOps) structuredCall() (modelCall, bool) {
 		return nil, false
 	}
 	return func(ctx context.Context, system, user string, schema []byte, maxTokens int) (string, error) {
+		ctx = usage.WithSource(ctx, usage.SourceReportInterpret)
 		client := h.llm
 		if bounded, ok := client.(tokenBounded); ok {
 			client = bounded.WithMaxTokens(maxTokens)

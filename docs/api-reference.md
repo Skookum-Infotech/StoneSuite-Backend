@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-687 endpoints across 7 surfaces, read from `main.go`.
+688 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 584 |
+| staff token + tenant | 585 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 25 |
 | staff token | 23 |
@@ -381,7 +381,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 | `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
 
-## `tenant` — 583 endpoints
+## `tenant` — 584 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -1110,6 +1110,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/sso-configs/{id}/domains` | staff token + tenant | `sso.CreateDomain` |
 | `DELETE` | `/api/tenant/sso-configs/{id}/domains/{domainId}` | staff token + tenant | `sso.DeleteDomain` |
 | `POST` | `/api/tenant/sso-configs/{id}/refresh-metadata` | staff token + tenant | `sso.RefreshMetadata` |
+
+### subscription
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/subscription/usage` | staff token + tenant | `subscriptionUsageOps.GetUsage` |
 
 ### users
 

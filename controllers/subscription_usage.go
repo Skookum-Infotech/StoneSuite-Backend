@@ -62,8 +62,9 @@ func NewSubscriptionUsageOps(tokens tokenUsageReader, storage storageSnapshotter
 		}}
 }
 
-// storageUsageJSON is the storage half of the response. LimitBytes is null
-// until subscription plans carry limits.
+// storageUsageJSON is the storage half of the response: the overall size of
+// the tenant's bucket right now — not tied to any billing period. LimitBytes
+// (an overall cap) is null until subscription plans carry limits.
 type storageUsageJSON struct {
 	UsedBytes   int64      `json:"usedBytes"`
 	ObjectCount int64      `json:"objectCount"`
@@ -77,9 +78,12 @@ type sourceTokensJSON struct {
 	TotalTokens int64  `json:"totalTokens"`
 }
 
-// aiTokenUsageJSON is the AI-token half of the response. LimitTokens is null
-// until subscription plans carry limits.
+// aiTokenUsageJSON is the AI-token half of the response: tokens used in the
+// current monthly billing period [PeriodStart, PeriodEnd), which resets at
+// PeriodEnd. LimitTokens (a per-period cap) is null until plans carry limits.
 type aiTokenUsageJSON struct {
+	PeriodStart      string             `json:"periodStart"`
+	PeriodEnd        string             `json:"periodEnd"`
 	PromptTokens     int64              `json:"promptTokens"`
 	CompletionTokens int64              `json:"completionTokens"`
 	TotalTokens      int64              `json:"totalTokens"`
@@ -87,16 +91,15 @@ type aiTokenUsageJSON struct {
 	BySource         []sourceTokensJSON `json:"bySource"`
 }
 
-// subscriptionUsageJSON is the whole usage payload. PeriodEnd is exclusive.
+// subscriptionUsageJSON is the whole usage payload.
 type subscriptionUsageJSON struct {
-	PeriodStart string           `json:"periodStart"`
-	PeriodEnd   string           `json:"periodEnd"`
-	Storage     storageUsageJSON `json:"storage"`
-	AITokens    aiTokenUsageJSON `json:"aiTokens"`
+	Storage  storageUsageJSON `json:"storage"`
+	AITokens aiTokenUsageJSON `json:"aiTokens"`
 }
 
 // GetUsage handles GET /api/tenant/subscription/usage: the caller's own
-// tenant's R2 storage and its LLM tokens for the current billing period.
+// tenant's overall R2 storage and its LLM tokens for the current monthly
+// billing period.
 func (h *SubscriptionUsageOps) GetUsage(w http.ResponseWriter, r *http.Request) {
 	env, ok := h.authorize(w, r)
 	if !ok {
@@ -117,10 +120,8 @@ func (h *SubscriptionUsageOps) GetUsage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "usage": subscriptionUsageJSON{
-		PeriodStart: period.Start.Format(usageDateLayout),
-		PeriodEnd:   period.End.Format(usageDateLayout),
-		Storage:     h.storageUsage(ctx, env),
-		AITokens:    tokenUsageJSON(totals),
+		Storage:  h.storageUsage(ctx, env),
+		AITokens: tokenUsageJSON(totals, period),
 	}})
 }
 
@@ -140,8 +141,9 @@ func (h *SubscriptionUsageOps) storageUsage(ctx context.Context, env subscriptio
 	return out
 }
 
-func tokenUsageJSON(t usage.TokenTotals) aiTokenUsageJSON {
+func tokenUsageJSON(t usage.TokenTotals, p usage.Period) aiTokenUsageJSON {
 	out := aiTokenUsageJSON{
+		PeriodStart: p.Start.Format(usageDateLayout), PeriodEnd: p.End.Format(usageDateLayout),
 		PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
 		TotalTokens: t.PromptTokens + t.CompletionTokens, BySource: []sourceTokensJSON{},
 	}

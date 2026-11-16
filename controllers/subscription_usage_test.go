@@ -114,9 +114,8 @@ func TestSubscriptionUsage_Payload(t *testing.T) {
 	assert.Equal(t, "tenant-1", tokens.gotTenant, "usage is read for the resolved tenant only")
 	assert.Equal(t, "ss-acme", snaps.gotBucket, "storage is measured on the tenant's own bucket only")
 	assert.JSONEq(t, `{"success":true,"usage":{
-		"periodStart":"2026-10-20","periodEnd":"2026-11-20",
 		"storage":{"usedBytes":4096,"objectCount":3,"measuredAt":"2026-11-16T08:00:00Z","limitBytes":null},
-		"aiTokens":{"promptTokens":900,"completionTokens":300,"totalTokens":1200,"limitTokens":null,
+		"aiTokens":{"periodStart":"2026-10-20","periodEnd":"2026-11-20","promptTokens":900,"completionTokens":300,"totalTokens":1200,"limitTokens":null,
 			"bySource":[{"source":"ask","totalTokens":1050},{"source":"import","totalTokens":150}]}}}`,
 		rec.Body.String())
 }

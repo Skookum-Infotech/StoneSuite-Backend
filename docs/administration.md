@@ -179,13 +179,14 @@ to.
 
 ## Subscription usage
 
-Account → Subscription shows how much your workspace is using in the
-current billing period, on the Plan tab under your current plan. File
-storage is the total size of every file your workspace keeps — record and
-email attachments, imports, your company logo, and documents uploaded for
-Create from document — and it is re-measured every few hours when you open
-the page, so it can lag slightly behind a fresh upload. AI tokens count what
-the StoneSuite Assistant, Create from document, the custom report builder
-and document import used this period, broken down by feature; the count
-starts again when a new billing period begins. Seeing this page needs the
+Account → Subscription shows your workspace's usage on the Plan tab, under
+your current plan. File storage is the overall size of every file your
+workspace keeps — record and email attachments, imports, your company logo,
+and documents uploaded for Create from document. It is a running total, not
+a monthly figure: it only goes down when files are deleted. It is re-measured
+every few hours when you open the page, so it can lag slightly behind a fresh
+upload. AI tokens count what the StoneSuite Assistant, Create from document,
+the custom report builder and document import used in the current monthly
+billing period, broken down by feature; the count resets to zero when the
+next period begins, and the page shows that date. Seeing this page needs the
 Subscription read permission.

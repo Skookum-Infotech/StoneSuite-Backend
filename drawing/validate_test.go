@@ -89,3 +89,31 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateEdgeToolMetadata(t *testing.T) {
+	withEdge := func(e PieceEdge) Drawing {
+		p := validPiece("p1")
+		p.Edges = []PieceEdge{e}
+		return Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{p}}}}
+	}
+	cases := []struct {
+		name    string
+		drawing Drawing
+		wantErr bool
+	}{
+		{"painted edge type accepted", withEdge(PieceEdge{Index: 0, EdgeTypeID: "7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11"}), false},
+		{"border arc and tags accepted", withEdge(PieceEdge{Index: 0, ArcHeightMm: f(-76.2), BorderID: "b-1", BorderStyle: "fullRadiusOut"}), false},
+		{"corner tags accepted", withEdge(PieceEdge{Index: 1, CornerID: "c-1", CornerStyle: "notch"}), false},
+		{"overlong edge type id rejected", withEdge(PieceEdge{Index: 0, EdgeTypeID: strings.Repeat("x", 65)}), true},
+		{"overlong border id rejected", withEdge(PieceEdge{Index: 0, BorderID: strings.Repeat("x", 65)}), true},
+		{"absurd arc height rejected", withEdge(PieceEdge{Index: 0, ArcHeightMm: f(1e9)}), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := Validate(c.drawing)
+			if (err != nil) != c.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, c.wantErr)
+			}
+		})
+	}
+}

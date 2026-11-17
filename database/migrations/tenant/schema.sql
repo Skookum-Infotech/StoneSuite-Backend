@@ -2663,6 +2663,35 @@ INSERT INTO lkp_cutout_type (cutout_type_code, cutout_type_label, cutout_type_so
     ('other',     'Other',     6, 1)
 ON CONFLICT (cutout_type_code) DO NOTHING;
 
+-- drawing_edge_type -- the shop's list of edge types the drawing editor's Edges tool paints
+-- onto a piece's sides (GET/POST/PUT /api/tenant/settings/edge-types): a name, a price per
+-- linear unit, a short alias, the colour it is drawn in, and the 3D finish (profile) it
+-- will show later. Distinct from lkp_edge_code, which is only a code + label. Four types
+-- are seeded for every tenant (system_key marks them; they can be edited, not duplicated);
+-- the rest are added by users. A piece's side points at one by id (PieceEdge.edgeTypeId).
+CREATE TABLE IF NOT EXISTS drawing_edge_type (
+    id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    system_key   VARCHAR(32)  NULL UNIQUE,
+    name         VARCHAR(64)  NOT NULL,
+    pricing_type VARCHAR(16)  NOT NULL DEFAULT 'linear' CHECK (pricing_type IN ('linear')),
+    price        NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+    alias        VARCHAR(8)   NOT NULL DEFAULT '',
+    color        VARCHAR(7)   NOT NULL CHECK (color ~ '^#[0-9a-fA-F]{6}$'),
+    finish       VARCHAR(16)  NOT NULL DEFAULT 'none'
+                 CHECK (finish IN ('none', 'raw', 'ogee', 'beveled', 'eased', 'waterfall', 'halfBullnose', 'bullnose')),
+    sort_order   INTEGER      NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_drawing_edge_type_name ON drawing_edge_type (LOWER(name));
+
+INSERT INTO drawing_edge_type (system_key, name, price, alias, color, finish, sort_order) VALUES
+    ('ease',       'Ease',       0,  'E', '#2563eb', 'eased',        1),
+    ('appliance',  'Appliance',  10, 'A', '#15803d', 'halfBullnose', 2),
+    ('finished',   'Finished',   0,  'F', '#d97706', 'none',         3),
+    ('unfinished', 'Unfinished', 0,  'U', '#6b7280', 'raw',          4)
+ON CONFLICT DO NOTHING;
+
 -- Indexes -- listing/filtering (all partial on live rows) -------------------
 CREATE INDEX IF NOT EXISTS idx_so_customer   ON sales_order (sales_order_customer_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_status     ON sales_order (sales_order_status)      WHERE sales_order_deleted_at IS NULL;

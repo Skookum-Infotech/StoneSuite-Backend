@@ -1459,6 +1459,11 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", tenantChain(so.GetDrawingVersion))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", tenantChain(so.RestoreDrawingVersion))
 		mux.Handle("GET /api/tenant/settings/edge-codes", tenantChain(controllers.GetEdgeCodes))
+		// The shop's own edge types for the Edges tool (name, price, alias, colour, finish).
+		// Reading is open to any tenant user; writing needs sales_order:update.
+		mux.Handle("GET /api/tenant/settings/edge-types", tenantChain(controllers.GetEdgeTypes))
+		mux.Handle("POST /api/tenant/settings/edge-types", tenantChain(controllers.CreateEdgeType))
+		mux.Handle("PUT /api/tenant/settings/edge-types/{id}", tenantChain(controllers.UpdateEdgeType))
 		mux.Handle("GET /api/tenant/settings/cutout-types", tenantChain(controllers.GetCutoutTypes))
 
 		// Fabrication & Installation: a production job spawned from a sales order,

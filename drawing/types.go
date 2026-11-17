@@ -23,6 +23,18 @@ type PieceEdge struct {
 	SplashHeightMm *float64 `json:"splashHeightMm,omitempty"`
 	// WaterfallHeightMm is a panel dropping from this side.
 	WaterfallHeightMm *float64 `json:"waterfallHeightMm,omitempty"`
+	// ArcHeightMm bows the side into a circular arc (signed; positive bulges to
+	// the left of the side's direction). Written by the Border and Corner tools.
+	ArcHeightMm *float64 `json:"arcHeightMm,omitempty"`
+	// BorderID/BorderStyle tag every side one Border reshape made; CornerID/
+	// CornerStyle do the same for one Corner change. The editor uses them to find
+	// the group again when it is made standard.
+	BorderID    string `json:"borderId,omitempty"`
+	BorderStyle string `json:"borderStyle,omitempty"`
+	CornerID    string `json:"cornerId,omitempty"`
+	CornerStyle string `json:"cornerStyle,omitempty"`
+	// EdgeTypeID is the drawing_edge_type (Edges tool) painted onto this side.
+	EdgeTypeID string `json:"edgeTypeId,omitempty"`
 }
 
 // Seam is a straight join line between two points on a piece.

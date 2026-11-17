@@ -20,6 +20,9 @@ const (
 	// maxEdgeHeightMm bounds overhang / backsplash / waterfall heights; it is
 	// the frontend's MAX_DIMENSION_MM.
 	maxEdgeHeightMm = 30000.0
+	// maxEdgeTagLen bounds the ids and style names the Border, Corner and Edges
+	// tools tag a side with (uuids are 36 characters; style names are shorter).
+	maxEdgeTagLen = 64
 	// maxShapeCodeLen bounds a cutout's picture code (the frontend's own codes
 	// are far shorter); which pictures exist is the frontend's business.
 	maxShapeCodeLen = 64
@@ -99,6 +102,18 @@ func validateEdges(piece Piece) error {
 		for name, v := range map[string]*float64{"overhang": e.OverhangMm, "backsplash height": e.SplashHeightMm, "waterfall height": e.WaterfallHeightMm} {
 			if v != nil && (*v < 0 || *v > maxEdgeHeightMm || math.IsNaN(*v)) {
 				return fmt.Errorf("drawing: piece %q side %d has an invalid %s", piece.ID, e.Index, name)
+			}
+		}
+		// An arc's height is signed (which side it bows to), so only its size is bounded.
+		if v := e.ArcHeightMm; v != nil && (math.Abs(*v) > maxEdgeHeightMm || math.IsNaN(*v)) {
+			return fmt.Errorf("drawing: piece %q side %d has an invalid arc height", piece.ID, e.Index)
+		}
+		for name, tag := range map[string]string{
+			"border id": e.BorderID, "border style": e.BorderStyle, "corner id": e.CornerID,
+			"corner style": e.CornerStyle, "edge type": e.EdgeTypeID,
+		} {
+			if utf8.RuneCountInString(tag) > maxEdgeTagLen {
+				return fmt.Errorf("drawing: piece %q side %d has a %s longer than %d characters", piece.ID, e.Index, name, maxEdgeTagLen)
 			}
 		}
 	}

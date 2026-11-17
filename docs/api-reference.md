@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-687 endpoints across 7 surfaces, read from `main.go`.
+691 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 584 |
+| staff token + tenant | 588 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 25 |
 | staff token | 23 |
@@ -381,7 +381,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 | `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
 
-## `tenant` — 583 endpoints
+## `tenant` — 587 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -1095,7 +1095,11 @@ The staff application. Every route requires a JWT and resolves a tenant database
 
 | Method | Path | Requires | Handler |
 |---|---|---|---|
+| `GET` | `/api/tenant/settings/cutout-types` | staff token + tenant | `controllers.GetCutoutTypes` |
 | `GET` | `/api/tenant/settings/edge-codes` | staff token + tenant | `controllers.GetEdgeCodes` |
+| `GET` | `/api/tenant/settings/edge-types` | staff token + tenant | `controllers.GetEdgeTypes` |
+| `POST` | `/api/tenant/settings/edge-types` | staff token + tenant | `controllers.CreateEdgeType` |
+| `PUT` | `/api/tenant/settings/edge-types/{id}` | staff token + tenant | `controllers.UpdateEdgeType` |
 
 ### sso-configs
 

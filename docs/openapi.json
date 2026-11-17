@@ -22714,6 +22714,37 @@
         ]
       }
     },
+    "/api/tenant/settings/cutout-types": {
+      "get": {
+        "operationId": "get_tenant_settings_cutout_types",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.GetCutoutTypes",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/settings/edge-codes": {
       "get": {
         "operationId": "get_tenant_settings_edge_codes",
@@ -22740,6 +22771,107 @@
           }
         ],
         "summary": "controllers.GetEdgeCodes",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/settings/edge-types": {
+      "get": {
+        "operationId": "get_tenant_settings_edge_types",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.GetEdgeTypes",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_settings_edge_types",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.CreateEdgeType",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/settings/edge-types/{id}": {
+      "put": {
+        "operationId": "put_tenant_settings_edge_types_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.UpdateEdgeType",
         "tags": [
           "tenant"
         ]

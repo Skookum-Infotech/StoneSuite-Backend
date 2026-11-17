@@ -57,17 +57,20 @@ func AllocateSlab(ctx context.Context, pool *pgxpool.Pool, jobUUID, slabUUID str
 	// Lock the slab and check availability (§4.2, §4.3).
 	var slabID, slabItemID int
 	var slabStatus string
+	var heldForOrder *int
 	err = tx.QueryRow(ctx, `
-		SELECT inventory_slab_id, inventory_item_id, slab_status FROM inventory_slab
+		SELECT inventory_slab_id, inventory_item_id, slab_status, reserved_sales_order_id FROM inventory_slab
 		WHERE inventory_slab_uuid = $1 AND slab_deleted_at IS NULL
-		FOR UPDATE`, slabUUID).Scan(&slabID, &slabItemID, &slabStatus)
+		FOR UPDATE`, slabUUID).Scan(&slabID, &slabItemID, &slabStatus, &heldForOrder)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClientError{Msg: "Slab not found."}
 	}
 	if err != nil {
 		return fmt.Errorf("lock slab: %w", err)
 	}
-	if slabStatus != "available" {
+	// A slab the order's own drawing already holds is this job's to take; any other
+	// hold is somebody else's.
+	if !slabFreeForJob(slabStatus, heldForOrder, st.salesOrderID) {
 		return ClientError{Msg: fmt.Sprintf("Slab is %s and cannot be allocated.", slabStatus)}
 	}
 	// The sales order says what stone the customer bought, so a slab of a
@@ -114,8 +117,11 @@ func AllocateSlab(ctx context.Context, pool *pgxpool.Pool, jobUUID, slabUUID str
 		}
 		return fmt.Errorf("insert allocation: %w", err)
 	}
+	// Clearing the order hold hands the slab over: from here the job's own
+	// allocation row is what keeps it reserved.
 	if _, err := tx.Exec(ctx, `
-		UPDATE inventory_slab SET slab_status = 'reserved', slab_updated_at = NOW() WHERE inventory_slab_id = $1`, slabID); err != nil {
+		UPDATE inventory_slab SET slab_status = 'reserved', reserved_sales_order_id = NULL, slab_updated_at = NOW()
+		WHERE inventory_slab_id = $1`, slabID); err != nil {
 		return fmt.Errorf("mark slab reserved: %w", err)
 	}
 

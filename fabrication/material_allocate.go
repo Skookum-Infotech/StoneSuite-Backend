@@ -77,15 +77,16 @@ func allocateMaterial(ctx context.Context, pool *pgxpool.Pool, jobID string, act
 		}
 		var slabID int
 		var status, inspection string
+		var heldForOrder *int
 		var surface MaterialSurface
-		err = tx.QueryRow(ctx, `SELECT s.inventory_slab_id,s.slab_status,s.inspection_status,i.inventory_item_uuid::text,s.slab_finish,s.slab_length_mm,s.slab_width_mm,s.slab_thickness_mm FROM inventory_slab s JOIN inventory_item i ON i.inventory_item_id=s.inventory_item_id WHERE s.inventory_slab_uuid=$1 AND s.slab_deleted_at IS NULL AND i.inventory_item_deleted_at IS NULL FOR UPDATE OF s`, in.SlabID).Scan(&slabID, &status, &inspection, &surface.MaterialID, &surface.Finish, &surface.LengthMM, &surface.WidthMM, &surface.ThicknessMM)
+		err = tx.QueryRow(ctx, `SELECT s.inventory_slab_id,s.slab_status,s.inspection_status,s.reserved_sales_order_id,i.inventory_item_uuid::text,s.slab_finish,s.slab_length_mm,s.slab_width_mm,s.slab_thickness_mm FROM inventory_slab s JOIN inventory_item i ON i.inventory_item_id=s.inventory_item_id WHERE s.inventory_slab_uuid=$1 AND s.slab_deleted_at IS NULL AND i.inventory_item_deleted_at IS NULL FOR UPDATE OF s`, in.SlabID).Scan(&slabID, &status, &inspection, &heldForOrder, &surface.MaterialID, &surface.Finish, &surface.LengthMM, &surface.WidthMM, &surface.ThicknessMM)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("lock layout slab: %w", err)
 		}
-		if status != "available" || inspection != "accepted" {
+		if !slabFreeForJob(status, heldForOrder, st.salesOrderID) || inspection != "accepted" {
 			return ClientError{Msg: "Choose an available slab or remnant with accepted inspection."}
 		}
 		if err = ValidateMaterialLayout(surface, *line, in.Layout); err != nil {
@@ -109,7 +110,7 @@ func allocateMaterial(ctx context.Context, pool *pgxpool.Pool, jobID string, act
 		if _, err = tx.Exec(ctx, `INSERT INTO fabrication_material_layout(fabrication_job_slab_id,template_id,source_line_uuid,layout,reviewed_by) VALUES($1,$2,$3,$4,$5)`, allocationID, templateID, in.SourceLineID, layout, actor.EmployeeID); err != nil {
 			return fmt.Errorf("save allocation layout: %w", err)
 		}
-		if _, err = tx.Exec(ctx, `UPDATE inventory_slab SET slab_status='reserved',slab_updated_at=NOW() WHERE inventory_slab_id=$1`, slabID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE inventory_slab SET slab_status='reserved',reserved_sales_order_id=NULL,slab_updated_at=NOW() WHERE inventory_slab_id=$1`, slabID); err != nil {
 			return fmt.Errorf("mark layout slab reserved: %w", err)
 		}
 		return nil

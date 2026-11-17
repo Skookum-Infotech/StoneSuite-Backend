@@ -1458,6 +1458,11 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/versions", tenantChain(so.ListDrawingVersions))
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", tenantChain(so.GetDrawingVersion))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", tenantChain(so.RestoreDrawingVersion))
+		// The slabs the Material drawing lays pieces on: adding one reserves it for the order.
+		soDrawingSlabs := controllers.NewSalesOrderDrawingSlabOps(so, r2Client)
+		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/slab-options", tenantChain(soDrawingSlabs.Options))
+		mux.Handle("POST /api/tenant/sales-orders/{uuid}/drawing/slabs", tenantChain(soDrawingSlabs.Hold))
+		mux.Handle("DELETE /api/tenant/sales-orders/{uuid}/drawing/slabs/{slabId}", tenantChain(soDrawingSlabs.Release))
 		mux.Handle("GET /api/tenant/settings/edge-codes", tenantChain(controllers.GetEdgeCodes))
 		// The shop's own edge types for the Edges tool (name, price, alias, colour, finish).
 		// Reading is open to any tenant user; writing needs sales_order:update.
@@ -1534,6 +1539,11 @@ func main() {
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/release", tenantChain(invUnit.ReleaseReservation))
 		mux.Handle("POST /api/tenant/inventory/units/{uuid}/inspection", tenantChain(invUnit.Inspect))
 		mux.Handle("GET /api/tenant/inventory/units/{uuid}/history", tenantChain(invUnit.History))
+		// The picture of one slab (R2-backed; 503 when storage is not configured).
+		invUnitPhoto := controllers.NewInventoryUnitPhotoOps(r2Client)
+		mux.Handle("GET /api/tenant/inventory/units/{uuid}/photo", tenantChain(invUnitPhoto.Get))
+		mux.Handle("PUT /api/tenant/inventory/units/{uuid}/photo", tenantChain(invUnitPhoto.Upload))
+		mux.Handle("DELETE /api/tenant/inventory/units/{uuid}/photo", tenantChain(invUnitPhoto.Delete))
 
 		// The original /inventory/slabs/* paths, served by the same handlers so
 		// the frontend can migrate to /units without a flag day. Remove once it

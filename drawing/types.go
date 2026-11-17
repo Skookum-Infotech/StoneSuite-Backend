@@ -99,6 +99,21 @@ type Piece struct {
 	Edges            []PieceEdge `json:"edges"`
 	Seams            []Seam      `json:"seams"`
 	Cutouts          []Cutout    `json:"cutouts"`
+	// Slab is where the Material tab laid this piece on a slab; nil when it has
+	// not been placed. A piece sits on one slab at a time.
+	Slab *SlabPlacement `json:"slab,omitempty"`
+}
+
+// SlabPlacement is a piece's spot on one inventory slab. The piece's outline is
+// rotated by RotationDeg about its own origin, then translated so the top-left
+// of its bounding box sits at (X, Y) millimetres from the slab's top-left corner.
+// SlabID is the inventory unit's uuid; the slab itself is held for the order by
+// the inventory module, not stored in the drawing.
+type SlabPlacement struct {
+	SlabID      string  `json:"slabId"`
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	RotationDeg float64 `json:"rotationDeg"`
 }
 
 // Note is a free-text annotation placed on the canvas.

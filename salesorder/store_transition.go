@@ -124,6 +124,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 		if err := inventory.ReleaseOrder(ctx, tx, internalID); err != nil {
 			return nil, err
 		}
+		// ...and so do the slabs its drawing was holding.
+		if err := inventory.ReleaseSalesOrderHoldsTx(ctx, tx, internalID, actorEmployeeID); err != nil {
+			return nil, err
+		}
 	case "FILL":
 		// A filled order's stock is used: quantity-tracked lines leave on-hand
 		// now, and the reservation closes. Refused (rolling the status change

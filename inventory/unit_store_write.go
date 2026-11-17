@@ -194,7 +194,8 @@ func ScrapUnit(ctx context.Context, pool *pgxpool.Pool, uuid string, reasonID *i
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_slab SET slab_status = 'scrapped', slab_updated_at = NOW(), slab_updated_by = $2,
-		       reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL
+		       reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL,
+		       reserved_sales_order_id = NULL
 		WHERE inventory_slab_id = $1`, u.id, nullableInt(actorEmployeeID)); err != nil {
 		return fmt.Errorf("mark unit scrapped: %w", err)
 	}

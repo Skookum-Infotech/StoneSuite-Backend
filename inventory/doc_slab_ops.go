@@ -130,7 +130,8 @@ func AdjustSlabDown(ctx context.Context, tx pgx.Tx, u UnitRef,
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_slab SET slab_status = $2, slab_updated_at = NOW(), slab_updated_by = $3,
-		       reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL
+		       reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL,
+		       reserved_sales_order_id = NULL
 		WHERE inventory_slab_id = $1`, u.ID, StatusScrapped, nullableInt(actorEmployeeID)); err != nil {
 		return 0, mapUnitWriteErr(err, "adjust")
 	}

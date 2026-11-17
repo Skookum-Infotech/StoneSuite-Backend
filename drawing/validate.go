@@ -3,12 +3,15 @@ package drawing
 import (
 	"fmt"
 	"math"
+	"strings"
 	"unicode/utf8"
 )
 
 // Spec §6 "Backend contract" caps: closed outlines, positive area,
 // <=200 pieces per area, <=20 areas.
 const (
+	// maxSlabIDLen bounds a slab uuid on a piece's slab placement.
+	maxSlabIDLen       = 64
 	maxAreasPerDrawing = 20
 	maxPiecesPerArea   = 200
 	maxCutoutsPerPiece = 100
@@ -135,6 +138,11 @@ func validatePiece(piece Piece) error {
 	}
 	if len(piece.Cutouts) > maxCutoutsPerPiece {
 		return fmt.Errorf("drawing: piece %q has %d cutouts, exceeds the %d-cutout limit", piece.ID, len(piece.Cutouts), maxCutoutsPerPiece)
+	}
+	if piece.Slab != nil {
+		if id := strings.TrimSpace(piece.Slab.SlabID); id == "" || len(id) > maxSlabIDLen {
+			return fmt.Errorf("drawing: piece %q is placed on a slab without a valid slab id", piece.ID)
+		}
 	}
 	if err := validateEdges(piece); err != nil {
 		return err

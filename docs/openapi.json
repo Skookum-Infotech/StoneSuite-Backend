@@ -15882,6 +15882,125 @@
         ]
       }
     },
+    "/api/tenant/inventory/units/{uuid}/photo": {
+      "delete": {
+        "operationId": "delete_tenant_inventory_units_uuid_photo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnitPhoto.Delete",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "get": {
+        "operationId": "get_tenant_inventory_units_uuid_photo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnitPhoto.Get",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "put": {
+        "operationId": "put_tenant_inventory_units_uuid_photo",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "invUnitPhoto.Upload",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/inventory/units/{uuid}/release": {
       "post": {
         "operationId": "post_tenant_inventory_units_uuid_release",
@@ -22205,6 +22324,137 @@
           }
         ],
         "summary": "so.PutDrawing",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/drawing/slab-options": {
+      "get": {
+        "operationId": "get_tenant_sales_orders_uuid_drawing_slab_options",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "soDrawingSlabs.Options",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/drawing/slabs": {
+      "post": {
+        "operationId": "post_tenant_sales_orders_uuid_drawing_slabs",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "soDrawingSlabs.Hold",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/sales-orders/{uuid}/drawing/slabs/{slabId}": {
+      "delete": {
+        "operationId": "delete_tenant_sales_orders_uuid_drawing_slabs_slabId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slabId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "soDrawingSlabs.Release",
         "tags": [
           "tenant"
         ]

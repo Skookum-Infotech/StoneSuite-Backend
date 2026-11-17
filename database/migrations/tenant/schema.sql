@@ -10330,6 +10330,18 @@ ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_by INTEGER NULL
 CREATE INDEX IF NOT EXISTS idx_slab_reserved_customer ON inventory_slab (reserved_customer_id)
     WHERE reserved_customer_id IS NOT NULL;
 
+-- A slab can also be held for one sales order straight from its Material drawing,
+-- before any fabrication job exists: status 'reserved' plus the order below. It is
+-- the third kind of hold beside a customer's and a job's. When the order's job
+-- allocates the slab the hold is handed over to the job and this column is cleared
+-- (the job's own fabrication_job_slab row owns it from then on). Cleared too when
+-- the order is cancelled or deleted, or the slab is written off. Like the customer
+-- columns, it means nothing unless slab_status = 'reserved'.
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_sales_order_id INTEGER NULL
+    REFERENCES sales_order(sales_order_id);
+CREATE INDEX IF NOT EXISTS idx_slab_reserved_sales_order ON inventory_slab (reserved_sales_order_id)
+    WHERE reserved_sales_order_id IS NOT NULL;
+
 -- -- request_idempotency ----------------------------------------------------
 -- Generic replay ledger for create endpoints that accept an Idempotency-Key
 -- header (package idempotency). A double-clicked Save or a client retry after

@@ -49,6 +49,27 @@ type Cutout struct {
 	InventoryItemID string   `json:"inventoryItemId,omitempty"`
 	EdgeCode        string   `json:"edgeCode,omitempty"`
 	Label           string   `json:"label,omitempty"`
+	// HideName / HideMeasurements leave the name / the size text off the drawing;
+	// the opening itself is always drawn.
+	HideName         bool `json:"hideName,omitempty"`
+	HideMeasurements bool `json:"hideMeasurements,omitempty"`
+	// ShapeCode names the picture the opening is drawn as (the frontend's
+	// cutoutShapes.ts, e.g. "sink.farmhouse"); empty is the plain rectangle.
+	ShapeCode string `json:"shapeCode,omitempty"`
+	// FaucetHoleCount / FaucetHoleRadiusMm describe the faucet holes drilled with
+	// a sink (radius in mm).
+	FaucetHoleCount    *int           `json:"faucetHoleCount,omitempty"`
+	FaucetHoleRadiusMm *float64       `json:"faucetHoleRadiusMm,omitempty"`
+	DistanceLines      *DistanceLines `json:"distanceLines,omitempty"`
+}
+
+// DistanceLines says, per side of a cutout, how its distance to the piece's
+// edge is measured: "center", "border" or "hidden".
+type DistanceLines struct {
+	Top    string `json:"top"`
+	Right  string `json:"right"`
+	Bottom string `json:"bottom"`
+	Left   string `json:"left"`
 }
 
 // Piece is one countertop piece within an Area.

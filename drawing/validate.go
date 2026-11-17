@@ -20,14 +20,19 @@ const (
 	// maxEdgeHeightMm bounds overhang / backsplash / waterfall heights; it is
 	// the frontend's MAX_DIMENSION_MM.
 	maxEdgeHeightMm = 30000.0
+	// maxShapeCodeLen bounds a cutout's picture code (the frontend's own codes
+	// are far shorter); which pictures exist is the frontend's business.
+	maxShapeCodeLen = 64
 )
 
 // allowedCutoutTypes / allowedCutoutShapes mirror the frontend's CutoutType and
 // CutoutShape unions (src/types/drawing.ts). An empty shape is allowed: it is
 // what a cutout saved before `shape` existed looks like.
 var (
-	allowedCutoutTypes  = map[string]bool{"sink": true, "cooktop": true, "faucet": true, "soap_dispenser": true, "outlet": true, "custom": true}
-	allowedCutoutShapes = map[string]bool{"": true, "rect": true, "round": true, "polygon": true}
+	allowedCutoutTypes  = map[string]bool{"sink": true, "cooktop": true, "faucet": true, "soap_dispenser": true, "outlet": true, "custom": true,
+		"fireplace": true, "bathtub": true, "other": true}
+	allowedDistanceModes = map[string]bool{"center": true, "border": true, "hidden": true}
+	allowedCutoutShapes = map[string]bool{"": true, "rect": true, "round": true, "polygon": true, "ellipse": true, "arc": true, "stadium": true}
 )
 
 // Validate checks a Drawing against the spec's server-side invariants and
@@ -136,6 +141,9 @@ func validateCutout(pieceID string, c Cutout) error {
 	if !allowedCutoutShapes[c.Shape] {
 		return fmt.Errorf("drawing: piece %q cutout %q has an unknown shape %q", pieceID, c.ID, c.Shape)
 	}
+	if err := validateCutoutExtras(pieceID, c); err != nil {
+		return err
+	}
 	switch c.Shape {
 	case "round":
 		if !positive(c.DiameterMm) {
@@ -146,10 +154,33 @@ func validateCutout(pieceID string, c Cutout) error {
 			return fmt.Errorf("drawing: piece %q cutout %q needs a custom outline with area", pieceID, c.ID)
 		}
 	default:
-		// "rect", or a legacy cutout with no shape: sized by width x depth, or a
+		// "rect", "ellipse", "arc", "stadium", or a legacy cutout with no shape: sized by width x depth, or a
 		// bare diameter (what the original data model offered for outlets).
 		if (!positive(c.WidthMm) || !positive(c.DepthMm)) && !positive(c.DiameterMm) {
 			return fmt.Errorf("drawing: piece %q cutout %q needs a width and depth above zero", pieceID, c.ID)
+		}
+	}
+	return nil
+}
+
+// validateCutoutExtras checks the optional faucet-hole and distance-line
+// settings: counts and radii cannot be negative, and every distance-line side
+// must be one of the known modes.
+func validateCutoutExtras(pieceID string, c Cutout) error {
+	if len(c.ShapeCode) > maxShapeCodeLen {
+		return fmt.Errorf("drawing: piece %q cutout %q has a shape code longer than %d characters", pieceID, c.ID, maxShapeCodeLen)
+	}
+	if c.FaucetHoleCount != nil && *c.FaucetHoleCount < 0 {
+		return fmt.Errorf("drawing: piece %q cutout %q has a negative faucet hole count", pieceID, c.ID)
+	}
+	if c.FaucetHoleRadiusMm != nil && *c.FaucetHoleRadiusMm < 0 {
+		return fmt.Errorf("drawing: piece %q cutout %q has a negative faucet hole radius", pieceID, c.ID)
+	}
+	if d := c.DistanceLines; d != nil {
+		for _, mode := range []string{d.Top, d.Right, d.Bottom, d.Left} {
+			if !allowedDistanceModes[mode] {
+				return fmt.Errorf("drawing: piece %q cutout %q has an unknown distance line mode %q", pieceID, c.ID, mode)
+			}
 		}
 	}
 	return nil

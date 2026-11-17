@@ -2638,6 +2638,31 @@ INSERT INTO lkp_edge_code (edge_code_code, edge_code_label, edge_code_created_by
     ('WF',  'Waterfall',             1)
 ON CONFLICT (edge_code_code) DO NOTHING;
 
+-- lkp_cutout_type -- the kinds of opening the drawing editor's Cutout dialog offers
+-- (GET /api/tenant/settings/cutout-types). Master data every tenant starts with, so it
+-- is seeded here; sort_order keeps the list in the order the shop reads it ('Other' last)
+-- rather than alphabetical.
+CREATE TABLE IF NOT EXISTS lkp_cutout_type (
+    cutout_type_id             SERIAL       PRIMARY KEY,
+    cutout_type_code           VARCHAR(32)  NOT NULL,
+    cutout_type_label          VARCHAR(64)  NOT NULL,
+    cutout_type_sort_order     INTEGER      NOT NULL DEFAULT 0,
+    cutout_type_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    cutout_type_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cutout_type_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    cutout_type_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_cutout_type_code UNIQUE (cutout_type_code)
+);
+
+INSERT INTO lkp_cutout_type (cutout_type_code, cutout_type_label, cutout_type_sort_order, cutout_type_created_by) VALUES
+    ('sink',      'Sink',      1, 1),
+    ('cooktop',   'Cooktop',   2, 1),
+    ('faucet',    'Faucet',    3, 1),
+    ('fireplace', 'Fireplace', 4, 1),
+    ('bathtub',   'Bathtub',   5, 1),
+    ('other',     'Other',     6, 1)
+ON CONFLICT (cutout_type_code) DO NOTHING;
+
 -- Indexes -- listing/filtering (all partial on live rows) -------------------
 CREATE INDEX IF NOT EXISTS idx_so_customer   ON sales_order (sales_order_customer_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_status     ON sales_order (sales_order_status)      WHERE sales_order_deleted_at IS NULL;

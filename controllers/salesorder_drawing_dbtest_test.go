@@ -58,6 +58,7 @@ func newDrawingTestEnv(t *testing.T, grants ...authz.Grant) *drawingTestEnv {
 	mux.HandleFunc("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", so.GetDrawingVersion)
 	mux.HandleFunc("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", so.RestoreDrawingVersion)
 	mux.HandleFunc("GET /api/tenant/settings/edge-codes", GetEdgeCodes)
+	mux.HandleFunc("GET /api/tenant/settings/cutout-types", GetCutoutTypes)
 	// Each env owns tenant connection pools; close them so six tests' worth do
 	// not pile up and exhaust Postgres's connection limit for later tests.
 	router := tenancy.NewRouter(nil)
@@ -166,4 +167,14 @@ func TestGetEdgeCodes_DB(t *testing.T) {
 	rec := env.do(http.MethodGet, "/api/tenant/settings/edge-codes", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"code":"EE"`)
+}
+
+func TestGetCutoutTypes_DB(t *testing.T) {
+	env := newDrawingTestEnv(t) // any authenticated user, like edge codes
+	rec := env.do(http.MethodGet, "/api/tenant/settings/cutout-types", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// Seeded for every tenant, in the order the dialog lists them.
+	assert.Contains(t, rec.Body.String(), `"cutoutTypes":[{"code":"sink","label":"Sink"},{"code":"cooktop","label":"Cooktop"},`+
+		`{"code":"faucet","label":"Faucet"},{"code":"fireplace","label":"Fireplace"},`+
+		`{"code":"bathtub","label":"Bathtub"},{"code":"other","label":"Other"}]`)
 }

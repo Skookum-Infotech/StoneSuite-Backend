@@ -1459,6 +1459,7 @@ func main() {
 		mux.Handle("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", tenantChain(so.GetDrawingVersion))
 		mux.Handle("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", tenantChain(so.RestoreDrawingVersion))
 		mux.Handle("GET /api/tenant/settings/edge-codes", tenantChain(controllers.GetEdgeCodes))
+		mux.Handle("GET /api/tenant/settings/cutout-types", tenantChain(controllers.GetCutoutTypes))
 
 		// Fabrication & Installation: a production job spawned from a sales order,
 		// tracking a stone order through 16 shop-floor statuses with serialized

@@ -95,6 +95,10 @@ type Piece struct {
 	RotationDeg      float64     `json:"rotationDeg"`
 	ThicknessMm      float64     `json:"thicknessMm"`
 	CornerRadiusMm   *float64    `json:"cornerRadiusMm,omitempty"`
+	// RadiusMm is only for Shape == "circle": the exact radius its outline
+	// (a many-point regular-polygon approximation) stands for, used for its
+	// true-circle dimension lines rather than per-edge ones.
+	RadiusMm         *float64    `json:"radiusMm,omitempty"`
 	SalesOrderLineID string      `json:"salesOrderLineId,omitempty"`
 	Edges            []PieceEdge `json:"edges"`
 	Seams            []Seam      `json:"seams"`

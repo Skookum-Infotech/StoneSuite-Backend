@@ -15,6 +15,7 @@ func TestPieceJSONRoundTripKeepsEveryField(t *testing.T) {
 		"id":"p1","label":"A-1","shape":"rect","kind":"island",
 		"outline":[{"x":0,"y":0},{"x":600,"y":0},{"x":600,"y":-400},{"x":0,"y":-400}],
 		"position":{"x":10.5,"y":-20.25},"rotationDeg":45.5,"thicknessMm":30,
+		"cornerRadiusMm":5.5,"radiusMm":127.5,
 		"edges":[],"seams":[],
 		"cutouts":[{
 			"id":"c1","type":"custom","shape":"polygon","center":{"x":300,"y":-200},

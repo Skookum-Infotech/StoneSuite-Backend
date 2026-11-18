@@ -16,6 +16,7 @@ import (
 	"stonesuite-backend/metrics"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/usage"
 )
 
 const (
@@ -218,6 +219,8 @@ func (w *Worker) runJob(ctx context.Context, tenantID, extractionID string) (out
 		return retry(fmt.Errorf("resolve tenant pool: %w", err)), nil
 	}
 	store = NewStore(pool)
+	// Bill the fallback LLM's tokens to this tenant (no request context here).
+	ctx = usage.WithSource(usage.WithTenant(ctx, tenantID), usage.SourceDocExtract)
 	r := &jobRunner{
 		store: store, pool: pool, objects: w.stores(tenant.R2Bucket), cfg: w.cfg,
 		llm: w.llm, waker: w.waker, notify: w.notify, tenantID: tenantID,

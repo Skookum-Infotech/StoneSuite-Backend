@@ -771,3 +771,32 @@ BEGIN
             CHECK (takeover_daily_cap BETWEEN 0 AND 100);
     END IF;
 END $$;
+
+-- Subscription usage metering (see package usage). billing_anchor_date is the
+-- day the tenant's monthly billing period starts on; NULL means "the day the
+-- tenant was created" until plans let a platform admin set it.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS billing_anchor_date DATE;
+
+-- Daily rollup of LLM tokens a tenant consumed on the self-hosted Ollama, one
+-- row per (tenant, UTC day, call source, model), incremented in place so the
+-- table stays small and still sums over any billing period.
+CREATE TABLE IF NOT EXISTS tenant_llm_usage_daily (
+    tenant_id          UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    usage_date         DATE        NOT NULL,
+    source             TEXT        NOT NULL,
+    model              TEXT        NOT NULL,
+    prompt_tokens      BIGINT      NOT NULL DEFAULT 0,
+    completion_tokens  BIGINT      NOT NULL DEFAULT 0,
+    calls              BIGINT      NOT NULL DEFAULT 0,
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, usage_date, source, model)
+);
+
+-- Latest measured size of each tenant's own R2 bucket (one row per tenant),
+-- refreshed by the periodic storage sweep.
+CREATE TABLE IF NOT EXISTS tenant_storage_snapshots (
+    tenant_id     UUID        PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    used_bytes    BIGINT      NOT NULL DEFAULT 0,
+    object_count  BIGINT      NOT NULL DEFAULT 0,
+    measured_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -13,6 +13,7 @@ import (
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/docs"
 	"stonesuite-backend/metrics"
+	"stonesuite-backend/usage"
 )
 
 // needsModel reports whether answering question may call the chat model —
@@ -102,7 +103,7 @@ func runAskDispatch(ctx context.Context, h *AIOps, pa preparedAsk, store crmstor
 			}
 			return res, routeCountDirect, emit(res)
 		}
-		if routed, ok := resolveRoutedFilteredCount(ctx, h.llm, store, pa.pool, pa.grants, pa.identityID, question, pa.history); ok {
+		if routed, ok := resolveRoutedFilteredCount(usage.WithSource(ctx, usage.SourceRoute), h.llm, store, pa.pool, pa.grants, pa.identityID, question, pa.history); ok {
 			return routed, routeCountRouted, emit(routed)
 		}
 	}
@@ -130,7 +131,7 @@ func runAskDispatch(ctx context.Context, h *AIOps, pa preparedAsk, store crmstor
 	// just discards the tokens and gets the assembled answer back.
 	collector := &retrievedCollector{next: sink}
 	res, err := h.withOllamaWake(ctx, collector, func(s ragcore.StreamSink) (ragcore.AskResult, error) {
-		return assistant.AskStream(ctx, req, s)
+		return assistant.AskStream(usage.WithSource(ctx, usage.SourceAsk), req, s)
 	})
 	if err == nil {
 		res.Citations = withRetrievedFallback(res, collector.retrieved)

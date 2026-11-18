@@ -20,6 +20,7 @@ import (
 	"stonesuite-backend/safego"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/usage"
 	"stonesuite-backend/workflow"
 )
 
@@ -176,7 +177,9 @@ func (w *Worker) processNext(ctx context.Context) {
 	// the job into a crash loop.
 	var runErr error
 	if panicErr := safego.Do(runCtx, "importer.runImport", func() {
-		runErr = w.runImport(runCtx, job.ID, *job.TenantID, payload)
+		// Bill the field-extraction LLM's tokens to this tenant (no request context here).
+		meteredCtx := usage.WithSource(usage.WithTenant(runCtx, *job.TenantID), usage.SourceImport)
+		runErr = w.runImport(meteredCtx, job.ID, *job.TenantID, payload)
 	}); panicErr != nil {
 		if err := w.queue.MarkDead(ctx, job.ID, "import crashed while processing the file"); err != nil {
 			slog.Error("importer: mark panicked job dead", "job", job.ID, "err", err)

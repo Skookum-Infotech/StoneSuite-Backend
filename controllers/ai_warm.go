@@ -12,6 +12,7 @@ import (
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/safego"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/usage"
 )
 
 // warmBoundedTimeout bounds the detached goroutine POST /api/tenant/ai/warm
@@ -133,7 +134,8 @@ func (h *AIOps) runWarmUp(ctx context.Context, tenantID string) bool {
 		slog.Warn("ai warm-up: ollama did not come up", "tenant_id", tenantID, "err", err)
 		return false
 	}
-	if err := ragcore.WarmUp(ctx, h.queryEmbed, h.llm); err != nil {
+	// A warm-up is platform housekeeping, not tenant usage: never billed.
+	if err := ragcore.WarmUp(usage.WithSource(ctx, usage.SourceWarmup), h.queryEmbed, h.llm); err != nil {
 		slog.Warn("ai warm-up failed", "tenant_id", tenantID, "err", err)
 		return false
 	}

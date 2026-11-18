@@ -52,6 +52,7 @@ import (
 	"stonesuite-backend/services"
 	"stonesuite-backend/storage"
 	"stonesuite-backend/tenancy"
+	"stonesuite-backend/usage"
 	"stonesuite-backend/vendorbill"
 	"stonesuite-backend/vendorcredit"
 	"stonesuite-backend/vendorpayment"
@@ -151,6 +152,8 @@ func main() {
 	var cp *tenancy.ControlPlane     // control-plane handle; also used by AIOps for the reindex-help platform-admin check
 	var cipher *secret.Cipher        // field-level secret cipher; also used by SSOOps to encrypt client secrets
 	var ollamaLifecycle *services.OllamaLifecycle
+	// usageRecorder meters per-tenant LLM tokens; flushed on shutdown.
+	var usageRecorder *usage.Recorder
 	// aiToggler implements controllers.PlatformToggleListener: it owns the
 	// shared Ollama Machine's start/stop + lease-renew lifecycle and the RAG
 	// index catch-up nudge on every platform AI-switch flip, including the
@@ -465,6 +468,11 @@ func main() {
 
 	// Tenant-scoped demo route: JWT -> tenant resolution -> per-tenant DB query.
 	if resolver != nil {
+		// Every chat client below is metered (usage.MeteredLLM) so each
+		// tenant's Ollama token consumption reaches the Subscription page.
+		usageRecorder = usage.NewRecorder(usage.NewStore(cpPool), usage.DefaultRecorderBuffer)
+		usageRecorder.Start()
+
 		tenantMe := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tenant, err := tenancy.TenantFromContext(r.Context())
 			if err != nil {
@@ -886,6 +894,14 @@ func main() {
 		mux.Handle("PUT /api/tenant/company-profile/logo", tenantChain(companyProfileOps.UploadLogo))
 		mux.Handle("DELETE /api/tenant/company-profile/logo", tenantChain(companyProfileOps.DeleteLogo))
 
+		// Subscription page usage: the caller's own tenant's R2 bucket size
+		// (measured on demand, see usage.StorageRefresher) and LLM tokens for the
+		// current billing period. Read-only; gated by subscription:read.
+		usageStore := usage.NewStore(cpPool)
+		subscriptionUsageOps := controllers.NewSubscriptionUsageOps(usageStore,
+			usage.NewStorageRefresher(usageStore, usage.R2Measurer{Client: r2Client}))
+		mux.Handle("GET /api/tenant/subscription/usage", tenantChain(subscriptionUsageOps.GetUsage))
+
 		// Tenant's physical locations (Configuration -> Company Info -> Locations tab).
 		companyLocationOps := controllers.NewCompanyLocationOps()
 		mux.Handle("GET /api/tenant/company-locations", tenantChain(companyLocationOps.List))
@@ -940,7 +956,7 @@ func main() {
 		// rag.StructuredLLMClient — see ai/ollama_llm.go); import still works
 		// for CSV/XLSX without it, since tabular staging never calls the LLM.
 		importWorker = importer.NewWorker(cp, tenantRouter, jobQueue, r2Client,
-			newChatClient())
+			newMeteredChatClient(usageRecorder))
 		importWorker.Start(2)
 		log.Println("Import worker started (2 workers, durable queue).")
 
@@ -976,7 +992,7 @@ func main() {
 				docExtractWaker = aiToggler.waker
 			}
 			docExtractWorker = docextractjob.NewWorker(cp, tenantRouter, jobQueue, r2Client,
-				newChatClient(), docExtractWaker, services.SendNotification,
+				newMeteredChatClient(usageRecorder), docExtractWaker, services.SendNotification,
 				docextractjob.ConfigFromApp(config.AppConfig))
 			docExtractWorker.Start()
 			log.Println("Document extraction worker started (concurrency 1, durable queue).")
@@ -1824,7 +1840,7 @@ func main() {
 		aiOps := controllers.NewAIOps(
 			cpPool,
 			ollama.NewQueryEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
-			newChatClient(),
+			newMeteredChatClient(usageRecorder),
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
@@ -2027,6 +2043,15 @@ func main() {
 		workers = append(workers, namedStopper{"docextract", docExtractWorker})
 	}
 	stopWorkersConcurrently(workers, workerStopTimeout)
+
+	// Flush metered LLM tokens queued by the requests and workers just stopped.
+	if usageRecorder != nil {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), shutdownCleanupTimeout)
+		if err := usageRecorder.Close(flushCtx); err != nil {
+			log.Printf("usage: token recorder flush incomplete: %v", err)
+		}
+		flushCancel()
+	}
 
 	// Release this holder's Ollama lease and stop the shared embedder box
 	// alongside this process — but only if no other holder (the other

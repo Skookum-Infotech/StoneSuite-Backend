@@ -1121,6 +1121,12 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `DELETE` | `/api/tenant/sso-configs/{id}/domains/{domainId}` | staff token + tenant | `sso.DeleteDomain` |
 | `POST` | `/api/tenant/sso-configs/{id}/refresh-metadata` | staff token + tenant | `sso.RefreshMetadata` |
 
+### subscription
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/subscription/usage` | staff token + tenant | `subscriptionUsageOps.GetUsage` |
+
 ### users
 
 | Method | Path | Requires | Handler |

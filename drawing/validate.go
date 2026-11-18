@@ -35,10 +35,10 @@ const (
 // CutoutShape unions (src/types/drawing.ts). An empty shape is allowed: it is
 // what a cutout saved before `shape` existed looks like.
 var (
-	allowedCutoutTypes  = map[string]bool{"sink": true, "cooktop": true, "faucet": true, "soap_dispenser": true, "outlet": true, "custom": true,
+	allowedCutoutTypes = map[string]bool{"sink": true, "cooktop": true, "faucet": true, "soap_dispenser": true, "outlet": true, "custom": true,
 		"fireplace": true, "bathtub": true, "other": true}
 	allowedDistanceModes = map[string]bool{"center": true, "border": true, "hidden": true}
-	allowedCutoutShapes = map[string]bool{"": true, "rect": true, "round": true, "polygon": true, "ellipse": true, "arc": true, "stadium": true}
+	allowedCutoutShapes  = map[string]bool{"": true, "rect": true, "round": true, "polygon": true, "ellipse": true, "arc": true, "stadium": true}
 )
 
 // Validate checks a Drawing against the spec's server-side invariants and

@@ -2,8 +2,8 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -79,13 +79,10 @@ func (h *ItemReceiptOps) authIRByUUID(w http.ResponseWriter, r *http.Request, uu
 	if !ok {
 		return nil, "", nil, false
 	}
-	ir, err := itemreceipt.Get(r.Context(), pool, uuid)
-	if errors.Is(err, itemreceipt.ErrNotFound) {
-		fail(w, http.StatusNotFound, "Item receipt not found.")
-		return nil, "", nil, false
-	}
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load item receipt.")
+	ir, ok := loadIROrFail(r.Context(), w, func(ctx context.Context) (*itemreceipt.ItemReceipt, error) {
+		return itemreceipt.Get(ctx, pool, uuid)
+	})
+	if !ok {
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

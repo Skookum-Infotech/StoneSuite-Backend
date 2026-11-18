@@ -142,7 +142,7 @@ func (h *SSOOps) GetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load SSO configuration.")
+		failLoad(w, err, "Failed to load SSO configuration.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "sso_config": cfg})
@@ -303,7 +303,7 @@ func (h *SSOOps) DeleteConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to delete SSO configuration.")
+		failLoad(w, err, "Failed to delete SSO configuration.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
@@ -332,7 +332,7 @@ func (h *SSOOps) RefreshMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load SSO configuration.")
+		failLoad(w, err, "Failed to load SSO configuration.")
 		return
 	}
 	if cfg.Protocol != ssoProtocolSAML {
@@ -413,7 +413,7 @@ func (h *SSOOps) ListDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	domains, err := h.cp.ListSSODomains(r.Context(), tenantID, r.PathValue("id"))
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to list SSO domains.")
+		failLoad(w, err, "Failed to list SSO domains.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "domains": domains})
@@ -454,7 +454,7 @@ func (h *SSOOps) CreateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load SSO configuration.")
+		failLoad(w, err, "Failed to load SSO configuration.")
 		return
 	}
 	if cfg.Protocol != ssoProtocolSAML {

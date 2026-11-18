@@ -199,7 +199,7 @@ func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
 		return nil, nil, "", "", false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		failLoad(w, err, "Failed to load record.")
 		return nil, nil, "", "", false
 	}
 	resource := resourceForKey(key)
@@ -225,7 +225,7 @@ func (h *CRMOps) authCRMByRecordID(w http.ResponseWriter, r *http.Request,
 			return nil, nil, "", "", false
 		}
 		if gerr != nil {
-			fail(w, http.StatusInternalServerError, "Failed to load record.")
+			failLoad(w, gerr, "Failed to load record.")
 			return nil, nil, "", "", false
 		}
 		allowed, aerr := recordInScope(r.Context(), pool, decision.Scope, payload.ID, rec.OwnerUserID)

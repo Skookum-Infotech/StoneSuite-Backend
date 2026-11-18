@@ -86,7 +86,7 @@ func (h *QuoteOps) authQuoteByUUID(w http.ResponseWriter, r *http.Request, uuid 
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load quote.")
+		failLoad(w, err, "Failed to load quote.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

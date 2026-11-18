@@ -355,7 +355,7 @@ func (h *UserOps) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load user.")
+		failLoad(w, err, "Failed to load user.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "user": u})
@@ -421,13 +421,13 @@ func (h *UserOps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			fail(w, http.StatusInternalServerError, "Failed to load user.")
+			failLoad(w, err, "Failed to load user.")
 			return
 		}
 		if target.Status != "suspended" {
 			isSA, err := userstore.IsSuperAdmin(r.Context(), pool, id)
 			if err != nil {
-				fail(w, http.StatusInternalServerError, "Failed to check admin status.")
+				failLoad(w, err, "Failed to check admin status.")
 				return
 			}
 			if isSA {
@@ -451,7 +451,7 @@ func (h *UserOps) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to update user.")
+		failLoad(w, err, "Failed to update user.")
 		return
 	}
 
@@ -513,7 +513,7 @@ func (h *UserOps) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 	// Guard: last active super_admin cannot be removed.
 	isSA, err := userstore.IsSuperAdmin(r.Context(), pool, id)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to check admin status.")
+		failLoad(w, err, "Failed to check admin status.")
 		return
 	}
 	if isSA {
@@ -534,7 +534,7 @@ func (h *UserOps) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load user.")
+		failLoad(w, err, "Failed to load user.")
 		return
 	}
 	if err := userstore.DeactivateUser(r.Context(), pool, id); err != nil {
@@ -542,7 +542,7 @@ func (h *UserOps) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusNotFound, "User not found.")
 			return
 		}
-		fail(w, http.StatusInternalServerError, "Failed to deactivate user.")
+		failLoad(w, err, "Failed to deactivate user.")
 		return
 	}
 
@@ -614,7 +614,7 @@ func (h *UserOps) ResendInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load invite.")
+		failLoad(w, err, "Failed to load invite.")
 		return
 	}
 	// Tenant isolation: only operate on this tenant's invites.
@@ -638,7 +638,7 @@ func (h *UserOps) ResendInvite(w http.ResponseWriter, r *http.Request) {
 	}
 	refreshed, err := h.CP.RefreshUserInvite(r.Context(), id, token, time.Now().Add(userInviteExpiry))
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to refresh invite.")
+		failLoad(w, err, "Failed to refresh invite.")
 		return
 	}
 
@@ -689,7 +689,7 @@ func (h *UserOps) RevokeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load invite.")
+		failLoad(w, err, "Failed to load invite.")
 		return
 	}
 	if invite.TenantID != tenant.ID {
@@ -706,7 +706,7 @@ func (h *UserOps) RevokeInvite(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusNotFound, "Invite not found or already closed.")
 			return
 		}
-		fail(w, http.StatusInternalServerError, "Failed to revoke invite.")
+		failLoad(w, err, "Failed to revoke invite.")
 		return
 	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Invitation revoked."})

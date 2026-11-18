@@ -105,7 +105,7 @@ func (h *ExpenseOps) authExpByUUID(w http.ResponseWriter, r *http.Request, uuid 
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load expense claim.")
+		failLoad(w, err, "Failed to load expense claim.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

@@ -80,7 +80,7 @@ func (h *EstimateOps) authEstimateByUUID(w http.ResponseWriter, r *http.Request,
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load estimate.")
+		failLoad(w, err, "Failed to load estimate.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

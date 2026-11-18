@@ -64,7 +64,7 @@ func (h *CustomerTransactionsOps) authCustomer(w http.ResponseWriter, r *http.Re
 		return nil, "", false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		failLoad(w, err, "Failed to load record.")
 		return nil, "", false
 	}
 	if key != customerRecordKey {

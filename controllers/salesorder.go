@@ -91,7 +91,7 @@ func (h *SalesOrderOps) authSOByUUID(w http.ResponseWriter, r *http.Request, uui
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load sales order.")
+		failLoad(w, err, "Failed to load sales order.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

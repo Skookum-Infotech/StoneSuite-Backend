@@ -118,7 +118,7 @@ func (h *WorkflowOps) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	// Best-effort: only CRM workflows (lead/prospect/customer) have configured
@@ -153,7 +153,7 @@ func (h *WorkflowOps) SetWorkflowEnabled(w http.ResponseWriter, r *http.Request)
 			fail(w, http.StatusConflict, err.Error())
 			return
 		}
-		fail(w, http.StatusInternalServerError, "Failed to update workflow.")
+		failLoad(w, err, "Failed to update workflow.")
 		return
 	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Workflow updated."})
@@ -180,7 +180,7 @@ func (h *WorkflowOps) SetCustomFieldsEnabled(w http.ResponseWriter, r *http.Requ
 			fail(w, http.StatusNotFound, "Workflow not found.")
 			return
 		}
-		fail(w, http.StatusInternalServerError, "Failed to update workflow.")
+		failLoad(w, err, "Failed to update workflow.")
 		return
 	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Workflow updated."})
@@ -206,7 +206,7 @@ func (h *WorkflowOps) GetWorkflowApprovers(w http.ResponseWriter, r *http.Reques
 		fail(w, http.StatusBadRequest, "This workflow does not support approver configuration.")
 		return
 	case err != nil:
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	ids, err := activeApproverUserIDs(r.Context(), pool, code)
@@ -242,7 +242,7 @@ func (h *WorkflowOps) SetWorkflowApprovers(w http.ResponseWriter, r *http.Reques
 		fail(w, http.StatusBadRequest, "This workflow does not support approver configuration.")
 		return
 	case err != nil:
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	if err := replaceActiveApprovers(r.Context(), pool, code, req.ApproverUserIDs); err != nil {
@@ -270,7 +270,7 @@ func (h *WorkflowOps) GetNumberingConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load numbering config.")
+		failLoad(w, err, "Failed to load numbering config.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "numbering": cfg})
@@ -368,7 +368,7 @@ func (h *WorkflowOps) ListRecords(w http.ResponseWriter, r *http.Request) {
 	callerUserID := h.callerScope(r, pool, identityID, scope)
 	records, err := workflow.ListRecords(r.Context(), pool, r.PathValue("id"), string(scope), callerUserID, workflow.MaxListRecords)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to list records.")
+		failLoad(w, err, "Failed to list records.")
 		return
 	}
 	approverUserID, _ := workflow.UserIDByIdentity(r.Context(), pool, identityID)
@@ -399,7 +399,7 @@ func (h *WorkflowOps) SearchRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	callerUserID := h.callerScope(r, pool, identityID, scope)
@@ -448,7 +448,7 @@ func (h *WorkflowOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	// Default the owner to the caller when not specified.
@@ -464,7 +464,7 @@ func (h *WorkflowOps) CreateRecord(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		fail(w, http.StatusInternalServerError, "Failed to create record.")
+		failLoad(w, err, "Failed to create record.")
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"success": true, "record": rec})
@@ -482,7 +482,7 @@ func (h *WorkflowOps) GetRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		failLoad(w, err, "Failed to load record.")
 		return
 	}
 	if !h.enforceRecordScope(w, r, pool, scope, identityID, rec, authz.ActionRead) {
@@ -514,7 +514,7 @@ func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		failLoad(w, err, "Failed to load record.")
 		return
 	}
 	if !h.enforceRecordScope(w, r, pool, scope, identityID, rec, authz.ActionUpdate) {
@@ -522,7 +522,7 @@ func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	def, err := workflow.LoadDefinition(r.Context(), pool, rec.WorkflowID)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	if err := workflow.ValidateCustomFields(def.Fields, req.CustomFields, def.Workflow.CustomFieldsEnabled); err != nil {
@@ -530,7 +530,7 @@ func (h *WorkflowOps) UpdateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := workflow.UpdateRecordFields(r.Context(), pool, rec.ID, req.CustomFields); err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to update record.")
+		failLoad(w, err, "Failed to update record.")
 		return
 	}
 	writeJSON(w, http.StatusOK, models.APIResponse{Success: true, Message: "Record updated."})

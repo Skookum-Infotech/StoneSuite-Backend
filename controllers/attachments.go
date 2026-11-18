@@ -126,7 +126,7 @@ func authRecordAccess(
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load record.")
+		failLoad(w, err, "Failed to load record.")
 		return nil, workflow.RecordAccessInfo{}, "", false
 	}
 	resource := resourceForKey(info.WorkflowKey)

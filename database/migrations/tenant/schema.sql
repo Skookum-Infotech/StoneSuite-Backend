@@ -8594,6 +8594,12 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_routing_number VARCHAR
 -- Empty object means no defaults: the PDF then omits those sections.
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS document_defaults JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- Company Preferences tab (Configuration -> Company Info -> Company
+-- Preferences): fabrication sq ft = countertop sq ft x (1 + this% / 100), shown
+-- in the drawing editor's sq ft breakdown. 20 is a starting default, not a
+-- measured number -- tenants are expected to tune it.
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS fabrication_percent NUMERIC(5,2) NOT NULL DEFAULT 20;
+
 -- (company_location is defined earlier in this file, ahead of the inventory
 -- tables that reference it -- see "Company locations" above.)
 

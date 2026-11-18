@@ -81,7 +81,7 @@ func (h *VendorBillOps) authVBByUUID(w http.ResponseWriter, r *http.Request, uui
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load vendor bill.")
+		failLoad(w, err, "Failed to load vendor bill.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

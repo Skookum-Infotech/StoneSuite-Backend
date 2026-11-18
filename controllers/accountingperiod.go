@@ -86,7 +86,7 @@ func apFail(w http.ResponseWriter, err error, serverMsg string) {
 	case accountingperiod.IsConflict(err):
 		fail(w, http.StatusConflict, err.Error())
 	default:
-		fail(w, http.StatusInternalServerError, serverMsg)
+		failLoad(w, err, serverMsg)
 	}
 }
 

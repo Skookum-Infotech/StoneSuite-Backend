@@ -222,20 +222,20 @@ func (h *FeedbackOps) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("feedback.GetForReporter: %v", err)
-		fail(w, http.StatusInternalServerError, "Failed to load feedback ticket.")
+		failLoad(w, err, "Failed to load feedback ticket.")
 		return
 	}
 
 	comments, err := feedback.ListComments(r.Context(), h.CP.Pool(), id, false)
 	if err != nil {
 		log.Printf("feedback.ListComments: %v", err)
-		fail(w, http.StatusInternalServerError, "Failed to load feedback ticket.")
+		failLoad(w, err, "Failed to load feedback ticket.")
 		return
 	}
 	attachments, err := feedback.ListAttachments(r.Context(), h.CP.Pool(), id)
 	if err != nil {
 		log.Printf("feedback.ListAttachments: %v", err)
-		fail(w, http.StatusInternalServerError, "Failed to load feedback ticket.")
+		failLoad(w, err, "Failed to load feedback ticket.")
 		return
 	}
 
@@ -270,7 +270,7 @@ func (h *FeedbackOps) AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		log.Printf("feedback.GetForReporter: %v", err)
-		fail(w, http.StatusInternalServerError, "Failed to load feedback ticket.")
+		failLoad(w, err, "Failed to load feedback ticket.")
 		return
 	}
 
@@ -384,7 +384,7 @@ func (h *FeedbackOps) PresignAttachments(w http.ResponseWriter, r *http.Request)
 		return
 	} else if err != nil {
 		log.Printf("feedback.GetForReporter: %v", err)
-		fail(w, http.StatusInternalServerError, "Failed to load feedback ticket.")
+		failLoad(w, err, "Failed to load feedback ticket.")
 		return
 	}
 
@@ -449,7 +449,7 @@ func (h *FeedbackOps) ConfirmAttachments(w http.ResponseWriter, r *http.Request)
 		return
 	} else if err != nil {
 		log.Printf("feedback.GetForReporter: %v", err)
-		fail(w, http.StatusInternalServerError, "Failed to load feedback ticket.")
+		failLoad(w, err, "Failed to load feedback ticket.")
 		return
 	}
 

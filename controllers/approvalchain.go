@@ -50,7 +50,7 @@ func (h *WorkflowOps) GetApprovalChain(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, errNotApprovalChainWorkflow.Error())
 		return
 	case err != nil:
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	gates, err := approvalchain.GatesWithApprovers(r.Context(), pool, cfg)
@@ -82,7 +82,7 @@ func (h *WorkflowOps) SetApprovalChain(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, errNotApprovalChainWorkflow.Error())
 		return
 	case err != nil:
-		fail(w, http.StatusInternalServerError, "Failed to load workflow.")
+		failLoad(w, err, "Failed to load workflow.")
 		return
 	}
 	var req struct {

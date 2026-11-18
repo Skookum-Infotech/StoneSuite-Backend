@@ -2,6 +2,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,13 +79,10 @@ func (h *PurchaseOrderOps) authPOByUUID(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return nil, "", nil, false
 	}
-	po, err := purchaseorder.Get(r.Context(), pool, uuid)
-	if errors.Is(err, purchaseorder.ErrNotFound) {
-		fail(w, http.StatusNotFound, "Purchase order not found.")
-		return nil, "", nil, false
-	}
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load purchase order.")
+	po, ok := loadPOOrFail(r.Context(), w, func(ctx context.Context) (*purchaseorder.PurchaseOrder, error) {
+		return purchaseorder.Get(ctx, pool, uuid)
+	})
+	if !ok {
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

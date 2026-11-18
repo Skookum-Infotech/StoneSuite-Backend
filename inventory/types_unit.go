@@ -82,6 +82,11 @@ type Unit struct {
 	ReservedCustomerName string     `json:"reservedCustomerName,omitempty"`
 	CustomerReservedAt   *time.Time `json:"customerReservedAt,omitempty"`
 
+	// The sales order this unit is held for from its Material drawing (status
+	// reserved, no fabrication job yet). Empty for every other unit.
+	ReservedSalesOrderID     *string `json:"reservedSalesOrderId,omitempty"`
+	ReservedSalesOrderNumber string  `json:"reservedSalesOrderNumber,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }

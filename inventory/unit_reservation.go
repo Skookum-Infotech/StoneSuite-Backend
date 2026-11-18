@@ -94,9 +94,9 @@ func ReserveUnitForCustomer(ctx context.Context, pool *pgxpool.Pool, unitUUID, c
 	return nil
 }
 
-// ReleaseUnitReservation gives a slab held for a customer back to available. A
-// reservation a fabrication job holds is not this one's to release — that goes
-// through the job.
+// ReleaseUnitReservation gives a slab held for a customer, or for a sales order's
+// drawing, back to available. A reservation a fabrication job holds is not this
+// one's to release — that goes through the job.
 func ReleaseUnitReservation(ctx context.Context, pool *pgxpool.Pool, unitUUID, note string, actorEmployeeID int) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -108,30 +108,41 @@ func ReleaseUnitReservation(ctx context.Context, pool *pgxpool.Pool, unitUUID, n
 	if err != nil {
 		return err
 	}
-	var customerName *string
+	// Who holds it: a customer (reserved from Inventory) or a sales order (held from
+	// its drawing). Either can be released here; a job's hold cannot.
+	var customerName, orderNumber *string
 	if u.status == StatusReserved {
 		err = tx.QueryRow(ctx, `
-			SELECT c.customer_name FROM inventory_slab s
-			JOIN customer c ON c.customer_id = s.reserved_customer_id
-			WHERE s.inventory_slab_id = $1`, u.id).Scan(&customerName)
+			SELECT c.customer_name, so.sales_order_number FROM inventory_slab s
+			LEFT JOIN customer c ON c.customer_id = s.reserved_customer_id
+			LEFT JOIN sales_order so ON so.sales_order_id = s.reserved_sales_order_id
+			WHERE s.inventory_slab_id = $1`, u.id).Scan(&customerName, &orderNumber)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("read unit reservation: %w", err)
 		}
 	}
-	if u.status != StatusReserved || customerName == nil {
-		return ClientError{Msg: "This unit is not reserved for a customer. A reservation a fabrication job holds is released from the job."}
+	holder := ""
+	switch {
+	case customerName != nil:
+		holder = *customerName
+	case orderNumber != nil:
+		holder = "sales order " + *orderNumber
+	}
+	if u.status != StatusReserved || holder == "" {
+		return ClientError{Msg: "This unit is not reserved for a customer or a sales order. A reservation a fabrication job holds is released from the job."}
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE inventory_slab
-		SET slab_status = $2, reserved_customer_id = NULL, reserved_at = NULL, reserved_by = NULL,
+		SET slab_status = $2, reserved_customer_id = NULL, reserved_sales_order_id = NULL,
+		    reserved_at = NULL, reserved_by = NULL,
 		    slab_updated_at = NOW(), slab_updated_by = $3
 		WHERE inventory_slab_id = $1`,
 		u.id, StatusAvailable, nullableInt(actorEmployeeID)); err != nil {
 		return mapUnitWriteErr(err, "release")
 	}
 	if err := writeUnitHistory(ctx, tx, u.id, "status_change", "status", StatusReserved, StatusAvailable,
-		u.binID, u.binID, nil, reservationNote("Released from "+*customerName+".", note), actorEmployeeID); err != nil {
+		u.binID, u.binID, nil, reservationNote("Released from "+holder+".", note), actorEmployeeID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

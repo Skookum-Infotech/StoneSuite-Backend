@@ -58,6 +58,10 @@ func newDrawingTestEnv(t *testing.T, grants ...authz.Grant) *drawingTestEnv {
 	mux.HandleFunc("GET /api/tenant/sales-orders/{uuid}/drawing/versions/{version}", so.GetDrawingVersion)
 	mux.HandleFunc("POST /api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore", so.RestoreDrawingVersion)
 	mux.HandleFunc("GET /api/tenant/settings/edge-codes", GetEdgeCodes)
+	mux.HandleFunc("GET /api/tenant/settings/edge-types", GetEdgeTypes)
+	mux.HandleFunc("POST /api/tenant/settings/edge-types", CreateEdgeType)
+	mux.HandleFunc("PUT /api/tenant/settings/edge-types/{id}", UpdateEdgeType)
+	mux.HandleFunc("GET /api/tenant/settings/cutout-types", GetCutoutTypes)
 	// Each env owns tenant connection pools; close them so six tests' worth do
 	// not pile up and exhaust Postgres's connection limit for later tests.
 	router := tenancy.NewRouter(nil)
@@ -166,4 +170,102 @@ func TestGetEdgeCodes_DB(t *testing.T) {
 	rec := env.do(http.MethodGet, "/api/tenant/settings/edge-codes", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"code":"EE"`)
+}
+
+func TestGetCutoutTypes_DB(t *testing.T) {
+	env := newDrawingTestEnv(t) // any authenticated user, like edge codes
+	rec := env.do(http.MethodGet, "/api/tenant/settings/cutout-types", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// Seeded for every tenant, in the order the dialog lists them.
+	assert.Contains(t, rec.Body.String(), `"cutoutTypes":[{"code":"sink","label":"Sink"},{"code":"cooktop","label":"Cooktop"},`+
+		`{"code":"faucet","label":"Faucet"},{"code":"fireplace","label":"Fireplace"},`+
+		`{"code":"bathtub","label":"Bathtub"},{"code":"other","label":"Other"}]`)
+}
+
+func TestGetEdgeTypes_DB(t *testing.T) {
+	env := newDrawingTestEnv(t) // any authenticated user, like edge codes
+	rec := env.do(http.MethodGet, "/api/tenant/settings/edge-types", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// The four every tenant starts with, in the order the Edges bar lists them.
+	body := rec.Body.String()
+	last := -1
+	for _, name := range []string{`"name":"Ease"`, `"name":"Appliance"`, `"name":"Finished"`, `"name":"Unfinished"`} {
+		at := strings.Index(body, name)
+		require.Greater(t, at, last, "%s missing or out of order in %s", name, body)
+		last = at
+	}
+	assert.Contains(t, body, `"name":"Appliance","pricingType":"linear","price":10,"alias":"A","color":"#15803d","finish":"halfBullnose","isSystem":true`)
+}
+
+func TestCreateAndUpdateEdgeType_DB(t *testing.T) {
+	env := newDrawingTestEnv(t, soReadWrite()...)
+	const path = "/api/tenant/settings/edge-types"
+
+	rec := env.do(http.MethodPost, path, `{"name":" Cove ","price":12.5,"alias":"C","color":"#AA00FF","finish":"bullnose"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"name":"Cove","pricingType":"linear","price":12.5,"alias":"C","color":"#aa00ff","finish":"bullnose","isSystem":false`)
+
+	// Names are unique whatever their case.
+	rec = env.do(http.MethodPost, path, `{"name":"cove","price":1,"color":"#112233"}`)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	// It is listed after the seeded four.
+	rec = env.do(http.MethodGet, path, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	require.Greater(t, strings.Index(body, `"name":"Cove"`), strings.Index(body, `"name":"Unfinished"`))
+
+	// Edit one of the seeded types (the Appliance row, found through the list).
+	idAt := strings.Index(body, `"name":"Appliance"`)
+	require.GreaterOrEqual(t, idAt, 0)
+	idStart := strings.LastIndex(body[:idAt], `"id":"`) + len(`"id":"`)
+	id := body[idStart : idStart+36]
+	rec = env.do(http.MethodPut, path+"/"+id, `{"name":"Appliance","price":15,"alias":"AP","color":"#00ff00","finish":"eased"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"price":15,"alias":"AP","color":"#00ff00","finish":"eased","isSystem":true`)
+
+	rec = env.do(http.MethodPut, path+"/00000000-0000-0000-0000-000000000000", `{"name":"Nope","price":1,"color":"#112233"}`)
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestEdgeTypeWriteValidation_DB(t *testing.T) {
+	env := newDrawingTestEnv(t, soReadWrite()...)
+	const path = "/api/tenant/settings/edge-types"
+	for name, body := range map[string]string{
+		"no name":         `{"name":"  ","price":1,"color":"#112233"}`,
+		"negative price":  `{"name":"X","price":-1,"color":"#112233"}`,
+		"bad colour":      `{"name":"X","price":1,"color":"green"}`,
+		"unknown finish":  `{"name":"X","price":1,"color":"#112233","finish":"zigzag"}`,
+		"unknown pricing": `{"name":"X","pricingType":"each","price":1,"color":"#112233"}`,
+	} {
+		rec := env.do(http.MethodPost, path, body)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", name, rec.Body.String())
+	}
+}
+
+func TestEdgeTypeWriteNeedsUpdateGrant_DB(t *testing.T) {
+	// Read-only on sales orders: may read the list but not change it.
+	env := newDrawingTestEnv(t, authz.Grant{Resource: authz.ResourceSalesOrder, Action: authz.ActionRead, Scope: authz.ScopeAll})
+	rec := env.do(http.MethodGet, "/api/tenant/settings/edge-types", "")
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = env.do(http.MethodPost, "/api/tenant/settings/edge-types", `{"name":"Cove","price":1,"color":"#112233"}`)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+// What the Border, Corner and Edges tools tag a side with must come back from a
+// saved drawing unchanged.
+func TestPutThenGetDrawing_KeepsEdgeToolMetadata_DB(t *testing.T) {
+	env := newDrawingTestEnv(t, soReadWrite()...)
+	area := strings.Replace(validAreaJSON, `"edges":[]`,
+		`"edges":[{"index":0,"arcHeightMm":-50,"borderId":"b-1","borderStyle":"fullRadiusOut","edgeTypeId":"7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11"},{"index":1,"cornerId":"c-1","cornerStyle":"notch"}]`, 1)
+	body := `{"areas":[` + area + `],"displayUnit":"in","fractionDenominator":32,"recordVersion":0}`
+	rec := env.do(http.MethodPut, "/api/tenant/sales-orders/"+env.soUUID+"/drawing", body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = env.do(http.MethodGet, "/api/tenant/sales-orders/"+env.soUUID+"/drawing", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for _, want := range []string{`"arcHeightMm":-50`, `"borderId":"b-1"`, `"borderStyle":"fullRadiusOut"`,
+		`"edgeTypeId":"7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11"`, `"cornerId":"c-1"`, `"cornerStyle":"notch"`} {
+		assert.Contains(t, rec.Body.String(), want)
+	}
 }

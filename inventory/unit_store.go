@@ -73,6 +73,7 @@ const unitSelect = `
 	       fj.fabrication_job_uuid, COALESCE(fj.fabrication_job_number,''),
 	       so.sales_order_uuid, COALESCE(so.sales_order_number,''), fjs.reserved_at,
 	       rcu.customer_uuid, COALESCE(rcu.customer_name,''), CASE WHEN rcu.customer_id IS NOT NULL THEN s.reserved_at END,
+	       hso.sales_order_uuid, COALESCE(hso.sales_order_number,''),
 	       lc.occurred_at, ls.occurred_at,
 	       COALESCE(rec.offcut_count, 0), COALESCE(rec.recovered_area, 0),
 	       s.slab_created_at, s.slab_updated_at` +
@@ -91,6 +92,8 @@ const unitSelect = `
 	LEFT JOIN sales_order so             ON so.sales_order_id = fj.sales_order_id
 	                                    AND so.sales_order_deleted_at IS NULL
 	LEFT JOIN customer rcu               ON rcu.customer_id = s.reserved_customer_id AND s.slab_status = 'reserved'
+	LEFT JOIN sales_order hso            ON hso.sales_order_id = s.reserved_sales_order_id AND s.slab_status = 'reserved'
+	                                    AND hso.sales_order_deleted_at IS NULL
 	LEFT JOIN inventory_slab_ledger lc   ON lc.inventory_slab_id = s.inventory_slab_id AND lc.event = 'consumed'
 	LEFT JOIN inventory_slab_ledger ls   ON ls.inventory_slab_id = s.inventory_slab_id AND ls.event = 'scrapped'` +
 	unitRecoveredJoin
@@ -119,6 +122,7 @@ func scanUnit(row pgx.Row) (*Unit, error) {
 		&jobID, &u.Usage.JobNumber,
 		&orderID, &u.Usage.SalesOrderNumber, &u.Usage.ReservedAt,
 		&u.ReservedCustomerID, &u.ReservedCustomerName, &u.CustomerReservedAt,
+		&u.ReservedSalesOrderID, &u.ReservedSalesOrderNumber,
 		&u.Usage.ConsumedAt, &u.Usage.ScrappedAt,
 		&u.Usage.OffcutCount, &u.Usage.RecoveredArea,
 		&u.CreatedAt, &u.UpdatedAt,

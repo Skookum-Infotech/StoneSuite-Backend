@@ -103,6 +103,13 @@ func runMigrations(ctx context.Context, gate *tenancy.MigrationGate, stale []ten
 			gate.Done(t.ID)
 			continue
 		}
+		// A freed slot and ctx.Done can be ready together and select picks at
+		// random, so re-check: never start new work once ctx is cancelled.
+		if ctx.Err() != nil {
+			<-sem
+			gate.Done(t.ID)
+			continue
+		}
 		wg.Add(1)
 		go func(t tenancy.Tenant) {
 			defer wg.Done()

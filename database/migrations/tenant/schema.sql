@@ -2638,6 +2638,60 @@ INSERT INTO lkp_edge_code (edge_code_code, edge_code_label, edge_code_created_by
     ('WF',  'Waterfall',             1)
 ON CONFLICT (edge_code_code) DO NOTHING;
 
+-- lkp_cutout_type -- the kinds of opening the drawing editor's Cutout dialog offers
+-- (GET /api/tenant/settings/cutout-types). Master data every tenant starts with, so it
+-- is seeded here; sort_order keeps the list in the order the shop reads it ('Other' last)
+-- rather than alphabetical.
+CREATE TABLE IF NOT EXISTS lkp_cutout_type (
+    cutout_type_id             SERIAL       PRIMARY KEY,
+    cutout_type_code           VARCHAR(32)  NOT NULL,
+    cutout_type_label          VARCHAR(64)  NOT NULL,
+    cutout_type_sort_order     INTEGER      NOT NULL DEFAULT 0,
+    cutout_type_is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    cutout_type_created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    cutout_type_created_by     INTEGER      NOT NULL REFERENCES employee(employee_id),
+    cutout_type_record_version INTEGER      NOT NULL DEFAULT 1,
+    CONSTRAINT uq_cutout_type_code UNIQUE (cutout_type_code)
+);
+
+INSERT INTO lkp_cutout_type (cutout_type_code, cutout_type_label, cutout_type_sort_order, cutout_type_created_by) VALUES
+    ('sink',      'Sink',      1, 1),
+    ('cooktop',   'Cooktop',   2, 1),
+    ('faucet',    'Faucet',    3, 1),
+    ('fireplace', 'Fireplace', 4, 1),
+    ('bathtub',   'Bathtub',   5, 1),
+    ('other',     'Other',     6, 1)
+ON CONFLICT (cutout_type_code) DO NOTHING;
+
+-- drawing_edge_type -- the shop's list of edge types the drawing editor's Edges tool paints
+-- onto a piece's sides (GET/POST/PUT /api/tenant/settings/edge-types): a name, a price per
+-- linear unit, a short alias, the colour it is drawn in, and the 3D finish (profile) it
+-- will show later. Distinct from lkp_edge_code, which is only a code + label. Four types
+-- are seeded for every tenant (system_key marks them; they can be edited, not duplicated);
+-- the rest are added by users. A piece's side points at one by id (PieceEdge.edgeTypeId).
+CREATE TABLE IF NOT EXISTS drawing_edge_type (
+    id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    system_key   VARCHAR(32)  NULL UNIQUE,
+    name         VARCHAR(64)  NOT NULL,
+    pricing_type VARCHAR(16)  NOT NULL DEFAULT 'linear' CHECK (pricing_type IN ('linear')),
+    price        NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (price >= 0),
+    alias        VARCHAR(8)   NOT NULL DEFAULT '',
+    color        VARCHAR(7)   NOT NULL CHECK (color ~ '^#[0-9a-fA-F]{6}$'),
+    finish       VARCHAR(16)  NOT NULL DEFAULT 'none'
+                 CHECK (finish IN ('none', 'raw', 'ogee', 'beveled', 'eased', 'waterfall', 'halfBullnose', 'bullnose')),
+    sort_order   INTEGER      NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_drawing_edge_type_name ON drawing_edge_type (LOWER(name));
+
+INSERT INTO drawing_edge_type (system_key, name, price, alias, color, finish, sort_order) VALUES
+    ('ease',       'Ease',       0,  'E', '#2563eb', 'eased',        1),
+    ('appliance',  'Appliance',  10, 'A', '#15803d', 'halfBullnose', 2),
+    ('finished',   'Finished',   0,  'F', '#d97706', 'none',         3),
+    ('unfinished', 'Unfinished', 0,  'U', '#6b7280', 'raw',          4)
+ON CONFLICT DO NOTHING;
+
 -- Indexes -- listing/filtering (all partial on live rows) -------------------
 CREATE INDEX IF NOT EXISTS idx_so_customer   ON sales_order (sales_order_customer_id) WHERE sales_order_deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_so_status     ON sales_order (sales_order_status)      WHERE sales_order_deleted_at IS NULL;
@@ -10275,6 +10329,18 @@ ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_by INTEGER NULL
     REFERENCES employee(employee_id);
 CREATE INDEX IF NOT EXISTS idx_slab_reserved_customer ON inventory_slab (reserved_customer_id)
     WHERE reserved_customer_id IS NOT NULL;
+
+-- A slab can also be held for one sales order straight from its Material drawing,
+-- before any fabrication job exists: status 'reserved' plus the order below. It is
+-- the third kind of hold beside a customer's and a job's. When the order's job
+-- allocates the slab the hold is handed over to the job and this column is cleared
+-- (the job's own fabrication_job_slab row owns it from then on). Cleared too when
+-- the order is cancelled or deleted, or the slab is written off. Like the customer
+-- columns, it means nothing unless slab_status = 'reserved'.
+ALTER TABLE inventory_slab ADD COLUMN IF NOT EXISTS reserved_sales_order_id INTEGER NULL
+    REFERENCES sales_order(sales_order_id);
+CREATE INDEX IF NOT EXISTS idx_slab_reserved_sales_order ON inventory_slab (reserved_sales_order_id)
+    WHERE reserved_sales_order_id IS NOT NULL;
 
 -- -- request_idempotency ----------------------------------------------------
 -- Generic replay ledger for create endpoints that accept an Idempotency-Key

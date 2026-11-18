@@ -1,6 +1,9 @@
 package drawing
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 var validRectOutline = []Point{{X: 0, Y: 0}, {X: 600, Y: 0}, {X: 600, Y: -400}, {X: 0, Y: -400}}
 
@@ -9,6 +12,8 @@ func validPiece(id string) Piece {
 }
 
 func f(v float64) *float64 { return &v }
+
+func i(v int) *int { return &v }
 
 func withRotation(p Piece, deg float64) Piece {
 	p.RotationDeg = deg
@@ -59,11 +64,49 @@ func TestValidate(t *testing.T) {
 		{"round faucet accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "faucet", Shape: "round", DiameterMm: f(35)})}}}}, false},
 		{"custom polygon accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "custom", Shape: "polygon", Outline: []Point{{X: -10, Y: 10}, {X: 10, Y: 10}, {X: 0, Y: -10}}})}}}}, false},
 		{"legacy outlet with only a diameter accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "outlet", DiameterMm: f(30)})}}}}, false},
+		{"fireplace cutout type accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "fireplace", Shape: "rect", WidthMm: f(300), DepthMm: f(200)})}}}}, false},
+		{"bathtub cutout type accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "bathtub", Shape: "rect", WidthMm: f(300), DepthMm: f(200)})}}}}, false},
+		{"other cutout type accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "other", Shape: "rect", WidthMm: f(300), DepthMm: f(200)})}}}}, false},
+		{"sink with faucet holes and distance lines accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "rect", WidthMm: f(300), DepthMm: f(200), FaucetHoleCount: i(1), FaucetHoleRadiusMm: f(16), DistanceLines: &DistanceLines{Top: "hidden", Right: "border", Bottom: "center", Left: "center"}})}}}}, false},
+		{"sink with a picture code accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "rect", WidthMm: f(300), DepthMm: f(200), ShapeCode: "sink.farmhouse"})}}}}, false},
+		{"overlong picture code rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "rect", WidthMm: f(300), DepthMm: f(200), ShapeCode: strings.Repeat("x", 65)})}}}}, true},
+		{"negative faucet hole count rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "rect", WidthMm: f(300), DepthMm: f(200), FaucetHoleCount: i(-1)})}}}}, true},
+		{"unknown distance line mode rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "rect", WidthMm: f(300), DepthMm: f(200), DistanceLines: &DistanceLines{Top: "wobbly", Right: "center", Bottom: "center", Left: "center"}})}}}}, true},
 		{"unknown cutout type rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "jacuzzi", WidthMm: f(1), DepthMm: f(1)})}}}}, true},
+		{"ellipse, arc and stadium cutouts accepted", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "bathtub", Shape: "stadium", WidthMm: f(1500), DepthMm: f(800)})}}}}, false},
+		{"ellipse cutout with no size rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "other", Shape: "ellipse"})}}}}, true},
 		{"unknown cutout shape rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "star", WidthMm: f(1), DepthMm: f(1)})}}}}, true},
 		{"rect cutout with no size rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "sink", Shape: "rect"})}}}}, true},
 		{"round cutout with zero diameter rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "faucet", Shape: "round", DiameterMm: f(0)})}}}}, true},
 		{"polygon cutout with 2 points rejected", Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{withCutout(Cutout{ID: "c", Type: "custom", Shape: "polygon", Outline: []Point{{X: 0, Y: 0}, {X: 1, Y: 1}}})}}}}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := Validate(c.drawing)
+			if (err != nil) != c.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateEdgeToolMetadata(t *testing.T) {
+	withEdge := func(e PieceEdge) Drawing {
+		p := validPiece("p1")
+		p.Edges = []PieceEdge{e}
+		return Drawing{Areas: []Area{{ID: "a1", Pieces: []Piece{p}}}}
+	}
+	cases := []struct {
+		name    string
+		drawing Drawing
+		wantErr bool
+	}{
+		{"painted edge type accepted", withEdge(PieceEdge{Index: 0, EdgeTypeID: "7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11"}), false},
+		{"border arc and tags accepted", withEdge(PieceEdge{Index: 0, ArcHeightMm: f(-76.2), BorderID: "b-1", BorderStyle: "fullRadiusOut"}), false},
+		{"corner tags accepted", withEdge(PieceEdge{Index: 1, CornerID: "c-1", CornerStyle: "notch"}), false},
+		{"overlong edge type id rejected", withEdge(PieceEdge{Index: 0, EdgeTypeID: strings.Repeat("x", 65)}), true},
+		{"overlong border id rejected", withEdge(PieceEdge{Index: 0, BorderID: strings.Repeat("x", 65)}), true},
+		{"absurd arc height rejected", withEdge(PieceEdge{Index: 0, ArcHeightMm: f(1e9)}), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

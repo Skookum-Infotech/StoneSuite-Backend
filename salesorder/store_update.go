@@ -249,6 +249,9 @@ func SoftDelete(ctx context.Context, pool *pgxpool.Pool, uuid string, actorEmplo
 	if err := inventory.ReleaseOrder(ctx, tx, internalID); err != nil {
 		return err
 	}
+	if err := inventory.ReleaseSalesOrderHoldsTx(ctx, tx, internalID, actorEmployeeID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit delete sales order: %w", err)
 	}

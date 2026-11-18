@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-688 endpoints across 7 surfaces, read from `main.go`.
+698 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 585 |
+| staff token + tenant | 595 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 25 |
 | staff token | 23 |
@@ -381,7 +381,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 | `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
 
-## `tenant` — 584 endpoints
+## `tenant` — 594 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -824,6 +824,9 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/inventory/units/{uuid}/cut` | staff token + tenant | `invUnit.Cut` |
 | `GET` | `/api/tenant/inventory/units/{uuid}/history` | staff token + tenant | `invUnit.History` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/inspection` | staff token + tenant | `invUnit.Inspect` |
+| `DELETE` | `/api/tenant/inventory/units/{uuid}/photo` | staff token + tenant | `invUnitPhoto.Delete` |
+| `GET` | `/api/tenant/inventory/units/{uuid}/photo` | staff token + tenant | `invUnitPhoto.Get` |
+| `PUT` | `/api/tenant/inventory/units/{uuid}/photo` | staff token + tenant | `invUnitPhoto.Upload` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/release` | staff token + tenant | `invUnit.ReleaseReservation` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/reserve` | staff token + tenant | `invUnit.Reserve` |
 | `POST` | `/api/tenant/inventory/units/{uuid}/scrap` | staff token + tenant | `invUnit.Scrap` |
@@ -1074,6 +1077,9 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `PUT` | `/api/tenant/sales-orders/{uuid}/customer-order-form` | staff token + tenant | `so.UpdateCustomerOrderForm` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/drawing` | staff token + tenant | `so.GetDrawing` |
 | `PUT` | `/api/tenant/sales-orders/{uuid}/drawing` | staff token + tenant | `so.PutDrawing` |
+| `GET` | `/api/tenant/sales-orders/{uuid}/drawing/slab-options` | staff token + tenant | `soDrawingSlabs.Options` |
+| `POST` | `/api/tenant/sales-orders/{uuid}/drawing/slabs` | staff token + tenant | `soDrawingSlabs.Hold` |
+| `DELETE` | `/api/tenant/sales-orders/{uuid}/drawing/slabs/{slabId}` | staff token + tenant | `soDrawingSlabs.Release` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/drawing/versions` | staff token + tenant | `so.ListDrawingVersions` |
 | `GET` | `/api/tenant/sales-orders/{uuid}/drawing/versions/{version}` | staff token + tenant | `so.GetDrawingVersion` |
 | `POST` | `/api/tenant/sales-orders/{uuid}/drawing/versions/{version}/restore` | staff token + tenant | `so.RestoreDrawingVersion` |
@@ -1095,7 +1101,11 @@ The staff application. Every route requires a JWT and resolves a tenant database
 
 | Method | Path | Requires | Handler |
 |---|---|---|---|
+| `GET` | `/api/tenant/settings/cutout-types` | staff token + tenant | `controllers.GetCutoutTypes` |
 | `GET` | `/api/tenant/settings/edge-codes` | staff token + tenant | `controllers.GetEdgeCodes` |
+| `GET` | `/api/tenant/settings/edge-types` | staff token + tenant | `controllers.GetEdgeTypes` |
+| `POST` | `/api/tenant/settings/edge-types` | staff token + tenant | `controllers.CreateEdgeType` |
+| `PUT` | `/api/tenant/settings/edge-types/{id}` | staff token + tenant | `controllers.UpdateEdgeType` |
 
 ### sso-configs
 

@@ -200,8 +200,11 @@ func loadMaterials(ctx context.Context, q querier, jobID int) ([]Material, error
 	srows, err := q.Query(ctx, `
 		SELECT inventory_item_id, COALESCE(SUM(slab_area), 0)
 		FROM inventory_slab
-		WHERE inventory_item_id = ANY($1) AND slab_status = 'available' AND inspection_status IN ('accepted','legacy') AND slab_deleted_at IS NULL
-		GROUP BY inventory_item_id`, ids)
+		WHERE inventory_item_id = ANY($1) AND inspection_status IN ('accepted','legacy') AND slab_deleted_at IS NULL
+		  AND (slab_status = 'available'
+		       OR (slab_status = 'reserved'
+		           AND reserved_sales_order_id = (SELECT sales_order_id FROM fabrication_job WHERE fabrication_job_id = $2)))
+		GROUP BY inventory_item_id`, ids, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("load slab stock for materials: %w", err)
 	}

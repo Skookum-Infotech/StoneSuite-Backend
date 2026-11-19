@@ -34,9 +34,13 @@ independently per tenant. It covers:
 - **JIT (just-in-time) user provisioning**: a first-time SAML login creates
   both a control-plane identity and a tenant-local `users` row automatically,
   matched/linked by email.
-- SP-initiated logout (best-effort): if the IdP advertises a Single Logout
-  endpoint, StoneSuite builds and returns a `LogoutRequest` URL for the
-  frontend to send the browser to.
+- SP-initiated logout: ends the user's server-side session, then, if the IdP
+  advertises a Single Logout endpoint, builds and returns a `LogoutRequest`
+  URL for the frontend to send the browser to.
+- IdP-initiated logout: when a session ends at the IdP, the IdP can send a
+  signed `LogoutRequest` to StoneSuite's single logout endpoint; StoneSuite
+  verifies it, ends that user's sessions and answers with a `LogoutResponse`
+  (§6, "Single logout endpoint").
 
 **What this explicitly does NOT implement:**
 
@@ -44,9 +48,6 @@ independently per tenant. It covers:
   assertion. A login must start at StoneSuite's own
   `GET /api/auth/saml/{provider}/initiate`. Clicking an app tile in the IdP's
   own portal (e.g. Entra's "My Apps") will not work.
-- **IdP-initiated SLO.** Nothing consumes an unsolicited `LogoutRequest` sent
-  by the IdP (e.g. an admin forcing a session end on the IdP side does not
-  propagate to StoneSuite).
 - **Automatic/background certificate or metadata refresh.** IdP metadata
   (including the signing certificate) is fetched once at config create/update
   time and otherwise never changes on its own — there is no scheduled job.
@@ -54,8 +55,7 @@ independently per tenant. It covers:
   (`POST /api/tenant/sso-configs/{id}/refresh-metadata`, see §6).
 
 Read [§8 Known limitations](#8-known-limitations) before relying on this in
-production — several more gaps exist beyond the three above, including one
-that affects every SP-initiated logout (§8).
+production — several more gaps exist beyond the two above (§8).
 
 This is a backend-only implementation. Do not point real production IdP
 integrations at it and expect a working login button without also reading the
@@ -279,6 +279,7 @@ ACS / Reply URL         :  POST ${API_BASE_URL}/api/auth/saml/entra/acs
 | `POST` | `/api/auth/saml/{provider}/acs` | none (IdP-facing) | per-IP (same as above) |
 | `POST` | `/api/auth/saml/exchange` | none (one-time code is the credential) | per-IP (same as above) |
 | `POST` | `/api/auth/saml/{provider}/logout` | JWT required (full `tenantChain`) | per-tenant (burst 40, 20 req/s) |
+| `GET`/`POST` | `/api/auth/saml/{provider}/logout-response` | none (IdP-facing; a signed `LogoutRequest` is the credential) | per-IP (same as above) |
 | `POST` | `/api/auth/saml/discover` | none | per-IP (same as above) |
 | `GET`/`POST`/`PUT`/`DELETE` | `/api/tenant/sso-configs[/{id}]` | JWT + `sso_config:read`/`configure` | per-tenant |
 | `POST` | `/api/tenant/sso-configs/{id}/refresh-metadata` | JWT + `sso_config:configure` | per-tenant |
@@ -381,10 +382,13 @@ Also sets `auth_token` (httpOnly, `Path=/`) and, best-effort,
 names to password login (`controllers/saml_exchange.go`).
 
 ### `POST /api/auth/saml/{provider}/logout`
-Requires a valid session (JWT via header or `auth_token` cookie). Clears
-local `auth_token`/`refresh_token` cookies unconditionally, *before* anything
+Requires a valid session (JWT via header or `auth_token` cookie). Ends the
+caller's server-side session (the session behind their refresh token and the
+one the access token was issued for, so neither token works afterwards) and
+clears the local `auth_token`/`refresh_token` cookies, *before* anything
 SLO-related is attempted. `400` if the current session wasn't established via
-this provider. Otherwise always `200`:
+this provider; `500` if the refresh token could not be deleted (the cookies
+are cleared regardless). Otherwise always `200`:
 ```json
 {"success": true, "slo_available": false}
 ```
@@ -395,6 +399,54 @@ available:
 ```
 The frontend is expected to navigate the browser to `logout_url` next. See
 §8 for what happens when the IdP redirects back.
+
+### Single logout endpoint: `GET`/`POST /api/auth/saml/{provider}/logout-response`
+This is the `SingleLogoutService` Location in the SP metadata, so the IdP sends
+both kinds of single-logout message here (SAML uses one endpoint for both):
+
+- **A `LogoutResponse`** to a request StoneSuite sent (above): the browser is
+  redirected to `{FRONTEND_URL}/auth/login?logged_out=true`; the response is not
+  parsed (§8).
+- **A `LogoutRequest`** from the IdP, because a session ended there. Both
+  bindings are accepted: HTTP-Redirect (`GET`, deflated, signature over the
+  query string) and HTTP-POST (`POST` form, signature inside the XML).
+
+A `LogoutRequest` is acted on only if **all** of these hold; otherwise the
+answer is `400 {"success": false, "message": "Invalid logout request."}`
+whatever the reason, and a `saml_slo_rejected` security event is logged with a
+stable `reason`:
+
+| `reason` | Meaning |
+|---|---|
+| `not_signed` | No signature. Unsigned requests are never accepted. |
+| `bad_signature` | Signature does not verify against the tenant's IdP certificate (or the request was altered after signing). |
+| `wrong_issuer` / `unknown_issuer` | `Issuer` is not the tenant's configured IdP entity id / matches no enabled SAML config. |
+| `wrong_target` | `Destination` missing or not this endpoint. |
+| `expired` | `IssueInstant` older than 5 minutes (or more than 2 minutes in the future), or `NotOnOrAfter` passed. |
+| `replayed` | This request id was already acted on (kept in `saml_logout_requests` until the request would have expired). |
+| `malformed` / `no_principal` | Not a well-formed `LogoutRequest`, or it names no user. |
+
+Redirect-binding signatures must be RSA with SHA-256, SHA-384 or SHA-512; SHA-1
+is refused, as is a repeated query parameter.
+
+Which tenant a request belongs to is not taken on its word. The `Issuer` only
+selects candidate configs; the signature must verify with that config's own
+certificate, and the `NameID` is then looked up **inside that tenant only**. A
+request that one tenant's IdP can sign therefore cannot end another tenant's
+session. A verified request naming a user StoneSuite has no record of is
+answered with `Success` like any other (logout is idempotent, and anything else
+would reveal which names exist) and logs `saml_slo_unknown_principal`.
+
+On success all of that user's sessions and refresh tokens end
+(`saml_slo_session_ended`; the session-state cache lags by at most 10 seconds),
+the browser's own auth cookies are cleared, and the browser is redirected to the
+IdP's single logout URL with a `LogoutResponse` (Status `Success`,
+`InResponseTo` the request id, `RelayState` echoed). If the tenant's config has
+no SLO URL, the user is still signed out and the browser lands on the login page.
+
+To use it, the IdP must be pointed at the SP's single logout URL
+(`{API_BASE_URL}/api/auth/saml/{provider}/logout-response`, shown in the SP
+metadata and `sp-info`) and must be configured to **sign** logout requests.
 
 ### `/api/tenant/sso-configs...` (config CRUD + domains)
 Covered in full, including the SAML-specific request/response fields, in
@@ -468,7 +520,17 @@ whatever `status` it's in (a `suspended`/`disabled` user is rejected with
 ## 8. Known limitations
 
 - **No IdP-initiated login.** SP-initiated only; see §1.
-- **No IdP-initiated SLO.** See §1.
+- **IdP-initiated SLO is verified only against a synthetic IdP.** The tests sign
+  requests with generated keys in both bindings; it has not been run against a
+  real Entra ID or Okta tenant. Confirm it with your IdP before relying on it.
+- **IdP-initiated SLO ends all of the user's sessions.** The `LogoutRequest`'s
+  `SessionIndex` is not used to pick one, so signing out at the IdP signs the
+  user out everywhere in StoneSuite.
+- **The `LogoutResponse` StoneSuite sends is unsigned**, because the service
+  provider has no signing key (the same reason `AuthnRequest`s are unsigned).
+  An IdP configured to require signed responses will not accept it. The user is
+  signed out in StoneSuite either way.
+- **IdP-initiated SLO needs an RSA signing certificate.** ECDSA is not supported.
 - **No automatic metadata/certificate refresh.** `SAML_METADATA_REFRESH_INTERVAL`
   is parsed from the environment but read by nothing (verified: no reference
   to `config.AppConfig.SAMLMetadataRefreshInterval` anywhere outside
@@ -479,9 +541,10 @@ whatever `status` it's in (a `suspended`/`disabled` user is rejected with
   (§10) until an admin — or an external cron hitting the refresh endpoint —
   updates it.
 - **SP-initiated logout's return leg does not validate the IdP's response.**
-  `GET /api/auth/saml/{provider}/logout-response` (the URL advertised in SP
+  `GET`/`POST /api/auth/saml/{provider}/logout-response` (the URL advertised in SP
   metadata's `SingleLogoutServices` entry and as `ServiceProviderSLOURL` in
-  the `LogoutRequest`) exists and redirects the browser to
+  the `LogoutRequest`; it also receives the IdP's own `LogoutRequest`s, see §6)
+  redirects, when it is handed a `LogoutResponse` or nothing, the browser to
   `{FRONTEND_URL}/auth/login?logged_out=true`, but it does not parse or
   verify the IdP's `LogoutResponse` — it redirects unconditionally regardless
   of what the IdP sends back. This is safe (local StoneSuite cookies are

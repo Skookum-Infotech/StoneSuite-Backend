@@ -800,3 +800,17 @@ CREATE TABLE IF NOT EXISTS tenant_storage_snapshots (
     object_count  BIGINT      NOT NULL DEFAULT 0,
     measured_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── saml_logout_requests ──────────────────────────────────────────────
+-- IdP-initiated SAML LogoutRequests already acted on, keyed by the IdP's entity
+-- id and the request's own ID, so a captured request cannot be replayed to log
+-- the user out again. A row only has to outlive the request's validity window;
+-- ClaimSAMLLogoutRequest prunes the rest.
+CREATE TABLE IF NOT EXISTS saml_logout_requests (
+    issuer      TEXT         NOT NULL,
+    request_id  TEXT         NOT NULL,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (issuer, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_saml_logout_requests_expires ON saml_logout_requests(expires_at);

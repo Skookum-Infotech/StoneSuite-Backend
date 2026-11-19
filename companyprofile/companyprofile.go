@@ -26,6 +26,13 @@ const MaxWordingLength = 5000
 // column existed) -- a safe guess, not a measured number.
 const DefaultFabricationPercent = 20
 
+// Blank is the profile Get returns for a tenant that has never saved one: all
+// empty except FabricationPercent, which reads back as its default. Compare
+// against this (not the zero Profile{}) to ask "has anything been saved yet?".
+func Blank() Profile {
+	return Profile{FabricationPercent: DefaultFabricationPercent}
+}
+
 // MaxFabricationPercent bounds FabricationPercent; 1000% comfortably covers
 // any real markup while still catching a stray typo (e.g. a dollar amount
 // pasted where a percent was expected).

@@ -30,7 +30,7 @@ machine after the response).
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
 5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
-   day for overdue/due-soon invoices. All four automation rules are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
+   day for overdue/due-soon invoices. All five system automation rules (`ar_dunning`, `quote_expiry`, `estimate_expiry`, `approval_stuck`, `anomaly_scan`) are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
    `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
    (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
    only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule

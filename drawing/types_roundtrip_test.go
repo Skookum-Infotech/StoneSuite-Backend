@@ -55,7 +55,8 @@ func TestPieceEdgeJSONRoundTripKeepsToolMetadata(t *testing.T) {
 		"position":{"x":0,"y":0},"rotationDeg":0,"thicknessMm":30,
 		"edges":[
 			{"index":0,"arcHeightMm":-76.2,"borderId":"b-1","borderStyle":"fullRadiusOut","edgeTypeId":"7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11"},
-			{"index":1,"cornerId":"c-1","cornerStyle":"radius","code":"EE","overhangMm":25}
+			{"index":1,"cornerId":"c-1","cornerStyle":"radius","code":"EE","overhangMm":25},
+			{"index":2,"attachedProfile":{"profileTypeId":"9e2b1c3d-4f5a-4b6c-8d7e-1a2b3c4d5e6f","measurementMm":101.6}}
 		],
 		"seams":[],"cutouts":[]
 	}`

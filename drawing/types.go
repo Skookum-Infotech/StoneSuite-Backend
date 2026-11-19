@@ -15,14 +15,24 @@ type Point struct {
 	Y float64 `json:"y"`
 }
 
+// AttachedProfile is the drawing_attached_profile_type (Profiles tool)
+// painted onto a side, plus the measurement chosen for this one instance.
+// Everything else about it (name, price, colour, angle, finish) is looked up
+// from ProfileTypeID — this record is never duplicated here.
+type AttachedProfile struct {
+	ProfileTypeID string  `json:"profileTypeId"`
+	MeasurementMm float64 `json:"measurementMm"`
+	// Slab is where the Material tab laid this profile piece on a slab; nil
+	// until it is placed. Same shape and meaning as Piece.Slab — a profile
+	// piece sits on one slab at a time, independently of its parent piece.
+	Slab *SlabPlacement `json:"slab,omitempty"`
+}
+
 // PieceEdge is a tenant-defined edge marking on one side of a piece.
 type PieceEdge struct {
-	Index          int      `json:"index"`
-	Code           string   `json:"code,omitempty"`
-	OverhangMm     *float64 `json:"overhangMm,omitempty"`
-	SplashHeightMm *float64 `json:"splashHeightMm,omitempty"`
-	// WaterfallHeightMm is a panel dropping from this side.
-	WaterfallHeightMm *float64 `json:"waterfallHeightMm,omitempty"`
+	Index      int      `json:"index"`
+	Code       string   `json:"code,omitempty"`
+	OverhangMm *float64 `json:"overhangMm,omitempty"`
 	// ArcHeightMm bows the side into a circular arc (signed; positive bulges to
 	// the left of the side's direction). Written by the Border and Corner tools.
 	ArcHeightMm *float64 `json:"arcHeightMm,omitempty"`
@@ -35,6 +45,10 @@ type PieceEdge struct {
 	CornerStyle string `json:"cornerStyle,omitempty"`
 	// EdgeTypeID is the drawing_edge_type (Edges tool) painted onto this side.
 	EdgeTypeID string `json:"edgeTypeId,omitempty"`
+	// AttachedProfile is the drawing_attached_profile_type (Profiles tool)
+	// painted onto this side. Supersedes the old SplashHeightMm/
+	// WaterfallHeightMm plain-height fields (see migration 2026-11-19).
+	AttachedProfile *AttachedProfile `json:"attachedProfile,omitempty"`
 }
 
 // Seam is a straight join line between two points on a piece.
@@ -86,15 +100,19 @@ type DistanceLines struct {
 
 // Piece is one countertop piece within an Area.
 type Piece struct {
-	ID               string      `json:"id"`
-	Label            string      `json:"label"`
-	Shape            string      `json:"shape"`
-	Kind             string      `json:"kind,omitempty"`
-	Outline          []Point     `json:"outline"`
-	Position         Point       `json:"position"`
-	RotationDeg      float64     `json:"rotationDeg"`
-	ThicknessMm      float64     `json:"thicknessMm"`
-	CornerRadiusMm   *float64    `json:"cornerRadiusMm,omitempty"`
+	ID             string   `json:"id"`
+	Label          string   `json:"label"`
+	Shape          string   `json:"shape"`
+	Kind           string   `json:"kind,omitempty"`
+	Outline        []Point  `json:"outline"`
+	Position       Point    `json:"position"`
+	RotationDeg    float64  `json:"rotationDeg"`
+	ThicknessMm    float64  `json:"thicknessMm"`
+	CornerRadiusMm *float64 `json:"cornerRadiusMm,omitempty"`
+	// RadiusMm is only for Shape == "circle": the exact radius its outline
+	// (a many-point regular-polygon approximation) stands for, used for its
+	// true-circle dimension lines rather than per-edge ones.
+	RadiusMm         *float64    `json:"radiusMm,omitempty"`
 	SalesOrderLineID string      `json:"salesOrderLineId,omitempty"`
 	Edges            []PieceEdge `json:"edges"`
 	Seams            []Seam      `json:"seams"`

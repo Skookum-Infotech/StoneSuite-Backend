@@ -32,7 +32,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func TestGet_NoRowYet_ReturnsZeroValue(t *testing.T) {
+func TestGet_NoRowYet_ReturnsZeroValueWithDefaultFabricationPercent(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -40,8 +40,9 @@ func TestGet_NoRowYet_ReturnsZeroValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v, want nil", err)
 	}
-	if !reflect.DeepEqual(*got, Profile{}) {
-		t.Errorf("Get() = %+v, want zero-value Profile", *got)
+	want := Profile{FabricationPercent: DefaultFabricationPercent}
+	if !reflect.DeepEqual(*got, want) {
+		t.Errorf("Get() = %+v, want %+v", *got, want)
 	}
 }
 

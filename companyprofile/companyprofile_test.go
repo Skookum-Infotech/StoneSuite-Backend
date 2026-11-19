@@ -64,6 +64,12 @@ func TestValidate(t *testing.T) {
 		{"bank name too long", func(p *Profile) { p.PaymentDetails = &PaymentDetails{BankName: tooLong} }, true},
 		{"account number too long", func(p *Profile) { p.PaymentDetails = &PaymentDetails{AccountNumber: tooLong} }, true},
 		{"routing number too long", func(p *Profile) { p.PaymentDetails = &PaymentDetails{RoutingNumber: tooLong} }, true},
+
+		{"fabrication percent zero", func(p *Profile) { p.FabricationPercent = 0 }, false},
+		{"fabrication percent default", func(p *Profile) { p.FabricationPercent = DefaultFabricationPercent }, false},
+		{"fabrication percent at max", func(p *Profile) { p.FabricationPercent = MaxFabricationPercent }, false},
+		{"fabrication percent negative", func(p *Profile) { p.FabricationPercent = -0.01 }, true},
+		{"fabrication percent over max", func(p *Profile) { p.FabricationPercent = MaxFabricationPercent + 0.01 }, true},
 	}
 
 	for _, tt := range tests {

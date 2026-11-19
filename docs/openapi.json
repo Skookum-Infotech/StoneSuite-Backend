@@ -22964,6 +22964,107 @@
         ]
       }
     },
+    "/api/tenant/settings/attached-profile-types": {
+      "get": {
+        "operationId": "get_tenant_settings_attached_profile_types",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.GetAttachedProfileTypes",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_settings_attached_profile_types",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.CreateAttachedProfileType",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/settings/attached-profile-types/{id}": {
+      "put": {
+        "operationId": "put_tenant_settings_attached_profile_types_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "controllers.UpdateAttachedProfileType",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/settings/cutout-types": {
       "get": {
         "operationId": "get_tenant_settings_cutout_types",

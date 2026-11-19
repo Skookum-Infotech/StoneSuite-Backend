@@ -102,9 +102,22 @@ func validateEdges(piece Piece) error {
 		if utf8.RuneCountInString(e.Code) > maxEdgeCodeRunes {
 			return fmt.Errorf("drawing: piece %q side %d has an edge code longer than %d characters", piece.ID, e.Index, maxEdgeCodeRunes)
 		}
-		for name, v := range map[string]*float64{"overhang": e.OverhangMm, "backsplash height": e.SplashHeightMm, "waterfall height": e.WaterfallHeightMm} {
+		for name, v := range map[string]*float64{"overhang": e.OverhangMm} {
 			if v != nil && (*v < 0 || *v > maxEdgeHeightMm || math.IsNaN(*v)) {
 				return fmt.Errorf("drawing: piece %q side %d has an invalid %s", piece.ID, e.Index, name)
+			}
+		}
+		if p := e.AttachedProfile; p != nil {
+			if utf8.RuneCountInString(p.ProfileTypeID) == 0 || utf8.RuneCountInString(p.ProfileTypeID) > maxEdgeTagLen {
+				return fmt.Errorf("drawing: piece %q side %d has an invalid attached profile type id", piece.ID, e.Index)
+			}
+			if p.MeasurementMm <= 0 || p.MeasurementMm > maxEdgeHeightMm || math.IsNaN(p.MeasurementMm) {
+				return fmt.Errorf("drawing: piece %q side %d has an invalid attached profile measurement", piece.ID, e.Index)
+			}
+			if p.Slab != nil {
+				if id := strings.TrimSpace(p.Slab.SlabID); id == "" || len(id) > maxSlabIDLen {
+					return fmt.Errorf("drawing: piece %q side %d is placed on a slab without a valid slab id", piece.ID, e.Index)
+				}
 			}
 		}
 		// An arc's height is signed (which side it bows to), so only its size is bounded.

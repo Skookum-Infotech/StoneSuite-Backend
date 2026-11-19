@@ -37,6 +37,53 @@ func TestPieceSlabPlacementJSONRoundTrip(t *testing.T) {
 	}
 }
 
+// An attached profile piece (Profiles tool) can be laid on a slab of its own,
+// independently of its parent piece — the placement must survive a save and
+// reload the same way the parent piece's own slab placement does.
+func TestAttachedProfileSlabPlacementJSONRoundTrip(t *testing.T) {
+	in := `{
+		"id":"p1","label":"A-1","shape":"rect",
+		"outline":[{"x":0,"y":0},{"x":600,"y":0},{"x":600,"y":-400},{"x":0,"y":-400}],
+		"position":{"x":0,"y":0},"rotationDeg":0,"thicknessMm":30,
+		"edges":[{"index":0,"attachedProfile":{
+			"profileTypeId":"backsplash-1","measurementMm":100,
+			"slab":{"slabId":"7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11","x":30,"y":40,"rotationDeg":0}
+		}}],
+		"seams":[],"cutouts":[]
+	}`
+	var piece Piece
+	if err := json.Unmarshal([]byte(in), &piece); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out, err := json.Marshal(piece)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var want, got map[string]any
+	if err := json.Unmarshal([]byte(in), &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("round trip lost or changed fields:\nwant %v\n got %v", want, got)
+	}
+}
+
+// An attached profile that was never placed must not grow a "slab" key.
+func TestAttachedProfileWithoutSlabOmitsTheKey(t *testing.T) {
+	p := validPiece("p1")
+	p.Edges = []PieceEdge{{Index: 0, AttachedProfile: &AttachedProfile{ProfileTypeID: "backsplash-1", MeasurementMm: 100}}}
+	out, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), `"slab"`) {
+		t.Errorf("an unplaced attached profile should not carry a slab key: %s", out)
+	}
+}
+
 // A piece that was never placed must not grow a "slab" key.
 func TestPieceWithoutSlabOmitsTheKey(t *testing.T) {
 	out, err := json.Marshal(validPiece("p1"))

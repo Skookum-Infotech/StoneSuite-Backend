@@ -105,14 +105,17 @@ func portalPage(w http.ResponseWriter, records any, nextCursor string, hasMore b
 }
 
 // portalFail maps store errors to status codes. An invalid filter key is the
-// caller's fault (400); a missing or out-of-scope document is 404, never 403.
+// caller's fault (400), and so is a malformed id: Postgres rejects it as invalid
+// input syntax (SQLSTATE 22P02), which dberr.Map reports as a 400, the same
+// mapping failLoad gives the staff routes. A missing or out-of-scope document is
+// 404, never 403. Anything else is a 500 carrying the handler's fallback message.
 func portalFail(w http.ResponseWriter, err error, fallback string) {
 	var invalid *query.InvalidFilterError
 	if errors.As(err, &invalid) {
 		fail(w, http.StatusBadRequest, invalid.Error())
 		return
 	}
-	fail(w, http.StatusInternalServerError, fallback)
+	failLoad(w, err, fallback)
 }
 
 // ---- sales orders -----------------------------------------------------------
@@ -367,7 +370,7 @@ func (h *PortalDocumentOps) messages(w http.ResponseWriter, r *http.Request, mod
 
 	visible, err := documentVisible(r, pool, sess.CustomerID, module, uuid)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load document.")
+		portalFail(w, err, "Failed to load document.")
 		return
 	}
 	if !visible {

@@ -31,6 +31,6 @@ func fjFail(w http.ResponseWriter, err error, serverMsg string) {
 			fail(w, http.StatusBadRequest, ife.Error())
 			return
 		}
-		fail(w, http.StatusInternalServerError, serverMsg)
+		failLoad(w, err, serverMsg)
 	}
 }

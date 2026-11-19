@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -9,6 +10,22 @@ import (
 	"stonesuite-backend/purchaseorder"
 	"stonesuite-backend/query"
 )
+
+// loadPOOrFail runs get and, when it fails, writes the response poFail gives for
+// that error — a missing order is a 404 and a malformed id (Postgres 22P02) a
+// 400, instead of every lookup failure being reported as a 500. It reports
+// whether the order loaded; on false the response is already written.
+func loadPOOrFail(
+	ctx context.Context, w http.ResponseWriter,
+	get func(context.Context) (*purchaseorder.PurchaseOrder, error),
+) (*purchaseorder.PurchaseOrder, bool) {
+	po, err := get(ctx)
+	if err != nil {
+		poFail(w, err, "Failed to load purchase order.")
+		return nil, false
+	}
+	return po, true
+}
 
 // poFail maps a store error to an HTTP response.
 func poFail(w http.ResponseWriter, err error, serverMsg string) {

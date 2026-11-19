@@ -84,7 +84,7 @@ func (h *RequisitionOps) authReqnByUUID(w http.ResponseWriter, r *http.Request, 
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load requisition.")
+		failLoad(w, err, "Failed to load requisition.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

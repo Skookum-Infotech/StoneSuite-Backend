@@ -40,7 +40,7 @@ func authSourceSalesOrder(w http.ResponseWriter, r *http.Request, pool *pgxpool.
 		return false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load sales order.")
+		failLoad(w, err, "Failed to load sales order.")
 		return false
 	}
 	if decision.Scope != authz.ScopeAll {

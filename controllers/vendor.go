@@ -80,7 +80,7 @@ func (h *VendorOps) authVendorByUUID(w http.ResponseWriter, r *http.Request, uui
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load vendor.")
+		failLoad(w, err, "Failed to load vendor.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {
@@ -119,7 +119,7 @@ func vendorFail(w http.ResponseWriter, err error, serverMsg string) {
 			fail(w, http.StatusBadRequest, ife.Error())
 			return
 		}
-		fail(w, http.StatusInternalServerError, serverMsg)
+		failLoad(w, err, serverMsg)
 	}
 }
 

@@ -206,7 +206,7 @@ func (h *CRMAdminOps) DeleteApprover(w http.ResponseWriter, r *http.Request) {
 	tag, err := pool.Exec(r.Context(),
 		`DELETE FROM crm_workflow_approver WHERE crm_workflow_approver_id = $1`, r.PathValue("id"))
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to remove approver.")
+		failLoad(w, err, "Failed to remove approver.")
 		return
 	}
 	if tag.RowsAffected() == 0 {

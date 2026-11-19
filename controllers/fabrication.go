@@ -94,7 +94,7 @@ func (h *FabricationOps) authFJByUUID(w http.ResponseWriter, r *http.Request, uu
 		return nil, "", nil, false
 	}
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Failed to load fabrication job.")
+		failLoad(w, err, "Failed to load fabrication job.")
 		return nil, "", nil, false
 	}
 	if scope != authz.ScopeAll {

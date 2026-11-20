@@ -5,6 +5,7 @@ package drawing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -188,5 +189,191 @@ func TestRestore_CreatesNewVersionFromOldSnapshot(t *testing.T) {
 	}
 	if len(fetched.Areas[0].Pieces) != 1 {
 		t.Errorf("GetVersion(v1).Areas[0].Pieces has %d pieces, want 1", len(fetched.Areas[0].Pieces))
+	}
+}
+
+// actorID is an employee that exists in every seeded tenant DB (the other
+// tests here use it as created_by); coalescing only ever applies to a known actor.
+const testActorID = 1
+
+func versionCount(t *testing.T, pool *pgxpool.Pool, soID int) int {
+	t.Helper()
+	items, _, err := ListVersions(context.Background(), pool, soID, "", 50)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	return len(items)
+}
+
+// ageLatestVersion back-dates the newest history row so the next save sees it
+// as older than the coalescing window (idleBy) and/or the burst-span cap (spanBy).
+func ageLatestVersion(t *testing.T, pool *pgxpool.Pool, soID int, idleBy, spanBy string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		UPDATE sales_order_drawing_version
+		SET at = at - $2::text::interval, first_at = COALESCE(first_at, at) - $3::text::interval
+		WHERE sales_order_id = $1
+		  AND version = (SELECT MAX(version) FROM sales_order_drawing_version WHERE sales_order_id = $1)`,
+		soID, idleBy, spanBy)
+	if err != nil {
+		t.Fatalf("age latest version: %v", err)
+	}
+}
+
+func TestSave_RapidSavesBySamePersonFoldIntoOneVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+	actor := testActorID
+
+	var cur *Drawing
+	var expected *int
+	for i := 0; i < 3; i++ {
+		d := validDrawing()
+		d.Areas[0].Name = fmt.Sprintf("Edit %d", i+1)
+		saved, err := Save(ctx, pool, soID, d, expected, &actor, "Test User")
+		if err != nil {
+			t.Fatalf("Save #%d: %v", i+1, err)
+		}
+		cur, expected = saved, &saved.Version
+	}
+
+	if cur.Version != 3 {
+		t.Errorf("record version = %d, want 3 (it still increments on every save)", cur.Version)
+	}
+	items, _, err := ListVersions(ctx, pool, soID, "", 50)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(items) != 1 || items[0].Version != 3 {
+		t.Fatalf("history = %+v, want exactly one entry labelled version 3", items)
+	}
+	snap, err := GetVersion(ctx, pool, soID, 3)
+	if err != nil {
+		t.Fatalf("GetVersion(3): %v", err)
+	}
+	if snap.Areas[0].Name != "Edit 3" {
+		t.Errorf("history snapshot area name = %q, want the latest content %q", snap.Areas[0].Name, "Edit 3")
+	}
+}
+
+func TestSave_ConflictStillDetectedAfterFolding(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+	actor := testActorID
+
+	first, err := Save(ctx, pool, soID, validDrawing(), nil, &actor, "A")
+	if err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	if _, err := Save(ctx, pool, soID, validDrawing(), &first.Version, &actor, "A"); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	// A second tab still holding version 1 must be rejected even though the
+	// history row it was based on has been folded forward.
+	_, err = Save(ctx, pool, soID, validDrawing(), &first.Version, &actor, "A")
+	if !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("Save() with a stale version error = %v, want ErrVersionConflict", err)
+	}
+}
+
+func TestSave_UnknownActorNeverFolds(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+
+	first, err := Save(ctx, pool, soID, validDrawing(), nil, nil, "Anon")
+	if err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	if _, err := Save(ctx, pool, soID, validDrawing(), &first.Version, nil, "Anon"); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	if got := versionCount(t, pool, soID); got != 2 {
+		t.Errorf("history has %d entries, want 2 (no actor to attribute a fold to)", got)
+	}
+}
+
+func TestSave_DifferentActorDoesNotFold(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+	actor := testActorID
+
+	first, err := Save(ctx, pool, soID, validDrawing(), nil, &actor, "A")
+	if err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	// nil is "someone other than the actor who wrote the previous row".
+	if _, err := Save(ctx, pool, soID, validDrawing(), &first.Version, nil, "B"); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	if got := versionCount(t, pool, soID); got != 2 {
+		t.Errorf("history has %d entries, want 2 (another person's edit is its own version)", got)
+	}
+}
+
+func TestSave_AfterIdleWindowStartsNewVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+	actor := testActorID
+
+	first, err := Save(ctx, pool, soID, validDrawing(), nil, &actor, "A")
+	if err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	ageLatestVersion(t, pool, soID, "2 hours", "2 hours")
+	if _, err := Save(ctx, pool, soID, validDrawing(), &first.Version, &actor, "A"); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	if got := versionCount(t, pool, soID); got != 2 {
+		t.Errorf("history has %d entries, want 2 (the earlier burst ended long ago)", got)
+	}
+}
+
+func TestSave_AfterMaxSpanStartsNewVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+	actor := testActorID
+
+	first, err := Save(ctx, pool, soID, validDrawing(), nil, &actor, "A")
+	if err != nil {
+		t.Fatalf("first Save: %v", err)
+	}
+	// Last write was just now, but the burst began 2 hours ago: past the span cap.
+	ageLatestVersion(t, pool, soID, "0 seconds", "2 hours")
+	if _, err := Save(ctx, pool, soID, validDrawing(), &first.Version, &actor, "A"); err != nil {
+		t.Fatalf("second Save: %v", err)
+	}
+	if got := versionCount(t, pool, soID); got != 2 {
+		t.Errorf("history has %d entries, want 2 (a long session must still leave restore points)", got)
+	}
+}
+
+func TestRestore_NeverFoldsIntoPreviousVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	soID := seedSalesOrderID(t, pool, seedCustomer(t, pool))
+	actor := testActorID
+
+	v1, err := Save(ctx, pool, soID, validDrawing(), nil, &actor, "A")
+	if err != nil {
+		t.Fatalf("Save v1: %v", err)
+	}
+	ageLatestVersion(t, pool, soID, "2 hours", "2 hours") // keep v1 as its own restore point
+	changed := validDrawing()
+	changed.Areas[0].Name = "Changed"
+	v2, err := Save(ctx, pool, soID, changed, &v1.Version, &actor, "A")
+	if err != nil {
+		t.Fatalf("Save v2: %v", err)
+	}
+	if _, err := Restore(ctx, pool, soID, v1.Version, &v2.Version, &actor, "A"); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if got := versionCount(t, pool, soID); got != 3 {
+		t.Errorf("history has %d entries, want 3 (restore must add its own entry, not overwrite the one before it)", got)
 	}
 }

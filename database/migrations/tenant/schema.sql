@@ -2614,6 +2614,11 @@ CREATE TABLE IF NOT EXISTS sales_order_drawing_version (
     at                             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_sales_order_drawing_version UNIQUE (sales_order_id, version)
 );
+-- first_at: when the editing burst this row represents began. Saves by the same person within
+-- a short window are folded into one row (see drawing.Save), so `at` moves with every fold while
+-- first_at stays put and bounds how long one row can keep absorbing saves. NULL on rows that were
+-- never folded (and on every row written before this column existed) -- read as `at`.
+ALTER TABLE sales_order_drawing_version ADD COLUMN IF NOT EXISTS first_at TIMESTAMP;
 
 -- lkp_edge_code -- countertop edge profile options for the drawing editor (spec's
 -- GET /api/tenant/settings/edge-codes), same shape as the other lkp_* lookup tables.

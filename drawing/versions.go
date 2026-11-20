@@ -128,5 +128,6 @@ func Restore(ctx context.Context, pool *pgxpool.Pool, salesOrderID, version int,
 	if err != nil {
 		return nil, err
 	}
-	return Save(ctx, pool, salesOrderID, *old, expectedVersion, actorEmployeeID, actorName)
+	// Never coalesced: an explicit restore must leave its own history entry.
+	return save(ctx, pool, salesOrderID, *old, expectedVersion, actorEmployeeID, actorName, false)
 }

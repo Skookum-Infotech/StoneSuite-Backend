@@ -167,8 +167,8 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		"GET /api/auth/saml/{provider}/logout-response": true,
 		// The IdP's single logout endpoint (a signed LogoutRequest is the credential).
 		"POST /api/auth/saml/{provider}/logout-response": true,
-		"GET /api/auth/saml/{provider}/metadata":        true,
-		"GET /api/auth/saml/{provider}/sp-info":         true,
+		"GET /api/auth/saml/{provider}/metadata":         true,
+		"GET /api/auth/saml/{provider}/sp-info":          true,
 
 		// Public tenant onboarding and workspace-user invitations.
 		"ANY /api/onboarding/form-schema": true, "ANY /api/onboarding/lookups": true,

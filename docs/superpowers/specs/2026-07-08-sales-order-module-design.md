@@ -89,7 +89,7 @@ The schema deliberately maps onto the [schema.org/Order](https://schema.org/Orde
 | **`paymentDueDate`** | **`sales_order_payment_due_date` (NEW, AD-8)** | ✅ **added** |
 | **`orderItemStatus`** | **`sales_order_item.line_fulfilled_quantity` + derived line status (NEW, AD-9)** | ✅ **added** |
 | `orderDelivery` (ParcelDelivery) | `sales_order_expected_delivery` + shipping snapshot; carrier/tracking → future `sales_order_fulfillment` | 🔜 partial / deferred |
-| `partOfInvoice` | future Invoice module; `sales_order_parent_id` lineage anticipates it | 🔜 deferred |
+| `partOfInvoice` | Invoice module is built; `invoice.invoice_sales_order_id` links an invoice to its source order (`invoice/store_convert.go`) | ✅ built |
 | `paymentMethod` / `paymentMethodId` / `paymentUrl` | belongs on Invoice/Payment; storing card data is prohibited | ❌ out of scope |
 | `discountCode` | modeled via `custom_fields` if ever needed | ❌ out of scope (YAGNI) |
 | `isGift` | consumer e-commerce concept | ❌ out of scope |

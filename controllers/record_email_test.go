@@ -228,7 +228,7 @@ func TestReplyAddress_OnlyForThreadedRecordTypesWhenEnabled(t *testing.T) {
 	if !on.Enabled() {
 		t.Fatal("a store and a domain must read as enabled")
 	}
-	for _, key := range []string{"vendor_bill", "requisition", ""} {
+	for _, key := range []string{"vendor_bill", "requisition", "customer", ""} {
 		if _, ok := on.ReplyAddress(context.Background(), "t", "r", key); ok {
 			t.Fatalf("%q has no email thread, so it must not get a reply address", key)
 		}
@@ -250,6 +250,9 @@ func TestThreadKinds(t *testing.T) {
 		{"invoice", true, true, "customer", "Send to customer", "Your invoice"},
 		{"purchase_order", true, true, "vendor", "Send to Vendor", "Your purchase order"},
 		{"requisition", true, false, "", "", ""},
+		{"customer", true, false, "", "", ""},
+		{"lead", false, false, "", "", ""},
+		{"prospect", false, false, "", "", ""},
 		{"vendor_bill", false, false, "", "", ""},
 		{"payment", false, false, "", "", ""},
 		{"", false, false, "", "", ""},

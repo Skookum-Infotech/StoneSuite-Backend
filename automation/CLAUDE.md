@@ -30,7 +30,7 @@ machine after the response).
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
 5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
-   day for overdue/due-soon invoices. All five system automation rules (`ar_dunning`, `quote_expiry`, `estimate_expiry`, `approval_stuck`, `anomaly_scan`) are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
+   day for overdue/due-soon invoices. All six system automation rules (`ar_dunning`, `quote_expiry`, `estimate_expiry`, `approval_stuck`, `install_tomorrow`, `anomaly_scan`) are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
    `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
    (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
    only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
@@ -58,3 +58,4 @@ machine after the response).
    record re-enters the gate (new history row, new anchor). The internal path honours only the
    kill switch (plus the 08:00–18:00 send window), and the email links in-app (login required),
    not a public link. The preview endpoint does not support this rule.
+8. **Install-tomorrow reminders (`install_tomorrow`, job `install_reminders`, `automation/install_*.go`)** are seeded **enabled** (`enabled_at` stamped) with a `-1d` cadence relative to `install_appointment.local_start_date`. One delivery row per visit × crew member (occurrence key carries the user id, so a crew change only adds rows for newcomers); recipients are crew whose employee resolves to an active user, via the internal drain path (kill switch + 08:00–18:00 window only). Candidates are `scheduled` visits on live, non-`CANC` jobs dated today..today+2 (a missed stage is a catch-up send worded "today"; visits already past are never reminded). The renderer re-checks live and drops `cancelled`, `completed`, `voided`, `anchor_changed` (rescheduled), `crew_changed`, `no_email`. The email links in-app (login required). The preview endpoint does not support this rule.

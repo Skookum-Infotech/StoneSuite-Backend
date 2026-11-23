@@ -164,6 +164,18 @@ do not receive past reminders. For invoice payment reminders, Preview shows who
 would be emailed right now without sending anything. Changing a rule needs the
 Automation configure permission; read access only shows the page.
 
+Each person can also turn on a daily digest for themselves: one email a day
+listing what is waiting on them, namely records waiting for their approval,
+their own overdue invoices, and their own quotes and estimates that expire
+within the next 7 days. The digest is off until someone turns it on. They
+choose the hour it is sent (between 8:00 and 5:00 in your workspace's time
+zone), which of the three sections to include, and whether a day with nothing to
+report is skipped, which is the default. For now these choices are made through
+the API for now; a settings screen is planned. The
+digest is a separate rule, "Daily digest", so an admin can turn it off for the
+whole workspace, and the "Pause all automated emails" switch stops it too. It
+is sent only to the person who asked for it.
+
 The "Pause all automated emails" switch stops every automated email for this
 workspace at once without changing any rule; reminders resume when you switch it
 back on. If StoneSuite support has turned automation off for the whole platform,

@@ -647,6 +647,9 @@ func main() {
 		automationRuleOps := controllers.NewAutomationRuleOps(automation.NewPlatformStore(cp.Pool()))
 		mux.Handle("GET /api/tenant/automation/rules", tenantChain(automationRuleOps.List))
 		mux.Handle("PUT /api/tenant/automation/rules/{key}", tenantChain(automationRuleOps.SetEnabled))
+		digestOps := controllers.NewAutomationDigestOps()
+		mux.Handle("GET /api/tenant/automation/digest/me", tenantChain(digestOps.Get))
+		mux.Handle("PUT /api/tenant/automation/digest/me", tenantChain(digestOps.Put))
 		var previewTZ *time.Location
 		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
 			previewTZ, _ = time.LoadLocation(tz)

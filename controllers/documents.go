@@ -295,6 +295,7 @@ func customerSendRequest(
 		}
 		recipients = append(recipients, r)
 	}
+	links := docLinks{Download: meta.DownloadURL, Portal: portalDocLink(meta.WorkflowKey, recordID)}
 	req := services.NotificationRequest{
 		TenantID:    tenantID,
 		Recipients:  recipients,
@@ -307,7 +308,7 @@ func customerSendRequest(
 		StatusLink: recordLink(meta.WorkflowKey, recordID),
 		Title:      subject,
 		Body:       "Document sent.",
-		Email:      withDownloadLink(documentEmail(doc, message, fileName, len(pdf)), meta.DownloadURL),
+		Email:      documentEmail(doc, message, fileName, len(pdf), links),
 		Channels:   []string{"email"},
 	}
 	// The email's Download PDF button is the customer's copy; only attach the

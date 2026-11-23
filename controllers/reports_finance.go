@@ -45,7 +45,7 @@ func (h *ReportsOps) authorizeFinanceReport(w http.ResponseWriter, r *http.Reque
 		return nil, reportWindow{}, false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to view finance reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceReportFinance, authz.ActionRead, "You do not have permission to view finance reports.")
 		return nil, reportWindow{}, false
 	}
 	return pool, reportWindow{from: from, to: to}, true

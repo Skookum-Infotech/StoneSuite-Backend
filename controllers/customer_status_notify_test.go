@@ -88,7 +88,8 @@ func TestBuildCustomerEventNotification(t *testing.T) {
 	}{
 		{"invoice with amount", "invoice", "Invoice", "PAID", 250, "/sales/invoice/rec-1", true},
 		{"zero amount omits row", "sales_order", "Sales Order", "OPEN", 0, "/sales/sales_order/rec-1", false},
-		{"fabrication uses installation route", "fabrication_job", "Fabrication Job", "CUTG", 0, "/sales/installation/rec-1", false},
+		{"fabrication has no portal page", "fabrication_job", "Fabrication Job", "CUTG", 0, "", false},
+		{"credit memo has no portal page", "credit_memo", "Credit Memo", "APPV", 0, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,7 +105,11 @@ func TestBuildCustomerEventNotification(t *testing.T) {
 			assert.Equal(t, "rec-1", req.ResourceID)
 			assert.Equal(t, []string{"email"}, req.Channels)
 			assert.Equal(t, tc.wantLink, req.Link)
-			assert.Equal(t, "https://app.example.com"+tc.wantLink, req.Email.ActionURL)
+			wantURL := ""
+			if tc.wantLink != "" {
+				wantURL = "https://app.example.com" + tc.wantLink
+			}
+			assert.Equal(t, wantURL, req.Email.ActionURL)
 
 			var labels []string
 			for _, d := range req.Email.Details {

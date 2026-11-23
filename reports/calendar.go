@@ -115,16 +115,19 @@ func weeklyCounts(rows []UpcomingInstall) []WeekCount {
 	return out
 }
 
-// UpcomingInstalls lists installs in the next `weeks` weeks (from today). A real
+// UpcomingInstalls lists installs in the next `weeks` weeks (from `today`, the
+// tenant's local date -- not the database's UTC day). A real
 // scheduled install appointment is shown as such; an order with none falls back
 // to its planned Installation activity, so nothing is counted twice.
-func UpcomingInstalls(ctx context.Context, pool *pgxpool.Pool, weeks int, scope authz.Scope, actor string) ([]UpcomingInstall, []WeekCount, error) {
+func UpcomingInstalls(ctx context.Context, pool *pgxpool.Pool, weeks int, scope authz.Scope, actor string, today time.Time) ([]UpcomingInstall, []WeekCount, error) {
 	rows := []UpcomingInstall{}
 	args := []any{ClampWeeks(weeks) * daysPerWeek}
 	owner, ok := calendarScope(ctx, pool, scope, actor, &args)
 	if !ok {
 		return rows, []WeekCount{}, nil
 	}
+	args = append(args, dateArg(today))
+	todayRef := fmt.Sprintf("$%d::date", len(args))
 	hasAppointment := `EXISTS (
 		SELECT 1 FROM install_appointment x
 		JOIN fabrication_job xj ON xj.fabrication_job_id = x.fabrication_job_id
@@ -142,7 +145,7 @@ func UpcomingInstalls(ctx context.Context, pool *pgxpool.Pool, weeks int, scope 
 			JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 			JOIN customer c ON c.customer_id = so.sales_order_customer_id
 			WHERE ia.visit_type = 'install' AND ia.appointment_status = 'scheduled'
-			  AND ia.local_start_date BETWEEN CURRENT_DATE AND CURRENT_DATE + $1::int
+			  AND ia.local_start_date BETWEEN %[8]s AND %[8]s + $1::int
 			  AND so.sales_order_deleted_at IS NULL AND rs.record_status_code <> '%[3]s'%[4]s
 			UNION ALL
 			SELECT so.sales_order_uuid::text, COALESCE(so.sales_order_number, ''), COALESCE(c.customer_name, ''),
@@ -152,12 +155,12 @@ func UpcomingInstalls(ctx context.Context, pool *pgxpool.Pool, weeks int, scope 
 			JOIN lkp_record_status rs ON rs.record_status_id = so.sales_order_status
 			JOIN customer c ON c.customer_id = so.sales_order_customer_id
 			WHERE s.activity_code = '%[5]s' AND s.schedule_status <> 'completed'
-			  AND s.scheduled_at::date BETWEEN CURRENT_DATE AND CURRENT_DATE + $1::int
+			  AND s.scheduled_at::date BETWEEN %[8]s AND %[8]s + $1::int
 			  AND so.sales_order_deleted_at IS NULL AND rs.record_status_code <> '%[3]s'%[4]s
 			  AND NOT %[6]s
 		) u
 		ORDER BY day, order_number
-		LIMIT %[7]d`, sourceAppointment, sourcePlan, cancelledOrderCode, owner, salesorder.ActivityInstallation, hasAppointment, maxReportRows)
+		LIMIT %[7]d`, sourceAppointment, sourcePlan, cancelledOrderCode, owner, salesorder.ActivityInstallation, hasAppointment, maxReportRows, todayRef)
 	r, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query upcoming installs: %w", err)

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/crmstore"
 	"stonesuite-backend/services"
 	"stonesuite-backend/tenancy"
@@ -41,8 +40,6 @@ const (
 	invoiceStatusPart       = "PART"
 	invoiceStatusPaid       = "PAID"
 	creditMemoStatusApplied = "APPL"
-	// custRouteInstallation is the frontend route segment fabrication jobs use.
-	custRouteInstallation = "installation"
 )
 
 const (
@@ -203,10 +200,12 @@ func notifyCustomerEventTo(ctx context.Context, actorIdentityID, customerUUID st
 	}
 }
 
-// customerEventLink is the portal/staff detail route for ev's record.
+// customerEventLink is the portal detail route for ev's record, or "" when the
+// portal has no page for that resource (see portalViewable): the email then
+// carries no button instead of one that bounces the customer to Sales Orders.
 func customerEventLink(resource, recordUUID string) string {
-	if resource == custResFabricationJob {
-		return approvalchain.RecordRoute(custRouteInstallation, recordUUID)
+	if !portalViewable(resource) {
+		return ""
 	}
 	return fmt.Sprintf(custLinkFormat, resource, recordUUID)
 }
@@ -268,7 +267,7 @@ var customerStatusCopyTable = map[string]map[string]statusCopy{
 		"CANC": {"Cancelled", "has been cancelled", "This order will not proceed.", "Your %s %s has been cancelled. Please contact us if you have any questions.", "Cancelled On", services.IconDocClock},
 	},
 	custResQuote: {
-		"SENT": {"Ready for Review", "is ready for your review", "Please take a look when you can.", "Your %s %s is ready for your review. You can view it in your customer portal.", "Sent On", services.IconDocArrow},
+		"SENT": {"Ready for Review", "is ready for your review", "Please take a look when you can.", "Your %s %s is ready for your review. Please contact us if you have any questions.", "Sent On", services.IconDocArrow},
 	},
 	custResInvoice: {
 		"SENT": {"Invoice Issued", "is ready", "A new invoice is available.", "Your %s %s is ready. You can view and review it in your customer portal.", "Issued On", services.IconDocArrow},

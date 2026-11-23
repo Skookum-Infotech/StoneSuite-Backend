@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"stonesuite-backend/approvalchain"
+	"stonesuite-backend/glpost"
 	"stonesuite-backend/workflow"
 )
 
@@ -72,7 +73,13 @@ func auditTx(ctx context.Context, tx pgx.Tx, action, uuid string, before *Vendor
 // Approve/Reject.
 func approvalConfig() approvalchain.ModuleConfig {
 	cfg := moduleConfig()
-	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, _ int, uuid, action string) error {
+	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, internalID int, uuid, action string) error {
+		if action == glpost.ApprovalAction {
+			// An approval always leaves Pending Approval, a non-ledger status.
+			if err := syncLedger(ctx, tx, internalID, 0, ""); err != nil {
+				return err
+			}
+		}
 		return auditTx(ctx, tx, action, uuid, nil, nil)
 	}
 	return cfg

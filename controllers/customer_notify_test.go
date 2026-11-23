@@ -73,3 +73,45 @@ func TestCustomerOptedOut(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildCustomerApprovedNotification_NoPortalPageForQuoteOrCreditMemo guards
+// the dead-link bug: the portal has no page for a quote or credit memo, so the
+// approval email must neither tell the customer to look in their portal nor
+// carry a button that bounces them to Sales Orders.
+func TestBuildCustomerApprovedNotification_NoPortalPageForQuoteOrCreditMemo(t *testing.T) {
+	prev := config.AppConfig
+	config.AppConfig.FrontendURL = "https://app.example.com"
+	t.Cleanup(func() { config.AppConfig = prev })
+
+	for _, tc := range []struct{ resource, display string }{{"quote", "Quote"}, {"credit_memo", "Credit Memo"}} {
+		t.Run(tc.resource, func(t *testing.T) {
+			req := buildCustomerApprovedNotification("tenant-1", "actor-1",
+				services.RecipientTarget{UserID: "ident-1", Email: "buyer@example.com"},
+				customerApproval{Resource: tc.resource, DisplayName: tc.display, Number: "N-1", Amount: 10, RecordUUID: "rec-1",
+					ApprovedAt: time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)})
+
+			html := mustEmailHTML(t, req)
+			assert.Empty(t, req.Link)
+			assert.Empty(t, req.Email.ActionURL)
+			assert.NotContains(t, html, "customer portal")
+			assert.NotContains(t, html, "/sales/"+tc.resource)
+			assert.Contains(t, html, "Please contact us if you have any questions.")
+		})
+	}
+}
+
+// TestApprovedBody guards the portal wording per resource.
+func TestApprovedBody(t *testing.T) {
+	assert.Equal(t, "Your invoice INV-1 has been approved. You can view the approved invoice in your customer portal anytime.",
+		approvedBody("invoice", "invoice", "INV-1"))
+	assert.Equal(t, "Your quote Q-1 has been approved. Please contact us if you have any questions.",
+		approvedBody("quote", "quote", "Q-1"))
+}
+
+// TestQuoteStatusCopyDoesNotSendCustomersToThePortal guards that the quote
+// "ready for review" email makes no promise the portal cannot keep.
+func TestQuoteStatusCopyDoesNotSendCustomersToThePortal(t *testing.T) {
+	c, ok := customerStatusCopy(custResQuote, "SENT")
+	assert.True(t, ok)
+	assert.NotContains(t, c.Body, "portal")
+}

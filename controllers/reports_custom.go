@@ -28,6 +28,8 @@ type customCaller struct {
 	tenantID   string
 	employeeID int // 0 when the identity has no employee row
 	access     customAccess
+	// identityID is the signed-in identity, for the security log.
+	identityID string
 }
 
 // authorizeCustom runs the checks every Custom Reports endpoint shares:
@@ -62,7 +64,7 @@ func authorizeCustomCaller(w http.ResponseWriter, r *http.Request, action authz.
 		return customCaller{}, false
 	}
 	if !authz.DecideAny(grants, []authz.Resource{authz.ResourceCustomReport}, action).Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to use custom reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceCustomReport, action, "You do not have permission to use custom reports.")
 		return customCaller{}, false
 	}
 	employeeID, _ := workflow.EmployeeIDByIdentity(r.Context(), pool, payload.ID)
@@ -71,6 +73,7 @@ func authorizeCustomCaller(w http.ResponseWriter, r *http.Request, action authz.
 		tenantID:   tenant.ID,
 		employeeID: employeeID,
 		access:     buildCustomAccess(grants, tenant.DesignVersion == tenancy.DesignV2),
+		identityID: payload.ID,
 	}, true
 }
 
@@ -85,13 +88,15 @@ func (c customCaller) requireEmployee(w http.ResponseWriter) bool {
 
 // source resolves a definition's source for this caller, answering 400 for an
 // unknown key and 403 when the caller no longer has that module's report grant.
-func (c customCaller) source(w http.ResponseWriter, key string) (reports.Source, bool) {
+func (c customCaller) source(w http.ResponseWriter, r *http.Request, key string) (reports.Source, bool) {
 	src, ok := reports.SourceByKey(key)
 	if !ok {
 		fail(w, http.StatusBadRequest, "Unknown source.")
 		return reports.Source{}, false
 	}
 	if !c.access.canUse(src) {
+		logSecurityEvent(r, "permission_denied",
+			"identity", c.identityID, "resource", string(authz.ResourceCustomReport), "source", key)
 		fail(w, http.StatusForbidden, fmt.Sprintf("You no longer have access to %s.", src.Label))
 		return reports.Source{}, false
 	}
@@ -216,7 +221,7 @@ func (h *ReportsOps) CustomRun(w http.ResponseWriter, r *http.Request) {
 		writeCustomError(w, r, err)
 		return
 	}
-	src, ok := caller.source(w, body.Definition.Source)
+	src, ok := caller.source(w, r, body.Definition.Source)
 	if !ok {
 		return
 	}
@@ -278,7 +283,7 @@ func (c customCaller) readReportBody(w http.ResponseWriter, r *http.Request) (cu
 		return body, false
 	}
 	body.Name = name
-	src, ok := c.source(w, body.Definition.Source)
+	src, ok := c.source(w, r, body.Definition.Source)
 	if !ok {
 		return body, false
 	}
@@ -354,7 +359,7 @@ func (h *ReportsOps) CustomCopy(w http.ResponseWriter, r *http.Request) {
 		writeCustomError(w, r, err)
 		return
 	}
-	src, ok := caller.source(w, original.Definition.Source)
+	src, ok := caller.source(w, r, original.Definition.Source)
 	if !ok {
 		return
 	}

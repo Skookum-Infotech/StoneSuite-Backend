@@ -280,3 +280,63 @@ func TestTenantLifecycle_Purge_RefusesANonTenantDatabaseNameBeforeAnyChange_DB(t
 	assert.Empty(t, prov.dropped, "no database may be dropped")
 	assert.Equal(t, before.Status, lh.mustTenant(t, tenant.ID).Status, "status must be untouched")
 }
+
+func TestListTenants_PagedWalksEveryTenantOnce_DB(t *testing.T) {
+	lh := newLifecycleHarness(t)
+	lh.seedOwner(t)
+	lh.seedCustomer(t)
+
+	get := func(rawQuery string) (*httptest.ResponseRecorder, []string, string) {
+		req := httptest.NewRequest(http.MethodGet, "/api/platform/tenants?"+rawQuery, nil)
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, middleware.UserContextPayload{ID: lh.adminID})
+		rec := httptest.NewRecorder()
+		lh.h.ListTenants(rec, req.WithContext(ctx))
+		var resp struct {
+			Tenants []struct {
+				ID string `json:"id"`
+			} `json:"tenants"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		ids := make([]string, 0, len(resp.Tenants))
+		for _, row := range resp.Tenants {
+			ids = append(ids, row.ID)
+		}
+		next := ""
+		if resp.NextCursor != nil {
+			next = *resp.NextCursor
+		}
+		return rec, ids, next
+	}
+
+	// The unpaged call is the reference list of every tenant.
+	_, all, _ := get("")
+	require.GreaterOrEqual(t, len(all), 2)
+
+	// Walking one tenant at a time must return the same tenants, in the same
+	// order, with no repeats, and end with an empty cursor.
+	var walked []string
+	cursor := ""
+	for range all {
+		rec, ids, next := get("limit=1&cursor=" + cursor)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		require.Len(t, ids, 1)
+		walked = append(walked, ids...)
+		cursor = next
+	}
+	assert.Equal(t, all, walked)
+	assert.Empty(t, cursor, "the last page must carry an empty nextCursor")
+}
+
+func TestListTenants_RejectsBadPagingParams_DB(t *testing.T) {
+	lh := newLifecycleHarness(t)
+	lh.seedOwner(t)
+
+	for _, rawQuery := range []string{"limit=0", "limit=abc", "cursor=not-a-real-cursor"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/platform/tenants?"+rawQuery, nil)
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, middleware.UserContextPayload{ID: lh.adminID})
+		rec := httptest.NewRecorder()
+		lh.h.ListTenants(rec, req.WithContext(ctx))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "query=%q body=%s", rawQuery, rec.Body.String())
+	}
+}

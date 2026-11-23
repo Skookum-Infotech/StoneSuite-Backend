@@ -57,6 +57,10 @@ var threadKinds = map[string]threadKind{
 	"invoice":        {fallbackSubject: "Your invoice", party: partyCustomer, sendAction: sendToCustomer},
 	"purchase_order": {fallbackSubject: "Your purchase order", party: partyVendor, sendAction: sendToVendor},
 	"requisition":    {notesOnly: true},
+	// A customer keeps a timeline of team notes (and their files). Nothing is
+	// emailed from the account itself: it has no document to send, so there is no
+	// first message to hang a reply address on.
+	"customer": {notesOnly: true},
 }
 
 // emailThread returns the thread of a record type whose conversation is carried

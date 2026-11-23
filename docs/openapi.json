@@ -638,6 +638,40 @@
         "tags": [
           "auth"
         ]
+      },
+      "post": {
+        "operationId": "post_auth_saml_provider_logout_response",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "summary": "samlAuth.LogoutResponse",
+        "tags": [
+          "auth"
+        ]
       }
     },
     "/api/auth/saml/{provider}/metadata": {

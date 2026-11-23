@@ -80,28 +80,27 @@ The invoice module follows the same v2-relational pattern as `customer` and `sal
 
 ---
 
-## 3. System design — "invoice based on sales order" (the deferred piece)
+## 3. System design — "invoice based on sales order"
 
-**Status: designed in the spec, NOT implemented.** The headline capability — creating an
-invoice *from* a sales order — has no code on the branch: no `invoice/convert.go`, no
-`POST /sales-orders/{uuid}/convert-to-invoice` route, no handler. `CreateInvoiceInput`
-deliberately omits `salesOrderUuid`; only standalone invoices can be created today. The
-lineage columns exist (and now have real FKs) but nothing writes them.
+**Status: BUILT (corrected after this review was written).** On 2026-07-12 the conversion had
+no code; it has since shipped. This section now describes the code as it exists, not a plan:
 
-**Recommended conversion design (next pass), per the colleague's spec §9 / AD-2 / AD-8:**
-1. New route `POST /api/tenant/sales-orders/{uuid}/convert-to-invoice`, guarded by
-   `invoice:create` (+ IDOR scope on the source SO).
-2. New `invoice.ConvertFromSalesOrder(ctx, pool, soUUID, actorEmployeeID)` in `invoice/convert.go`:
-   one transaction, `SELECT ... FOR UPDATE` the sales order, copy its already-frozen
-   billing/shipping and per-line snapshots **verbatim** (no live re-read of customer/inventory),
-   set `invoice_sales_order_id` / `invoice_item.sales_order_item_id`, compute totals,
-   assign number, write a `convert` history row, start at `DRFT`.
-3. Multiple invoices per SO allowed (progress billing); conversion is intentionally not
-   idempotent. Direct `POST /invoices` continues to reject any SO linkage.
+- Route: `POST /api/tenant/sales-orders/{uuid}/convert`, handler `SalesOrderOps.Convert` in
+  `controllers/salesorder_convert.go`. It needs `sales_order:read` on the source (IDOR
+  guarded) and `invoice:create` on the target.
+- Store: `invoice.ConvertFromSalesOrder` in `invoice/store_convert.go`, with tests in
+  `invoice/store_convert_test.go`. It runs in one transaction, locks the sales order
+  `FOR SHARE`, copies the frozen billing/shipping and per-line snapshots verbatim (no
+  re-pricing), recomputes header totals from the copied lines, sets `invoice_sales_order_id`
+  and `invoice_item.sales_order_item_id`, and starts the invoice at `DRFT`. It writes a
+  create row to `invoice_history` and a `convert` row to `sales_order_history`.
+- A sales order converts **at most once** (`uq_invoice_sales_order_once`). The first call
+  returns 201 with `created=true`. Replaying it returns the existing invoice with 200 and
+  `created=false`. This replaced the original "multiple invoices per SO, not idempotent"
+  recommendation. Direct `POST /invoices` still rejects any sales order linkage.
 
-Invoice's read path already `LEFT JOIN`s `sales_order`/`sales_order_item` to expose lineage
-UUIDs, so once the conversion writes those columns the existing Get/Search surfaces them
-with no further change.
+The invoice read path `LEFT JOIN`s `sales_order`/`sales_order_item`, so the lineage UUIDs
+appear on Get/Search with no further change.
 
 ---
 

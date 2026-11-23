@@ -11,6 +11,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -493,13 +494,43 @@ func (h *TenantOps) InviteCustomer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// ListTenants returns all tenants. Platform-admin only.
+// ListTenants returns tenants, newest first. Platform-admin only.
+//
+// With no query params it returns every tenant (the original contract). With
+// ?limit=N and/or ?cursor=C it returns one keyset page (N clamped to
+// tenancy.MaxTenantPageSize) plus "nextCursor" — "" on the last page; pass the
+// cursor back unchanged to continue.
 func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requirePlatformAdmin(r); !ok {
 		fail(w, http.StatusForbidden, "Platform admin privileges required.")
 		return
 	}
-	tenants, err := h.CP.ListTenants(r.Context())
+	query := r.URL.Query()
+	paged := query.Has("limit") || query.Has("cursor")
+
+	var (
+		tenants    []tenancy.Tenant
+		nextCursor string
+		err        error
+	)
+	if paged {
+		limit := tenancy.MaxTenantPageSize
+		if raw := query.Get("limit"); raw != "" {
+			n, convErr := strconv.Atoi(raw)
+			if convErr != nil || n < 1 {
+				fail(w, http.StatusBadRequest, "limit must be a positive integer.")
+				return
+			}
+			limit = n
+		}
+		tenants, nextCursor, err = h.CP.ListTenantsPage(r.Context(), limit, query.Get("cursor"))
+		if errors.Is(err, tenancy.ErrInvalidTenantCursor) {
+			fail(w, http.StatusBadRequest, "Invalid cursor.")
+			return
+		}
+	} else {
+		tenants, err = h.CP.ListTenants(r.Context())
+	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Failed to list tenants.")
 		return
@@ -524,7 +555,11 @@ func (h *TenantOps) ListTenants(w http.ResponseWriter, r *http.Request) {
 			"takeoverDailyCap":        t.TakeoverDailyCap,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "tenants": out})
+	resp := map[string]any{"success": true, "tenants": out}
+	if paged {
+		resp["nextCursor"] = nextCursor
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // TenantLifecycle handles /api/platform/tenants/{id}/{action} where action is

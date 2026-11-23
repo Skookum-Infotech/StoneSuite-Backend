@@ -72,6 +72,18 @@ applied, what was billed and what was paid in the last 12 months, and the date
 of the latest activity. A figure is left blank when you cannot read the
 records behind it.
 
+## Downloading lists as CSV
+
+The Leads, Prospects and Customers lists each have a Download CSV button above
+the table. It downloads every record in the list as a spreadsheet, including
+each record's owner. When a search or filter is applied the button reads
+Download filtered CSV and downloads only the matching records. You only get the
+records you are allowed to see.
+
+On the Customers list you can also tick the checkbox on one or more rows (the
+checkbox in the header selects every row on the page). A bar then shows how
+many are selected, and Export selected (CSV) downloads just those customers.
+
 ## Custom fields
 
 Each of the three pipelines (lead, prospect, customer) can have up to 15

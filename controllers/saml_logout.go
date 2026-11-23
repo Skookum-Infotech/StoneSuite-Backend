@@ -7,12 +7,13 @@ import (
 	"stonesuite-backend/saml"
 )
 
-// Logout clears the caller's local session and, if the identity was
-// established via SAML and the IdP advertises a Single Logout endpoint,
-// returns a logout_url the frontend should navigate the browser to next.
-// SP-initiated only: IdP-initiated logout, where the IdP calls back to tell
-// the SP a session ended elsewhere, is not implemented -- see the step
-// report. Path: POST /api/auth/saml/{provider}/logout (auth required)
+// Logout ends the caller's own session (server side, not just its cookies) and,
+// if the identity was established via SAML and the IdP advertises a Single
+// Logout endpoint, returns a logout_url the frontend should navigate the
+// browser to next. This is the SP-initiated half of single logout; the
+// IdP-initiated half, where the IdP tells us a session ended there, arrives at
+// LogoutResponse's endpoint (see saml_slo.go).
+// Path: POST /api/auth/saml/{provider}/logout (auth required)
 func (h *SAMLAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
 	if !isValidSAMLProvider(provider) {
@@ -45,9 +46,13 @@ func (h *SAMLAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
 
 	cfg, cfgErr := h.cp.GetSSOConfigForAuth(ctx, tenant.ID, provider)
 
-	// Clear our own session regardless of SLO outcome below -- local logout
+	// End our own session regardless of SLO outcome below -- local logout
 	// must never depend on the IdP being reachable, configured, or even
-	// SAML-capable of SLO at all.
+	// SAML-capable of SLO at all. Clearing the cookies alone would leave the
+	// access and refresh tokens working until they expire.
+	if !h.endLocalSession(w, r, payload) {
+		return
+	}
 	clearAuthCookies(w)
 
 	if cfgErr != nil || cfg.SLOURL == "" || h.cipher == nil {
@@ -83,17 +88,27 @@ func (h *SAMLAuthOps) Logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "slo_available": true, "logout_url": logoutURL})
 }
 
-// LogoutResponse is the SP-side endpoint the IdP redirects the browser back
-// to after processing our LogoutRequest -- it is advertised in SP metadata
-// and as the Destination of that request (see spConfig). Logout above
-// already cleared the local session before ever redirecting to the IdP, so
-// there is no security decision left to make on the way back; this handler
-// exists only so that return trip lands somewhere other than a 404, whatever
-// the IdP sends (or doesn't send) back. Path: GET /api/auth/saml/{provider}/logout-response
+// LogoutResponse is the SP's single logout endpoint -- the SingleLogoutService
+// Location advertised in SP metadata and the Destination of our LogoutRequest
+// (see spConfig). SAML uses one endpoint for both directions, so two things
+// arrive here:
+//
+//   - A LogoutRequest from the IdP, because a session ended there: verified and
+//     acted on by idpLogoutRequest (saml_slo.go).
+//   - The IdP's LogoutResponse to the request Logout sent. That logout already
+//     ended the local session before redirecting to the IdP, so there is no
+//     security decision left; the return trip just lands on the login page
+//     rather than a 404, whatever the IdP sends back.
+//
+// Path: GET and POST /api/auth/saml/{provider}/logout-response
 func (h *SAMLAuthOps) LogoutResponse(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
 	if !isValidSAMLProvider(provider) {
 		fail(w, http.StatusNotFound, "Not found.")
+		return
+	}
+	if encoded, relayState, redirectBinding, ok := sloRequestParts(w, r); ok {
+		h.idpLogoutRequest(w, r, provider, encoded, relayState, redirectBinding)
 		return
 	}
 	http.Redirect(w, r, frontendBase()+"/auth/login?logged_out=true", http.StatusFound)

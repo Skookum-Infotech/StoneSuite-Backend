@@ -52,7 +52,7 @@ func (h *ReportsOps) authorizeCRMReport(w http.ResponseWriter, r *http.Request) 
 		return req, false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to view CRM reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceReportCRM, authz.ActionRead, "You do not have permission to view CRM reports.")
 		return req, false
 	}
 	return crmReportRequest{
@@ -130,7 +130,7 @@ func (h *ReportsOps) StaleRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		days = n
 	}
-	rows, err := reports.StaleRecords(r.Context(), req.pool, days, req.filter.Scope, req.filter.ActorIdentityID)
+	rows, err := reports.StaleRecords(r.Context(), req.pool, days, req.filter.Scope, req.filter.ActorIdentityID, h.today(r.Context(), req.pool))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Could not build the report.")
 		return

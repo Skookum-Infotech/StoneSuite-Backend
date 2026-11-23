@@ -198,6 +198,13 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreatePaymentInput, acto
 	if err := auditTx(ctx, tx, auditCreate, newUUID, nil, employeeExtra(actorEmployeeID)); err != nil {
 		return nil, err
 	}
+	// A payment with no approver configured is born Approved (see above); its
+	// receipt goes on the books with it. A Pending one posts when approved.
+	if initialStatusID != pendStatusID {
+		if err := syncLedger(ctx, tx, newID, actorEmployeeID, ""); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit create payment: %w", err)
 	}

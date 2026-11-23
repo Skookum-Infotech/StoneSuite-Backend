@@ -8,6 +8,7 @@ import (
 
 	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/authz"
+	"stonesuite-backend/glpost"
 	"stonesuite-backend/workflow"
 )
 
@@ -77,7 +78,13 @@ func AuditTxAs(ctx context.Context, tx pgx.Tx, action, uuid string, actorEmploye
 // learn who acted).
 func approvalConfig(actorEmployeeID int) approvalchain.ModuleConfig {
 	cfg := moduleConfig()
-	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, _ int, uuid, action string) error {
+	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, internalID int, uuid, action string) error {
+		if action == glpost.ApprovalAction {
+			// An approval always leaves a non-ledger status (Pending Approval).
+			if err := syncLedger(ctx, tx, internalID, actorEmployeeID, ""); err != nil {
+				return err
+			}
+		}
 		return auditTx(ctx, tx, action, uuid, nil, employeeExtra(actorEmployeeID))
 	}
 	return cfg

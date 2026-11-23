@@ -146,7 +146,7 @@ func BuildLogoutRequestURL(cfg Config, nameID, sessionIndex, relayState string) 
 		return "", fmt.Errorf("saml: building logout request document: %w", err)
 	}
 
-	redirectURL, err = deflateRedirectURL(cfg.IDPSLOURL, relayState, doc)
+	redirectURL, err = deflateRedirectURL(cfg.IDPSLOURL, "SAMLRequest", relayState, doc)
 	if err != nil {
 		return "", fmt.Errorf("saml: building logout redirect url: %w", err)
 	}
@@ -155,11 +155,12 @@ func BuildLogoutRequestURL(cfg Config, nameID, sessionIndex, relayState string) 
 }
 
 // deflateRedirectURL DEFLATE-compresses and base64-encodes doc, then appends
-// it (plus an optional RelayState) as query parameters on base, per the SAML
+// it (plus an optional RelayState) as query parameters on base (param is
+// "SAMLRequest" or "SAMLResponse"), per the SAML
 // HTTP-Redirect binding (saml-bindings-2.0-os section 3.4.4.1). It never
 // signs the query string -- see the BuildLogoutRequestURL doc comment for
 // why this exists instead of gosaml2's own redirect-URL builder.
-func deflateRedirectURL(base, relayState string, doc *etree.Document) (string, error) {
+func deflateRedirectURL(base, param, relayState string, doc *etree.Document) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil {
 		return "", fmt.Errorf("parsing redirect base url: %w", err)
@@ -183,7 +184,7 @@ func deflateRedirectURL(base, relayState string, doc *etree.Document) (string, e
 	}
 
 	qs := parsed.Query()
-	qs.Set("SAMLRequest", base64.StdEncoding.EncodeToString(buf.Bytes()))
+	qs.Set(param, base64.StdEncoding.EncodeToString(buf.Bytes()))
 	if relayState != "" {
 		qs.Set("RelayState", relayState)
 	}

@@ -312,8 +312,9 @@ func ClampStaleDays(days int) int {
 // StaleRecords lists open leads and prospects whose last logged activity or
 // status change is at least `days` days old, oldest first. "Open" means not
 // converted (no child record), and neither an Unqualified lead nor a Lost
-// prospect. Not window-based: it is a worklist as of today.
-func StaleRecords(ctx context.Context, pool *pgxpool.Pool, days int, scope authz.Scope, actorIdentityID string) ([]StaleRecord, error) {
+// prospect. Not window-based: it is a worklist as of `today`, the tenant's local
+// date (not the database's UTC day).
+func StaleRecords(ctx context.Context, pool *pgxpool.Pool, days int, scope authz.Scope, actorIdentityID string, today time.Time) ([]StaleRecord, error) {
 	out := []StaleRecord{}
 	args := []any{ClampStaleDays(days)}
 	ownerFilter := ""
@@ -325,10 +326,12 @@ func StaleRecords(ctx context.Context, pool *pgxpool.Pool, days int, scope authz
 		args = append(args, empID)
 		ownerFilter = fmt.Sprintf(" AND c.customer_crm_owner_user_id = $%d", len(args))
 	}
+	args = append(args, dateArg(today))
+	todayRef := fmt.Sprintf("$%d::date", len(args))
 	q := fmt.Sprintf(`
 		SELECT c.customer_uuid::text, rt.record_type_code, c.customer_name, COALESCE(cs.crm_status_name, ''),
 		       COALESCE(NULLIF(TRIM(e.employee_first_name || ' ' || e.employee_last_name), ''), ''),
-		       t.last_touch, (CURRENT_DATE - t.last_touch::date)
+		       t.last_touch, (%[7]s - t.last_touch::date)
 		FROM customer c
 		JOIN lkp_record_type rt ON rt.record_type_id = c.record_type AND rt.record_type_code IN ('%[1]s', '%[2]s')
 		LEFT JOIN lkp_crm_status cs ON cs.crm_status_id = c.customer_crm_status
@@ -343,9 +346,9 @@ func StaleRecords(ctx context.Context, pool *pgxpool.Pool, days int, scope authz
 		WHERE c.customer_deleted_at IS NULL%[3]s
 		  AND COALESCE(cs.crm_status_code, '') NOT IN ('%[4]s', '%[5]s')
 		  AND NOT EXISTS (SELECT 1 FROM customer ch WHERE ch.customer_parent_id = c.customer_id AND ch.customer_deleted_at IS NULL)
-		  AND (CURRENT_DATE - t.last_touch::date) >= $1
+		  AND (%[7]s - t.last_touch::date) >= $1
 		ORDER BY t.last_touch ASC, c.customer_name
-		LIMIT %[6]d`, typeLead, typeProspect, ownerFilter, statusLeadUnqualified, statusProspectLost, maxReportRows)
+		LIMIT %[6]d`, typeLead, typeProspect, ownerFilter, statusLeadUnqualified, statusProspectLost, maxReportRows, todayRef)
 	r, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query stale records: %w", err)

@@ -121,6 +121,10 @@ func QuickPay(ctx context.Context, pool *pgxpool.Pool, invoiceUUID string, amoun
 		VALUES ($1, NULL, $2, 'create', $3)`, newID, appvStatusID, nullableInt(actorEmployeeID)); err != nil {
 		return nil, fmt.Errorf("insert quickpay create history: %w", err)
 	}
+	// Born Approved: the receipt goes on the books with the payment itself.
+	if err := syncLedger(ctx, tx, newID, actorEmployeeID, ""); err != nil {
+		return nil, err
+	}
 	if err := applyTx(ctx, tx, newUUID, invoiceUUID, amount, actorEmployeeID); err != nil {
 		return nil, err
 	}

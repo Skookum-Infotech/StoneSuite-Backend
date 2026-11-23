@@ -141,6 +141,10 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 		return nil, err
 	}
 
+	// The ledger entry commits or rolls back with the status change itself.
+	if err := syncLedger(ctx, tx, internalID, actorEmployeeID, curStatusCode); err != nil {
+		return nil, err
+	}
 	if err := auditTx(ctx, tx, auditTransition, uuid, nil, nil); err != nil {
 		return nil, err
 	}

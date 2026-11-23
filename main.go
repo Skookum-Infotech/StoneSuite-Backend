@@ -859,7 +859,12 @@ func main() {
 		mux.Handle("POST /api/auth/saml/{provider}/acs", authRateLimiter.PerIPFunc(samlAuth.ACS))
 		mux.Handle("POST /api/auth/saml/exchange", authRateLimiter.PerIPFunc(samlAuth.Exchange))
 		mux.Handle("POST /api/auth/saml/{provider}/logout", tenantChain(samlAuth.Logout))
-		mux.Handle("GET /api/auth/saml/{provider}/logout-response", http.HandlerFunc(samlAuth.LogoutResponse))
+		// One SP single-logout endpoint for both bindings and both directions (the
+		// IdP's LogoutResponse to ours, and an IdP-initiated LogoutRequest). It does
+		// signature checks and DB work for an unauthenticated caller, so it is
+		// rate limited per IP like the other credential endpoints.
+		mux.Handle("GET /api/auth/saml/{provider}/logout-response", authRateLimiter.PerIPFunc(samlAuth.LogoutResponse))
+		mux.Handle("POST /api/auth/saml/{provider}/logout-response", authRateLimiter.PerIPFunc(samlAuth.LogoutResponse))
 
 		// Tenant-wide audit-log browser (audit:read, scope-narrowed on the actor).
 		auditOps := controllers.NewAuditOps()

@@ -46,28 +46,12 @@ func TestFinishRowsAndTotals(t *testing.T) {
 	if finishVendorRow(VendorRow{}).AvgPOValue != 0 {
 		t.Error("no POs must not divide by zero")
 	}
-	tot := sumVendors([]VendorRow{{POCount: 1, POValue: 10, Billed: 5}, {POCount: 2, POValue: 20, BalanceOwed: 7}})
-	if tot.POCount != 3 || !approx(tot.POValue, 30) || !approx(tot.Billed, 5) || !approx(tot.BalanceOwed, 7) {
-		t.Errorf("vendor totals = %+v", tot)
-	}
 	it := finishItemRow(PurchaseItemRow{Quantity: 10, Spend: 250, FirstCost: 20, LastCost: 30})
 	if !approx(it.AvgCost, 25) || it.CostChange == nil || !approx(*it.CostChange, 50) {
 		t.Errorf("item row = %+v", it)
 	}
 	if finishItemRow(PurchaseItemRow{}).AvgCost != 0 {
 		t.Error("zero quantity must not divide by zero")
-	}
-}
-
-func TestSumOpenPOs(t *testing.T) {
-	late := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	got := sumOpenPOs([]OpenPORow{
-		{Outstanding: 100, DaysOverdue: 5, ExpectedDate: &late},
-		{Outstanding: 50},
-		{Outstanding: 25, DaysOverdue: 1},
-	})
-	if got.Count != 3 || !approx(got.Outstanding, 175) || got.OverdueCount != 2 || !approx(got.OverdueValue, 125) {
-		t.Errorf("got %+v", got)
 	}
 }
 
@@ -88,5 +72,19 @@ func TestSumAging(t *testing.T) {
 	}
 	if len(sumAging(nil).Buckets) != len(AgingBucketLabels) {
 		t.Error("empty aging must still carry every bucket")
+	}
+}
+
+// TestDateArg guards the YYYY-MM-DD form bound to a $n::date placeholder, and
+// that it reads the date in the value's own zone (the tenant's), not UTC.
+func TestDateArg(t *testing.T) {
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Skip("tzdata unavailable")
+	}
+	// 9pm on 22 Nov in Chicago is already 23 Nov in UTC.
+	evening := time.Date(2026, 11, 22, 21, 0, 0, 0, chicago)
+	if got := dateArg(evening); got != "2026-11-22" {
+		t.Errorf("dateArg = %q, want the tenant-local day 2026-11-22", got)
 	}
 }

@@ -37,9 +37,8 @@ func notifyCustomerApproved(ctx context.Context, cp *tenancy.ControlPlane, actor
 		Resource: resource, DisplayName: displayName, Number: number, RecordUUID: recordUUID,
 		EventSuffix: customerEventApproved, Badge: custApprovedBadge,
 		Heading: subject, HeadingAccent: custApprovedVerb + ".",
-		Subtitle: custApprovedSubtle,
-		Body: fmt.Sprintf(
-			"Your %s %s has been approved. You can view the approved %s in your customer portal anytime.", kind, number, kind),
+		Subtitle:  custApprovedSubtle,
+		Body:      approvedBody(resource, kind, number),
 		DateLabel: custApprovedDate, Amount: amount, OccurredAt: time.Now(), Icon: services.IconDocCheck,
 	})
 }
@@ -74,7 +73,7 @@ type customerApproval struct {
 // SendNotification through the shared template.
 func buildCustomerApprovedNotification(tenantID, actorIdentityID string, recipient services.RecipientTarget, a customerApproval) services.NotificationRequest {
 	const verb = "has been approved"
-	link := fmt.Sprintf("/sales/%s/%s", a.Resource, a.RecordUUID)
+	link := customerEventLink(a.Resource, a.RecordUUID)
 	subject := fmt.Sprintf("Your %s %s", a.DisplayName, a.Number)
 	kind := strings.ToLower(a.DisplayName)
 	return services.NotificationRequest{
@@ -91,10 +90,9 @@ func buildCustomerApprovedNotification(tenantID, actorIdentityID string, recipie
 		Email: &services.Email{
 			Preheader: subject + " " + verb + ".", Badge: "Approved", Icon: services.IconDocCheck,
 			Heading: subject, HeadingAccent: verb + ".",
-			Subtitle: "Thank you for your prompt action.",
-			Greet:    true,
-			Paragraphs: []services.Paragraph{{services.Text(fmt.Sprintf(
-				"Your %s %s has been approved. You can view the approved %s in your customer portal anytime.", kind, a.Number, kind))}},
+			Subtitle:   "Thank you for your prompt action.",
+			Greet:      true,
+			Paragraphs: []services.Paragraph{{services.Text(approvedBody(a.Resource, kind, a.Number))}},
 			Details: []services.Detail{
 				{Label: a.DisplayName + " Number", Value: a.Number},
 				{Label: "Amount", Value: services.FormatEmailMoney("", a.Amount)},

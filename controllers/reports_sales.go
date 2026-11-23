@@ -1,12 +1,15 @@
 package controllers
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"stonesuite-backend/authz"
+	"stonesuite-backend/config"
 	"stonesuite-backend/middleware"
 	"stonesuite-backend/reports"
 	"stonesuite-backend/tenancy"
@@ -16,10 +19,34 @@ import (
 const reportDateLayout = "2006-01-02"
 
 // ReportsOps serves the Reports module's read-only aggregate endpoints.
-type ReportsOps struct{}
+type ReportsOps struct {
+	// fallbackTZ is the timezone "today" is read in for a tenant that has not set
+	// one on its company profile (nil means UTC).
+	fallbackTZ *time.Location
+}
 
-// NewReportsOps constructs the handler group.
-func NewReportsOps() *ReportsOps { return &ReportsOps{} }
+// NewReportsOps constructs the handler group. The fallback timezone is the
+// configured AUTOMATION_DEFAULT_TIMEZONE, the same default the transaction and
+// install-schedule handlers use.
+func NewReportsOps() *ReportsOps {
+	var fallback *time.Location
+	if name := config.AppConfig.AutomationDefaultTimezone; name != "" {
+		loc, err := time.LoadLocation(name)
+		if err != nil {
+			slog.Warn("reports: invalid default timezone, using UTC", "timezone", name, "error", err)
+		} else {
+			fallback = loc
+		}
+	}
+	return &ReportsOps{fallbackTZ: fallback}
+}
+
+// today is the tenant-local calendar date the "as of today" reports measure
+// from. The database's CURRENT_DATE is the UTC day, which for a US tenant is
+// already tomorrow every evening.
+func (h *ReportsOps) today(ctx context.Context, pool *pgxpool.Pool) time.Time {
+	return tenantToday(ctx, pool, h.fallbackTZ)
+}
 
 // salesReportRequest is a parsed + authorized Sales report call.
 type salesReportRequest struct {
@@ -94,7 +121,7 @@ func (h *ReportsOps) authorizeSalesReport(w http.ResponseWriter, r *http.Request
 		return req, false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to view sales reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceReportSales, authz.ActionRead, "You do not have permission to view sales reports.")
 		return req, false
 	}
 	filter.Scope = decision.Scope

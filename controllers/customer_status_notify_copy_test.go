@@ -66,8 +66,13 @@ func TestStatusCopyEvent(t *testing.T) {
 func TestCustomerEventLink(t *testing.T) {
 	cases := []struct{ name, resource, id, want string }{
 		{"standard", "invoice", "abc", "/sales/invoice/abc"},
-		{"credit memo", "credit_memo", "abc", "/sales/credit_memo/abc"},
-		{"fabrication remaps", "fabrication_job", "abc", "/sales/installation/abc"},
+		{"sales order", "sales_order", "abc", "/sales/sales_order/abc"},
+		{"payment", "payment", "abc", "/sales/payment/abc"},
+		{"refund", "refund", "abc", "/sales/refund/abc"},
+		// The portal has no page for these, so a link would bounce the customer.
+		{"quote has no portal page", "quote", "abc", ""},
+		{"credit memo has no portal page", "credit_memo", "abc", ""},
+		{"fabrication has no portal page", "fabrication_job", "abc", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,13 +102,13 @@ func TestBuildCustomerEventNotificationContent(t *testing.T) {
 		wantLink        string
 		wantAmountValue string
 	}{
-		{"defaults", func(*customerEvent) {}, "View quote", "Updated On", "/sales/quote/rec-1", ""},
+		{"defaults: quote has no portal page", func(*customerEvent) {}, "View quote", "Updated On", "", ""},
 		{"custom action and date label", func(e *customerEvent) { e.ActionLabel = "Review now"; e.DateLabel = "Sent On" },
-			"Review now", "Sent On", "/sales/quote/rec-1", ""},
+			"Review now", "Sent On", "", ""},
 		{"link override wins", func(e *customerEvent) { e.LinkOverride = "/sales/created-orders" },
 			"View quote", "Updated On", "/sales/created-orders", ""},
 		{"amount formatted", func(e *customerEvent) { e.Amount = 12450 },
-			"View quote", "Updated On", "/sales/quote/rec-1", "$12,450.00"},
+			"View quote", "Updated On", "", "$12,450.00"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,7 +120,11 @@ func TestBuildCustomerEventNotificationContent(t *testing.T) {
 			assert.Equal(t, "Ready for Review.", req.Body)
 			assert.Equal(t, "quote.customer_status", req.EventType)
 			assert.Equal(t, tc.wantLink, req.Link)
-			assert.Equal(t, "https://app.example.com"+tc.wantLink, req.Email.ActionURL)
+			wantURL := ""
+			if tc.wantLink != "" {
+				wantURL = "https://app.example.com" + tc.wantLink
+			}
+			assert.Equal(t, wantURL, req.Email.ActionURL, "no link means the template omits the button")
 			assert.Equal(t, tc.wantAction, req.Email.ActionLabel)
 			assert.Equal(t, "Your Quote Q-1 is ready.", req.Email.Preheader)
 			assert.True(t, req.Email.Greet)

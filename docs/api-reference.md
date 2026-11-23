@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-701 endpoints across 7 surfaces, read from `main.go`.
+702 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -12,9 +12,9 @@
 |---|---:|
 | staff token + tenant | 598 |
 | portal token + tenant | 32 |
-| none (rate-limited) | 25 |
+| none (rate-limited) | 27 |
 | staff token | 23 |
-| none | 18 |
+| none | 17 |
 | portal token | 3 |
 | customer token | 2 |
 
@@ -37,7 +37,8 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `POST` | `/api/auth/saml/exchange` | rate-limited per IP |
 | `POST` | `/api/auth/saml/{provider}/acs` | rate-limited per IP |
 | `GET` | `/api/auth/saml/{provider}/initiate` | rate-limited per IP |
-| `GET` | `/api/auth/saml/{provider}/logout-response` | no rate limit |
+| `GET` | `/api/auth/saml/{provider}/logout-response` | rate-limited per IP |
+| `POST` | `/api/auth/saml/{provider}/logout-response` | rate-limited per IP |
 | `GET` | `/api/auth/saml/{provider}/metadata` | no rate limit |
 | `GET` | `/api/auth/saml/{provider}/sp-info` | no rate limit |
 | `POST` | `/api/auth/session/takeover` | rate-limited per IP |
@@ -94,7 +95,7 @@ Liveness, readiness and metrics. No credential.
 | `POST` | `/api/internal/email/inbound` | none (rate-limited) | `recordEmailOps.Inbound` |
 | `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | none (rate-limited) | `recordEmailOps.InboundAttachment` |
 
-## `auth` — 24 endpoints
+## `auth` — 25 endpoints
 
 Staff sign-in, session rotation, password reset and SAML SSO.
 
@@ -155,7 +156,8 @@ Staff sign-in, session rotation, password reset and SAML SSO.
 | `POST` | `/api/auth/saml/{provider}/acs` | none (rate-limited) | `samlAuth.ACS` |
 | `GET` | `/api/auth/saml/{provider}/initiate` | none (rate-limited) | `samlAuth.Initiate` |
 | `POST` | `/api/auth/saml/{provider}/logout` | staff token + tenant | `samlAuth.Logout` |
-| `GET` | `/api/auth/saml/{provider}/logout-response` | none | `samlAuth.LogoutResponse` |
+| `GET` | `/api/auth/saml/{provider}/logout-response` | none (rate-limited) | `samlAuth.LogoutResponse` |
+| `POST` | `/api/auth/saml/{provider}/logout-response` | none (rate-limited) | `samlAuth.LogoutResponse` |
 | `GET` | `/api/auth/saml/{provider}/metadata` | none | `samlAuth.Metadata` |
 | `GET` | `/api/auth/saml/{provider}/sp-info` | none | `samlAuth.SPInfo` |
 

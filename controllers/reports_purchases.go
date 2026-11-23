@@ -69,7 +69,7 @@ func (h *ReportsOps) authorizePurchasesReport(w http.ResponseWriter, r *http.Req
 		return req, false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to view purchases reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceReportPurchases, authz.ActionRead, "You do not have permission to view purchases reports.")
 		return req, false
 	}
 	return purchasesReportRequest{
@@ -109,14 +109,14 @@ func (h *ReportsOps) PurchasesByItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // OpenPurchaseOrders serves Reports > Purchases > Open POs & Receiving: the
-// purchase orders still waiting on goods, as of today (no date window).
+// purchase orders still waiting on goods, as of today in the tenant's timezone (no date window).
 // GET /api/tenant/reports/purchases/open-pos
 func (h *ReportsOps) OpenPurchaseOrders(w http.ResponseWriter, r *http.Request) {
 	req, ok := h.authorizePurchasesReport(w, r, false)
 	if !ok {
 		return
 	}
-	rows, totals, err := reports.OpenPurchaseOrders(r.Context(), req.pool, req.filter.Scope, req.filter.ActorIdentityID)
+	rows, totals, err := reports.OpenPurchaseOrders(r.Context(), req.pool, req.filter.Scope, req.filter.ActorIdentityID, h.today(r.Context(), req.pool))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Could not build the report.")
 		return
@@ -125,14 +125,14 @@ func (h *ReportsOps) OpenPurchaseOrders(w http.ResponseWriter, r *http.Request) 
 }
 
 // APAging serves Reports > Purchases > AP Aging: unpaid vendor bills by how
-// far past due they are, as of today (no date window).
+// far past due they are, as of today in the tenant's timezone (no date window).
 // GET /api/tenant/reports/purchases/ap-aging
 func (h *ReportsOps) APAging(w http.ResponseWriter, r *http.Request) {
 	req, ok := h.authorizePurchasesReport(w, r, false)
 	if !ok {
 		return
 	}
-	rows, totals, err := reports.APAging(r.Context(), req.pool, req.filter.Scope, req.filter.ActorIdentityID)
+	rows, totals, err := reports.APAging(r.Context(), req.pool, req.filter.Scope, req.filter.ActorIdentityID, h.today(r.Context(), req.pool))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Could not build the report.")
 		return

@@ -9,23 +9,66 @@ import (
 	"stonesuite-backend/services"
 )
 
+// docLinks are the two places a document-send email can point the customer.
+type docLinks struct {
+	// Download is the signed, login-free PDF link; "" when none is configured
+	// (the PDF is then attached to the email instead).
+	Download string
+	// Portal is the record's page in the customer portal; "" when the portal
+	// has no page for that document type (see portalViewable).
+	Portal string
+}
+
+// primary is the link the email's button, PDF card and document number use:
+// the download when there is one, else the portal page, else none.
+func (l docLinks) primary() (url, label string) {
+	switch {
+	case l.Download != "":
+		return l.Download, "Download PDF"
+	case l.Portal != "":
+		return l.Portal, "View in portal"
+	}
+	return "", ""
+}
+
+// Copy for the sentence after the document number, one per button the email
+// ends up with, so the text never promises a button that is not there.
+const (
+	docSentenceDownload = ". Use the button below to download the PDF."
+	docSentencePortal   = ". The PDF is attached; you can also view it in your customer portal with the button below."
+	docSentenceAttached = ". The PDF is attached."
+)
+
 // documentEmail is the content of a document-send customer email: the seller
 // and document number, the attached PDF's card, an optional sender message,
-// and a link to the customer portal. It renders through the shared template
-// like every other email; the seller's identity appears in the text (its logo
-// is on the attached PDF, see docpdf.Seller.LogoPNG).
-func documentEmail(d docpdf.PrintableDoc, message, fileName string, pdfSize int) *services.Email {
+// and one button -- the signed PDF download when there is one, else a portal
+// deep-link when the portal can show this document, else no button. It renders
+// through the shared template like every other email; the seller's identity
+// appears in the text (its logo is on the attached PDF, see
+// docpdf.Seller.LogoPNG).
+func documentEmail(d docpdf.PrintableDoc, message, fileName string, pdfSize int, links docLinks) *services.Email {
 	kind := docKindLabel(d.Kind)
-	portal := services.PortalURL()
+	url, label := links.primary()
+	sentence := docSentenceAttached
+	switch {
+	case links.Download != "":
+		sentence = docSentenceDownload
+	case links.Portal != "":
+		sentence = docSentencePortal
+	}
+	number := services.Text(d.Number)
+	if url != "" {
+		number = services.Link(d.Number, url)
+	}
 	paragraphs := []services.Paragraph{{
 		services.Bold(d.Seller.Name), services.Text(" has sent you " + strings.ToLower(kind) + " "),
-		services.Link(d.Number, portal),
-		services.Text(". Use the button below to download the PDF."),
+		number,
+		services.Text(sentence),
 	}}
 	if message != "" {
 		paragraphs = append(paragraphs, services.Paragraph{services.Text(message)})
 	}
-	return &services.Email{
+	e := &services.Email{
 		Preheader:     kind + " " + d.Number + " from " + d.Seller.Name,
 		Badge:         "Document Sent",
 		Icon:          services.IconDocArrow,
@@ -35,9 +78,10 @@ func documentEmail(d docpdf.PrintableDoc, message, fileName string, pdfSize int)
 		Greet:         true,
 		Paragraphs:    paragraphs,
 		Attachment:    &services.AttachmentCard{FileName: fileName, Size: services.FormatFileSize(pdfSize)},
-		ActionURL:     portal,
-		ActionLabel:   "View in portal",
+		ActionURL:     url,
+		ActionLabel:   label,
 	}
+	return withDownloadLink(e, links.Download)
 }
 
 // docKindLabel title-cases a PrintableDoc kind ("SALES ORDER" -> "Sales Order").

@@ -9,6 +9,7 @@ import (
 
 	"stonesuite-backend/approvalchain"
 	"stonesuite-backend/authz"
+	"stonesuite-backend/glpost"
 	"stonesuite-backend/workflow"
 )
 
@@ -72,7 +73,13 @@ func auditTx(ctx context.Context, tx pgx.Tx, action, uuid string, before *Vendor
 // learn who acted).
 func approvalConfig(actorEmployeeID int) approvalchain.ModuleConfig {
 	cfg := moduleConfig()
-	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, _ int, uuid, action string) error {
+	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, internalID int, uuid, action string) error {
+		if action == glpost.ApprovalAction {
+			// An approval always leaves Pending Approval, a non-Paid status.
+			if err := syncLedger(ctx, tx, internalID, actorEmployeeID, ""); err != nil {
+				return err
+			}
+		}
 		return auditTx(ctx, tx, action, uuid, nil, employeeExtra(actorEmployeeID))
 	}
 	return cfg

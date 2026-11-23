@@ -125,7 +125,12 @@ func (w *Worker) process(ctx context.Context, j Job) error {
 	if err != nil {
 		return err
 	}
-	content := rag.RenderRecord(doc)
+	content, hits := screenRecordText(rag.RenderRecord(doc))
+	if len(hits) > 0 {
+		// Same event name family the document importer uses for the same signal.
+		slog.Warn("security event", "security_event", "rag_index_prompt_injection_suspected",
+			"source_id", j.SourceID, "kind", doc.WorkflowKey, "phrases", findingPhrases(hits))
+	}
 	if est := chunk.EstimateTokens(content); est > recordTokenBudget {
 		slog.Warn("rag record exceeds embed token budget; embedder will truncate it silently",
 			"source_id", j.SourceID, "estimated_tokens", est, "budget", recordTokenBudget)

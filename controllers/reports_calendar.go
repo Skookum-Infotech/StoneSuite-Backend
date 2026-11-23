@@ -51,7 +51,7 @@ func (h *ReportsOps) authorizeCalendarReport(w http.ResponseWriter, r *http.Requ
 		return req, false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to view calendar reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceReportCalendar, authz.ActionRead, "You do not have permission to view calendar reports.")
 		return req, false
 	}
 	req.pool, req.scope, req.actorIdentityID = pool, decision.Scope, payload.ID
@@ -74,7 +74,7 @@ func (h *ReportsOps) UpcomingInstalls(w http.ResponseWriter, r *http.Request) {
 		}
 		weeks = n
 	}
-	rows, perWeek, err := reports.UpcomingInstalls(r.Context(), req.pool, weeks, req.scope, req.actorIdentityID)
+	rows, perWeek, err := reports.UpcomingInstalls(r.Context(), req.pool, weeks, req.scope, req.actorIdentityID, h.today(r.Context(), req.pool))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Could not build the report.")
 		return

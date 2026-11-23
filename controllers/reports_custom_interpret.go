@@ -166,7 +166,7 @@ func (h *AIOps) InterpretCustomReport(w http.ResponseWriter, r *http.Request) {
 	}
 	sources := caller.access.sources()
 	if len(sources) == 0 {
-		fail(w, http.StatusForbidden, "You do not have access to any report sources.")
+		reportForbidden(w, r, caller.identityID, authz.ResourceCustomReport, authz.ActionRead, "You do not have access to any report sources.")
 		return
 	}
 	call, ok := h.structuredCall()

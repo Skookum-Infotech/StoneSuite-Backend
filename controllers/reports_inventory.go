@@ -43,7 +43,7 @@ func (h *ReportsOps) authorizeInventoryReport(w http.ResponseWriter, r *http.Req
 		return nil, time.Time{}, time.Time{}, false
 	}
 	if !decision.Allowed {
-		fail(w, http.StatusForbidden, "You do not have permission to view inventory reports.")
+		reportForbidden(w, r, payload.ID, authz.ResourceReportInventory, authz.ActionRead, "You do not have permission to view inventory reports.")
 		return nil, time.Time{}, time.Time{}, false
 	}
 	return pool, from, to, true

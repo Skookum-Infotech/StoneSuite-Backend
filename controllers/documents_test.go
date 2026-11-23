@@ -31,13 +31,14 @@ func TestDocumentOps_RequiresAuth(t *testing.T) {
 
 func TestDocumentEmail_MatchesDocumentDeliveredDesign(t *testing.T) {
 	withEmailConfig(t)
+	const invoiceLink = "https://app.example.com/sales/invoice/inv-1"
 	doc := docpdf.PrintableDoc{Kind: "INVOICE", Number: "INV-0042", Seller: docpdf.Seller{Name: "Acme Stone Co"}}
-	out := mustRenderEmail(t, documentEmail(doc, "", "INV-0042.pdf", 245*1024))
+	out := mustRenderEmail(t, documentEmail(doc, "", "INV-0042.pdf", 245*1024, docLinks{Portal: invoiceLink}))
 
 	for _, want := range []string{
 		">DOCUMENT SENT<", "Invoice <span style=\"white-space:nowrap;\">INV-0042</span> is on its way.", "Your document is ready to view.",
-		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="https://app.example.com/portal"`,
-		">INV-0042</a>. Use the button below to download the PDF.",
+		`<strong style="color:#18181b;">Acme Stone Co</strong> has sent you invoice <a href="` + invoiceLink + `"`,
+		">INV-0042</a>. The PDF is attached; you can also view it in your customer portal with the button below.",
 		"INV-0042.pdf", "245 KB", ">View in portal<",
 	} {
 		assert.Contains(t, out, want)
@@ -47,7 +48,7 @@ func TestDocumentEmail_MatchesDocumentDeliveredDesign(t *testing.T) {
 func TestDocumentEmail_SenderMessageIsKept(t *testing.T) {
 	withEmailConfig(t)
 	doc := docpdf.PrintableDoc{Kind: "ESTIMATE", Number: "EST-1", Seller: docpdf.Seller{Name: "Acme"}}
-	out := mustRenderEmail(t, documentEmail(doc, "Here's your custom note.", "EST-1.pdf", 10))
+	out := mustRenderEmail(t, documentEmail(doc, "Here's your custom note.", "EST-1.pdf", 10, docLinks{}))
 
 	assert.Contains(t, out, "Here&#39;s your custom note.", "the sender's own message is still delivered")
 	assert.Contains(t, out, "has sent you estimate")
@@ -279,10 +280,66 @@ func TestWithDownloadLink_PointsEveryLinkAtThePDF(t *testing.T) {
 	config.AppConfig.FrontendURL = "https://app.example.com"
 	t.Cleanup(func() { config.AppConfig = prev })
 	const url = "https://api.example.com/d/signed"
-	e := withDownloadLink(documentEmail(docpdf.PrintableDoc{Kind: "INVOICE", Number: "INV-1", Seller: docpdf.Seller{Name: "Acme"}}, "", "INV-1.pdf", 10), url)
+	e := documentEmail(docpdf.PrintableDoc{Kind: "INVOICE", Number: "INV-1", Seller: docpdf.Seller{Name: "Acme"}}, "", "INV-1.pdf", 10,
+		docLinks{Download: url, Portal: "https://app.example.com/sales/invoice/inv-1"})
 
 	assert.Equal(t, url, e.ActionURL)
 	assert.Equal(t, "Download PDF", e.ActionLabel)
 	assert.Equal(t, url, e.Attachment.URL)
 	assert.Equal(t, url, e.Paragraphs[0][2].Href)
+}
+
+// TestDocumentEmail_ButtonMatchesWhatTheCustomerCanOpen guards the portal
+// "dead link" bug: a document the portal has no page for must not get a "View
+// in portal" button, and the copy must not promise a button that is not there.
+func TestDocumentEmail_ButtonMatchesWhatTheCustomerCanOpen(t *testing.T) {
+	withEmailConfig(t)
+	const portal = "https://app.example.com/sales/invoice/inv-1"
+	const download = "https://api.example.com/d/signed"
+	doc := docpdf.PrintableDoc{Kind: "QUOTE", Number: "Q-1", Seller: docpdf.Seller{Name: "Acme"}}
+
+	tests := []struct {
+		name         string
+		links        docLinks
+		wantURL      string
+		wantLabel    string
+		wantSentence string
+	}{
+		{"download wins over portal", docLinks{Download: download, Portal: portal}, download, "Download PDF", docSentenceDownload},
+		{"portal when no download", docLinks{Portal: portal}, portal, "View in portal", docSentencePortal},
+		{"no link: no button, PDF attached", docLinks{}, "", "", docSentenceAttached},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := documentEmail(doc, "", "Q-1.pdf", 10, tt.links)
+			assert.Equal(t, tt.wantURL, e.ActionURL)
+			assert.Equal(t, tt.wantLabel, e.ActionLabel)
+			last := e.Paragraphs[0][len(e.Paragraphs[0])-1]
+			assert.Equal(t, tt.wantSentence, last.Text)
+			if tt.wantURL == "" {
+				assert.NotContains(t, mustRenderEmail(t, e), "View in portal")
+				assert.NotContains(t, mustRenderEmail(t, e), "/portal")
+			}
+		})
+	}
+}
+
+// TestPortalDocLink guards which documents get a portal deep-link: exactly the
+// four the portal serves (see src/config/customerPortal.ts in the WebUI).
+func TestPortalDocLink(t *testing.T) {
+	withEmailConfig(t)
+	tests := []struct{ resource, id, want string }{
+		{"sales_order", "a", "https://app.example.com/sales/sales_order/a"},
+		{"invoice", "a", "https://app.example.com/sales/invoice/a"},
+		{"payment", "a", "https://app.example.com/sales/payment/a"},
+		{"refund", "a", "https://app.example.com/sales/refund/a"},
+		{"quote", "a", ""},
+		{"estimate", "a", ""},
+		{"credit_memo", "a", ""},
+		{"purchase_order", "a", ""},
+		{"invoice", "", ""},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, portalDocLink(tt.resource, tt.id), tt.resource+"/"+tt.id)
+	}
 }

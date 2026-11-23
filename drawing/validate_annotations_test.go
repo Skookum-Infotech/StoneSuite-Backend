@@ -23,18 +23,32 @@ func TestValidateEdgesAndAnnotations(t *testing.T) {
 		drawing Drawing
 		wantErr bool
 	}{
-		{"edge profile, overhang, splash and waterfall accepted",
-			oneArea([]Piece{withEdges(PieceEdge{Index: 0, Code: "EE", OverhangMm: f(25), SplashHeightMm: f(100), WaterfallHeightMm: f(900)})}, nil, nil), false},
+		{"edge profile, overhang and attached profile accepted",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, Code: "EE", OverhangMm: f(25),
+				AttachedProfile: &AttachedProfile{ProfileTypeID: "backsplash-1", MeasurementMm: 100}})}, nil, nil), false},
 		{"edge on a side that does not exist rejected",
 			oneArea([]Piece{withEdges(PieceEdge{Index: 4, Code: "EE"})}, nil, nil), true},
 		{"negative edge index rejected",
 			oneArea([]Piece{withEdges(PieceEdge{Index: -1, Code: "EE"})}, nil, nil), true},
 		{"two entries for one side rejected",
 			oneArea([]Piece{withEdges(PieceEdge{Index: 1, Code: "EE"}, PieceEdge{Index: 1, Code: "BN"})}, nil, nil), true},
-		{"negative backsplash height rejected",
-			oneArea([]Piece{withEdges(PieceEdge{Index: 0, SplashHeightMm: f(-1)})}, nil, nil), true},
-		{"absurd waterfall height rejected",
-			oneArea([]Piece{withEdges(PieceEdge{Index: 0, WaterfallHeightMm: f(1e9)})}, nil, nil), true},
+		{"negative overhang rejected",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, OverhangMm: f(-1)})}, nil, nil), true},
+		{"empty attached profile type id rejected",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, AttachedProfile: &AttachedProfile{ProfileTypeID: "", MeasurementMm: 100}})}, nil, nil), true},
+		{"zero attached profile measurement rejected",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, AttachedProfile: &AttachedProfile{ProfileTypeID: "backsplash-1", MeasurementMm: 0}})}, nil, nil), true},
+		{"absurd attached profile measurement rejected",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, AttachedProfile: &AttachedProfile{ProfileTypeID: "backsplash-1", MeasurementMm: 1e9}})}, nil, nil), true},
+		{"attached profile placed on a slab accepted",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, AttachedProfile: &AttachedProfile{
+				ProfileTypeID: "backsplash-1", MeasurementMm: 100,
+				Slab: &SlabPlacement{SlabID: "7d1c4a52-3a0e-4f4c-9a53-0d2b7a1c9e11", X: 10, Y: 20, RotationDeg: 90},
+			}})}, nil, nil), false},
+		{"attached profile placed on a slab without a slab id rejected",
+			oneArea([]Piece{withEdges(PieceEdge{Index: 0, AttachedProfile: &AttachedProfile{
+				ProfileTypeID: "backsplash-1", MeasurementMm: 100, Slab: &SlabPlacement{X: 10, Y: 20},
+			}})}, nil, nil), true},
 		{"overlong edge code rejected",
 			oneArea([]Piece{withEdges(PieceEdge{Index: 0, Code: strings.Repeat("X", 17)})}, nil, nil), true},
 		{"note within the length limit accepted",
@@ -60,7 +74,7 @@ func TestAreaJSONRoundTripKeepsEdgesAndAnnotations(t *testing.T) {
 		"id":"a1","name":"Kitchen","code":"K","sortOrder":0,"cabinets":[],
 		"pieces":[{"id":"p1","label":"A-1","shape":"rect","outline":[{"x":0,"y":0},{"x":600,"y":0},{"x":600,"y":-400},{"x":0,"y":-400}],
 			"position":{"x":0,"y":0},"rotationDeg":0,"thicknessMm":30,"seams":[],"cutouts":[],
-			"edges":[{"index":0,"code":"EE","overhangMm":25,"splashHeightMm":100,"waterfallHeightMm":900}]}],
+			"edges":[{"index":0,"code":"EE","overhangMm":25,"attachedProfile":{"profileTypeId":"backsplash-1","measurementMm":100}}]}],
 		"notes":[{"id":"n1","text":"Seam here","at":{"x":1,"y":2},"pieceId":"p1"}],
 		"dimensions":[{"id":"d1","from":{"x":0,"y":0},"to":{"x":100,"y":0},"offsetMm":40}]
 	}`

@@ -2614,6 +2614,11 @@ CREATE TABLE IF NOT EXISTS sales_order_drawing_version (
     at                             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_sales_order_drawing_version UNIQUE (sales_order_id, version)
 );
+-- first_at: when the editing burst this row represents began. Saves by the same person within
+-- a short window are folded into one row (see drawing.Save), so `at` moves with every fold while
+-- first_at stays put and bounds how long one row can keep absorbing saves. NULL on rows that were
+-- never folded (and on every row written before this column existed) -- read as `at`.
+ALTER TABLE sales_order_drawing_version ADD COLUMN IF NOT EXISTS first_at TIMESTAMP;
 
 -- lkp_edge_code -- countertop edge profile options for the drawing editor (spec's
 -- GET /api/tenant/settings/edge-codes), same shape as the other lkp_* lookup tables.
@@ -2690,6 +2695,41 @@ INSERT INTO drawing_edge_type (system_key, name, price, alias, color, finish, so
     ('appliance',  'Appliance',  10, 'A', '#15803d', 'halfBullnose', 2),
     ('finished',   'Finished',   0,  'F', '#d97706', 'none',         3),
     ('unfinished', 'Unfinished', 0,  'U', '#6b7280', 'raw',          4)
+ON CONFLICT DO NOTHING;
+
+-- drawing_attached_profile_type -- the shop's list of attached-piece types the drawing
+-- editor's Profiles tool paints onto a piece's sides (GET/POST/PUT
+-- /api/tenant/settings/attached-profile-types): a name, a price per linear unit, a short
+-- alias, the colour it is drawn in, the preset widths/heights it can be painted at, the
+-- angle it stands at relative to the parent piece in 3D (90/180/270), and whether two
+-- painted sides meeting at a corner get a mitered or square joint. Named "attached_profile"
+-- (not "profile") to stay distinct from lkp_edge_code's "edge profile" and from
+-- EdgeFinish's 3D cross-section shape, both already called "profile" elsewhere in this
+-- module. Four types are seeded for every tenant (system_key marks them; they can be
+-- edited, not duplicated); the rest are added by users. A piece's side points at one by id
+-- (PieceEdge.attachedProfile.profileTypeId).
+CREATE TABLE IF NOT EXISTS drawing_attached_profile_type (
+    id                     UUID             PRIMARY KEY DEFAULT gen_random_uuid(),
+    system_key             VARCHAR(32)      NULL UNIQUE,
+    name                   VARCHAR(64)      NOT NULL,
+    pricing_type           VARCHAR(16)      NOT NULL DEFAULT 'linear' CHECK (pricing_type IN ('linear')),
+    price                  NUMERIC(12,2)    NOT NULL DEFAULT 0 CHECK (price >= 0),
+    alias                  VARCHAR(8)       NOT NULL DEFAULT '',
+    color                  VARCHAR(7)       NOT NULL CHECK (color ~ '^#[0-9a-fA-F]{6}$'),
+    measurement_presets_mm DOUBLE PRECISION[] NOT NULL DEFAULT '{}',
+    angle_deg              SMALLINT         NOT NULL DEFAULT 180 CHECK (angle_deg IN (90, 180, 270)),
+    finish                 VARCHAR(16)      NOT NULL DEFAULT 'none' CHECK (finish IN ('none', 'mitered')),
+    sort_order             INTEGER          NOT NULL DEFAULT 0,
+    created_at             TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_drawing_attached_profile_type_name ON drawing_attached_profile_type (LOWER(name));
+
+INSERT INTO drawing_attached_profile_type (system_key, name, price, alias, color, measurement_presets_mm, angle_deg, finish, sort_order) VALUES
+    ('backsplash', 'Backsplash',  12, 'BS', '#2563eb', ARRAY[101.6, 152.4]::DOUBLE PRECISION[], 90,  'none',    1),
+    ('lamination', 'Lamination',  18, 'LM', '#9333ea', ARRAY[38.1, 50.8]::DOUBLE PRECISION[],    180, 'mitered', 2),
+    ('miter_edge', 'Miter Edge',  15, 'ME', '#f59e0b', ARRAY[38.1]::DOUBLE PRECISION[],           90,  'mitered', 3),
+    ('waterfall',  'Waterfall',   22, 'WF', '#ec4899', ARRAY[609.6, 762.0]::DOUBLE PRECISION[],   270, 'mitered', 4)
 ON CONFLICT DO NOTHING;
 
 -- Indexes -- listing/filtering (all partial on live rows) -------------------
@@ -8593,6 +8633,12 @@ ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS bank_routing_number VARCHAR
 -- sales_order, invoice) as {"invoice": {"terms": "...", "notes": "..."}}.
 -- Empty object means no defaults: the PDF then omits those sections.
 ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS document_defaults JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Company Preferences tab (Configuration -> Company Info -> Company
+-- Preferences): fabrication sq ft = countertop sq ft x (1 + this% / 100), shown
+-- in the drawing editor's sq ft breakdown. 20 is a starting default, not a
+-- measured number -- tenants are expected to tune it.
+ALTER TABLE company_profile ADD COLUMN IF NOT EXISTS fabrication_percent NUMERIC(5,2) NOT NULL DEFAULT 20;
 
 -- (company_location is defined earlier in this file, ahead of the inventory
 -- tables that reference it -- see "Company locations" above.)

@@ -1490,6 +1490,12 @@ func main() {
 		mux.Handle("GET /api/tenant/settings/edge-types", tenantChain(controllers.GetEdgeTypes))
 		mux.Handle("POST /api/tenant/settings/edge-types", tenantChain(controllers.CreateEdgeType))
 		mux.Handle("PUT /api/tenant/settings/edge-types/{id}", tenantChain(controllers.UpdateEdgeType))
+		// The shop's own attached-profile types for the Profiles tool (name, price, alias,
+		// colour, measurement presets, angle, finish). Reading is open to any tenant user;
+		// writing needs sales_order:update.
+		mux.Handle("GET /api/tenant/settings/attached-profile-types", tenantChain(controllers.GetAttachedProfileTypes))
+		mux.Handle("POST /api/tenant/settings/attached-profile-types", tenantChain(controllers.CreateAttachedProfileType))
+		mux.Handle("PUT /api/tenant/settings/attached-profile-types/{id}", tenantChain(controllers.UpdateAttachedProfileType))
 		mux.Handle("GET /api/tenant/settings/cutout-types", tenantChain(controllers.GetCutoutTypes))
 
 		// Fabrication & Installation: a production job spawned from a sales order,

@@ -69,11 +69,16 @@ func seedProfile(ctx context.Context, pool *pgxpool.Pool, metadataJSON string, d
 	if err != nil {
 		return false, fmt.Errorf("check existing company profile: %w", err)
 	}
-	if !reflect.DeepEqual(*existing, companyprofile.Profile{}) {
+	if !reflect.DeepEqual(*existing, companyprofile.Blank()) {
 		return false, nil
 	}
 	if dryRun {
 		return true, nil
+	}
+	// Onboarding metadata has no markup field; keep the tenant on the same
+	// default a never-saved profile reads back with, not 0%.
+	if profile.FabricationPercent == 0 {
+		profile.FabricationPercent = companyprofile.DefaultFabricationPercent
 	}
 	if err := companyprofile.Upsert(ctx, pool, profile); err != nil {
 		return false, fmt.Errorf("seed company profile: %w", err)

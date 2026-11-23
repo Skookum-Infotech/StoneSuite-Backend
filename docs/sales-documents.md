@@ -216,6 +216,19 @@ date without being fully paid shows as Overdue. An invoice with payments or
 credit memos applied to it can't be voided — unapply them first. Once an
 invoice is Void it stays Void.
 
+### Invoice list: selecting, exporting and saved views
+
+On the Invoices list, tick the checkbox on one or more rows (the header
+checkbox selects every row on the page) and use Export selected (CSV) to
+download just those invoices.
+
+Saved views remember a search and sort so you can come back to it. Set up the
+list the way you want, type a name in the View name box and choose Save view.
+Pick a saved view from the Saved views menu to apply it, or delete the one
+you have applied. Views are kept in your browser, so they are private to you
+on that browser and are not shared with other people or other devices. You can
+keep up to 20.
+
 ## Payments
 
 A Payment records money received from a customer, created from Sales →

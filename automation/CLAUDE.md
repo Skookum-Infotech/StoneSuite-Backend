@@ -30,7 +30,7 @@ machine after the response).
 4. **Audit observers are a list** (`workflow.RegisterAuditObserver`). Each one runs
    panic-isolated, and none may block the write.
 5. **AR dunning (`ar_dunning`, `automation/ar_*.go`)** emails one digest per customer per
-   day for overdue/due-soon invoices. All five system automation rules (`ar_dunning`, `quote_expiry`, `estimate_expiry`, `approval_stuck`, `anomaly_scan`) are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
+   day for overdue/due-soon invoices. All six system automation rules (`ar_dunning`, `quote_expiry`, `estimate_expiry`, `approval_stuck`, `vendor_bill_due`, `anomaly_scan`) are seeded **enabled** with `enabled_at` stamped (a NULL `enabled_at` makes every stage `pre_enable` forever), so the platform switch is the only master gate; tenants can still toggle it via
    `GET /api/tenant/automation/rules` (`automation:read`) and `PUT /api/tenant/automation/rules/{key}`
    (`automation:configure`, body `{"enabled":bool}`). Enabling stamps `automation_state.enabled_at`
    only on a disabled-to-enabled change (re-enable resets it, so no backlog blast); the rule
@@ -58,3 +58,4 @@ machine after the response).
    record re-enters the gate (new history row, new anchor). The internal path honours only the
    kill switch (plus the 08:00–18:00 send window), and the email links in-app (login required),
    not a public link. The preview endpoint does not support this rule.
+9. **Vendor bill due reminders (`vendor_bill_due`, job `vendor_bill_reminders`, `automation/vendorbill_*.go`)** are seeded **enabled** (`enabled_at` stamped) with a `-3/0`-day cadence relative to `vendor_bill_due_date`. Owner-only **internal** digests (kill switch + 08:00–18:00 window only). Candidates are `APPV`/`PART`/`ODUE` bills with a live balance (`grand_total - amount_paid - credit_total > 0`) due in [today-2, today+3]; `PINI` is excluded (payment in flight). The renderer re-checks live and drops `voided`, `paid`, `payment_initiated`, `not_payable`, `anchor_changed`, `owner_changed`, `no_email`. The email links in-app (login required). The preview endpoint does not support this rule.

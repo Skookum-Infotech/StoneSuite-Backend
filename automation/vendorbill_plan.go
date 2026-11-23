@@ -1,0 +1,97 @@
+package automation
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// planVendorBills writes the delivery rows for every vendor bill stage already
+// due, in one transaction, and returns how many planned/skipped rows were newly inserted.
+func planVendorBills(ctx context.Context, pool *pgxpool.Pool, env JobEnv, rule ruleRow) (planned, skipped int, err error) {
+	ctx = WithSystemActor(ctx)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("vendor bill plan begin: %w", err)
+	}
+	planned, skipped, err = planVendorBillsTx(ctx, tx, env, rule)
+	if err != nil {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			err = fmt.Errorf("%w (rollback: %v)", err, rbErr)
+		}
+		return 0, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("vendor bill plan commit: %w", err)
+	}
+	return planned, skipped, nil
+}
+
+// planVendorBillsTx is the body of planVendorBills, run against an open transaction.
+func planVendorBillsTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule ruleRow) (planned, skipped int, err error) {
+	cands, err := listVendorBillCandidates(ctx, tx, env.Today)
+	if err != nil {
+		return 0, 0, err
+	}
+	uuids := make([]string, 0, len(cands))
+	anchors := make([]time.Time, 0, len(cands))
+	for _, c := range cands {
+		uuids = append(uuids, c.UUID)
+		anchors = append(anchors, c.DueDate)
+	}
+	if planned, skipped, err = insertDeliveries(ctx, tx, rule.ID, resourceVendorBill, recipientInternal, vendorBillInsertsFor(cands, env, rule)); err != nil {
+		return 0, 0, err
+	}
+	if err := supersedeAnchors(ctx, tx, rule.ID, resourceVendorBill, uuids, anchors); err != nil {
+		return 0, 0, err
+	}
+	if err := markPlanned(ctx, tx, rule.ID, env.Now); err != nil {
+		return 0, 0, err
+	}
+	return planned, skipped, nil
+}
+
+// vendorBillInsertsFor is the candidate/stage loop: a pure function of its inputs.
+func vendorBillInsertsFor(cands []VendorBillDoc, env JobEnv, rule ruleRow) []deliveryInsert {
+	offsets := make([]int, len(rule.Config.Cadence))
+	for i, st := range rule.Config.Cadence {
+		offsets[i] = st.OffsetDays
+	}
+	enabledOn := env.Today // enabled_at NULL: nothing retroactive
+	if !rule.EnabledOn.IsZero() {
+		enabledOn = localDate(rule.EnabledOn, env.Loc)
+	}
+	runAt := NextSendWindow(env.Now, env.Loc)
+	sendDay := localDate(runAt, env.Loc) // bills reminded the same morning share one digest
+
+	var out []deliveryInsert
+	for _, c := range cands {
+		for _, sp := range PlanStages(c.DueDate, offsets, env.Today, enabledOn) {
+			ins := deliveryInsert{RecordID: c.UUID, Anchor: c.DueDate, Stage: sp.Stage,
+				Key:   OccurrenceKey(rule.ID, resourceVendorBill, c.UUID, c.DueDate, sp.Stage),
+				Email: c.OwnerEmail, RunAt: env.Now, Status: statusSkipped}
+			reason := string(sp.Action)
+			if sp.Action == StageActionPlan {
+				if c.OwnerEmail == "" {
+					reason = reasonNoEmail
+				} else {
+					digest := DigestKey(rule.ID, c.OwnerEmail, sendDay)
+					ins.Status, ins.RunAt, ins.Digest, reason = statusPlanned, runAt, &digest, ""
+				}
+			}
+			if reason != "" {
+				ins.Reason = &reason
+			}
+			if c.OwnerUserID != "" {
+				uid := c.OwnerUserID
+				ins.UserID = &uid
+			}
+			out = append(out, ins)
+		}
+	}
+	return out
+}

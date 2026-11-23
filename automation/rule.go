@@ -25,3 +25,6 @@ type ARCadenceStage struct {
 type ARRuleConfig struct {
 	Cadence []ARCadenceStage `json:"cadence"`
 }
+
+// RuleKeyVendorBillDue is the rule_key of the seeded vendor-bill-due reminder rule.
+const RuleKeyVendorBillDue = "vendor_bill_due"

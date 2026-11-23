@@ -176,6 +176,25 @@ Paid, or Void — the same progression an Invoice you send to your own
 customers follows, just on the vendor side. Vendor Payments and Vendor
 Credits are applied against a bill to move it toward Paid.
 
+### Due-date reminders
+
+The owner of an approved vendor bill gets an email, and an in-app
+notification, three days before the due date and again on the due date.
+Several bills on the same morning arrive as one reminder, listing each bill's
+vendor, the balance still owed and how many days remain.
+
+- Only bills that are Approved, Partially Paid or Overdue are reminded. Drafts,
+  bills waiting for approval, Paid and Void bills are not.
+- A bill whose payment has been started (Payment Initiated) is dropped, since
+  the money is already on its way. A balance fully covered by vendor credits is
+  dropped too.
+- If you change the due date, the reminder follows the new date. A bill with no
+  due date is never reminded.
+- Reminders go out between 8:00 and 6:00 in your workspace's time zone, and
+  only to an owner with an active account and an email address.
+- An admin can turn this off under Automation → Rules ("Vendor bill due
+  reminders").
+
 ## Create a purchase order or vendor bill from a document
 
 When your workspace has it turned on, Purchases → Purchase Orders and

@@ -143,7 +143,7 @@ func TestRenderVendorBillDigest(t *testing.T) {
 	early := vbDoc("VBIL-1", "o@x.io", 21)
 	early.Route = "/purchasing/vendor-bills/x"
 	in := []VendorBillDoc{late, early}
-	e := renderVendorBillDigest("Acme Stone", in, today)
+	e := renderVendorBillDigest("Acme Stone", in, today, vendorBillOwnerReason)
 	assert.Equal(t, []VendorBillDoc{late, early}, in, "input must not be reordered")
 	require.Len(t, e.Details, 2)
 	assert.Equal(t, "Vendor bill VBIL-1", e.Details[0].Label, "earliest due first")
@@ -167,4 +167,12 @@ func TestDefaultJobsIncludesVendorBillReminders(t *testing.T) {
 		names = append(names, j.Name())
 	}
 	assert.Contains(t, names, vendorBillJobName)
+}
+
+func TestVendorBillReasonFor(t *testing.T) {
+	mine := VendorBillDoc{OwnerUserID: "u1"}
+	unowned := VendorBillDoc{}
+	assert.Equal(t, vendorBillOwnerReason, vendorBillReasonFor([]VendorBillDoc{mine}, "u1"))
+	assert.Equal(t, vendorBillApproverReason, vendorBillReasonFor([]VendorBillDoc{unowned}, "u1"), "an unowned bill reaches approvers")
+	assert.Equal(t, vendorBillApproverReason, vendorBillReasonFor([]VendorBillDoc{mine, unowned}, "u1"), "any bill they do not own makes it an approver notice")
 }

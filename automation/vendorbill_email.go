@@ -16,7 +16,8 @@ const (
 	vendorBillEventType   = "automation.vendor_bill_due"
 	vendorBillTitle       = "Vendor bill due reminder"
 	vendorBillActionLabel = "Open in StoneSuite"
-	vendorBillEmailReason = "you own a vendor bill that is due for payment."
+	vendorBillOwnerReason    = "you own a vendor bill that is due for payment."
+	vendorBillApproverReason = "you are an approver of a vendor bill that is due for payment."
 )
 
 // vendorBillTiming words a bill's due date relative to today.
@@ -42,8 +43,19 @@ func vendorBillBody(n int) string {
 	return fmt.Sprintf("%d vendor bills need payment.", n)
 }
 
-// renderVendorBillDigest builds the owner-facing reminder, earliest due date first.
-func renderVendorBillDigest(company string, items []VendorBillDoc, today time.Time) services.Email {
+// vendorBillReasonFor says why this recipient is told: they own every listed bill, or they are an approver.
+func vendorBillReasonFor(items []VendorBillDoc, userID string) string {
+	for _, it := range items {
+		if it.OwnerUserID != userID {
+			return vendorBillApproverReason
+		}
+	}
+	return vendorBillOwnerReason
+}
+
+// renderVendorBillDigest builds the reminder for one recipient, earliest due date first; reason is the
+// "you are receiving this because" clause.
+func renderVendorBillDigest(company string, items []VendorBillDoc, today time.Time, reason string) services.Email {
 	sorted := append([]VendorBillDoc(nil), items...)
 	sort.SliceStable(sorted, func(a, b int) bool {
 		if !sameDay(sorted[a].DueDate, sorted[b].DueDate) {
@@ -74,7 +86,7 @@ func renderVendorBillDigest(company string, items []VendorBillDoc, today time.Ti
 		Greet:      true,
 		Paragraphs: []services.Paragraph{lead},
 		Details:    details,
-		Reason:     vendorBillEmailReason,
+		Reason:     reason,
 	}
 	if len(sorted) > 0 && sorted[0].Route != "" {
 		if email.ActionURL = services.AppURL(sorted[0].Route); email.ActionURL != "" {
@@ -132,7 +144,7 @@ func (r vendorBillRenderer) Render(ctx context.Context, env JobEnv, g Group) (se
 	if err != nil {
 		return services.NotificationRequest{}, nil, nil, fmt.Errorf("vendor bill digest company profile: %w", err)
 	}
-	email := renderVendorBillDigest(profile.CompanyName, live, env.Today)
+	email := renderVendorBillDigest(profile.CompanyName, live, env.Today, vendorBillReasonFor(live, recipient.UserID))
 	earliest := live[0]
 	for _, d := range live[1:] {
 		if d.DueDate.Before(earliest.DueDate) {

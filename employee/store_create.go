@@ -88,7 +88,7 @@ const errEmailTaken = "An employee with this email already exists."
 // it starts there (not yet usable anywhere); otherwise it is Active at once and
 // gets its Vendor record in the same transaction.
 func Create(ctx context.Context, pool *pgxpool.Pool, in CreateEmployeeInput, actorEmployeeID int) (*Employee, error) {
-	f := in.employeeFields.normalize()
+	f := in.normalize()
 	if err := f.validate(); err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateEmployeeInput, act
 // over to its Vendor record. The email of an employee that is a login user is
 // its sign-in identity and cannot be changed here.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateEmployeeInput, actorEmployeeID int) (*Employee, error) {
-	f := in.employeeFields.normalize()
+	f := in.normalize()
 	if err := f.validate(); err != nil {
 		return nil, err
 	}

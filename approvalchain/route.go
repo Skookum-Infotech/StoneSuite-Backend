@@ -30,6 +30,7 @@ var moduleRoutes = map[string]moduleRoute{
 	"credit_memo":    {Domain: "sales", Module: "credit_memo"},
 	"refund":         {Domain: "sales", Module: "refund"},
 	"bin_transfer":   {Domain: "inventory", Module: "bin_transfer"},
+	"employee":       {Domain: "config", Module: "employees"},
 }
 
 // listOnlyRoutes maps the modules that predate the engine (and so are absent

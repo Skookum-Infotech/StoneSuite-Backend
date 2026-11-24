@@ -33,7 +33,8 @@ const vbSelect = `
 	       vb.vendor_bill_custom_fields,
 	       vb.vendor_bill_created_at, vb.vendor_bill_updated_at, vb.vendor_bill_record_version,
 	       vb.vendor_bill_id, vb.vendor_bill_status, vb.vendor_bill_vendor_id,
-	       COALESCE(cu.id::text,'')
+	       COALESCE(cu.id::text,''),
+	       COALESCE(ex.expense_uuid::text,''), COALESCE(ex.expense_number,'')
 	FROM vendor_bill vb
 	JOIN lkp_record_status rs ON rs.record_status_id = vb.vendor_bill_status
 	JOIN vendor v ON v.vendor_id = vb.vendor_bill_vendor_id
@@ -41,7 +42,8 @@ const vbSelect = `
 	LEFT JOIN employee oe ON oe.employee_id = vb.vendor_bill_owner_id
 	LEFT JOIN users ou ON ou.id = oe.employee_user_id
 	LEFT JOIN employee ce ON ce.employee_id = vb.vendor_bill_created_by
-	LEFT JOIN users cu ON cu.id = ce.employee_user_id`
+	LEFT JOIN users cu ON cu.id = ce.employee_user_id
+	LEFT JOIN expense ex ON ex.expense_id = vb.vendor_bill_expense_id`
 
 // vbMeta carries the internal numeric ids a vendor bill row has but the API
 // response deliberately does not expose. Search needs them to mint a keyset
@@ -60,6 +62,7 @@ func scanVendorBill(row pgx.Row) (*VendorBill, vbMeta, error) {
 		custom                     map[string]any
 		meta                       vbMeta
 		poUUID, poNum              string
+		expUUID, expNum            string
 	)
 	err := row.Scan(
 		&b.ID, &b.Number,
@@ -78,9 +81,13 @@ func scanVendorBill(row pgx.Row) (*VendorBill, vbMeta, error) {
 		&b.AmountPaid, &b.BalanceDue,
 		&custom, &b.CreatedAt, &b.UpdatedAt, &b.RecordVersion,
 		&meta.internalID, &meta.statusID, &meta.vendorID, &b.CreatedByUserID,
+		&expUUID, &expNum,
 	)
 	if err != nil {
 		return nil, vbMeta{}, err
+	}
+	if expUUID != "" {
+		b.Expense = &ExpenseRef{ID: expUUID, Number: expNum}
 	}
 	if poUUID != "" {
 		b.PurchaseOrder = &PurchaseOrderRef{ID: poUUID, Number: poNum}

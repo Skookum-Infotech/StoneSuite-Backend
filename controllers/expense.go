@@ -30,12 +30,13 @@ import (
 //
 //	GET    /api/tenant/expenses                    — unfiltered list (cursor-paginated)
 //	POST   /api/tenant/expenses/search             — filter + sort + search + pagination
-//	POST   /api/tenant/expenses                    — create (claimant = caller)
+//	POST   /api/tenant/expenses                    — create (claimant = caller unless claimantEmployeeId is sent)
 //	GET    /api/tenant/expenses/categories         — active lkp_expense_category rows (line category picker)
+//	GET    /api/tenant/expenses/claimants          — Active employees a claim can be filed for
 //	GET    /api/tenant/expenses/{uuid}             — get (+ items)
 //	PATCH  /api/tenant/expenses/{uuid}             — update (DRFT only)
 //	DELETE /api/tenant/expenses/{uuid}             — soft delete (DRFT only)
-//	POST   /api/tenant/expenses/{uuid}/transition  — status change (submit/recall/revise/reimburse/approve-after-quorum)
+//	POST   /api/tenant/expenses/{uuid}/transition  — status change (submit/recall/revise; Paid is set by the vendor bill, never by hand)
 //	POST   /api/tenant/expenses/{uuid}/approve     — approval sign-off
 //	POST   /api/tenant/expenses/{uuid}/reject      — reject (dedicated, always captures a reason)
 //	GET    /api/tenant/expenses/{uuid}/audit       — audit trail
@@ -114,6 +115,14 @@ func (h *ExpenseOps) authExpByUUID(w http.ResponseWriter, r *http.Request, uuid 
 			fail(w, http.StatusInternalServerError, "Permission check failed.")
 			return nil, "", nil, false
 		}
+		// Whoever filed the claim for someone else keeps access to it.
+		if !allowed && exp.CreatorUserID != "" {
+			allowed, aerr = recordInScope(r.Context(), pool, scope, identityID, exp.CreatorUserID)
+			if aerr != nil {
+				fail(w, http.StatusInternalServerError, "Permission check failed.")
+				return nil, "", nil, false
+			}
+		}
 		if !allowed {
 			logSecurityEvent(r, "idor_denied",
 				"identity", identityID, "record", uuid, "resource", string(authz.ResourceExpense),
@@ -191,6 +200,28 @@ func (h *ExpenseOps) Categories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "categories": cats})
+}
+
+// Claimants GET /api/tenant/expenses/claimants
+// Lists the Active employees a claim can be filed for (the expense form's
+// Employee picker; id is the employee id, code the email). Gated by expense:read
+// rather than employee:read, since anyone who files claims needs the list.
+func (h *ExpenseOps) Claimants(w http.ResponseWriter, r *http.Request) {
+	pool, _, _, ok := h.authExp(w, r, authz.ActionRead)
+	if !ok {
+		return
+	}
+	claimants, err := queryLookupItems(r.Context(), pool, `
+		SELECT employee_id, employee_email,
+		       COALESCE(NULLIF(TRIM(employee_first_name || ' ' || employee_last_name), ''), employee_email)
+		FROM employee
+		WHERE employee_is_active AND NOT employee_is_system AND employee_deleted_at IS NULL
+		ORDER BY 3`)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Failed to load employees.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "claimants": claimants})
 }
 
 // Create POST /api/tenant/expenses

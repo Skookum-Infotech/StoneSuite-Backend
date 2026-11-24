@@ -33,6 +33,7 @@ const (
 	domainSales     = "sales"
 	domainPurchases = "purchases"
 	domainInventory = "inventory"
+	domainConfig    = "config"
 )
 
 var metas = map[string]Meta{
@@ -53,6 +54,8 @@ var metas = map[string]Meta{
 	"expense":        {Label: "Expense Claim", Resource: authz.ResourceExpense, Domain: domainPurchases, RouteModule: "expense", AmountColumn: "expense_total"},
 
 	"bin_transfer": {Label: "Bin Transfer", Resource: authz.ResourceBinTransfer, Domain: domainInventory, RouteModule: "bin_transfer"},
+
+	"employee": {Label: "Employee", Resource: authz.ResourceEmployee, Domain: domainConfig, RouteModule: "employees"},
 }
 
 // MetaFor returns the inbox metadata for a workflow key.

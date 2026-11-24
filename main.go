@@ -1374,6 +1374,20 @@ func main() {
 		mux.Handle("POST /api/tenant/inventory/bin-transfers/{uuid}/complete", tenantChain(invBinTrf.Complete))
 		mux.Handle("GET /api/tenant/inventory/bin-transfers/{uuid}/history", tenantChain(invBinTrf.History))
 
+		// Employees (Configuration > Employee): the staff directory. A new employee
+		// goes through the approval chain configured under Configure > Workflows >
+		// Employee, and an Active one gets a vendor record of type "Employee".
+		cfgEmp := controllers.NewEmployeeOps()
+		mux.Handle("GET /api/tenant/employees", tenantChain(cfgEmp.List))
+		mux.Handle("POST /api/tenant/employees/search", tenantChain(cfgEmp.Search))
+		mux.Handle("POST /api/tenant/employees", tenantChain(cfgEmp.Create))
+		mux.Handle("GET /api/tenant/employees/{uuid}", tenantChain(cfgEmp.Get))
+		mux.Handle("PATCH /api/tenant/employees/{uuid}", tenantChain(cfgEmp.Update))
+		mux.Handle("POST /api/tenant/employees/{uuid}/transition", tenantChain(cfgEmp.Transition))
+		mux.Handle("POST /api/tenant/employees/{uuid}/approve", tenantChain(cfgEmp.Approve))
+		mux.Handle("POST /api/tenant/employees/{uuid}/reject", tenantChain(cfgEmp.Reject))
+		mux.Handle("GET /api/tenant/employees/{uuid}/history", tenantChain(cfgEmp.History))
+
 		invCnt := controllers.NewInventoryCountOps()
 		mux.Handle("GET /api/tenant/inventory/counts", tenantChain(invCnt.List))
 		mux.Handle("POST /api/tenant/inventory/counts/search", tenantChain(invCnt.Search))
@@ -1763,12 +1777,15 @@ func main() {
 		mux.Handle("POST /api/tenant/expenses/search", tenantChain(expOps.Search))
 		mux.Handle("POST /api/tenant/expenses", tenantChain(expOps.Create))
 		mux.Handle("GET /api/tenant/expenses/categories", tenantChain(expOps.Categories))
+		mux.Handle("GET /api/tenant/expenses/claimants", tenantChain(expOps.Claimants))
+		mux.Handle("GET /api/tenant/expenses/billable", tenantChain(expOps.Billable))
 		mux.Handle("GET /api/tenant/expenses/{uuid}", tenantChain(expOps.Get))
 		mux.Handle("PATCH /api/tenant/expenses/{uuid}", tenantChain(expOps.Update))
 		mux.Handle("DELETE /api/tenant/expenses/{uuid}", tenantChain(expOps.Delete))
 		mux.Handle("POST /api/tenant/expenses/{uuid}/transition", tenantChain(expOps.Transition))
 		mux.Handle("POST /api/tenant/expenses/{uuid}/approve", tenantChain(expOps.Approve))
 		mux.Handle("POST /api/tenant/expenses/{uuid}/reject", tenantChain(expOps.Reject))
+		mux.Handle("POST /api/tenant/expenses/{uuid}/create-bill", tenantChain(expOps.CreateBill))
 		mux.Handle("GET /api/tenant/expenses/{uuid}/audit", tenantChain(expOps.Audit))
 
 		// Invoice: dedicated v2 relational module, sibling of sales order.

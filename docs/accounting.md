@@ -58,9 +58,17 @@ time.
 
 An Expense records a business cost, created from Purchases → Expenses → New
 Expense. It moves through Draft, Submitted, Approved, or Rejected, and
-finally Reimbursed once paid back. A rejected expense shows the rejection
-reason. If approvers are configured for expenses, a submitted expense waits
-for their sign-off before it can be approved.
+finally Paid. A rejected expense shows the rejection reason. The Employee
+field says who the expense is for; it starts as you, and you can pick another
+active employee to file it for them. If approvers are configured for expenses,
+a submitted expense waits for their sign-off before it can be approved.
+
+When an expense is approved, a Vendor Bill is created automatically from it,
+billed by the employee's vendor record, with one bill line per expense line. That
+bill follows the normal Vendor Bill workflow: it needs its own approval, then you
+record a payment against it, which creates a Vendor Payment. When the Vendor
+Payment is marked Paid, the Vendor Bill and the Expense both become Paid. The
+expense page links to its bill. Paid cannot be set by hand.
 
 ## Approvals in Finance
 

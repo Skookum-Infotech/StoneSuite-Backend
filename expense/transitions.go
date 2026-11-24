@@ -12,13 +12,15 @@ var ErrInvalidTransition = errors.New("invalid expense status transition")
 // via the generic Transition path. RJCT is deliberately absent from SUBM's
 // set -- rejection is a dedicated decision (Reject, approval.go) that always
 // captures a reason and never requires quorum, unlike a generic transition
-// (spec AD-5). Terminal state (REIM) maps to an empty set.
+// (spec AD-5). APPV has no manual way out: the claim becomes PAID only when the
+// vendor bill raised from it is paid (vendorbill.syncExpenseTx), and PAID is
+// terminal.
 var allowedTransitions = map[string]map[string]bool{
 	"DRFT": {"SUBM": true},
 	"SUBM": {"APPV": true, "DRFT": true},
-	"APPV": {"REIM": true},
+	"APPV": {},
 	"RJCT": {"DRFT": true},
-	"REIM": {},
+	"PAID": {},
 }
 
 // CanTransition reports whether moving fromCode->toCode is allowed.

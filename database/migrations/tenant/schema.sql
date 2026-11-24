@@ -10606,3 +10606,15 @@ ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
 INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
 SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'PORD'
 ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- ── Automation: install-tomorrow site visit reminders (internal) ──
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
+-- the offset is days relative to the visit's local start date (-1 = the day before).
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('install_tomorrow', 'Install tomorrow reminders', TRUE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":-1}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'install_tomorrow'
+ON CONFLICT (rule_id) DO NOTHING;

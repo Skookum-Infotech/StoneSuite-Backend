@@ -199,3 +199,24 @@ Visits are never deleted. Use cancel instead.
 - Customers cannot see their visits through the customer portal.
 - Install Schedule does not check your crew's working hours or time off.
   Conflicts are only about other visits.
+
+## Reminders the day before a visit
+
+Each crew member booked on a visit gets a reminder email, and an in-app
+notification, the day before the visit. One reminder covers all of that
+person's visits for the day. It lists the kind of visit, the job number, the
+customer and the start time in the visit's own time zone, and links back to
+Install Schedule.
+
+- Reminders are sent in the morning, between 8:00 and 6:00 in your workspace's
+  time zone, never overnight.
+- A visit that is cancelled or completed, or whose job is cancelled or deleted,
+  is dropped before sending. If you move a visit to another day, the reminder
+  follows the new date.
+- A visit booked the evening before, or on the day itself, still gets one
+  reminder, worded "today". Crew members you add later get their own reminder;
+  people who already had one are not reminded twice.
+- Crew members without an active StoneSuite account with an email address are
+  skipped.
+- An admin can turn the reminder on or off under Automation → Rules
+  ("Install tomorrow reminders"). It is on by default for new workspaces.

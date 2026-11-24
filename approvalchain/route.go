@@ -30,16 +30,18 @@ var moduleRoutes = map[string]moduleRoute{
 	"credit_memo":    {Domain: "sales", Module: "credit_memo"},
 	"refund":         {Domain: "sales", Module: "refund"},
 	"bin_transfer":   {Domain: "inventory", Module: "bin_transfer"},
-}
-
-// listOnlyRoutes maps the modules that predate the engine (and so are absent
-// from moduleRoutes, whose record deep links stay unchanged) to their frontend
-// list pages, so a delete notification still has somewhere useful to link.
-var listOnlyRoutes = map[string]moduleRoute{
+	// Not wired for approval notifications (no DisplayName), but the stuck-approval reminders
+	// link to them, and the web app serves their records at these paths.
 	"quote":       {Domain: "sales", Module: "quote"},
 	"estimate":    {Domain: "sales", Module: "estimate"},
 	"sales_order": {Domain: "sales", Module: "sales_order"},
 }
+
+// listOnlyRoutes maps modules that have a frontend list page but no record deep link to
+// that list page, so a delete notification still has somewhere useful to link. It is
+// currently empty: quote, estimate and sales_order moved to moduleRoutes when the
+// stuck-approval reminders began linking to them. A module added here keeps list-only links.
+var listOnlyRoutes = map[string]moduleRoute{}
 
 // resourceRoute builds a notification's deep-link path for resource+recordID,
 // or "" if resource has no known route -- an unmapped resource must never

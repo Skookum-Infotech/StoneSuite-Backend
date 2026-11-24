@@ -66,15 +66,32 @@ type vendorBillFacts struct {
 // listVendorBillCandidates returns approved, unpaid, live bills whose due date
 // falls within [today-2d, today+3d].
 func listVendorBillCandidates(ctx context.Context, q Querier, today time.Time) ([]VendorBillDoc, error) {
-	rows, err := q.Query(ctx, vendorBillSelect+`
+	return scanVendorBills(ctx, q, vendorBillSelect+`
 WHERE rs.record_status_code = ANY($1::text[])
   AND vb.vendor_bill_due_date BETWEEN $2::date - $3::int AND $2::date + $4::int
   AND vb.vendor_bill_deleted_at IS NULL
   AND (vb.vendor_bill_grand_total - vb.vendor_bill_amount_paid - vb.vendor_bill_credit_total) > 0
 ORDER BY vb.vendor_bill_due_date, vb.vendor_bill_id`,
 		vendorBillRemindStatuses, today, vendorBillLookbackDays, vendorBillLookaheadDays)
+}
+
+// listVendorBillsDueBy returns approved, unpaid, live bills due on or before today+days, overdue
+// ones included (the daily digest keeps reporting a bill until it is paid).
+func listVendorBillsDueBy(ctx context.Context, q Querier, today time.Time, days int) ([]VendorBillDoc, error) {
+	return scanVendorBills(ctx, q, vendorBillSelect+`
+WHERE rs.record_status_code = ANY($1::text[])
+  AND vb.vendor_bill_due_date <= $2::date + $3::int
+  AND vb.vendor_bill_deleted_at IS NULL
+  AND (vb.vendor_bill_grand_total - vb.vendor_bill_amount_paid - vb.vendor_bill_credit_total) > 0
+ORDER BY vb.vendor_bill_due_date, vb.vendor_bill_id`,
+		vendorBillRemindStatuses, today, days)
+}
+
+// scanVendorBills runs a query built on vendorBillSelect and decodes every row.
+func scanVendorBills(ctx context.Context, q Querier, sql string, args ...any) ([]VendorBillDoc, error) {
+	rows, err := q.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list vendor bill candidates: %w", err)
+		return nil, fmt.Errorf("list vendor bills: %w", err)
 	}
 	defer rows.Close()
 	var out []VendorBillDoc
@@ -84,7 +101,7 @@ ORDER BY vb.vendor_bill_due_date, vb.vendor_bill_id`,
 		var ownerStatus string // the owner is judged when recipients are resolved, not here
 		if err := rows.Scan(&d.UUID, &d.Number, &d.VendorName, &d.OwnerEmail, &d.OwnerUserID, &d.OwnerIdentityID,
 			&f.DueDate, &f.Status, &f.Deleted, &ownerStatus, &d.Balance); err != nil {
-			return nil, fmt.Errorf("scan vendor bill candidate: %w", err)
+			return nil, fmt.Errorf("scan vendor bill: %w", err)
 		}
 		if f.DueDate != nil {
 			d.DueDate = *f.DueDate
@@ -92,7 +109,7 @@ ORDER BY vb.vendor_bill_due_date, vb.vendor_bill_id`,
 		out = append(out, d)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate vendor bill candidates: %w", err)
+		return nil, fmt.Errorf("iterate vendor bills: %w", err)
 	}
 	return out, nil
 }

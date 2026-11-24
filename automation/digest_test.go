@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"stonesuite-backend/approvalinbox"
 )
 
 var digestLoc = time.FixedZone("tenant", -5*3600)
@@ -35,13 +37,13 @@ func TestDigestPrefsValidate(t *testing.T) {
 		{"window end is closed", func(p *DigestPrefs) { p.SendHour = 18 }, false},
 		{"negative hour", func(p *DigestPrefs) { p.SendHour = -1 }, false},
 		{"on with no sections", func(p *DigestPrefs) {
-			p.Enabled, p.IncludeApprovals, p.IncludeInvoices, p.IncludeExpiring = true, false, false, false
+			p.Enabled, p.IncludeInstalls, p.IncludeVendorBills, p.IncludeApprovals = true, false, false, false
 		}, false},
 		{"off with no sections is allowed", func(p *DigestPrefs) {
-			p.Enabled, p.IncludeApprovals, p.IncludeInvoices, p.IncludeExpiring = false, false, false, false
+			p.Enabled, p.IncludeInstalls, p.IncludeVendorBills, p.IncludeApprovals = false, false, false, false
 		}, true},
 		{"one section is enough", func(p *DigestPrefs) {
-			p.Enabled, p.IncludeApprovals, p.IncludeInvoices, p.IncludeExpiring = true, false, true, false
+			p.Enabled, p.IncludeInstalls, p.IncludeVendorBills, p.IncludeApprovals = true, false, true, false
 		}, true},
 	}
 	for _, tc := range tests {
@@ -110,41 +112,71 @@ func TestDigestInsertsForIsOncePerUserPerDay(t *testing.T) {
 
 func TestDigestContentEmpty(t *testing.T) {
 	assert.True(t, digestContent{}.empty())
-	assert.False(t, digestContent{Approvals: 1}.empty())
-	assert.False(t, digestContent{OverdueInvoices: 1}.empty())
-	assert.False(t, digestContent{ExpiringQuotes: 1}.empty())
-	assert.False(t, digestContent{ExpiringEstimates: 1}.empty())
+	assert.False(t, digestContent{Installs: []InstallRow{{}}}.empty())
+	assert.False(t, digestContent{Bills: []VendorBillDoc{{}}}.empty())
+	assert.False(t, digestContent{Approvals: approvalinbox.Counts{Total: 1}}.empty())
+}
+
+func digestSample() digestContent {
+	inst := installRow("a", "c@x.io", 24)
+	bill := VendorBillDoc{Number: "VB-7", VendorName: "Granite Co", Balance: 980, DueDate: time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)}
+	return digestContent{
+		Installs: []InstallRow{inst},
+		Bills:    []VendorBillDoc{bill},
+		Approvals: approvalinbox.Counts{Total: 3, Modules: []approvalinbox.ModuleCount{
+			{WorkflowKey: "quote", Label: "Quotes", Count: 2}, {WorkflowKey: "estimate", Label: "Estimates", Count: 1}, {WorkflowKey: "sales_order", Label: "Sales Orders"}}},
+	}
 }
 
 func TestDigestDetails(t *testing.T) {
 	today := time.Date(2026, 11, 23, 0, 0, 0, 0, digestLoc)
-	oldest := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
-	rows := digestDetails(digestContent{Approvals: 3, OldestApproval: &oldest, OverdueInvoices: 1, OverdueTotal: 1250.5,
-		ExpiringQuotes: 2, ExpiringEstimates: 1}, today)
-	require.Len(t, rows, 4)
-	assert.Equal(t, "Waiting for your approval", rows[0].Label)
-	assert.Equal(t, "3 records, oldest waiting 3 days", rows[0].Value)
-	assert.Equal(t, "1 invoice, $1,250.50 outstanding", rows[1].Value)
-	assert.Equal(t, "2 quotes", rows[2].Value)
-	assert.Equal(t, "1 estimate", rows[3].Value)
+	rows := digestDetails(digestSample(), today, installLoc)
+	require.Len(t, rows, 4, "one install, one bill, and a row per module that has something waiting")
+	assert.Equal(t, "Installation Tue, Nov 24, 8:00 AM", rows[0].Label)
+	assert.Equal(t, "SORD-1 - Acme Stone", rows[0].Value)
+	assert.Equal(t, "Vendor bill VB-7 (Granite Co)", rows[1].Label)
+	assert.Equal(t, "$980.00, due tomorrow", rows[1].Value)
+	assert.Equal(t, "Quotes waiting for your approval", rows[2].Label)
+	assert.Equal(t, "2", rows[2].Value)
+	assert.Equal(t, "Estimates waiting for your approval", rows[3].Label)
 
-	assert.Empty(t, digestDetails(digestContent{}, today), "sections with nothing to report are left out")
-	one := digestDetails(digestContent{Approvals: 1}, today)
-	require.Len(t, one, 1)
-	assert.Equal(t, "1 record", one[0].Value, "no age is shown without an oldest date")
+	assert.Empty(t, digestDetails(digestContent{}, today, installLoc), "sections with nothing to report are left out")
+}
+
+func TestDigestDetailsCapsLongLists(t *testing.T) {
+	today := time.Date(2026, 11, 23, 0, 0, 0, 0, digestLoc)
+	c := digestContent{}
+	for i := 0; i < 8; i++ {
+		c.Installs = append(c.Installs, installRow("a", "c@x.io", 24))
+		c.Bills = append(c.Bills, VendorBillDoc{Number: "VB", DueDate: today})
+	}
+	rows := digestDetails(c, today, installLoc)
+	require.Len(t, rows, 2*(digestListMax+1))
+	assert.Equal(t, "+3 more", rows[digestListMax].Value)
+}
+
+func TestDigestDueWording(t *testing.T) {
+	today := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		offset int
+		want   string
+	}{{-2, "overdue by 2 days"}, {-1, "overdue by 1 day"}, {0, "due today"}, {1, "due tomorrow"}, {3, "due in 3 days"}}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, digestDueWording(today.AddDate(0, 0, tc.offset), today))
+	}
 }
 
 func TestDigestBodyAndEmail(t *testing.T) {
 	today := time.Date(2026, 11, 23, 0, 0, 0, 0, digestLoc)
 	assert.Equal(t, digestNothing, digestBody(digestContent{}))
-	assert.Equal(t, "1 item needs your attention.", digestBody(digestContent{Approvals: 5}))
-	assert.Equal(t, "2 items need your attention.", digestBody(digestContent{Approvals: 5, OverdueInvoices: 1}))
+	assert.Equal(t, "1 installation, 1 vendor bill due, 3 approvals waiting.", digestBody(digestSample()))
+	assert.Equal(t, "2 installations.", digestBody(digestContent{Installs: []InstallRow{{}, {}}}))
 
-	e := renderDigestEmail("Acme Stone", digestContent{OverdueInvoices: 2, OverdueTotal: 10}, today)
+	e := renderDigestEmail("Acme Stone", digestSample(), today, installLoc)
 	assert.Equal(t, digestTitle, e.Heading)
-	require.Len(t, e.Details, 1)
+	require.Len(t, e.Details, 4)
 
-	empty := renderDigestEmail("", digestContent{}, today)
+	empty := renderDigestEmail("", digestContent{}, today, installLoc)
 	assert.Empty(t, empty.Details)
 	require.NotEmpty(t, empty.Paragraphs)
 }

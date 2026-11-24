@@ -104,10 +104,10 @@ func (h *AutomationDigestOps) Get(w http.ResponseWriter, r *http.Request) {
 type digestPrefsPatch struct {
 	Enabled          *bool `json:"enabled"`
 	SendHour         *int  `json:"sendHour"`
-	IncludeApprovals *bool `json:"includeApprovals"`
-	IncludeInvoices  *bool `json:"includeInvoices"`
-	IncludeExpiring  *bool `json:"includeExpiring"`
-	SkipEmpty        *bool `json:"skipEmpty"`
+	IncludeInstalls    *bool `json:"includeInstalls"`
+	IncludeVendorBills *bool `json:"includeVendorBills"`
+	IncludeApprovals   *bool `json:"includeApprovals"`
+	SkipEmpty          *bool `json:"skipEmpty"`
 }
 
 // apply overlays the fields the patch sets on current.
@@ -118,14 +118,14 @@ func (p digestPrefsPatch) apply(current automation.DigestPrefs) automation.Diges
 	if p.SendHour != nil {
 		current.SendHour = *p.SendHour
 	}
+	if p.IncludeInstalls != nil {
+		current.IncludeInstalls = *p.IncludeInstalls
+	}
+	if p.IncludeVendorBills != nil {
+		current.IncludeVendorBills = *p.IncludeVendorBills
+	}
 	if p.IncludeApprovals != nil {
 		current.IncludeApprovals = *p.IncludeApprovals
-	}
-	if p.IncludeInvoices != nil {
-		current.IncludeInvoices = *p.IncludeInvoices
-	}
-	if p.IncludeExpiring != nil {
-		current.IncludeExpiring = *p.IncludeExpiring
 	}
 	if p.SkipEmpty != nil {
 		current.SkipEmpty = *p.SkipEmpty
@@ -146,7 +146,7 @@ func (h *AutomationDigestOps) Put(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxDigestPrefsBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&patch); err != nil || patch.empty() {
-		fail(w, http.StatusBadRequest, "Body must set at least one of enabled, sendHour, includeApprovals, includeInvoices, includeExpiring, skipEmpty.")
+		fail(w, http.StatusBadRequest, "Body must set at least one of enabled, sendHour, includeInstalls, includeVendorBills, includeApprovals, skipEmpty.")
 		return
 	}
 	current, err := store.Load(r.Context(), userID)

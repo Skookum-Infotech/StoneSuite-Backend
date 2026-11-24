@@ -10639,9 +10639,9 @@ CREATE TABLE IF NOT EXISTS automation_digest_prefs (
     user_id           UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     enabled           BOOLEAN     NOT NULL DEFAULT FALSE,
     send_hour         SMALLINT    NOT NULL DEFAULT 8,
+    include_installs  BOOLEAN     NOT NULL DEFAULT TRUE,
+    include_vendor_bills BOOLEAN  NOT NULL DEFAULT TRUE,
     include_approvals BOOLEAN     NOT NULL DEFAULT TRUE,
-    include_invoices  BOOLEAN     NOT NULL DEFAULT TRUE,
-    include_expiring  BOOLEAN     NOT NULL DEFAULT TRUE,
     skip_empty        BOOLEAN     NOT NULL DEFAULT TRUE,
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT automation_digest_prefs_hour_chk CHECK (send_hour BETWEEN 8 AND 17)

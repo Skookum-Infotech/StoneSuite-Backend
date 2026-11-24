@@ -27,7 +27,7 @@ func TestDigestPrefsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, DefaultDigestPrefs(), got, "a user with no row has the defaults, digest off")
 
-	want := DigestPrefs{Enabled: true, SendHour: 14, IncludeApprovals: false, IncludeInvoices: true, IncludeExpiring: true, SkipEmpty: false}
+	want := DigestPrefs{Enabled: true, SendHour: 14, IncludeInstalls: true, IncludeVendorBills: false, IncludeApprovals: true, SkipEmpty: false}
 	require.NoError(t, SaveDigestPrefs(f.ctx, f.tx, userID, want))
 	got, err = LoadDigestPrefs(f.ctx, f.tx, userID)
 	require.NoError(t, err)
@@ -105,100 +105,131 @@ func TestListDigestRecipients(t *testing.T) {
 	assert.False(t, found, "a deactivated user is gone")
 }
 
-func TestDigestOverdueInvoiceSummary(t *testing.T) {
-	f := newARFixture(t)
-	cust := f.customer(arCust{})
-	mine, _ := f.employeeWithUser("inv-mine@x.io", "active")
-	other, _ := f.employeeWithUser("inv-other@x.io", "active")
-	mk := func(owner int, i arInv) {
-		i.cust = cust
-		uuid := f.invoice(i)
-		_, err := f.tx.Exec(f.ctx, `UPDATE invoice SET invoice_owner_id = $2 WHERE invoice_uuid = $1::uuid`, uuid, owner)
-		require.NoError(t, err)
+// grantRole gives the user a role holding each (resource, action) pair at the given scope.
+func (f *arFixture) grantRole(userID string, scope string, pairs ...[2]string) {
+	var roleID string
+	require.NoError(f.t, f.tx.QueryRow(f.ctx, `INSERT INTO roles (key, name, is_system) VALUES ('digest-' || gen_random_uuid()::text, 'Digest test', FALSE) RETURNING id::text`).Scan(&roleID))
+	for _, p := range pairs {
+		_, err := f.tx.Exec(f.ctx, `INSERT INTO role_permissions (role_id, resource, action, scope) VALUES ($1::uuid, $2, $3, $4)`, roleID, p[0], p[1], scope)
+		require.NoError(f.t, err)
 	}
-	mk(mine, arInv{status: "SENT", due: dayOffset(-5), balance: "100.50"})
-	mk(mine, arInv{status: "ODUE", due: dayOffset(-30), balance: "200"})
-	mk(mine, arInv{status: "PART", due: dayOffset(-1), balance: "50"})
-	mk(mine, arInv{status: "SENT", due: dayOffset(0), balance: "999"}) // due today is not yet overdue
-	mk(mine, arInv{status: "SENT", due: dayOffset(4), balance: "999"}) // not due yet
-	mk(mine, arInv{status: "PAID", due: dayOffset(-9), balance: "0"})  // settled
-	mk(mine, arInv{status: "SENT", due: dayOffset(-9), balance: "0"})  // nothing owed
-	mk(mine, arInv{status: "SENT", due: dayOffset(-9), balance: "70", deleted: true})
-	mk(other, arInv{status: "SENT", due: dayOffset(-5), balance: "1000"})
-
-	n, total, err := overdueInvoiceSummary(f.ctx, f.tx, mine, arToday)
-	require.NoError(t, err)
-	assert.Equal(t, 3, n)
-	assert.InDelta(t, 350.50, total, 0.001)
-
-	n, total, err = overdueInvoiceSummary(f.ctx, f.tx, other, arToday)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n, "each user sees only their own invoices")
-	assert.InDelta(t, 1000, total, 0.001)
-
-	n, total, err = overdueInvoiceSummary(f.ctx, f.tx, 999999, arToday)
-	require.NoError(t, err)
-	assert.Zero(t, n)
-	assert.Zero(t, total, "no rows still yields zero, not a scan error")
+	_, err := f.tx.Exec(f.ctx, `INSERT INTO user_roles (user_id, role_id) VALUES ($1::uuid, $2::uuid)`, userID, roleID)
+	require.NoError(f.t, err)
 }
 
-func TestDigestExpiringCount(t *testing.T) {
+// crew puts the employee on the visit crew.
+func (f *arFixture) crew(apptUUID string, emp int) {
+	_, err := f.tx.Exec(f.ctx, `INSERT INTO install_appointment_crew (install_appointment_id, employee_id, crew_role, assigned_by)
+		SELECT install_appointment_id, $2, 'lead', $2 FROM install_appointment WHERE install_appointment_uuid = $1::uuid`, apptUUID, emp)
+	require.NoError(f.t, err)
+}
+
+func TestDigestInstalls(t *testing.T) {
 	f := newARFixture(t)
 	cust := f.customer(arCust{})
-	mine, _ := f.employeeWithUser("exp-mine@x.io", "active")
-	other, _ := f.employeeWithUser("exp-other@x.io", "active")
+	crewEmp, _ := f.employeeWithUser("crew@x.io", "active")
+	ownerEmp, _ := f.employeeWithUser("jobowner@x.io", "active")
+	other, _ := f.employeeWithUser("elsewhere@x.io", "active")
 
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(0)})
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(7)})
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(8)})  // beyond the horizon
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(-1)}) // already expired
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "DRFT", valid: dayOffset(3)})
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(3), deleted: true})
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &other, status: "SENT", valid: dayOffset(3)})
-	converted := f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(3)})
-	f.convert(converted)
-	f.expiryDoc(estimateSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(2)})
-	linked := f.expiryDoc(estimateSpec, expDoc{cust: cust, owner: &mine, status: "SENT", valid: dayOffset(2)})
-	f.linkQuote(linked, false)
+	job := f.instJob(cust, "INST", false)
+	mine := f.instAppointment(instAppt{job: job, day: dayOffset(1)})
+	f.crew(mine, crewEmp)
+	today := f.instAppointment(instAppt{job: job, day: dayOffset(0)})
+	f.crew(today, crewEmp)
+	f.instAppointment(instAppt{job: job, day: dayOffset(4)})                      // beyond the horizon
+	f.instAppointment(instAppt{job: job, day: dayOffset(-1)})                     // already past
+	f.instAppointment(instAppt{job: job, day: dayOffset(2), status: "cancelled"}) // cancelled
+	f.instAppointment(instAppt{job: job, day: dayOffset(2), visitType: "template"})
+	cancelledJob := f.instJob(cust, "CANC", false)
+	c := f.instAppointment(instAppt{job: cancelledJob, day: dayOffset(1)})
+	f.crew(c, crewEmp)
+	_, err := f.tx.Exec(f.ctx, `UPDATE fabrication_job SET job_owner_id = $2 WHERE fabrication_job_id = $1`, job, ownerEmp)
+	require.NoError(t, err)
 
-	q, err := expiringCount(f.ctx, f.tx, quoteSpec, mine, arToday)
+	got, err := digestInstalls(f.ctx, f.tx, crewEmp, arToday)
 	require.NoError(t, err)
-	assert.Equal(t, 2, q, "today and the last day of the horizon count; converted, draft, deleted, others' and out-of-range do not")
-	e, err := expiringCount(f.ctx, f.tx, estimateSpec, mine, arToday)
+	require.Len(t, got, 2, "scheduled install visits from today to +3 days on live jobs")
+	assert.Equal(t, today, got[0].UUID, "soonest first")
+	assert.Equal(t, mine, got[1].UUID)
+
+	got, err = digestInstalls(f.ctx, f.tx, ownerEmp, arToday)
 	require.NoError(t, err)
-	assert.Equal(t, 1, e, "an estimate that already has a quote is not counted")
-	q, err = expiringCount(f.ctx, f.tx, quoteSpec, other, arToday)
+	assert.Len(t, got, 2, "the owner of the job is assigned to its visits (the in-range, scheduled install ones)")
+
+	got, err = digestInstalls(f.ctx, f.tx, other, arToday)
 	require.NoError(t, err)
-	assert.Equal(t, 1, q)
+	assert.Empty(t, got, "someone neither on the crew nor the owner sees nothing")
+}
+
+func TestDigestVendorBills(t *testing.T) {
+	f := newARFixture(t)
+	vendor := f.vendor()
+	owner, ownerUser := f.employeeWithUser("vb-own@x.io", "active")
+	approver, approverUser := f.employeeWithUser("vb-appr@x.io", "active")
+	_, bystander := f.employeeWithUser("vb-by@x.io", "active")
+	f.vbApprover(approver)
+
+	owned := f.vbRowInsert(vbRow{vendor: vendor, status: "APPV", due: dayOffset(2), total: "100", paid: "0", credit: "0", owner: &owner})
+	unowned := f.vbRowInsert(vbRow{vendor: vendor, status: "PART", due: dayOffset(-9), total: "50", paid: "10", credit: "0"})
+	f.vbRowInsert(vbRow{vendor: vendor, status: "APPV", due: dayOffset(4), total: "100", paid: "0", credit: "0", owner: &owner}) // too far out
+	f.vbRowInsert(vbRow{vendor: vendor, status: "PAID", due: dayOffset(1), total: "100", paid: "100", credit: "0", owner: &owner})
+	f.vbRowInsert(vbRow{vendor: vendor, status: "PINI", due: dayOffset(1), total: "100", paid: "0", credit: "0", owner: &owner})
+
+	ids := func(bs []VendorBillDoc) []string {
+		var out []string
+		for _, b := range bs {
+			out = append(out, b.UUID)
+		}
+		return out
+	}
+	got, err := digestVendorBills(f.ctx, f.tx, ownerUser, arToday)
+	require.NoError(t, err)
+	assert.Equal(t, []string{owned}, ids(got), "the owner sees their own bill, not the unowned one")
+
+	got, err = digestVendorBills(f.ctx, f.tx, approverUser, arToday)
+	require.NoError(t, err)
+	assert.Equal(t, []string{unowned}, ids(got), "an approver sees bills with no owner, overdue ones included")
+
+	got, err = digestVendorBills(f.ctx, f.tx, bystander, arToday)
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }
 
 func TestBuildDigestContent(t *testing.T) {
 	f := newARFixture(t)
 	cust := f.customer(arCust{})
+	vendor := f.vendor()
 	emp, userID := f.employeeWithUser("content@x.io", "active")
-	uuid := f.invoice(arInv{cust: cust, status: "SENT", due: dayOffset(-5), balance: "80"})
-	_, err := f.tx.Exec(f.ctx, `UPDATE invoice SET invoice_owner_id = $2 WHERE invoice_uuid = $1::uuid`, uuid, emp)
-	require.NoError(t, err)
-	f.expiryDoc(quoteSpec, expDoc{cust: cust, owner: &emp, status: "SENT", valid: dayOffset(2)})
-
-	rc, found, err := loadDigestRecipient(f.ctx, f.tx, userID)
-	require.NoError(t, err)
-	require.False(t, found, "no prefs row yet")
+	job := f.instJob(cust, "INST", false)
+	f.crew(f.instAppointment(instAppt{job: job, day: dayOffset(1)}), emp)
+	f.vbRowInsert(vbRow{vendor: vendor, status: "APPV", due: dayOffset(1), total: "80", paid: "0", credit: "0", owner: &emp})
+	for _, d := range salesDocs { // one waiting on the user in each of the three modules
+		f.salesDocAtGate(d, cust, emp, emp, atDays(2, 12))
+	}
 	f.optIn(userID, nil)
-	rc, found, err = loadDigestRecipient(f.ctx, f.tx, userID)
+	rc, found, err := loadDigestRecipient(f.ctx, f.tx, userID)
 	require.NoError(t, err)
 	require.True(t, found)
 
 	c, err := buildDigestContent(f.ctx, f.tx, rc, arToday)
-	require.NoError(t, err, "a user with no approver grants must not make the approvals count fail")
-	assert.Zero(t, c.Approvals)
-	assert.Equal(t, 1, c.OverdueInvoices)
-	assert.InDelta(t, 80, c.OverdueTotal, 0.001)
-	assert.Equal(t, 1, c.ExpiringQuotes)
-	assert.Zero(t, c.ExpiringEstimates)
+	require.NoError(t, err, "a user with no grants must not make the content fail")
+	assert.True(t, c.empty(), "without read permission nothing is reported: the digest follows what the user may see")
+
+	f.grantRole(userID, "all",
+		[2]string{"install_appointment", "read"}, [2]string{"vendor_bill", "read"},
+		[2]string{"quote", "read"}, [2]string{"estimate", "read"}, [2]string{"sales_order", "read"},
+		[2]string{"quote", "transition"}, [2]string{"estimate", "transition"}, [2]string{"sales_order", "transition"})
+	c, err = buildDigestContent(f.ctx, f.tx, rc, arToday)
+	require.NoError(t, err)
+	assert.Len(t, c.Installs, 1)
+	assert.Len(t, c.Bills, 1)
+	assert.Equal(t, 3, c.Approvals.Total, "one quote, one estimate, one sales order")
+	for _, m := range c.Approvals.Modules {
+		assert.Contains(t, []string{"quote", "estimate", "sales_order"}, m.WorkflowKey, "only those three modules are reported")
+	}
 	assert.False(t, c.empty())
 
-	rc.Prefs.IncludeInvoices, rc.Prefs.IncludeExpiring = false, false
+	rc.Prefs.IncludeInstalls, rc.Prefs.IncludeVendorBills, rc.Prefs.IncludeApprovals = false, false, false
 	c, err = buildDigestContent(f.ctx, f.tx, rc, arToday)
 	require.NoError(t, err)
 	assert.True(t, c.empty(), "a section the user switched off is never queried or shown")
@@ -207,5 +238,5 @@ func TestBuildDigestContent(t *testing.T) {
 	rc.Prefs = DefaultDigestPrefs()
 	c, err = buildDigestContent(f.ctx, f.tx, rc, arToday)
 	require.NoError(t, err)
-	assert.True(t, c.empty(), "a user with no employee record owns nothing")
+	assert.True(t, c.empty(), "a user with no employee record has no assignments")
 }

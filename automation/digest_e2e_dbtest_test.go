@@ -40,9 +40,11 @@ func TestDailyDigestEndToEnd(t *testing.T) {
 	_, otherUser := f.employeeWithUser("dg-skip@x.io", "active")
 	rule := f.dgSeededRule()
 
-	uuid := f.invoice(arInv{cust: cust, status: "SENT", due: dayOffset(-4), balance: "300"})
-	_, err := f.tx.Exec(f.ctx, `UPDATE invoice SET invoice_owner_id = $2 WHERE invoice_uuid = $1::uuid`, uuid, emp)
-	require.NoError(t, err)
+	vendor := f.vendor()
+	bill := f.vbRowInsert(vbRow{vendor: vendor, status: "APPV", due: dayOffset(1), total: "300", paid: "0", credit: "0", owner: &emp})
+	f.grantRole(userID, "all", [2]string{"vendor_bill", "read"}, [2]string{"install_appointment", "read"})
+	job := f.instJob(cust, "INST", false)
+	f.crew(f.instAppointment(instAppt{job: job, day: dayOffset(1)}), emp)
 
 	f.optIn(userID, func(p *DigestPrefs) { p.SendHour = 9 })
 	// Never opted in: gets nothing.
@@ -73,12 +75,14 @@ func TestDailyDigestEndToEnd(t *testing.T) {
 	assert.Empty(t, dropped)
 	require.Len(t, kept, 1)
 	assert.Equal(t, digestTitle, req.Title)
-	assert.Equal(t, "1 item needs your attention.", req.Body)
+	assert.Equal(t, "1 installation, 1 vendor bill due.", req.Body)
 	assert.Equal(t, userID, req.ResourceID)
 	require.NotNil(t, req.Email)
-	require.Len(t, req.Email.Details, 1)
-	assert.Equal(t, "Your overdue invoices", req.Email.Details[0].Label)
-	assert.Equal(t, "1 invoice, $300.00 outstanding", req.Email.Details[0].Value)
+	assert.Equal(t, []string{arChannelMail, expiryChannelApp}, req.Channels, "email and in-app")
+	assert.Equal(t, rcptIdentity(t, f, userID), req.Recipients[0].UserID, "the in-app copy goes to the user's own feed")
+	require.Len(t, req.Email.Details, 2)
+	assert.Contains(t, req.Email.Details[0].Label, "Installation")
+	assert.Equal(t, "$300.00, due tomorrow", req.Email.Details[1].Value)
 
 	// The user turns the digest off before it is sent.
 	f.optIn(userID, func(p *DigestPrefs) { p.Enabled = false })
@@ -87,9 +91,11 @@ func TestDailyDigestEndToEnd(t *testing.T) {
 	assert.Empty(t, kept)
 	assert.Equal(t, reasonDigestOff, dropped[groups[0].Items[0].OccurrenceKey])
 
-	// Back on, but the invoice is paid and the user skips empty digests.
+	// Back on, but the bill is paid and the visit cancelled, and the user skips empty digests.
 	f.optIn(userID, func(p *DigestPrefs) { p.SendHour = 9 })
-	_, err = f.tx.Exec(f.ctx, `UPDATE invoice SET invoice_status = $2, invoice_balance_due = 0 WHERE invoice_uuid = $1::uuid`, uuid, f.statusID("INVC", "PAID"))
+	_, err = f.tx.Exec(f.ctx, `UPDATE vendor_bill SET vendor_bill_amount_paid = vendor_bill_grand_total WHERE vendor_bill_uuid = $1::uuid`, bill)
+	require.NoError(t, err)
+	_, err = f.tx.Exec(f.ctx, `UPDATE install_appointment SET appointment_status = 'cancelled', cancelled_at = now()`)
 	require.NoError(t, err)
 	_, kept, dropped, err = r.Render(f.ctx, env, groups[0])
 	require.NoError(t, err)
@@ -110,4 +116,11 @@ func TestDailyDigestEndToEnd(t *testing.T) {
 	_, _, dropped, err = r.Render(f.ctx, env, groups[0])
 	require.NoError(t, err)
 	assert.Equal(t, reasonRecipientChanged, dropped[groups[0].Items[0].OccurrenceKey])
+}
+
+func rcptIdentity(t *testing.T, f *arFixture, userID string) string {
+	t.Helper()
+	var id string
+	require.NoError(t, f.tx.QueryRow(f.ctx, `SELECT identity_id::text FROM users WHERE id = $1::uuid`, userID).Scan(&id))
+	return id
 }

@@ -31,6 +31,11 @@ func vendorBillRecipients(ctx context.Context, q Querier, doc VendorBillDoc) ([]
 	if doc.OwnerEmail != "" && doc.OwnerUserID != "" {
 		return []vendorBillRecipient{{UserID: doc.OwnerUserID, IdentityID: doc.OwnerIdentityID, Email: doc.OwnerEmail}}, nil
 	}
+	return vendorBillApprovers(ctx, q)
+}
+
+// vendorBillApprovers lists the approvers of vendor bills who can still act, with an email address.
+func vendorBillApprovers(ctx context.Context, q Querier) ([]vendorBillRecipient, error) {
 	rows, err := q.Query(ctx, vendorBillApproversSQL)
 	if err != nil {
 		return nil, fmt.Errorf("vendor bill approvers: %w", err)

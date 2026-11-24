@@ -20,32 +20,52 @@ const (
 	digestHomeRoute = "/"
 )
 
-// digestDetails turns the content into the label/value rows of the email, one
-// per non-empty section, in a fixed order.
-func digestDetails(c digestContent, today time.Time) []services.Detail {
+// digestListMax caps how many individual installations or bills an email lists; the rest are counted.
+const digestListMax = 5
+
+// digestDetails turns the content into the label/value rows of the email: installations, then vendor
+// bills, then the approvals waiting per module.
+func digestDetails(c digestContent, today time.Time, loc *time.Location) []services.Detail {
 	var rows []services.Detail
-	if c.Approvals > 0 {
-		value := plural(c.Approvals, "record")
-		if c.OldestApproval != nil {
-			if days := -arDaysFromToday(*c.OldestApproval, today); days > 0 {
-				value += fmt.Sprintf(", oldest waiting %s", plural(days, "day"))
-			}
+	for i, r := range c.Installs {
+		if i == digestListMax {
+			rows = append(rows, services.Detail{Label: "More installations", Value: fmt.Sprintf("+%d more", len(c.Installs)-digestListMax)})
+			break
 		}
-		rows = append(rows, services.Detail{Label: "Waiting for your approval", Value: value})
+		value := r.CustomerName
+		if r.SalesOrderNo != "" {
+			value = r.SalesOrderNo + " - " + r.CustomerName
+		}
+		rows = append(rows, services.Detail{Label: "Installation " + installWhen(r, loc), Value: value})
 	}
-	if c.OverdueInvoices > 0 {
-		rows = append(rows, services.Detail{Label: "Your overdue invoices",
-			Value: fmt.Sprintf("%s, %s outstanding", plural(c.OverdueInvoices, "invoice"), services.FormatEmailMoney("", c.OverdueTotal))})
+	for i, b := range c.Bills {
+		if i == digestListMax {
+			rows = append(rows, services.Detail{Label: "More vendor bills", Value: fmt.Sprintf("+%d more", len(c.Bills)-digestListMax)})
+			break
+		}
+		rows = append(rows, services.Detail{Label: "Vendor bill " + b.Number + " (" + b.VendorName + ")",
+			Value: services.FormatEmailMoney("", b.Balance) + ", " + digestDueWording(b.DueDate, today)})
 	}
-	if c.ExpiringQuotes > 0 {
-		rows = append(rows, services.Detail{Label: fmt.Sprintf("Your quotes expiring within %d days", digestExpiryHorizonDays),
-			Value: plural(c.ExpiringQuotes, "quote")})
-	}
-	if c.ExpiringEstimates > 0 {
-		rows = append(rows, services.Detail{Label: fmt.Sprintf("Your estimates expiring within %d days", digestExpiryHorizonDays),
-			Value: plural(c.ExpiringEstimates, "estimate")})
+	for _, m := range c.Approvals.Modules {
+		if m.Count > 0 {
+			rows = append(rows, services.Detail{Label: m.Label + " waiting for your approval", Value: fmt.Sprint(m.Count)})
+		}
 	}
 	return rows
+}
+
+// digestDueWording says when a bill is due relative to today.
+func digestDueWording(due, today time.Time) string {
+	switch d := arDaysFromToday(due, today); {
+	case d < 0:
+		return "overdue by " + plural(-d, "day")
+	case d == 0:
+		return "due today"
+	case d == 1:
+		return "due tomorrow"
+	default:
+		return fmt.Sprintf("due in %d days", d)
+	}
 }
 
 // plural words a count with its noun: "1 invoice", "3 invoices".
@@ -56,25 +76,26 @@ func plural(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// digestBody is the in-app text for the content.
+// digestBody is the in-app text for the content, e.g. "2 installations, 1 vendor bill due, 3 approvals waiting."
 func digestBody(c digestContent) string {
-	n := 0
-	for _, v := range []int{c.Approvals, c.OverdueInvoices, c.ExpiringQuotes, c.ExpiringEstimates} {
-		if v > 0 {
-			n++
-		}
+	var parts []string
+	if n := len(c.Installs); n > 0 {
+		parts = append(parts, plural(n, "installation"))
 	}
-	switch n {
-	case 0:
+	if n := len(c.Bills); n > 0 {
+		parts = append(parts, plural(n, "vendor bill")+" due")
+	}
+	if n := c.Approvals.Total; n > 0 {
+		parts = append(parts, plural(n, "approval")+" waiting")
+	}
+	if len(parts) == 0 {
 		return digestNothing
-	case 1:
-		return "1 item needs your attention."
 	}
-	return fmt.Sprintf("%d items need your attention.", n)
+	return strings.Join(parts, ", ") + "."
 }
 
 // renderDigestEmail builds the digest email; an empty content says so.
-func renderDigestEmail(company string, c digestContent, today time.Time) services.Email {
+func renderDigestEmail(company string, c digestContent, today time.Time, loc *time.Location) services.Email {
 	lead := services.Paragraph{services.Text("Here is what needs your attention today.")}
 	if c.empty() {
 		lead = services.Paragraph{services.Text(digestNothing)}
@@ -89,7 +110,7 @@ func renderDigestEmail(company string, c digestContent, today time.Time) service
 		Heading:    digestTitle,
 		Greet:      true,
 		Paragraphs: []services.Paragraph{lead},
-		Details:    digestDetails(c, today),
+		Details:    digestDetails(c, today, loc),
 		Reason:     digestEmailReason,
 	}
 	if email.ActionURL = services.AppURL(digestHomeRoute); email.ActionURL != "" {
@@ -145,7 +166,7 @@ func (r digestRenderer) Render(ctx context.Context, env JobEnv, g Group) (servic
 	if err != nil {
 		return services.NotificationRequest{}, nil, nil, fmt.Errorf("digest company profile: %w", err)
 	}
-	email := renderDigestEmail(profile.CompanyName, content, env.Today)
+	email := renderDigestEmail(profile.CompanyName, content, env.Today, env.Loc)
 	return services.NotificationRequest{
 		TenantID:   env.Tenant.ID,
 		Recipients: []services.RecipientTarget{{UserID: rcpt.IdentityID, Email: rcpt.Email, Name: strings.TrimSpace(rcpt.Name)}},

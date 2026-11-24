@@ -98,13 +98,13 @@ func TestDigestPrefs_PutPatchesOnlyWhatIsSent(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	rec = httptest.NewRecorder()
-	ops.Put(rec, digestRequest(http.MethodPut, `{"includeInvoices":false}`, "ident-1"))
+	ops.Put(rec, digestRequest(http.MethodPut, `{"includeVendorBills":false}`, "ident-1"))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	got := store.prefs["user-1"]
 	assert.True(t, got.Enabled, "an earlier choice survives a later partial update")
 	assert.Equal(t, 14, got.SendHour)
-	assert.False(t, got.IncludeInvoices)
+	assert.False(t, got.IncludeVendorBills)
 	assert.True(t, got.IncludeApprovals)
 }
 
@@ -128,7 +128,7 @@ func TestDigestPrefs_PutRejectsBadInput(t *testing.T) {
 		{"hour after the window", `{"sendHour":18}`},
 		{"fractional hour", `{"sendHour":9.5}`},
 		{"string flag", `{"enabled":"yes"}`},
-		{"every section off while on", `{"enabled":true,"includeApprovals":false,"includeInvoices":false,"includeExpiring":false}`},
+		{"every section off while on", `{"enabled":true,"includeInstalls":false,"includeVendorBills":false,"includeApprovals":false}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

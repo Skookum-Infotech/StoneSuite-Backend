@@ -183,6 +183,24 @@ do not receive past reminders. For invoice payment reminders, Preview shows who
 would be emailed right now without sending anything. Changing a rule needs the
 Automation configure permission; read access only shows the page.
 
+Stuck-approval reminders cover every record type that has an approval step with
+approvers set up, including quotes, estimates and sales orders. When one of these
+sits waiting on an approver, that approver gets a reminder 2, 4 and 6 days after it
+entered the approval step, with a link to the document. For quotes, estimates and
+sales orders this is the only automatic approval email: they do not send an email
+when they are submitted, approved or rejected.
+Each person can also turn on a daily digest for themselves under Account Settings >
+Notifications: one email and one in-app notification a day listing what needs their
+attention, namely installations in the next 3 days that they are assigned to, vendor
+bills they are responsible for that are due within 3 days or overdue, and quotes,
+estimates and sales orders waiting for their approval. The digest is off until someone
+turns it on. They choose the hour it is sent (between 8:00 and 5:00 in your
+workspace's time zone), which of the three sections to include, and whether a day with
+nothing to report is skipped, which is the default. The digest is a separate rule,
+"Daily digest", so an admin can turn it off for the whole workspace, and the "Pause
+all automated emails" switch stops it too. It is sent only to the person who asked
+for it.
+
 The "Pause all automated emails" switch stops every automated email for this
 workspace at once without changing any rule; reminders resume when you switch it
 back on. If StoneSuite support has turned automation off for the whole platform,

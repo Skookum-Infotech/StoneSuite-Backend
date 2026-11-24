@@ -83,6 +83,12 @@ type ModuleConfig struct {
 	// immediately when DisplayName == "", so engine.Approve's behavior is
 	// unchanged for every module that doesn't set this.
 	DisplayName string
+	// ReminderName is the label stuck-approval reminders use for a module that has no
+	// DisplayName. It switches on the reminders and nothing else: the approval
+	// notifications and the self-approval anomaly check still read DisplayName, so a
+	// module can be reminded about without being wired for notifications. Ignored when
+	// DisplayName is set (see ReminderLabel).
+	ReminderName string
 	// Resource is the workflow key this config is registered under (e.g.
 	// "invoice"), duplicated here so notify.go's hooks can build a
 	// notification's Resource/EventType without engine.go needing the
@@ -128,12 +134,14 @@ var registry = map[string]ModuleConfig{
 			UpdatedAtColumn: "estimate_updated_at", UpdatedByColumn: "estimate_updated_by",
 			RecordVersionColumn: "estimate_record_version", DeletedAtColumn: "estimate_deleted_at",
 			CreatedAtColumn: "estimate_created_at",
-			// Read by approvalinbox only. DisplayName/Resource stay unset on purpose: setting
-			// them would switch on approval notifications, stuck-approval reminders and the
-			// self-approval anomaly for this module -- a separate decision.
+			// Read by approvalinbox and the stuck-approval reminders. DisplayName/Resource stay
+			// unset on purpose: setting them would switch on approval notifications and the
+			// self-approval anomaly for this module -- a separate decision. ReminderName below
+			// opts in to the reminders alone.
 			OwnerColumn: "estimate_owner_id", NumberColumn: "estimate_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
+		ReminderName: "Estimate",
+		Gates:        []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
 	"quote": {
 		RecordTypeCode: "QUOT", ApproverTable: "quote_approver", ApprovalTable: "quote_approval",
@@ -144,12 +152,14 @@ var registry = map[string]ModuleConfig{
 			UpdatedAtColumn: "quote_updated_at", UpdatedByColumn: "quote_updated_by",
 			RecordVersionColumn: "quote_record_version", DeletedAtColumn: "quote_deleted_at",
 			CreatedAtColumn: "quote_created_at",
-			// Read by approvalinbox only. DisplayName/Resource stay unset on purpose: setting
-			// them would switch on approval notifications, stuck-approval reminders and the
-			// self-approval anomaly for this module -- a separate decision.
+			// Read by approvalinbox and the stuck-approval reminders. DisplayName/Resource stay
+			// unset on purpose: setting them would switch on approval notifications and the
+			// self-approval anomaly for this module -- a separate decision. ReminderName below
+			// opts in to the reminders alone.
 			OwnerColumn: "quote_owner_id", NumberColumn: "quote_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
+		ReminderName: "Quote",
+		Gates:        []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
 	"sales_order": {
 		RecordTypeCode: "SORD", ApproverTable: "sales_order_approver", ApprovalTable: "sales_order_approval",
@@ -160,12 +170,14 @@ var registry = map[string]ModuleConfig{
 			UpdatedAtColumn: "sales_order_updated_at", UpdatedByColumn: "sales_order_updated_by",
 			RecordVersionColumn: "sales_order_record_version", DeletedAtColumn: "sales_order_deleted_at",
 			CreatedAtColumn: "sales_order_created_at",
-			// Read by approvalinbox only. DisplayName/Resource stay unset on purpose: setting
-			// them would switch on approval notifications, stuck-approval reminders and the
-			// self-approval anomaly for this module -- a separate decision.
+			// Read by approvalinbox and the stuck-approval reminders. DisplayName/Resource stay
+			// unset on purpose: setting them would switch on approval notifications and the
+			// self-approval anomaly for this module -- a separate decision. ReminderName below
+			// opts in to the reminders alone.
 			OwnerColumn: "sales_order_owner_id", NumberColumn: "sales_order_number",
 		},
-		Gates: []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
+		ReminderName: "Sales Order",
+		Gates:        []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 	},
 	"purchase_order": {
 		RecordTypeCode: "PORD", ApproverTable: "purchase_order_approver", ApprovalTable: "purchase_order_approval",
@@ -410,4 +422,14 @@ func Keys() []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// ReminderLabel is the human label stuck-approval reminders use for this module: its
+// DisplayName when it is wired for notifications, otherwise its ReminderName. It is
+// empty for a module that gets no reminders.
+func (m ModuleConfig) ReminderLabel() string {
+	if m.DisplayName != "" {
+		return m.DisplayName
+	}
+	return m.ReminderName
 }

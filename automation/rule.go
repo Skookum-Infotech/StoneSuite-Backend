@@ -25,3 +25,9 @@ type ARCadenceStage struct {
 type ARRuleConfig struct {
 	Cadence []ARCadenceStage `json:"cadence"`
 }
+
+// RuleKeyInstallTomorrow is the rule_key of the seeded install-tomorrow reminder rule.
+const RuleKeyInstallTomorrow = "install_tomorrow"
+
+// RuleKeyVendorBillDue is the rule_key of the seeded vendor-bill-due reminder rule.
+const RuleKeyVendorBillDue = "vendor_bill_due"

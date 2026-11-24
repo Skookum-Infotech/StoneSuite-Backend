@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-714 endpoints across 7 surfaces, read from `main.go`.
+716 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 610 |
+| staff token + tenant | 612 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 27 |
 | staff token | 23 |
@@ -383,7 +383,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 | `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
 
-## `tenant` — 609 endpoints
+## `tenant` — 611 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -449,6 +449,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `GET` | `/api/tenant/automation/deliveries` | staff token + tenant | `automationDeliveryOps.List` |
+| `GET` | `/api/tenant/automation/digest/me` | staff token + tenant | `digestOps.Get` |
+| `PUT` | `/api/tenant/automation/digest/me` | staff token + tenant | `digestOps.Put` |
 | `GET` | `/api/tenant/automation/rules` | staff token + tenant | `automationRuleOps.List` |
 | `PUT` | `/api/tenant/automation/rules/{key}` | staff token + tenant | `automationRuleOps.SetEnabled` |
 | `POST` | `/api/tenant/automation/rules/{key}/preview` | staff token + tenant | `controllers.NewAutomationPreviewOps` |

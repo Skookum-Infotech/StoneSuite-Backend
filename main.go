@@ -401,6 +401,9 @@ func main() {
 		// features call domainEvents.Register at boot, before the first tick.
 		domainEvents := domainevent.NewRegistry()
 		automationDeps := automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL, Events: domainEvents}
+		if cp != nil {
+			automationDeps.Portal = automation.ControlPlanePortalLookup(cp)
+		}
 		automationOps := controllers.NewAutomationOps(
 			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs(automationDeps)...),
 			automationSwitch, automationKV,
@@ -647,6 +650,9 @@ func main() {
 		automationRuleOps := controllers.NewAutomationRuleOps(automation.NewPlatformStore(cp.Pool()))
 		mux.Handle("GET /api/tenant/automation/rules", tenantChain(automationRuleOps.List))
 		mux.Handle("PUT /api/tenant/automation/rules/{key}", tenantChain(automationRuleOps.SetEnabled))
+		digestOps := controllers.NewAutomationDigestOps()
+		mux.Handle("GET /api/tenant/automation/digest/me", tenantChain(digestOps.Get))
+		mux.Handle("PUT /api/tenant/automation/digest/me", tenantChain(digestOps.Put))
 		var previewTZ *time.Location
 		if tz := config.AppConfig.AutomationDefaultTimezone; tz != "" {
 			previewTZ, _ = time.LoadLocation(tz)

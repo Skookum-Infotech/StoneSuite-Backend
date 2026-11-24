@@ -10607,6 +10607,58 @@ INSERT INTO lkp_record_status (record_status_code, record_status_name, record_st
 SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'PORD'
 ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
 
+-- ── Automation: install-tomorrow reminders (customer-facing) ──
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
+-- the offset is days relative to the installation's local start date (-1 = the day before).
+-- Recipients are the customer, so the engine applies the external guards (pause switch, suppression list, caps).
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('install_tomorrow', 'Installation reminders', TRUE, TRUE, 'external',
+        '{"cadence":[{"offsetDays":-1}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'install_tomorrow'
+ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation: vendor bill due reminders (internal) ──
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
+-- offsets are days relative to the bill due date: 3 days before and on the due date.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('vendor_bill_due', 'Vendor bill due reminders', TRUE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":-3},{"offsetDays":0}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'vendor_bill_due'
+ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation: daily digest (internal, opt-in per user) ──
+-- Per-user delivery preferences. No row means the digest is off for that user.
+-- send_hour is the tenant-local hour (inside the 08:00-18:00 send window) from which the digest goes out.
+CREATE TABLE IF NOT EXISTS automation_digest_prefs (
+    user_id           UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled           BOOLEAN     NOT NULL DEFAULT FALSE,
+    send_hour         SMALLINT    NOT NULL DEFAULT 8,
+    include_installs  BOOLEAN     NOT NULL DEFAULT TRUE,
+    include_vendor_bills BOOLEAN  NOT NULL DEFAULT TRUE,
+    include_approvals BOOLEAN     NOT NULL DEFAULT TRUE,
+    skip_empty        BOOLEAN     NOT NULL DEFAULT TRUE,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_digest_prefs_hour_chk CHECK (send_hour BETWEEN 8 AND 17)
+);
+CREATE INDEX IF NOT EXISTS idx_automation_digest_prefs_enabled
+    ON automation_digest_prefs (user_id) WHERE enabled;
+
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate).
+-- It sends nothing until a user opts in; it has no cadence (one digest per user per local day).
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('daily_digest', 'Daily digest', TRUE, TRUE, 'internal', '{}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'daily_digest'
+ON CONFLICT (rule_id) DO NOTHING;
+
 -- =====================================================================
 -- EMPLOYEE module (EMPL): Configuration > Employee.
 --

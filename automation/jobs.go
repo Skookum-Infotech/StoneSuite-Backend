@@ -31,9 +31,12 @@ type Deps struct {
 	// Events holds the domain-event consumers registered at boot; nil or empty
 	// means there is nothing to drain.
 	Events *domainevent.Registry
+	// Portal finds a customer's portal login, so a customer-facing reminder can also appear in their
+	// in-app feed. nil means customers are reached by email only.
+	Portal PortalLookup
 }
 
 // DefaultJobs is every date-triggered job the tick endpoint runs.
 func DefaultJobs(d Deps) []Job {
-	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}, &ExpiryReminders{deps: d}, &ApprovalReminders{deps: d}, &DomainEventDrain{deps: d}, &ProposedActionSweep{}, &AnomalyScan{deps: d}, IdempotencyPrune{}}
+	return []Job{VendorPaymentDispatch{}, &ARDunning{deps: d}, &ExpiryReminders{deps: d}, &ApprovalReminders{deps: d}, &InstallReminders{deps: d}, &VendorBillReminders{deps: d}, &DailyDigest{deps: d}, &DomainEventDrain{deps: d}, &ProposedActionSweep{}, &AnomalyScan{deps: d}, IdempotencyPrune{}}
 }

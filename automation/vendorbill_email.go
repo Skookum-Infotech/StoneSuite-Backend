@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	vendorBillEventType   = "automation.vendor_bill_due"
-	vendorBillTitle       = "Vendor bill due reminder"
-	vendorBillActionLabel = "Open in StoneSuite"
+	vendorBillEventType      = "automation.vendor_bill_due"
+	vendorBillTitle          = "Vendor bill due reminder"
+	vendorBillActionLabel    = "Open in StoneSuite"
 	vendorBillOwnerReason    = "you own a vendor bill that is due for payment."
 	vendorBillApproverReason = "you are an approver of a vendor bill that is due for payment."
 )

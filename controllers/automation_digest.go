@@ -102,8 +102,8 @@ func (h *AutomationDigestOps) Get(w http.ResponseWriter, r *http.Request) {
 // digestPrefsPatch is the PUT body. Every field is optional; one left out keeps
 // the user's current value, so a client can flip a single switch.
 type digestPrefsPatch struct {
-	Enabled          *bool `json:"enabled"`
-	SendHour         *int  `json:"sendHour"`
+	Enabled            *bool `json:"enabled"`
+	SendHour           *int  `json:"sendHour"`
 	IncludeInstalls    *bool `json:"includeInstalls"`
 	IncludeVendorBills *bool `json:"includeVendorBills"`
 	IncludeApprovals   *bool `json:"includeApprovals"`

@@ -39,11 +39,17 @@ func planVendorBillsTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule ruleRow)
 	}
 	uuids := make([]string, 0, len(cands))
 	anchors := make([]time.Time, 0, len(cands))
+	targets := make([]vendorBillTarget, 0, len(cands))
 	for _, c := range cands {
+		rcpts, err := vendorBillRecipients(ctx, tx, c)
+		if err != nil {
+			return 0, 0, err
+		}
+		targets = append(targets, vendorBillTarget{Doc: c, Rcpts: rcpts})
 		uuids = append(uuids, c.UUID)
 		anchors = append(anchors, c.DueDate)
 	}
-	if planned, skipped, err = insertDeliveries(ctx, tx, rule.ID, resourceVendorBill, recipientInternal, vendorBillInsertsFor(cands, env, rule)); err != nil {
+	if planned, skipped, err = insertDeliveries(ctx, tx, rule.ID, resourceVendorBill, recipientInternal, vendorBillInsertsFor(targets, env, rule)); err != nil {
 		return 0, 0, err
 	}
 	if err := supersedeAnchors(ctx, tx, rule.ID, resourceVendorBill, uuids, anchors); err != nil {
@@ -55,8 +61,19 @@ func planVendorBillsTx(ctx context.Context, tx pgx.Tx, env JobEnv, rule ruleRow)
 	return planned, skipped, nil
 }
 
-// vendorBillInsertsFor is the candidate/stage loop: a pure function of its inputs.
-func vendorBillInsertsFor(cands []VendorBillDoc, env JobEnv, rule ruleRow) []deliveryInsert {
+// vendorBillTarget is a bill with the people responsible for it.
+type vendorBillTarget struct {
+	Doc   VendorBillDoc
+	Rcpts []vendorBillRecipient
+}
+
+// vendorBillNoRecipientPart is the recipient segment of the occurrence key for a bill nobody is
+// responsible for (one skipped no_email row per stage).
+const vendorBillNoRecipientPart = "none"
+
+// vendorBillInsertsFor is the bill/recipient/stage loop: a pure function of its inputs. Each recipient has
+// their own occurrence key, and one person gets one digest per day across all their bills.
+func vendorBillInsertsFor(targets []vendorBillTarget, env JobEnv, rule ruleRow) []deliveryInsert {
 	offsets := make([]int, len(rule.Config.Cadence))
 	for i, st := range rule.Config.Cadence {
 		offsets[i] = st.OffsetDays
@@ -66,32 +83,47 @@ func vendorBillInsertsFor(cands []VendorBillDoc, env JobEnv, rule ruleRow) []del
 		enabledOn = localDate(rule.EnabledOn, env.Loc)
 	}
 	runAt := NextSendWindow(env.Now, env.Loc)
-	sendDay := localDate(runAt, env.Loc) // bills reminded the same morning share one digest
+	sendDay := localDate(runAt, env.Loc)
 
 	var out []deliveryInsert
-	for _, c := range cands {
-		for _, sp := range PlanStages(c.DueDate, offsets, env.Today, enabledOn) {
-			ins := deliveryInsert{RecordID: c.UUID, Anchor: c.DueDate, Stage: sp.Stage,
-				Key:   OccurrenceKey(rule.ID, resourceVendorBill, c.UUID, c.DueDate, sp.Stage),
-				Email: c.OwnerEmail, RunAt: env.Now, Status: statusSkipped}
-			reason := string(sp.Action)
-			if sp.Action == StageActionPlan {
-				if c.OwnerEmail == "" {
+	for _, t := range targets {
+		c := t.Doc
+		stages := PlanStages(c.DueDate, offsets, env.Today, enabledOn)
+		if len(t.Rcpts) == 0 {
+			for _, sp := range stages {
+				reason := string(sp.Action)
+				if sp.Action == StageActionPlan {
 					reason = reasonNoEmail
-				} else {
-					digest := DigestKey(rule.ID, c.OwnerEmail, sendDay)
-					ins.Status, ins.RunAt, ins.Digest, reason = statusPlanned, runAt, &digest, ""
 				}
+				out = append(out, vendorBillRow(rule, c, vendorBillNoRecipientPart, sp.Stage, "", "", reason, env))
 			}
-			if reason != "" {
-				ins.Reason = &reason
+			continue
+		}
+		for _, rc := range t.Rcpts {
+			for _, sp := range stages {
+				ins := vendorBillRow(rule, c, rc.UserID, sp.Stage, rc.Email, rc.UserID, string(sp.Action), env)
+				if sp.Action == StageActionPlan {
+					digest := DigestKey(rule.ID, rc.Email, sendDay)
+					ins.Status, ins.RunAt, ins.Digest, ins.Reason = statusPlanned, runAt, &digest, nil
+				}
+				out = append(out, ins)
 			}
-			if c.OwnerUserID != "" {
-				uid := c.OwnerUserID
-				ins.UserID = &uid
-			}
-			out = append(out, ins)
 		}
 	}
 	return out
+}
+
+// vendorBillRow builds a skipped row for one (bill, recipient part, stage); the caller upgrades it to
+// planned when a send is due.
+func vendorBillRow(rule ruleRow, c VendorBillDoc, part string, stage int, email, userID, reason string, env JobEnv) deliveryInsert {
+	ins := deliveryInsert{RecordID: c.UUID, Anchor: c.DueDate, Stage: stage, Email: email, RunAt: env.Now, Status: statusSkipped,
+		Key: OccurrenceKey(rule.ID, resourceVendorBill, c.UUID+"~"+part, c.DueDate, stage)}
+	if reason != "" {
+		ins.Reason = &reason
+	}
+	if userID != "" {
+		uid := userID
+		ins.UserID = &uid
+	}
+	return ins
 }

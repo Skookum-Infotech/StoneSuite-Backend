@@ -121,7 +121,6 @@ func TestVendorBillEligible(t *testing.T) {
 		{"not approved", mut(func(b *vbRow) { b.status = "DRFT" }), reasonNotPayable},
 		{"credit covers it", mut(func(b *vbRow) { b.credit = "500" }), reasonPaid},
 		{"due date moved", mut(func(b *vbRow) { b.due = dayOffset(9) }), reasonAnchorChanged},
-		{"no owner", mut(func(b *vbRow) { b.owner = nil }), reasonNoEmail},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,6 +130,12 @@ func TestVendorBillEligible(t *testing.T) {
 			assert.Equal(t, tc.want, reason)
 		})
 	}
+
+	// Who is told is decided per recipient, so a bill with no owner is still worth a reminder.
+	noOwner := mut(func(b *vbRow) { b.owner = nil })
+	ok, reason, _, err = vendorBillEligible(f.ctx, f.tx, noOwner, planned)
+	require.NoError(t, err)
+	assert.True(t, ok, reason)
 
 	ok, reason, _, err = vendorBillEligible(f.ctx, f.tx, "123e4567-e89b-12d3-a456-426614174999", planned)
 	require.NoError(t, err)

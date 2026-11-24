@@ -57,12 +57,10 @@ LEFT JOIN users u ON u.id = e.employee_user_id AND u.status = '` + userStatusAct
 
 // vendorBillFacts are the live facts vendorBillReason judges.
 type vendorBillFacts struct {
-	Deleted    bool
-	Status     string
-	Balance    float64
-	DueDate    *time.Time
-	Email      string
-	UserStatus string
+	Deleted bool
+	Status  string
+	Balance float64
+	DueDate *time.Time
 }
 
 // listVendorBillCandidates returns approved, unpaid, live bills whose due date
@@ -83,8 +81,9 @@ ORDER BY vb.vendor_bill_due_date, vb.vendor_bill_id`,
 	for rows.Next() {
 		var d VendorBillDoc
 		var f vendorBillFacts
+		var ownerStatus string // the owner is judged when recipients are resolved, not here
 		if err := rows.Scan(&d.UUID, &d.Number, &d.VendorName, &d.OwnerEmail, &d.OwnerUserID, &d.OwnerIdentityID,
-			&f.DueDate, &f.Status, &f.Deleted, &f.UserStatus, &d.Balance); err != nil {
+			&f.DueDate, &f.Status, &f.Deleted, &ownerStatus, &d.Balance); err != nil {
 			return nil, fmt.Errorf("scan vendor bill candidate: %w", err)
 		}
 		if f.DueDate != nil {
@@ -101,9 +100,10 @@ ORDER BY vb.vendor_bill_due_date, vb.vendor_bill_id`,
 // vendorBillEligible re-checks one bill live at send time. reason "" means eligible.
 func vendorBillEligible(ctx context.Context, q Querier, uuid string, plannedDue time.Time) (ok bool, reason string, live VendorBillDoc, err error) {
 	var f vendorBillFacts
+	var ownerStatus string
 	scanErr := q.QueryRow(ctx, vendorBillSelect+` WHERE vb.vendor_bill_uuid = $1::uuid`, uuid).Scan(
 		&live.UUID, &live.Number, &live.VendorName, &live.OwnerEmail, &live.OwnerUserID, &live.OwnerIdentityID,
-		&f.DueDate, &f.Status, &f.Deleted, &f.UserStatus, &live.Balance)
+		&f.DueDate, &f.Status, &f.Deleted, &ownerStatus, &live.Balance)
 	if errors.Is(scanErr, pgx.ErrNoRows) {
 		return false, reasonVoided, VendorBillDoc{}, nil
 	}
@@ -113,13 +113,14 @@ func vendorBillEligible(ctx context.Context, q Querier, uuid string, plannedDue 
 	if f.DueDate != nil {
 		live.DueDate = *f.DueDate
 	}
-	f.Balance, f.Email = live.Balance, live.OwnerEmail
+	f.Balance = live.Balance
 	reason = vendorBillReason(f, plannedDue)
 	return reason == "", reason, live, nil
 }
 
 // vendorBillReason maps live facts to the first matching skip reason ("" = eligible);
-// precedence: voided, paid, payment_initiated, not_payable, anchor_changed, no_email.
+// precedence: voided, paid, payment_initiated, not_payable, anchor_changed. Who is told is not part of
+// whether the bill is still worth a reminder: that is checked per recipient when the email is built.
 func vendorBillReason(f vendorBillFacts, planned time.Time) string {
 	switch {
 	case f.Deleted || f.Status == vbStatusVoid:
@@ -132,8 +133,6 @@ func vendorBillReason(f vendorBillFacts, planned time.Time) string {
 		return reasonNotPayable
 	case f.DueDate == nil || !sameDay(*f.DueDate, planned):
 		return reasonAnchorChanged
-	case f.Email == "" || f.UserStatus != userStatusActive:
-		return reasonNoEmail
 	}
 	return ""
 }

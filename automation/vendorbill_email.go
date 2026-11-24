@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"stonesuite-backend/approvalchain"
@@ -16,8 +17,6 @@ const (
 	vendorBillTitle       = "Vendor bill due reminder"
 	vendorBillActionLabel = "Open in StoneSuite"
 	vendorBillEmailReason = "you own a vendor bill that is due for payment."
-	// reasonOwnerMoved drops a delivery whose bill now belongs to someone other than the planned recipient.
-	reasonOwnerMoved = "owner_changed"
 )
 
 // vendorBillTiming words a bill's due date relative to today.
@@ -99,6 +98,7 @@ type vendorBillDB interface {
 func (r vendorBillRenderer) Render(ctx context.Context, env JobEnv, g Group) (services.NotificationRequest, []Delivery, map[string]string, error) {
 	var kept []Delivery
 	var live []VendorBillDoc
+	var recipient vendorBillRecipient
 	dropped := map[string]string{}
 	for _, it := range g.Items {
 		ok, reason, doc, err := vendorBillEligible(ctx, r.pool, it.RecordID, it.Anchor)
@@ -109,10 +109,18 @@ func (r vendorBillRenderer) Render(ctx context.Context, env JobEnv, g Group) (se
 			dropped[it.OccurrenceKey] = reason
 			continue
 		}
-		if !equalFold(doc.OwnerEmail, g.RecipientEmail) {
-			dropped[it.OccurrenceKey] = reasonOwnerMoved
+		// Who is responsible can change between planning and sending (the owner is reassigned, an
+		// approver is deactivated), so this recipient must still be one of the bill's current ones.
+		rcpts, err := vendorBillRecipients(ctx, r.pool, doc)
+		if err != nil {
+			return services.NotificationRequest{}, nil, nil, err
+		}
+		me, isRecipient := vendorBillRecipientFor(rcpts, g.RecipientEmail)
+		if !isRecipient {
+			dropped[it.OccurrenceKey] = reasonRecipientChanged
 			continue
 		}
+		recipient = me
 		doc.Route = approvalchain.RecordRoute(resourceVendorBill, doc.UUID)
 		kept = append(kept, it)
 		live = append(live, doc)
@@ -133,7 +141,7 @@ func (r vendorBillRenderer) Render(ctx context.Context, env JobEnv, g Group) (se
 	}
 	return services.NotificationRequest{
 		TenantID:   env.Tenant.ID,
-		Recipients: []services.RecipientTarget{{UserID: earliest.OwnerIdentityID, Email: earliest.OwnerEmail}},
+		Recipients: []services.RecipientTarget{{UserID: recipient.IdentityID, Email: recipient.Email, Name: strings.TrimSpace(recipient.Name)}},
 		EventType:  vendorBillEventType,
 		Resource:   resourceVendorBill,
 		ResourceID: earliest.UUID,
@@ -143,4 +151,14 @@ func (r vendorBillRenderer) Render(ctx context.Context, env JobEnv, g Group) (se
 		Email:      &email,
 		Channels:   []string{arChannelMail, expiryChannelApp},
 	}, kept, dropped, nil
+}
+
+// vendorBillRecipientFor finds the recipient with the given email among a bill's current ones.
+func vendorBillRecipientFor(rcpts []vendorBillRecipient, email string) (vendorBillRecipient, bool) {
+	for _, r := range rcpts {
+		if equalFold(r.Email, email) {
+			return r, true
+		}
+	}
+	return vendorBillRecipient{}, false
 }

@@ -26,6 +26,45 @@ func vbDoc(number, email string, dueDay int) VendorBillDoc {
 		DueDate: time.Date(2026, 11, dueDay, 0, 0, 0, 0, time.UTC)}
 }
 
+// vbTargetOf is the bill with its owner as the one recipient (none when the doc has no owner email).
+func vbTargetOf(d VendorBillDoc) vendorBillTarget {
+	t := vendorBillTarget{Doc: d}
+	if d.OwnerEmail != "" {
+		t.Rcpts = []vendorBillRecipient{{UserID: d.OwnerUserID, IdentityID: d.OwnerIdentityID, Email: d.OwnerEmail}}
+	}
+	return t
+}
+
+func TestVendorBillInsertsForApproversEachGetTheirOwnRow(t *testing.T) {
+	d := vbDoc("VBIL-1", "", 26)
+	target := vendorBillTarget{Doc: d, Rcpts: []vendorBillRecipient{
+		{UserID: "u-a", Email: "a@x.io"}, {UserID: "u-b", Email: "b@x.io"}}}
+	other := vendorBillTarget{Doc: vbDoc("VBIL-2", "", 26), Rcpts: target.Rcpts[:1]}
+
+	got := vendorBillInsertsFor([]vendorBillTarget{target, other}, vbEnv(9), vbRule())
+	require.Len(t, got, 3, "two approvers on one bill, one on the other")
+	keys := map[string]bool{}
+	for _, g := range got {
+		keys[g.Key] = true
+		assert.Equal(t, statusPlanned, g.Status)
+		require.NotNil(t, g.UserID)
+	}
+	assert.Len(t, keys, 3, "every recipient and bill has its own occurrence key")
+	assert.Equal(t, *got[0].Digest, *got[2].Digest, "one person gets one digest across all their bills")
+	assert.NotEqual(t, *got[0].Digest, *got[1].Digest, "another person gets their own")
+}
+
+func TestVendorBillRecipientFor(t *testing.T) {
+	rcpts := []vendorBillRecipient{{UserID: "u1", Email: "A@X.io"}, {UserID: "u2", Email: "b@x.io"}}
+	got, ok := vendorBillRecipientFor(rcpts, "a@x.IO")
+	assert.True(t, ok)
+	assert.Equal(t, "u1", got.UserID, "the match ignores case")
+	_, ok = vendorBillRecipientFor(rcpts, "stranger@x.io")
+	assert.False(t, ok)
+	_, ok = vendorBillRecipientFor(nil, "a@x.io")
+	assert.False(t, ok)
+}
+
 func TestVendorBillInsertsFor(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -40,7 +79,7 @@ func TestVendorBillInsertsFor(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := vendorBillInsertsFor([]VendorBillDoc{tc.doc}, vbEnv(9), vbRule())
+			got := vendorBillInsertsFor([]vendorBillTarget{vbTargetOf(tc.doc)}, vbEnv(9), vbRule())
 			var statuses []string
 			for _, g := range got {
 				statuses = append(statuses, g.Status)
@@ -51,7 +90,7 @@ func TestVendorBillInsertsFor(t *testing.T) {
 }
 
 func TestVendorBillInsertsForNoEmailReason(t *testing.T) {
-	got := vendorBillInsertsFor([]VendorBillDoc{vbDoc("VBIL-1", "", 26)}, vbEnv(9), vbRule())
+	got := vendorBillInsertsFor([]vendorBillTarget{vbTargetOf(vbDoc("VBIL-1", "", 26))}, vbEnv(9), vbRule())
 	require.Len(t, got, 1)
 	require.NotNil(t, got[0].Reason)
 	assert.Equal(t, reasonNoEmail, *got[0].Reason)
@@ -59,21 +98,21 @@ func TestVendorBillInsertsForNoEmailReason(t *testing.T) {
 }
 
 func TestVendorBillInsertsForOffHoursWaitsForWindow(t *testing.T) {
-	got := vendorBillInsertsFor([]VendorBillDoc{vbDoc("VBIL-1", "o@x.io", 26)}, vbEnv(22), vbRule())
+	got := vendorBillInsertsFor([]vendorBillTarget{vbTargetOf(vbDoc("VBIL-1", "o@x.io", 26))}, vbEnv(22), vbRule())
 	require.Len(t, got, 1)
 	assert.True(t, InSendWindow(got[0].RunAt, vbLoc))
 }
 
 func TestVendorBillInsertsForKeysAreStable(t *testing.T) {
 	d := vbDoc("VBIL-1", "o@x.io", 26)
-	got := vendorBillInsertsFor([]VendorBillDoc{d, d}, vbEnv(9), vbRule())
+	got := vendorBillInsertsFor([]vendorBillTarget{vbTargetOf(d), vbTargetOf(d)}, vbEnv(9), vbRule())
 	require.Len(t, got, 2)
 	assert.Equal(t, got[0].Key, got[1].Key, "same bill and stage must collide so the insert is idempotent")
 }
 
 func TestVendorBillReason(t *testing.T) {
 	due := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
-	base := vendorBillFacts{Status: "APPV", Balance: 100, DueDate: &due, Email: "o@x.io", UserStatus: userStatusActive}
+	base := vendorBillFacts{Status: "APPV", Balance: 100, DueDate: &due}
 	mut := func(f func(*vendorBillFacts)) vendorBillFacts { v := base; f(&v); return v }
 	moved := due.AddDate(0, 0, 5)
 	tests := []struct {
@@ -92,8 +131,6 @@ func TestVendorBillReason(t *testing.T) {
 		{"draft not approved", mut(func(f *vendorBillFacts) { f.Status = "DRFT" }), reasonNotPayable},
 		{"due date moved", mut(func(f *vendorBillFacts) { f.DueDate = &moved }), reasonAnchorChanged},
 		{"due date cleared", mut(func(f *vendorBillFacts) { f.DueDate = nil }), reasonAnchorChanged},
-		{"owner has no email", mut(func(f *vendorBillFacts) { f.Email = "" }), reasonNoEmail},
-		{"owner deactivated", mut(func(f *vendorBillFacts) { f.UserStatus = "inactive" }), reasonNoEmail},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, vendorBillReason(tc.f, due)) })

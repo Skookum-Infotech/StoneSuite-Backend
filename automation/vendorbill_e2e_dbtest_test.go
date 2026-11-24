@@ -87,5 +87,5 @@ func TestVendorBillReminderEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	_, _, dropped, err = r.Render(f.ctx, env, groups[0])
 	require.NoError(t, err)
-	assert.Equal(t, reasonOwnerMoved, dropped[groups[0].Items[0].OccurrenceKey])
+	assert.Equal(t, reasonRecipientChanged, dropped[groups[0].Items[0].OccurrenceKey])
 }

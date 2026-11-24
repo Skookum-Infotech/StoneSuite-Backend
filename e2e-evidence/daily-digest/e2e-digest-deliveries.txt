@@ -1,0 +1,8 @@
+   rule_key   |  recipient_email  | status  | reason | attempts 
+--------------+-------------------+---------+--------+----------
+ daily_digest | empty@e2e.local   | sent    |        |        0
+ daily_digest | finance@e2e.local | sent    |        |        0
+ daily_digest | ops@e2e.local     | sent    |        |        0
+ daily_digest | viewer@e2e.local  | skipped | empty  |        0
+(4 rows)
+

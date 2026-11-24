@@ -1,0 +1,12 @@
+     rule_key     | status  | count 
+------------------+---------+-------
+ approval_stuck   | planned |     7
+ approval_stuck   | sent    |     7
+ daily_digest     | sent    |     8
+ daily_digest     | skipped |     4
+ install_tomorrow | sent    |     4
+ vendor_bill_due  | planned |     4
+ vendor_bill_due  | sent    |     5
+ vendor_bill_due  | skipped |     1
+(8 rows)
+

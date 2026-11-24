@@ -179,7 +179,9 @@ Credits are applied against a bill to move it toward Paid.
 ### Due-date reminders
 
 The owner of an approved vendor bill gets an email, and an in-app
-notification, three days before the due date and again on the due date.
+notification that opens the bill, three days before the due date and again on the
+due date. If the bill has no owner (or the owner is no longer an active user), every
+approver of vendor bills who can still act gets the reminder instead.
 Several bills on the same morning arrive as one reminder, listing each bill's
 vendor, the balance still owed and how many days remain.
 
@@ -191,7 +193,9 @@ vendor, the balance still owed and how many days remain.
 - If you change the due date, the reminder follows the new date. A bill with no
   due date is never reminded.
 - Reminders go out between 8:00 and 6:00 in your workspace's time zone, and
-  only to an owner with an active account and an email address.
+  only to people with an active account and an email address. A bill with
+  nobody to tell is skipped and shown that way in the delivery log.
+- Reminders stop when the bill is paid, voided, or its payment is started.
 - An admin can turn this off under Automation → Rules ("Vendor bill due
   reminders").
 

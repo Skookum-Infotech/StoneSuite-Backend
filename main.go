@@ -401,6 +401,9 @@ func main() {
 		// features call domainEvents.Register at boot, before the first tick.
 		domainEvents := domainevent.NewRegistry()
 		automationDeps := automation.Deps{Send: automation.NotifySender{}, LinkURL: controllers.DocLinkURL, Events: domainEvents}
+		if cp != nil {
+			automationDeps.Portal = automation.ControlPlanePortalLookup(cp)
+		}
 		automationOps := controllers.NewAutomationOps(
 			automation.NewRunner(cp, tenantRouter, automationTZ, automation.DefaultJobs(automationDeps)...),
 			automationSwitch, automationKV,

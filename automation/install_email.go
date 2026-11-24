@@ -3,7 +3,7 @@ package automation
 import (
 	"context"
 	"fmt"
-	"sort"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,24 +12,20 @@ import (
 )
 
 const (
-	installEventType   = "automation.install_tomorrow"
-	installTitle       = "Site visit reminder"
-	installActionLabel = "Open install schedule"
-	installEmailReason = "you are on the crew for a scheduled site visit."
-	installRouteFormat = "/calendar/install-schedule?appointment=%s"
-	installClockLayout = "3:04 PM"
-	installDayLayout   = "Mon, Jan 2"
+	installEventType = "automation.install_tomorrow"
+	// installPortalRouteFormat is the customer portal page for the order the installation belongs to.
+	// The portal has no page for an appointment, and the customer already tracks the job through the order.
+	installPortalRouteFormat = "/sales/sales_order/%s"
+	installActionLabel       = "View your order"
+	installClockLayout       = "3:04 PM"
+	installDayLayout         = "Mon, Jan 2"
+	installResourceOrder     = "sales_order"
 )
 
-// installVisitLabel names a visit type for people ("Install", "Template", "Service visit").
-func installVisitLabel(visitType string) string {
-	switch visitType {
-	case "template":
-		return "Template"
-	case "service":
-		return "Service visit"
-	}
-	return "Install"
+// installDB is what the renderer reads through: queries and the company profile.
+type installDB interface {
+	Querier
+	companyprofile.Querier
 }
 
 // installTiming words a visit's date relative to the tenant-local today.
@@ -39,24 +35,14 @@ func installTiming(days int) string {
 		return "today"
 	case days == 1:
 		return "tomorrow"
-	case days == -1:
-		return "yesterday"
 	case days > 1:
 		return fmt.Sprintf("in %d days", days)
 	}
-	return fmt.Sprintf("%d days ago", -days)
+	return ""
 }
 
-// installBody is the in-app text for n visits.
-func installBody(n int) string {
-	if n == 1 {
-		return "1 site visit is coming up."
-	}
-	return fmt.Sprintf("%d site visits are coming up.", n)
-}
-
-// installWhen renders the visit's start in its own time zone ("Tue, Jan 2, 8:00 AM"
-// or "Tue, Jan 2, all day"); an unknown zone falls back to fallback.
+// installWhen renders the visit's start in its own time zone ("Tue, Jan 2, 8:00 AM" or
+// "Tue, Jan 2, all day"); an unknown zone falls back to fallback.
 func installWhen(r InstallRow, fallback *time.Location) string {
 	loc, err := time.LoadLocation(r.Timezone)
 	if err != nil || loc == nil {
@@ -69,72 +55,110 @@ func installWhen(r InstallRow, fallback *time.Location) string {
 	return start.Format(installDayLayout) + ", " + start.Format(installClockLayout)
 }
 
-// renderInstallDigest builds the crew-facing reminder, soonest visit first.
-func renderInstallDigest(company string, items []InstallRow, today time.Time, fallback *time.Location) services.Email {
+// installHeading is the title of the email and the in-app notification: it names the day when every
+// visit is on the same day, and is otherwise generic.
+func installHeading(items []InstallRow, today time.Time) string {
+	if len(items) == 1 {
+		switch installTiming(arDaysFromToday(items[0].LocalStart, today)) {
+		case "today":
+			return "Your installation is today"
+		case "tomorrow":
+			return "Your installation is tomorrow"
+		}
+		return "Your installation is coming up"
+	}
+	return "Your installations are coming up"
+}
+
+// installBody is the in-app text: the visit's date and time, or a count.
+func installBody(items []InstallRow, fallback *time.Location) string {
+	if len(items) == 1 {
+		return "Installation scheduled for " + installWhen(items[0], fallback) + "."
+	}
+	return fmt.Sprintf("%d installations are coming up.", len(items))
+}
+
+// renderInstallEmail builds the customer-facing reminder, soonest visit first. portalLink is the app
+// link for customers with a portal login; empty omits the button (an email without a link is better
+// than one a customer cannot open).
+func renderInstallEmail(company string, items []InstallRow, today time.Time, fallback *time.Location, portalLink string) services.Email {
 	sorted := append([]InstallRow(nil), items...)
-	sort.SliceStable(sorted, func(a, b int) bool {
-		if !sorted[a].StartsAt.Equal(sorted[b].StartsAt) {
-			return sorted[a].StartsAt.Before(sorted[b].StartsAt)
+	for i := 1; i < len(sorted); i++ { // insertion sort by start: the list is tiny and this keeps the input untouched
+		for j := i; j > 0 && sorted[j].StartsAt.Before(sorted[j-1].StartsAt); j-- {
+			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
 		}
-		return sorted[a].UUID < sorted[b].UUID
-	})
-	lead := services.Paragraph{services.Text("You have a site visit coming up.")}
-	if len(sorted) > 1 {
-		lead = services.Paragraph{services.Text("You have site visits coming up.")}
 	}
+	from := "us"
 	if company != "" {
-		lead = append(lead, services.Text(" Sent by "), services.Bold(company), services.Text("."))
+		from = company
 	}
-	details := make([]services.Detail, 0, len(sorted))
+	var lead services.Paragraph
+	if len(sorted) == 1 {
+		lead = services.Paragraph{services.Text("This is a reminder from "), services.Bold(from),
+			services.Text(" that your installation is scheduled for "), services.Bold(installWhen(sorted[0], fallback)), services.Text(".")}
+	} else {
+		lead = services.Paragraph{services.Text("This is a reminder from "), services.Bold(from),
+			services.Text(fmt.Sprintf(" about your %d upcoming installations.", len(sorted)))}
+	}
+	var details []services.Detail
 	for _, it := range sorted {
-		label := installVisitLabel(it.VisitType)
-		if it.JobNumber != "" {
-			label += " " + it.JobNumber
+		when := installWhen(it, fallback)
+		if t := installTiming(arDaysFromToday(it.LocalStart, today)); t != "" {
+			when += " (" + t + ")"
 		}
-		details = append(details, services.Detail{
-			Label: label,
-			Value: fmt.Sprintf("%s, %s (%s)", it.CustomerName, installWhen(it, fallback), installTiming(arDaysFromToday(it.LocalStart, today))),
-		})
+		label := "Installation"
+		if it.SalesOrderNo != "" {
+			label += " for order " + it.SalesOrderNo
+		}
+		details = append(details, services.Detail{Label: label, Value: when})
+		if it.Address != "" {
+			details = append(details, services.Detail{Label: "Address", Value: it.Address})
+		}
 	}
+	heading := installHeading(sorted, today)
 	email := services.Email{
-		Preheader:  installTitle,
-		Badge:      installTitle,
+		Preheader:  heading,
+		Badge:      heading,
 		Icon:       services.IconDocClock,
-		Heading:    installTitle,
+		Heading:    heading,
 		Greet:      true,
-		Paragraphs: []services.Paragraph{lead},
+		Paragraphs: []services.Paragraph{lead, {services.Text("If you need to change the time, please contact us.")}},
 		Details:    details,
-		Reason:     installEmailReason,
+		Reason:     "you have an installation scheduled with " + from + ".",
 	}
-	if len(sorted) > 0 {
-		if email.ActionURL = services.AppURL(fmt.Sprintf(installRouteFormat, sorted[0].UUID)); email.ActionURL != "" {
+	if portalLink != "" {
+		if email.ActionURL = services.AppURL(portalLink); email.ActionURL != "" {
 			email.ActionLabel = installActionLabel
 		}
 	}
 	return email
 }
 
-// installRenderer renders install reminder digests from live visit data.
-type installRenderer struct{ pool Querier2 }
-
-// Querier2 is what the renderer needs: a Querier that companyprofile can also read through.
-type Querier2 interface {
-	Querier
-	companyprofile.Querier
+// installRenderer renders install reminders from live data.
+type installRenderer struct {
+	pool installDB
+	deps Deps
 }
 
-// Render re-checks each visit live for its recipient, drops ineligible ones
-// with their reason and builds one in-app plus email digest for the rest.
+// Render re-checks each installation live (still scheduled, same day, customer still reachable at the
+// planned address), drops the ones that no longer apply with their reason, and builds one email for
+// the rest. When the customer has a portal login the same notification also lands in their in-app feed.
 func (r installRenderer) Render(ctx context.Context, env JobEnv, g Group) (services.NotificationRequest, []Delivery, map[string]string, error) {
-	var kept []Delivery
-	var live []InstallRow
 	dropped := map[string]string{}
+	var (
+		kept []Delivery
+		live []InstallRow
+	)
 	for _, it := range g.Items {
-		ok, reason, row, err := installEligible(ctx, r.pool, it.RecordID, g.RecipientEmail, it.Anchor)
+		row, found, err := loadInstall(ctx, r.pool, it.RecordID)
 		if err != nil {
 			return services.NotificationRequest{}, nil, nil, err
 		}
-		if !ok {
+		reason := reasonVoided
+		if found {
+			reason = installReason(row, it.Anchor, g.RecipientEmail)
+		}
+		if reason != "" {
 			dropped[it.OccurrenceKey] = reason
 			continue
 		}
@@ -146,25 +170,40 @@ func (r installRenderer) Render(ctx context.Context, env JobEnv, g Group) (servi
 	}
 	profile, err := companyprofile.Get(ctx, r.pool)
 	if err != nil {
-		return services.NotificationRequest{}, nil, nil, fmt.Errorf("install digest company profile: %w", err)
+		return services.NotificationRequest{}, nil, nil, fmt.Errorf("install email company profile: %w", err)
 	}
-	email := renderInstallDigest(profile.CompanyName, live, env.Today, env.Loc)
-	soonest := live[0]
-	for _, v := range live[1:] {
-		if v.StartsAt.Before(soonest.StartsAt) {
-			soonest = v
+
+	target := services.RecipientTarget{Email: g.RecipientEmail, Name: strings.TrimSpace(live[0].CustomerName)}
+	channels := []string{arChannelMail}
+	link := ""
+	if r.deps.Portal != nil {
+		id, found, err := r.deps.Portal(ctx, env.Tenant.ID, live[0].CustomerUUID)
+		switch {
+		case err != nil:
+			// The email still goes; only the in-app copy is lost, and the next reminder tries again.
+			slog.WarnContext(ctx, "install reminder: portal lookup failed, sending email only",
+				"tenant", env.Tenant.ID, "customer", live[0].CustomerUUID, "error", err)
+		case found:
+			target.UserID = id.IdentityID
+			if strings.TrimSpace(id.Name) != "" {
+				target.Name = strings.TrimSpace(id.Name)
+			}
+			channels = append(channels, expiryChannelApp)
+			link = fmt.Sprintf(installPortalRouteFormat, live[0].SalesOrderUUID)
 		}
 	}
+
+	email := renderInstallEmail(profile.CompanyName, live, env.Today, env.Loc, link)
 	return services.NotificationRequest{
 		TenantID:   env.Tenant.ID,
-		Recipients: []services.RecipientTarget{{UserID: soonest.IdentityID, Email: soonest.Email, Name: strings.TrimSpace(soonest.Name)}},
+		Recipients: []services.RecipientTarget{target},
 		EventType:  installEventType,
-		Resource:   resourceInstallAppointment,
-		ResourceID: soonest.UUID,
-		Title:      installTitle,
-		Body:       installBody(len(live)),
-		Link:       fmt.Sprintf(installRouteFormat, soonest.UUID),
+		Resource:   installResourceOrder,
+		ResourceID: live[0].SalesOrderUUID,
+		Title:      installHeading(live, env.Today),
+		Body:       installBody(live, env.Loc),
+		Link:       link,
 		Email:      &email,
-		Channels:   []string{arChannelMail, expiryChannelApp},
+		Channels:   channels,
 	}, kept, dropped, nil
 }

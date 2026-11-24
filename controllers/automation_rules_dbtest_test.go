@@ -184,7 +184,7 @@ func TestListIncludesBuiltInRules(t *testing.T) {
 	install, ok := byKey[automation.RuleKeyInstallTomorrow]
 	require.True(t, ok, automation.RuleKeyInstallTomorrow)
 	assert.True(t, install.Enabled)
-	assert.Equal(t, "internal", install.Audience)
+	assert.Equal(t, "external", install.Audience)
 	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: -1}}, install.Cadence)
 	vbDue, ok := byKey[automation.RuleKeyVendorBillDue]
 	require.True(t, ok, automation.RuleKeyVendorBillDue)

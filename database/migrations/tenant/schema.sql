@@ -10607,16 +10607,19 @@ INSERT INTO lkp_record_status (record_status_code, record_status_name, record_st
 SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'PORD'
 ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
 
--- ── Automation: install-tomorrow site visit reminders (internal) ──
+-- ── Automation: install-tomorrow reminders (customer-facing) ──
 -- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
--- the offset is days relative to the visit's local start date (-1 = the day before).
+-- the offset is days relative to the installation's local start date (-1 = the day before).
+-- Recipients are the customer, so the engine applies the external guards (pause switch, suppression list, caps).
 INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
-VALUES ('install_tomorrow', 'Install tomorrow reminders', TRUE, TRUE, 'internal',
+VALUES ('install_tomorrow', 'Installation reminders', TRUE, TRUE, 'external',
         '{"cadence":[{"offsetDays":-1}]}')
 ON CONFLICT (rule_key) DO NOTHING;
 
 INSERT INTO automation_state (rule_id, enabled_at)
 SELECT id, NOW() FROM automation_rules WHERE rule_key = 'install_tomorrow'
+ON CONFLICT (rule_id) DO NOTHING;
+
 -- ── Automation: vendor bill due reminders (internal) ──
 -- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
 -- offsets are days relative to the bill due date: 3 days before and on the due date.
@@ -10627,6 +10630,8 @@ ON CONFLICT (rule_key) DO NOTHING;
 
 INSERT INTO automation_state (rule_id, enabled_at)
 SELECT id, NOW() FROM automation_rules WHERE rule_key = 'vendor_bill_due'
+ON CONFLICT (rule_id) DO NOTHING;
+
 -- ── Automation: daily digest (internal, opt-in per user) ──
 -- Per-user delivery preferences. No row means the digest is off for that user.
 -- send_hour is the tenant-local hour (inside the 08:00-18:00 send window) from which the digest goes out.

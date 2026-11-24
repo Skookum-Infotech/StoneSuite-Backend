@@ -30,7 +30,7 @@ func (j *InstallReminders) Run(ctx context.Context, pool *pgxpool.Pool, env JobE
 	if err != nil {
 		return Result{}, fmt.Errorf("install reminders plan: %w", err)
 	}
-	res, err := drain(ctx, pool, env, j.deps.Send, installRenderer{pool: pool}, rule.ID)
+	res, err := drain(ctx, pool, env, j.deps.Send, installRenderer{pool: pool, deps: j.deps}, rule.ID)
 	res.Skipped += skipped
 	if err != nil {
 		return res, fmt.Errorf("install reminders drain: %w", err)

@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -20,31 +21,39 @@ func installRule() ruleRow {
 		EnabledOn: time.Date(2026, 11, 1, 0, 0, 0, 0, installLoc)}
 }
 
-func installRow(uuid, userID, email string, day int) InstallRow {
-	return InstallRow{UUID: uuid, UserID: userID, Email: email, EmployeeID: 7, VisitType: "install",
-		CustomerName: "Acme", JobNumber: "FJOB-000001", Timezone: "America/Chicago",
+func installRow(uuid, email string, day int) InstallRow {
+	return InstallRow{UUID: uuid, SalesOrderUUID: "so-" + uuid, SalesOrderNo: "SORD-1", CustomerUUID: "cust-" + email,
+		CustomerName: "Acme Stone", ContactEmail: email, Timezone: "America/Chicago",
 		StartsAt:   time.Date(2026, 11, day, 14, 0, 0, 0, time.UTC),
-		LocalStart: time.Date(2026, 11, day, 0, 0, 0, 0, time.UTC), Status: installStatusScheduled}
+		LocalStart: time.Date(2026, 11, day, 0, 0, 0, 0, time.UTC), Status: installStatusScheduled,
+		Address: "12 Quarry Rd, Austin, TX 78701"}
 }
 
 func TestInstallInsertsFor(t *testing.T) {
 	tests := []struct {
 		name       string
-		row        InstallRow
-		env        JobEnv
+		mutate     func(*InstallRow)
+		day        int
+		hour       int
 		wantStatus string
 		wantReason string
 		wantN      int
 	}{
-		{"tomorrow is planned", installRow("a", "u1", "c@x.io", 24), installEnv(9), statusPlanned, "", 1},
-		{"day after tomorrow not due yet", installRow("a", "u1", "c@x.io", 25), installEnv(9), "", "", 0},
-		{"visit today gets a catch-up reminder", installRow("a", "u1", "c@x.io", 23), installEnv(9), statusPlanned, "", 1},
-		{"no email is skipped", installRow("a", "", "", 24), installEnv(9), statusSkipped, reasonNoEmail, 1},
-		{"planned after hours waits for the window", installRow("a", "u1", "c@x.io", 24), installEnv(22), statusPlanned, "", 1},
+		{"tomorrow is planned", nil, 24, 9, statusPlanned, "", 1},
+		{"day after tomorrow is not due yet", nil, 25, 9, "", "", 0},
+		{"a visit today gets a catch-up reminder", nil, 23, 9, statusPlanned, "", 1},
+		{"customer with no email is skipped", func(r *InstallRow) { r.ContactEmail = "" }, 24, 9, statusSkipped, reasonNoEmail, 1},
+		{"do not contact is skipped", func(r *InstallRow) { r.DoNotContact = true }, 24, 9, statusSkipped, reasonDoNotContact, 1},
+		{"deleted customer is skipped", func(r *InstallRow) { r.CustomerDeleted = true }, 24, 9, statusSkipped, reasonCustomerGone, 1},
+		{"after hours waits for the window", nil, 24, 22, statusPlanned, "", 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := installInsertsFor([]InstallRow{tc.row}, tc.env, installRule())
+			row := installRow("a", "c@x.io", tc.day)
+			if tc.mutate != nil {
+				tc.mutate(&row)
+			}
+			got := installInsertsFor([]InstallRow{row}, installEnv(tc.hour), installRule())
 			require.Len(t, got, tc.wantN)
 			if tc.wantN == 0 {
 				return
@@ -53,29 +62,35 @@ func TestInstallInsertsFor(t *testing.T) {
 			if tc.wantReason != "" {
 				require.NotNil(t, got[0].Reason)
 				assert.Equal(t, tc.wantReason, *got[0].Reason)
+				assert.Nil(t, got[0].Digest, "a skipped row is never sent, so it has no digest")
 			}
 			if tc.wantStatus == statusPlanned {
 				require.NotNil(t, got[0].Digest)
 				assert.True(t, InSendWindow(got[0].RunAt, installLoc), "run_at must be inside the send window")
+				assert.Equal(t, "c@x.io", got[0].Email)
 			}
 		})
 	}
 }
 
-func TestInstallInsertsForKeysPerRecipient(t *testing.T) {
-	a := installRow("appt", "u1", "a@x.io", 24)
-	b := installRow("appt", "u2", "b@x.io", 24)
-	got := installInsertsFor([]InstallRow{a, b, a}, installEnv(9), installRule())
+func TestInstallInsertsForOneEmailPerCustomerPerDay(t *testing.T) {
+	a := installRow("a", "c@x.io", 24)
+	b := installRow("b", "c@x.io", 24)
+	other := installRow("c", "other@x.io", 24)
+	got := installInsertsFor([]InstallRow{a, b, other}, installEnv(9), installRule())
 	require.Len(t, got, 3)
-	assert.NotEqual(t, got[0].Key, got[1].Key, "each crew member needs their own occurrence key")
-	assert.Equal(t, got[0].Key, got[2].Key, "same recipient and visit must collide so the insert is idempotent")
-	assert.NotEqual(t, *got[0].Digest, *got[1].Digest)
+	assert.NotEqual(t, got[0].Key, got[1].Key, "each visit has its own occurrence key")
+	assert.Equal(t, *got[0].Digest, *got[1].Digest, "one customer's two visits go in one email")
+	assert.NotEqual(t, *got[0].Digest, *got[2].Digest, "another customer gets their own")
+
+	again := installInsertsFor([]InstallRow{a}, installEnv(9), installRule())
+	assert.Equal(t, got[0].Key, again[0].Key, "a re-plan must collide so nothing is inserted twice")
 }
 
-func TestInstallInsertsForNotRetroactive(t *testing.T) {
+func TestInstallInsertsForIsNotRetroactive(t *testing.T) {
 	rule := installRule()
 	rule.EnabledOn = time.Date(2026, 11, 23, 8, 0, 0, 0, installLoc) // enabled today
-	got := installInsertsFor([]InstallRow{installRow("a", "u1", "c@x.io", 24)}, installEnv(9), rule)
+	got := installInsertsFor([]InstallRow{installRow("a", "c@x.io", 24)}, installEnv(9), rule)
 	require.Len(t, got, 1)
 	assert.Equal(t, statusSkipped, got[0].Status)
 	require.NotNil(t, got[0].Reason)
@@ -84,57 +99,107 @@ func TestInstallInsertsForNotRetroactive(t *testing.T) {
 
 func TestInstallReason(t *testing.T) {
 	planned := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
-	base := installRow("a", "u1", "c@x.io", 24)
+	base := installRow("a", "c@x.io", 24)
 	mut := func(f func(*InstallRow)) InstallRow { r := base; f(&r); return r }
 	tests := []struct {
-		name string
-		row  InstallRow
-		want string
+		name         string
+		row          InstallRow
+		plannedEmail string
+		want         string
 	}{
-		{"eligible", base, ""},
-		{"job deleted", mut(func(r *InstallRow) { r.JobDeleted = true }), reasonVoided},
-		{"appointment cancelled", mut(func(r *InstallRow) { r.Status = installStatusCancelled }), reasonCancelled},
-		{"job cancelled", mut(func(r *InstallRow) { r.JobCancelled = true }), reasonCancelled},
-		{"completed", mut(func(r *InstallRow) { r.Status = installStatusCompleted }), reasonCompleted},
-		{"rescheduled", mut(func(r *InstallRow) { r.LocalStart = r.LocalStart.AddDate(0, 0, 3) }), reasonAnchorChanged},
-		{"recipient lost email", mut(func(r *InstallRow) { r.Email = "" }), reasonNoEmail},
+		{"eligible", base, "c@x.io", ""},
+		{"eligible when the planned address differs only in case", base, "C@X.IO", ""},
+		{"job deleted", mut(func(r *InstallRow) { r.JobDeleted = true }), "c@x.io", reasonVoided},
+		{"visit cancelled", mut(func(r *InstallRow) { r.Status = installStatusCancelled }), "c@x.io", reasonCancelled},
+		{"job cancelled", mut(func(r *InstallRow) { r.JobCancelled = true }), "c@x.io", reasonCancelled},
+		{"visit completed", mut(func(r *InstallRow) { r.Status = installStatusCompleted }), "c@x.io", reasonCompleted},
+		{"rescheduled", mut(func(r *InstallRow) { r.LocalStart = r.LocalStart.AddDate(0, 0, 3) }), "c@x.io", reasonAnchorChanged},
+		{"customer deleted", mut(func(r *InstallRow) { r.CustomerDeleted = true }), "c@x.io", reasonCustomerGone},
+		{"customer asked not to be contacted", mut(func(r *InstallRow) { r.DoNotContact = true }), "c@x.io", reasonDoNotContact},
+		{"email removed", mut(func(r *InstallRow) { r.ContactEmail = "" }), "c@x.io", reasonNoEmail},
+		{"email changed since planning", mut(func(r *InstallRow) { r.ContactEmail = "new@x.io" }), "c@x.io", reasonRecipientChanged},
 	}
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, installReason(tc.row, planned)) })
+		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, installReason(tc.row, planned, tc.plannedEmail)) })
 	}
 }
 
-func TestRenderInstallDigest(t *testing.T) {
-	today := time.Date(2026, 11, 23, 0, 0, 0, 0, installLoc)
-	late := installRow("b", "u1", "c@x.io", 24)
-	late.StartsAt = late.StartsAt.Add(3 * time.Hour)
-	early := installRow("a", "u1", "c@x.io", 24)
-	early.VisitType = "service"
-	in := []InstallRow{late, early}
-	e := renderInstallDigest("Acme Stone", in, today, installLoc)
-	assert.Equal(t, []InstallRow{late, early}, in, "input must not be reordered")
-	require.Len(t, e.Details, 2)
-	assert.Equal(t, "Service visit FJOB-000001", e.Details[0].Label, "soonest visit first")
-	assert.Contains(t, e.Details[0].Value, "tomorrow")
-	assert.Contains(t, e.Details[0].Value, "Acme")
-	assert.Equal(t, installTitle, e.Heading)
+func TestFormatInstallAddress(t *testing.T) {
+	assert.Equal(t, "12 Quarry Rd, Unit 4, Austin, TX 78701", formatInstallAddress("12 Quarry Rd", "Unit 4", "Austin", "TX", "78701"))
+	assert.Equal(t, "12 Quarry Rd, Austin", formatInstallAddress("12 Quarry Rd", "", "Austin", "", ""))
+	assert.Equal(t, "Austin, TX", formatInstallAddress("", "", "Austin", "TX", ""))
+	assert.Empty(t, formatInstallAddress("", "  ", "", "", ""))
 }
 
-func TestInstallWhen(t *testing.T) {
-	r := installRow("a", "u1", "c@x.io", 24)
-	assert.Equal(t, "Tue, Nov 24, 8:00 AM", installWhen(r, installLoc))
+func TestInstallWhenAndTiming(t *testing.T) {
+	r := installRow("a", "c@x.io", 24)
+	assert.Equal(t, "Tue, Nov 24, 8:00 AM", installWhen(r, installLoc), "14:00 UTC is 8:00 AM in the visit's own Chicago zone")
 	r.AllDay = true
 	assert.Equal(t, "Tue, Nov 24, all day", installWhen(r, installLoc))
 	r.AllDay, r.Timezone = false, "Not/AZone"
-	assert.Equal(t, "Tue, Nov 24, 9:00 AM", installWhen(r, time.FixedZone("f", -5*3600)), "unknown zone falls back")
+	assert.Equal(t, "Tue, Nov 24, 9:00 AM", installWhen(r, time.FixedZone("f", -5*3600)), "an unknown zone falls back")
+
+	assert.Equal(t, "today", installTiming(0))
+	assert.Equal(t, "tomorrow", installTiming(1))
+	assert.Equal(t, "in 2 days", installTiming(2))
+	assert.Empty(t, installTiming(-1), "a past visit gets no relative wording")
 }
 
-func TestInstallBodyAndTiming(t *testing.T) {
-	assert.Equal(t, "1 site visit is coming up.", installBody(1))
-	assert.Equal(t, "3 site visits are coming up.", installBody(3))
-	assert.Equal(t, "tomorrow", installTiming(1))
-	assert.Equal(t, "today", installTiming(0))
-	assert.Equal(t, "in 2 days", installTiming(2))
+func TestInstallHeadingAndBody(t *testing.T) {
+	today := time.Date(2026, 11, 23, 0, 0, 0, 0, installLoc)
+	one := []InstallRow{installRow("a", "c@x.io", 24)}
+	assert.Equal(t, "Your installation is tomorrow", installHeading(one, today))
+	assert.Equal(t, "Your installation is today", installHeading([]InstallRow{installRow("a", "c@x.io", 23)}, today))
+	assert.Equal(t, "Your installation is coming up", installHeading([]InstallRow{installRow("a", "c@x.io", 25)}, today))
+	two := []InstallRow{installRow("a", "c@x.io", 24), installRow("b", "c@x.io", 24)}
+	assert.Equal(t, "Your installations are coming up", installHeading(two, today))
+
+	assert.Equal(t, "Installation scheduled for Tue, Nov 24, 8:00 AM.", installBody(one, installLoc))
+	assert.Equal(t, "2 installations are coming up.", installBody(two, installLoc))
+}
+
+func TestRenderInstallEmailSingle(t *testing.T) {
+	today := time.Date(2026, 11, 23, 0, 0, 0, 0, installLoc)
+	e := renderInstallEmail("Acme Stone", []InstallRow{installRow("a", "c@x.io", 24)}, today, installLoc, "")
+	assert.Equal(t, "Your installation is tomorrow", e.Heading)
+	require.Len(t, e.Details, 2)
+	assert.Equal(t, "Installation for order SORD-1", e.Details[0].Label)
+	assert.Equal(t, "Tue, Nov 24, 8:00 AM (tomorrow)", e.Details[0].Value)
+	assert.Equal(t, "Address", e.Details[1].Label)
+	assert.Equal(t, "12 Quarry Rd, Austin, TX 78701", e.Details[1].Value)
+	assert.Equal(t, "you have an installation scheduled with Acme Stone.", e.Reason)
+	assert.Empty(t, e.ActionURL, "no portal link, no button")
+	assert.Empty(t, e.ActionLabel)
+}
+
+func TestRenderInstallEmailNeverExposesCrewOrInternalData(t *testing.T) {
+	e := renderInstallEmail("Acme Stone", []InstallRow{installRow("a", "c@x.io", 24)}, time.Date(2026, 11, 23, 0, 0, 0, 0, installLoc), installLoc, "")
+	var all strings.Builder
+	all.WriteString(e.Heading + e.Reason)
+	for _, p := range e.Paragraphs {
+		for _, s := range p {
+			all.WriteString(s.Text)
+		}
+	}
+	for _, d := range e.Details {
+		all.WriteString(d.Label + d.Value)
+	}
+	assert.NotContains(t, all.String(), "so-a", "internal uuids must not appear in the customer email")
+	assert.NotContains(t, strings.ToLower(all.String()), "crew")
+}
+
+func TestRenderInstallEmailMultipleSortedAndUntouched(t *testing.T) {
+	today := time.Date(2026, 11, 23, 0, 0, 0, 0, installLoc)
+	late := installRow("b", "c@x.io", 25)
+	early := installRow("a", "c@x.io", 24)
+	in := []InstallRow{late, early}
+	e := renderInstallEmail("", in, today, installLoc, "/sales/sales_order/x")
+	assert.Equal(t, []InstallRow{late, early}, in, "the input must not be reordered")
+	assert.Equal(t, "Your installations are coming up", e.Heading)
+	require.Len(t, e.Details, 4)
+	assert.Contains(t, e.Details[0].Value, "Nov 24", "soonest first")
+	assert.Contains(t, e.Details[2].Value, "Nov 25")
+	assert.NotEmpty(t, e.Paragraphs[0])
 }
 
 func TestDefaultJobsIncludesInstallReminders(t *testing.T) {

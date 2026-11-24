@@ -220,5 +220,6 @@ func RecomputeBalance(ctx context.Context, tx pgx.Tx, l Locked, action string, a
 		l.InternalID, fromStatusID, toStatusID, action, nullableInt(actorEmployeeID)); err != nil {
 		return fmt.Errorf("insert vendor bill %s history: %w", action, err)
 	}
-	return nil
+	// A bill raised from an expense claim carries its paid state back to the claim.
+	return syncExpenseTx(ctx, tx, l.InternalID, toCode, actorEmployeeID)
 }

@@ -145,6 +145,11 @@ const (
 	// particular is the sign-off the Configure > Workflows approver chain gates.
 	ResourceBinTransfer Resource = "bin_transfer"
 
+	// ResourceEmployee is the staff directory under Configuration > Employee.
+	// Separate from ResourceUser (login accounts): an employee may have no login
+	// at all, and approving a new employee is its own grant.
+	ResourceEmployee Resource = "employee"
+
 	// Finance
 	ResourceChartOfAccount Resource = "chart_of_account"
 	ResourceCashTransfer   Resource = "cash_transfer"
@@ -291,6 +296,14 @@ var catalog = []Permission{
 	{ResourceBinTransfer, ActionDelete},
 	{ResourceBinTransfer, ActionTransition},
 	{ResourceBinTransfer, ActionApprove},
+
+	// Employees: transition covers deactivate/reactivate; approve is the approver
+	// chain's sign-off and veto for a new employee.
+	{ResourceEmployee, ActionCreate},
+	{ResourceEmployee, ActionRead},
+	{ResourceEmployee, ActionUpdate},
+	{ResourceEmployee, ActionTransition},
+	{ResourceEmployee, ActionApprove},
 
 	// Read is separated from the write actions here on purpose: every inventory
 	// form needs the vocabularies to populate its dropdowns, so a bin clerk

@@ -33,7 +33,7 @@ func employeeIDByIdentity(ctx context.Context, pool *pgxpool.Pool, identityID st
 // Search lists expense claims under the caller's RBAC scope with filter/sort/
 // global search + keyset pagination. Scope × filter is ANDed — a filter can
 // only narrow the permitted set. "own" scope narrows to claims the caller
-// filed (AD-2). List rows omit line items to avoid an N+1 join.
+// is the claimant of or filed for someone else (AD-2). List rows omit line items to avoid an N+1 join.
 func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID string, req query.Request) (Page, error) {
 	where := []string{"exp.expense_deleted_at IS NULL"}
 	var args []any
@@ -43,7 +43,7 @@ func Search(ctx context.Context, pool *pgxpool.Pool, scope, actorIdentityID stri
 		if !found {
 			return Page{}, nil
 		}
-		where = append(where, fmt.Sprintf("exp.expense_claimant_id = $%d", nextIdx))
+		where = append(where, fmt.Sprintf("(exp.expense_claimant_id = $%d OR exp.expense_created_by = $%d)", nextIdx, nextIdx))
 		args = append(args, empID)
 		nextIdx++
 	}

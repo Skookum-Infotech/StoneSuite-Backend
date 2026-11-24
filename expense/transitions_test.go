@@ -13,12 +13,12 @@ func TestCanTransition(t *testing.T) {
 		{"SUBM", "APPV", true},
 		{"SUBM", "DRFT", true},
 		{"SUBM", "RJCT", false}, // reject is a dedicated decision, not a generic transition
-		{"APPV", "REIM", true},
+		{"APPV", "PAID", false}, // paid only by the vendor bill settling,
 		{"APPV", "DRFT", false},
 		{"APPV", "RJCT", false},
 		{"RJCT", "DRFT", true},
 		{"RJCT", "APPV", false},
-		{"REIM", "DRFT", false},
+		{"PAID", "DRFT", false},
 		{"UNKNOWN", "DRFT", false},
 	}
 	for _, tt := range tests {
@@ -32,7 +32,7 @@ func TestValidateTransition(t *testing.T) {
 	if err := ValidateTransition("DRFT", "SUBM"); err != nil {
 		t.Errorf("ValidateTransition(DRFT, SUBM) = %v, want nil", err)
 	}
-	if err := ValidateTransition("REIM", "DRFT"); err != ErrInvalidTransition {
-		t.Errorf("ValidateTransition(REIM, DRFT) = %v, want ErrInvalidTransition", err)
+	if err := ValidateTransition("PAID", "DRFT"); err != ErrInvalidTransition {
+		t.Errorf("ValidateTransition(PAID, DRFT) = %v, want ErrInvalidTransition", err)
 	}
 }

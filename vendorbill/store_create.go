@@ -76,6 +76,16 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	if err != nil {
 		return nil, err
 	}
+	// A bill stands for one source document: a purchase order or an expense claim.
+	var expenseID int
+	if in.ExpenseUUID != "" {
+		if in.PurchaseOrderUUID != "" {
+			return nil, ClientError{Msg: "A vendor bill can come from a purchase order or an expense claim, not both."}
+		}
+		if expenseID, err = claimExpenseTx(ctx, tx, in.ExpenseUUID, vendorInternalID); err != nil {
+			return nil, err
+		}
+	}
 
 	lines, err := resolveLines(ctx, tx, in.Items, in.SalesTaxPercent)
 	if err != nil {
@@ -141,6 +151,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateVendorBillInput, a
 	}
 	if poID != nil {
 		cv = append(cv, colVal{"vendor_bill_purchase_order_id", *poID, ""})
+	}
+	if expenseID > 0 {
+		cv = append(cv, colVal{"vendor_bill_expense_id", expenseID, ""})
 	}
 
 	insertSQL, insertArgs := buildInsert("vendor_bill", cv, "vendor_bill_id, vendor_bill_uuid")

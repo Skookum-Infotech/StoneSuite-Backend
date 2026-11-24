@@ -7971,6 +7971,341 @@
         ]
       }
     },
+    "/api/tenant/employees": {
+      "get": {
+        "operationId": "get_tenant_employees",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.List",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "post": {
+        "operationId": "post_tenant_employees",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Create",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/employees/search": {
+      "post": {
+        "operationId": "post_tenant_employees_search",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Search",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/employees/{uuid}": {
+      "get": {
+        "operationId": "get_tenant_employees_uuid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Get",
+        "tags": [
+          "tenant"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_tenant_employees_uuid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Update",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/employees/{uuid}/approve": {
+      "post": {
+        "operationId": "post_tenant_employees_uuid_approve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Approve",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/employees/{uuid}/history": {
+      "get": {
+        "operationId": "get_tenant_employees_uuid_history",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.History",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/employees/{uuid}/reject": {
+      "post": {
+        "operationId": "post_tenant_employees_uuid_reject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Reject",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/employees/{uuid}/transition": {
+      "post": {
+        "operationId": "post_tenant_employees_uuid_transition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "cfgEmp.Transition",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/estimates": {
       "get": {
         "operationId": "get_tenant_estimates",
@@ -8446,6 +8781,37 @@
         ]
       }
     },
+    "/api/tenant/expenses/billable": {
+      "get": {
+        "operationId": "get_tenant_expenses_billable",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "expOps.Billable",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/tenant/expenses/categories": {
       "get": {
         "operationId": "get_tenant_expenses_categories",
@@ -8472,6 +8838,37 @@
           }
         ],
         "summary": "expOps.Categories",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/expenses/claimants": {
+      "get": {
+        "operationId": "get_tenant_expenses_claimants",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "expOps.Claimants",
         "tags": [
           "tenant"
         ]
@@ -8704,6 +9101,47 @@
           }
         ],
         "summary": "expOps.Audit",
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/tenant/expenses/{uuid}/create-bill": {
+      "post": {
+        "operationId": "post_tenant_expenses_uuid_create_bill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "expOps.CreateBill",
         "tags": [
           "tenant"
         ]

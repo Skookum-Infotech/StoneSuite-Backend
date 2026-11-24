@@ -194,3 +194,25 @@ func validateCustom(ctx context.Context, pool *pgxpool.Pool, custom map[string]a
 	}
 	return nil
 }
+
+// resolveClaimant decides who a claim is for: the employee named by requested,
+// or the acting caller when none is. Either way the claimant must be a real,
+// Active employee (spec AD-8, layer 2). Filing for someone else is allowed to
+// anyone who can create expenses; the claim is theirs, the filer keeps access.
+func resolveClaimant(ctx context.Context, q workflow.Querier, requested *int, actorEmployeeID int) (int, error) {
+	claimantID := actorEmployeeID
+	if requested != nil && *requested > 0 {
+		claimantID = *requested
+	}
+	active, err := employeeActive(ctx, q, claimantID)
+	if err != nil {
+		return 0, err
+	}
+	if !active {
+		if claimantID == actorEmployeeID {
+			return 0, ClientError{Msg: "Your employee record is inactive; you cannot file an expense claim."}
+		}
+		return 0, ClientError{Msg: "The selected employee is not active, so a claim cannot be filed for them."}
+	}
+	return claimantID, nil
+}

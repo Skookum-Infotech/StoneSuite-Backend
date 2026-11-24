@@ -198,8 +198,8 @@ func TestTransition_RejectsIllegalMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := Transition(context.Background(), pool, created.ID, "APPV", 1); !errors.Is(err, ErrInvalidTransition) {
-		t.Fatalf("Transition DRFT->APPV = %v, want ErrInvalidTransition", err)
+	if _, err := Transition(context.Background(), pool, created.ID, "PAID", 1); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Transition DRFT->PAID = %v, want ErrInvalidTransition", err)
 	}
 	// RJCT is reachable only through Reject, never the generic Transition path (AD-5).
 	if _, err := Transition(context.Background(), pool, created.ID, "RJCT", 1); !errors.Is(err, ErrInvalidTransition) {
@@ -277,13 +277,13 @@ func TestApprove_SignOffFlipsApprovalStatusAndGatesTransition(t *testing.T) {
 	if approved.StatusCode != "APPV" {
 		t.Errorf("StatusCode = %q, want APPV", approved.StatusCode)
 	}
-	// APPV -> REIM ("process") requires no approval (zero approvers configured there).
-	reimbursed, err := Transition(ctx, pool, created.ID, "REIM", 1)
-	if err != nil {
-		t.Fatalf("Transition APPV->REIM: %v", err)
+	// Approved is a stop: the only way on is the vendor bill raised from the claim
+	// being paid, never a manual move.
+	if _, err := Transition(ctx, pool, created.ID, "PAID", 1); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Transition APPV->PAID = %v, want ErrInvalidTransition", err)
 	}
-	if reimbursed.StatusCode != "REIM" {
-		t.Errorf("StatusCode = %q, want REIM", reimbursed.StatusCode)
+	if approved.VendorBill == nil {
+		t.Fatal("approving the claim should have raised a vendor bill")
 	}
 }
 

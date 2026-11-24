@@ -130,6 +130,14 @@ func Transition(ctx context.Context, pool *pgxpool.Pool, uuid, toStatusCode stri
 
 	writeHistory(ctx, tx, internalID, "transition", &curStatusID, &toStatusID, actorEmployeeID)
 
+	// Landing on Approved -- here, with nobody configured to approve -- raises the
+	// claim's vendor bill, the same as the last approver's sign-off does.
+	if toStatusCode == approvedStatusCode {
+		if err := createBillTx(ctx, tx, internalID, actorEmployeeID); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transition: %w", err)
 	}

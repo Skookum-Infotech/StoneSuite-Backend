@@ -95,6 +95,9 @@ type Vendor struct {
 	DisplayName     string `json:"displayName"`
 	OwnerUserID     string `json:"-"`
 	OwnerEmployeeID *int   `json:"ownerEmployeeId"`
+	// EmployeeID is the employee an Employee-type vendor stands for (empty for any
+	// other vendor): the vendor is edited from that employee's page, not here.
+	EmployeeID string `json:"employeeId,omitempty"`
 
 	vendorFields
 

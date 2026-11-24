@@ -181,6 +181,21 @@ func TestListIncludesBuiltInRules(t *testing.T) {
 	assert.True(t, stuck.Enabled)
 	assert.Equal(t, "internal", stuck.Audience)
 	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: 2}, {OffsetDays: 4}, {OffsetDays: 6}}, stuck.Cadence)
+	install, ok := byKey[automation.RuleKeyInstallTomorrow]
+	require.True(t, ok, automation.RuleKeyInstallTomorrow)
+	assert.True(t, install.Enabled)
+	assert.Equal(t, "external", install.Audience)
+	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: -1}}, install.Cadence)
+	vbDue, ok := byKey[automation.RuleKeyVendorBillDue]
+	require.True(t, ok, automation.RuleKeyVendorBillDue)
+	assert.True(t, vbDue.Enabled)
+	assert.Equal(t, "internal", vbDue.Audience)
+	assert.Equal(t, []automation.ARCadenceStage{{OffsetDays: -3}, {OffsetDays: 0}}, vbDue.Cadence)
+	digest, ok := byKey[automation.RuleKeyDailyDigest]
+	require.True(t, ok, automation.RuleKeyDailyDigest)
+	assert.True(t, digest.Enabled)
+	assert.Equal(t, "internal", digest.Audience)
+	assert.Empty(t, digest.Cadence, "the digest has no cadence: one per user per day")
 }
 
 // TestListRuleMachineFields: seeded rules carry isSystem, lastPlannedAt from

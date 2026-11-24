@@ -162,30 +162,6 @@ func (c *ControlPlane) PurgeTenant(ctx context.Context, id string) error {
 	return ErrPlatformOwnerProtected
 }
 
-// maxListTenants is a safety cap on unbounded SELECT; pagination should be
-// added (TODO) once tenant count approaches this limit.
-const maxListTenants = 1000
-
-// ListTenants returns tenants ordered by creation time (platform admin view).
-// Results are capped at maxListTenants rows to prevent unbounded scans.
-func (c *ControlPlane) ListTenants(ctx context.Context) ([]Tenant, error) {
-	rows, err := c.pool.Query(ctx, "SELECT "+tenantColumns+" FROM tenants ORDER BY created_at DESC LIMIT $1", maxListTenants)
-	if err != nil {
-		return nil, fmt.Errorf("list tenants: %w", err)
-	}
-	defer rows.Close()
-
-	var out []Tenant
-	for rows.Next() {
-		t, err := scanTenant(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *t)
-	}
-	return out, rows.Err()
-}
-
 // nullable converts an empty string to SQL NULL, for optional foreign-key
 // and free-text columns shared by the invite and platform-admin writes.
 func nullable(s string) any {

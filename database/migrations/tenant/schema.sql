@@ -10606,3 +10606,228 @@ ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
 INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
 SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'PORD'
 ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+-- ── Automation: install-tomorrow reminders (customer-facing) ──
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
+-- the offset is days relative to the installation's local start date (-1 = the day before).
+-- Recipients are the customer, so the engine applies the external guards (pause switch, suppression list, caps).
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('install_tomorrow', 'Installation reminders', TRUE, TRUE, 'external',
+        '{"cadence":[{"offsetDays":-1}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'install_tomorrow'
+ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation: vendor bill due reminders (internal) ──
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
+-- offsets are days relative to the bill due date: 3 days before and on the due date.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('vendor_bill_due', 'Vendor bill due reminders', TRUE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":-3},{"offsetDays":0}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'vendor_bill_due'
+ON CONFLICT (rule_id) DO NOTHING;
+
+-- ── Automation: daily digest (internal, opt-in per user) ──
+-- Per-user delivery preferences. No row means the digest is off for that user.
+-- send_hour is the tenant-local hour (inside the 08:00-18:00 send window) from which the digest goes out.
+CREATE TABLE IF NOT EXISTS automation_digest_prefs (
+    user_id           UUID        PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled           BOOLEAN     NOT NULL DEFAULT FALSE,
+    send_hour         SMALLINT    NOT NULL DEFAULT 8,
+    include_installs  BOOLEAN     NOT NULL DEFAULT TRUE,
+    include_vendor_bills BOOLEAN  NOT NULL DEFAULT TRUE,
+    include_approvals BOOLEAN     NOT NULL DEFAULT TRUE,
+    skip_empty        BOOLEAN     NOT NULL DEFAULT TRUE,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_digest_prefs_hour_chk CHECK (send_hour BETWEEN 8 AND 17)
+);
+CREATE INDEX IF NOT EXISTS idx_automation_digest_prefs_enabled
+    ON automation_digest_prefs (user_id) WHERE enabled;
+
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate).
+-- It sends nothing until a user opts in; it has no cadence (one digest per user per local day).
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('daily_digest', 'Daily digest', TRUE, TRUE, 'internal', '{}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'daily_digest'
+ON CONFLICT (rule_id) DO NOTHING;
+
+-- =====================================================================
+-- EMPLOYEE module (EMPL): Configuration > Employee.
+--
+-- The employee table already exists (every audit/owner FK in the schema points
+-- at it, and each login user has one). This turns it into a managed record:
+-- a number, profile fields, a status (Pending Approval -> Active -> Inactive)
+-- and an optional approval chain (Configure > Workflows > Employee). The
+-- gate is PEND (target ACTV); with no approver configured a new employee is
+-- Active at once.
+--
+-- employee_is_active stays the one "usable" flag the rest of the app reads
+-- (claimant / approver / sales-rep pickers): it is TRUE only while the status
+-- is Active, so a Pending or Inactive employee drops out of every picker.
+--
+-- An Active employee also gets a Vendor (vendor_type = 'Employee',
+-- vendor.vendor_employee_id) so expense claims can be billed and paid as
+-- vendor bills; see vendors/store_employee.go.
+-- =====================================================================
+
+INSERT INTO lkp_record_type (record_type_code, record_type_code_full, record_type_name,
+    record_type_is_active, record_type_is_system, record_type_created_by) VALUES
+    ('EMPL','employee','Employee', TRUE,TRUE,1)
+ON CONFLICT (record_type_code) DO NOTHING;
+
+INSERT INTO lkp_record_status (record_status_code, record_status_name,
+    record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT v.code, v.name, rt.record_type_id, TRUE, TRUE, 1
+FROM (VALUES ('PEND','Pending Approval'), ('ACTV','Active'), ('INAC','Inactive')) AS v(code, name)
+CROSS JOIN lkp_record_type rt WHERE rt.record_type_code = 'EMPL'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_uuid            UUID         NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_number          VARCHAR(20)      NULL;  -- 'EMPL-000001', generated post-insert in Go
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_phone           VARCHAR(30)  NOT NULL DEFAULT '';
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_job_title       VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_department      VARCHAR(100) NOT NULL DEFAULT '';
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_address         TEXT         NOT NULL DEFAULT '';
+-- NULL = a row written before this module (or by userstore.EnsureEmployeeForUser);
+-- the backfill below and the Go readers both treat it as Active/Inactive by employee_is_active.
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_status          INTEGER          NULL REFERENCES lkp_record_status(record_status_id);
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_approval_status VARCHAR(10)  NOT NULL DEFAULT 'none';
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_approved_by     INTEGER          NULL REFERENCES employee(employee_id);
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE employee ADD COLUMN IF NOT EXISTS employee_updated_by      INTEGER          NULL REFERENCES employee(employee_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_employee_uuid   ON employee (employee_uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_employee_number ON employee (employee_number) WHERE employee_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_employee_status ON employee (employee_status) WHERE employee_deleted_at IS NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_employee_approval_status' AND conrelid = 'employee'::regclass) THEN
+    ALTER TABLE employee ADD CONSTRAINT chk_employee_approval_status
+      CHECK (employee_approval_status IN ('none','pending','approved','rejected'));
+  END IF;
+END $$;
+
+-- Backfill (re-runs every boot, cheap): rows that predate the module -- or were
+-- inserted by the user-signup path, which knows nothing of status or number --
+-- become Active/Inactive according to employee_is_active, and get the default
+-- EMPL-nnnnnn number (the same format assignNumber falls back to).
+UPDATE employee e
+SET employee_status = rs.record_status_id
+FROM lkp_record_status rs
+JOIN lkp_record_type rt ON rt.record_type_id = rs.record_status_record_type AND rt.record_type_code = 'EMPL'
+WHERE e.employee_status IS NULL
+  AND rs.record_status_code = CASE WHEN e.employee_is_active THEN 'ACTV' ELSE 'INAC' END;
+
+UPDATE employee
+SET employee_number = 'EMPL-' || LPAD(employee_id::text, 6, '0')
+WHERE employee_number IS NULL AND NOT employee_is_system;
+
+-- Shape fixed by approvalchain.writeGenericHistory.
+CREATE TABLE IF NOT EXISTS employee_history (
+    employee_history_id SERIAL      PRIMARY KEY,
+    employee_id         INTEGER     NOT NULL REFERENCES employee(employee_id) ON DELETE CASCADE,
+    from_status_id      INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    to_status_id        INTEGER         NULL REFERENCES lkp_record_status(record_status_id),
+    action              VARCHAR(32) NOT NULL DEFAULT 'transition',  -- create|update|transition|approve|approve_override|reject|activate|deactivate
+    actor_employee_id   INTEGER         NULL REFERENCES employee(employee_id),
+    at                  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_employee_history_employee ON employee_history (employee_id);
+
+-- Approver config and per-round sign-offs: the uniform shape approvalchain's
+-- engine serves every module from (see approvalchain/registry.go).
+CREATE TABLE IF NOT EXISTS employee_approver (
+    employee_approver_id SERIAL      PRIMARY KEY,
+    record_type_id       INTEGER     NOT NULL REFERENCES lkp_record_type(record_type_id),      -- = EMPL
+    record_status_id     INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),  -- the gate: PEND
+    approver_employee_id INTEGER     NOT NULL REFERENCES employee(employee_id),
+    is_active            BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at           TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by           INTEGER         NULL REFERENCES employee(employee_id),
+    CONSTRAINT uq_employee_approver UNIQUE (record_type_id, record_status_id, approver_employee_id)
+);
+CREATE TABLE IF NOT EXISTS employee_approval (
+    employee_approval_id SERIAL      PRIMARY KEY,
+    employee_id          INTEGER     NOT NULL REFERENCES employee(employee_id) ON DELETE CASCADE,
+    record_status_id     INTEGER     NOT NULL REFERENCES lkp_record_status(record_status_id),
+    approver_employee_id INTEGER     NOT NULL REFERENCES employee(employee_id),
+    approved_at          TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_employee_approval UNIQUE (employee_id, record_status_id, approver_employee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_employee_approver_lookup
+    ON employee_approver (record_type_id, record_status_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_employee_approval_employee
+    ON employee_approval (employee_id);
+
+-- The workflow row Configure > Workflows lists (approval chain) and Record
+-- Numbering keys on. The module's real statuses live in lkp_record_status for
+-- EMPL; these states are its display twin, as for every relational module.
+INSERT INTO workflows (key, name, description, enabled, is_default, pipeline_order)
+SELECT 'employee', 'Employee', 'Staff records. New employees can require approval before they become active.', TRUE, TRUE, 0
+WHERE NOT EXISTS (SELECT 1 FROM workflows WHERE LOWER(key) = 'employee');
+
+INSERT INTO workflow_states (workflow_id, key, name, is_initial, is_terminal, sort_order, color)
+SELECT w.id, v.key, v.name, v.is_initial, v.is_terminal, v.sort_order, v.color
+FROM workflows w
+CROSS JOIN (VALUES
+    ('emp_pending',  'EMP-Pending Approval', TRUE,  FALSE, 0, '#f59e0b'),
+    ('emp_active',   'EMP-Active',           FALSE, FALSE, 1, '#22c55e'),
+    ('emp_inactive', 'EMP-Inactive',         FALSE, TRUE,  2, '#6b7280')
+) AS v(key, name, is_initial, is_terminal, sort_order, color)
+WHERE LOWER(w.key) = 'employee'
+  AND NOT EXISTS (SELECT 1 FROM workflow_states s WHERE s.workflow_id = w.id);
+
+-- VENDOR: a third type, 'Employee', for the vendor an Active employee gets.
+-- The inline CHECK in vendor's CREATE TABLE only knows Person|Organization, so
+-- widen it once (the definition test makes this a no-op on later boots).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint
+             WHERE conname = 'chk_vendor_type' AND conrelid = 'vendor'::regclass
+               AND pg_get_constraintdef(oid) NOT LIKE '%Employee%') THEN
+    ALTER TABLE vendor DROP CONSTRAINT chk_vendor_type;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_vendor_type' AND conrelid = 'vendor'::regclass) THEN
+    ALTER TABLE vendor ADD CONSTRAINT chk_vendor_type
+      CHECK (vendor_type IN ('Person','Organization','Employee'));
+  END IF;
+END $$;
+
+ALTER TABLE vendor ADD COLUMN IF NOT EXISTS vendor_employee_id INTEGER NULL REFERENCES employee(employee_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vendor_employee ON vendor (vendor_employee_id)
+    WHERE vendor_employee_id IS NOT NULL AND vendor_deleted_at IS NULL;
+
+-- EXPENSE: Reimbursed (set by hand) becomes Paid, set only when the vendor
+-- payment for the claim's vendor bill is Paid. Rows already on Reimbursed move
+-- to Paid; the old status stays in the lookup (history rows point at it) but
+-- is retired.
+INSERT INTO lkp_record_status (record_status_code, record_status_name, record_status_record_type, record_status_is_active, record_status_is_system, record_status_created_by)
+SELECT 'PAID', 'Paid', record_type_id, TRUE, TRUE, 1 FROM lkp_record_type WHERE record_type_code = 'EXPN'
+ON CONFLICT (record_status_code, record_status_record_type) DO NOTHING;
+
+UPDATE expense
+SET expense_status = (SELECT p.record_status_id FROM lkp_record_status p
+                      JOIN lkp_record_type pt ON pt.record_type_id = p.record_status_record_type
+                      WHERE pt.record_type_code = 'EXPN' AND p.record_status_code = 'PAID')
+WHERE expense_status = (SELECT r.record_status_id FROM lkp_record_status r
+                        JOIN lkp_record_type rt ON rt.record_type_id = r.record_status_record_type
+                        WHERE rt.record_type_code = 'EXPN' AND r.record_status_code = 'REIM');
+
+UPDATE lkp_record_status SET record_status_is_active = FALSE
+WHERE record_status_code = 'REIM'
+  AND record_status_record_type = (SELECT record_type_id FROM lkp_record_type WHERE record_type_code = 'EXPN');
+
+-- VENDOR BILL <- EXPENSE: the bill an approved expense claim creates. One live
+-- bill per claim.
+ALTER TABLE vendor_bill ADD COLUMN IF NOT EXISTS vendor_bill_expense_id INTEGER NULL REFERENCES expense(expense_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vendor_bill_expense ON vendor_bill (vendor_bill_expense_id)
+    WHERE vendor_bill_expense_id IS NOT NULL AND vendor_bill_deleted_at IS NULL;

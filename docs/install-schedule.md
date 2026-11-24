@@ -199,3 +199,25 @@ Visits are never deleted. Use cancel instead.
 - Customers cannot see their visits through the customer portal.
 - Install Schedule does not check your crew's working hours or time off.
   Conflicts are only about other visits.
+
+## Reminders the day before a visit
+
+The customer on the job's sales order gets an email the day before an install visit,
+with the date, time (in the visit's own time zone) and job site address. If the
+customer has a customer portal login they also get a notification there that opens the
+sales order. One email covers all of that customer's visits for the day. Crew members
+are not sent this reminder.
+
+- Reminders are sent in the morning, between 8:00 and 6:00 in your workspace's
+  time zone, never overnight.
+- Only install visits are reminded, not template or service visits.
+- A visit that is cancelled or completed, or whose job is cancelled or deleted,
+  is dropped before sending. If you move a visit to another day, the reminder
+  follows the new date.
+- A visit booked the evening before, or on the day itself, still gets one
+  reminder, worded "today".
+- Customers with no email address, marked do-not-contact, or deleted are skipped.
+  Because these go to customers, your workspace's pause switch, the suppression
+  list and the daily and weekly sending limits apply.
+- An admin can turn the reminder on or off under Automation > Rules
+  ("Installation reminders"). It is on by default for new workspaces.

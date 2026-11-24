@@ -70,11 +70,13 @@ const vendorSelect = `
 	       COALESCE(to_char(v.vendor_founding_date,'YYYY-MM-DD'),''), v.vendor_founding_location,
 	       COALESCE(to_char(v.vendor_dissolution_date,'YYYY-MM-DD'),''), v.vendor_department,
 	       v.vendor_accepted_payment_methods, v.vendor_compliance_policies,
-	       v.vendor_created_at, v.vendor_updated_at
+	       v.vendor_created_at, v.vendor_updated_at,
+	       COALESCE(ee.employee_uuid::text,'')
 	FROM vendor v
 	JOIN lkp_record_status rs ON rs.record_status_id = v.vendor_status
 	LEFT JOIN employee oe ON oe.employee_id = v.vendor_owner_id
-	LEFT JOIN users ou ON ou.id = oe.employee_user_id`
+	LEFT JOIN users ou ON ou.id = oe.employee_user_id
+	LEFT JOIN employee ee ON ee.employee_id = v.vendor_employee_id`
 
 func scanVendor(row pgx.Row) (*Vendor, error) {
 	var v Vendor
@@ -96,6 +98,7 @@ func scanVendor(row pgx.Row) (*Vendor, error) {
 		&v.DissolutionDate, &v.Department,
 		&methodsRaw, &policiesRaw,
 		&v.CreatedAt, &v.UpdatedAt,
+		&v.EmployeeID,
 	); err != nil {
 		return nil, err
 	}
@@ -309,6 +312,9 @@ func validateVendorType(vendorType string, in vendorFields) error {
 		if strings.TrimSpace(in.LegalName) == "" {
 			return ClientError{Msg: "Legal business name is required for an Organization vendor."}
 		}
+	case EmployeeVendorType:
+		// Written only by EnsureForEmployeeTx, from the employee record.
+		return ClientError{Msg: "An Employee vendor is created and edited from Configuration > Employee."}
 	default:
 		return ClientError{Msg: `vendorType must be "Person" or "Organization".`}
 	}

@@ -21,6 +21,12 @@ type PurchaseOrderRef struct {
 	Number string `json:"number"`
 }
 
+// ExpenseRef is the flattened {id, number} of the expense claim a bill was raised from.
+type ExpenseRef struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
+}
+
 // Line is one vendor_bill_item row: catalog/free-text snapshot + stored money.
 type Line struct {
 	ID                  string  `json:"id"`
@@ -143,7 +149,11 @@ type vendorBillFields struct {
 type CreateVendorBillInput struct {
 	VendorUUID        string `json:"vendorUuid"`
 	PurchaseOrderUUID string `json:"purchaseOrderUuid,omitempty"`
-	AllowDuplicate    bool   `json:"allowDuplicate,omitempty"`
+	// ExpenseUUID optionally raises the bill for an approved expense claim: the
+	// vendor must be the claimant's Employee vendor and the claim must not
+	// already have a live bill. Exclusive with PurchaseOrderUUID.
+	ExpenseUUID    string `json:"expenseUuid,omitempty"`
+	AllowDuplicate bool   `json:"allowDuplicate,omitempty"`
 	vendorBillFields
 
 	// IdempotencyKey (from the Idempotency-Key header, never the body) makes
@@ -187,6 +197,8 @@ type VendorBill struct {
 
 	Vendor        VendorRef         `json:"vendor"`
 	PurchaseOrder *PurchaseOrderRef `json:"purchaseOrder,omitempty"` // nullable lineage (AD-8)
+	// Expense is the expense claim this bill was raised from, when it was.
+	Expense *ExpenseRef `json:"expense,omitempty"`
 
 	OwnerUserID     string `json:"-"`
 	CreatedByUserID string `json:"-"`

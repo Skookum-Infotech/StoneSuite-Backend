@@ -30,11 +30,19 @@ const expSelect = `
 	       exp.expense_total,
 	       exp.expense_record_version,
 	       exp.expense_created_at, exp.expense_updated_at,
-	       exp.expense_status
+	       exp.expense_status,
+	       COALESCE(NULLIF(TRIM(ce.employee_first_name || ' ' || ce.employee_last_name), ''), ce.employee_email),
+	       COALESCE(cu.id::text,''),
+	       COALESCE(vb.vendor_bill_uuid::text,''), COALESCE(vb.vendor_bill_number,''),
+	       COALESCE(vbs.record_status_code,''), COALESCE(vbs.record_status_name,'')
 	FROM expense exp
 	JOIN lkp_record_status rs ON rs.record_status_id = exp.expense_status
 	JOIN employee ce ON ce.employee_id = exp.expense_claimant_id
-	LEFT JOIN users u ON u.id = ce.employee_user_id`
+	LEFT JOIN users u ON u.id = ce.employee_user_id
+	LEFT JOIN employee fe ON fe.employee_id = exp.expense_created_by
+	LEFT JOIN users cu ON cu.id = fe.employee_user_id
+	LEFT JOIN vendor_bill vb ON vb.vendor_bill_expense_id = exp.expense_id AND vb.vendor_bill_deleted_at IS NULL
+	LEFT JOIN lkp_record_status vbs ON vbs.record_status_id = vb.vendor_bill_status`
 
 // expMeta carries the internal numeric id an expense row has but the API
 // response deliberately does not expose. Search needs it to mint a keyset
@@ -47,6 +55,7 @@ func scanExpense(row pgx.Row) (*Expense, expMeta, error) {
 	var p Expense
 	var meta expMeta
 	var customRaw []byte
+	var billID, billNumber, billStatusCode, billStatus string
 	if err := row.Scan(
 		&p.ID, &p.Number, &p.Status, &p.StatusCode, &p.ApprovalStatus,
 		&p.OwnerUserID,
@@ -57,11 +66,16 @@ func scanExpense(row pgx.Row) (*Expense, expMeta, error) {
 		&p.RecordVersion,
 		&p.CreatedAt, &p.UpdatedAt,
 		&meta.statusID,
+		&p.ClaimantName, &p.CreatorUserID,
+		&billID, &billNumber, &billStatusCode, &billStatus,
 	); err != nil {
 		return nil, expMeta{}, err
 	}
 	if len(customRaw) > 0 {
 		_ = json.Unmarshal(customRaw, &p.CustomFields)
+	}
+	if billID != "" {
+		p.VendorBill = &BillRef{ID: billID, Number: billNumber, StatusCode: billStatusCode, Status: billStatus}
 	}
 	return &p, meta, nil
 }

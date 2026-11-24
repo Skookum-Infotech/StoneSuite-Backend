@@ -21,7 +21,8 @@ type approvalSpec struct {
 	Cfg            approvalchain.ModuleConfig
 }
 
-// approvalSpecs derives one spec per notify-wired module and gate that can be
+// approvalSpecs derives one spec per module that has a reminder label (a DisplayName, or a
+// ReminderName for modules not wired for notifications) and gate that can be
 // rejected (every gate except RejectInPlace ones, so RejectUnsupported gates are
 // included), ordered by workflow key then gate order. In-place gates are excluded: "pending since" is meaningless for them.
 func approvalSpecs() []approvalSpec {
@@ -30,7 +31,7 @@ func approvalSpecs() []approvalSpec {
 	var out []approvalSpec
 	for _, key := range keys {
 		cfg, ok := approvalchain.ForWorkflowKey(key)
-		if !ok || cfg.DisplayName == "" {
+		if !ok || cfg.ReminderLabel() == "" {
 			continue
 		}
 		for _, g := range cfg.Gates {
@@ -38,7 +39,7 @@ func approvalSpecs() []approvalSpec {
 				continue
 			}
 			out = append(out, approvalSpec{
-				Workflow: key, DisplayName: cfg.DisplayName,
+				Workflow: key, DisplayName: cfg.ReminderLabel(),
 				RecordTypeCode: cfg.RecordTypeCode, Gate: g, Cfg: cfg,
 			})
 		}

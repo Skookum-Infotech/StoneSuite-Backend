@@ -17,6 +17,25 @@ can manage which roles they hold, and use Deactivate account to remove their
 access. A deactivated person also stops counting as an approver and stops
 receiving approval emails (see Approval chains).
 
+## Employees
+
+Configuration → Employee lists the people who work for you, whether or not they
+can sign in. Add one with their name, email, phone, job title, department and
+address. Creating an employee does not create a login; people who already sign in
+appear here too, and their email can only be changed under Users.
+
+If approvers are set for Employee (Configure → Workflows → Employee → Approval
+Chain), a new employee waits as Pending Approval until every approver signs off;
+an approver can also reject it, and editing a rejected employee sends it back for
+approval. With no approvers, a new employee is Active straight away. Only Active
+employees can be picked as approvers, expense claimants or sales reps.
+
+Every Active employee has a matching vendor record of type Employee (Purchases →
+Vendors), created automatically, so an expense claim can be billed and paid to
+them. Name, email and contact changes on the employee carry over to that vendor,
+and making the employee Inactive makes the vendor Inactive. Employee vendors are
+managed from the Employee page, not from the vendor form.
+
 ## Roles and access
 
 Configure → Roles & Access is where you control what each role can see and
@@ -163,6 +182,24 @@ turning it on starts reminders from today, so invoices that were already overdue
 do not receive past reminders. For invoice payment reminders, Preview shows who
 would be emailed right now without sending anything. Changing a rule needs the
 Automation configure permission; read access only shows the page.
+
+Stuck-approval reminders cover every record type that has an approval step with
+approvers set up, including quotes, estimates and sales orders. When one of these
+sits waiting on an approver, that approver gets a reminder 2, 4 and 6 days after it
+entered the approval step, with a link to the document. For quotes, estimates and
+sales orders this is the only automatic approval email: they do not send an email
+when they are submitted, approved or rejected.
+Each person can also turn on a daily digest for themselves under Account Settings >
+Notifications: one email and one in-app notification a day listing what needs their
+attention, namely installations in the next 3 days that they are assigned to, vendor
+bills they are responsible for that are due within 3 days or overdue, and quotes,
+estimates and sales orders waiting for their approval. The digest is off until someone
+turns it on. They choose the hour it is sent (between 8:00 and 5:00 in your
+workspace's time zone), which of the three sections to include, and whether a day with
+nothing to report is skipped, which is the default. The digest is a separate rule,
+"Daily digest", so an admin can turn it off for the whole workspace, and the "Pause
+all automated emails" switch stops it too. It is sent only to the person who asked
+for it.
 
 The "Pause all automated emails" switch stops every automated email for this
 workspace at once without changing any rule; reminders resume when you switch it

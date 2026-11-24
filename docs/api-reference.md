@@ -4,13 +4,13 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-702 endpoints across 7 surfaces, read from `main.go`.
+716 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
 | Requires | Endpoints |
 |---|---:|
-| staff token + tenant | 598 |
+| staff token + tenant | 612 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 27 |
 | staff token | 23 |
@@ -383,7 +383,7 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 | `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
 
-## `tenant` — 597 endpoints
+## `tenant` — 611 endpoints
 
 The staff application. Every route requires a JWT and resolves a tenant database.
 
@@ -449,6 +449,8 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `GET` | `/api/tenant/automation/deliveries` | staff token + tenant | `automationDeliveryOps.List` |
+| `GET` | `/api/tenant/automation/digest/me` | staff token + tenant | `digestOps.Get` |
+| `PUT` | `/api/tenant/automation/digest/me` | staff token + tenant | `digestOps.Put` |
 | `GET` | `/api/tenant/automation/rules` | staff token + tenant | `automationRuleOps.List` |
 | `PUT` | `/api/tenant/automation/rules/{key}` | staff token + tenant | `automationRuleOps.SetEnabled` |
 | `POST` | `/api/tenant/automation/rules/{key}/preview` | staff token + tenant | `controllers.NewAutomationPreviewOps` |
@@ -574,6 +576,20 @@ The staff application. Every route requires a JWT and resolves a tenant database
 | `POST` | `/api/tenant/document-extractions/{id}/proposed-entities/{key}/propose` | staff token + tenant | `docExtractOps.ProposeEntity` |
 | `POST` | `/api/tenant/document-extractions/{id}/start` | staff token + tenant | `docExtractOps.Start` |
 
+### employees
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/tenant/employees` | staff token + tenant | `cfgEmp.List` |
+| `POST` | `/api/tenant/employees` | staff token + tenant | `cfgEmp.Create` |
+| `POST` | `/api/tenant/employees/search` | staff token + tenant | `cfgEmp.Search` |
+| `GET` | `/api/tenant/employees/{uuid}` | staff token + tenant | `cfgEmp.Get` |
+| `PATCH` | `/api/tenant/employees/{uuid}` | staff token + tenant | `cfgEmp.Update` |
+| `POST` | `/api/tenant/employees/{uuid}/approve` | staff token + tenant | `cfgEmp.Approve` |
+| `GET` | `/api/tenant/employees/{uuid}/history` | staff token + tenant | `cfgEmp.History` |
+| `POST` | `/api/tenant/employees/{uuid}/reject` | staff token + tenant | `cfgEmp.Reject` |
+| `POST` | `/api/tenant/employees/{uuid}/transition` | staff token + tenant | `cfgEmp.Transition` |
+
 ### estimates
 
 | Method | Path | Requires | Handler |
@@ -596,13 +612,16 @@ The staff application. Every route requires a JWT and resolves a tenant database
 |---|---|---|---|
 | `GET` | `/api/tenant/expenses` | staff token + tenant | `expOps.List` |
 | `POST` | `/api/tenant/expenses` | staff token + tenant | `expOps.Create` |
+| `GET` | `/api/tenant/expenses/billable` | staff token + tenant | `expOps.Billable` |
 | `GET` | `/api/tenant/expenses/categories` | staff token + tenant | `expOps.Categories` |
+| `GET` | `/api/tenant/expenses/claimants` | staff token + tenant | `expOps.Claimants` |
 | `POST` | `/api/tenant/expenses/search` | staff token + tenant | `expOps.Search` |
 | `DELETE` | `/api/tenant/expenses/{uuid}` | staff token + tenant | `expOps.Delete` |
 | `GET` | `/api/tenant/expenses/{uuid}` | staff token + tenant | `expOps.Get` |
 | `PATCH` | `/api/tenant/expenses/{uuid}` | staff token + tenant | `expOps.Update` |
 | `POST` | `/api/tenant/expenses/{uuid}/approve` | staff token + tenant | `expOps.Approve` |
 | `GET` | `/api/tenant/expenses/{uuid}/audit` | staff token + tenant | `expOps.Audit` |
+| `POST` | `/api/tenant/expenses/{uuid}/create-bill` | staff token + tenant | `expOps.CreateBill` |
 | `POST` | `/api/tenant/expenses/{uuid}/reject` | staff token + tenant | `expOps.Reject` |
 | `POST` | `/api/tenant/expenses/{uuid}/transition` | staff token + tenant | `expOps.Transition` |
 

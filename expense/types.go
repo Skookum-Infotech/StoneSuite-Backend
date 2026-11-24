@@ -21,15 +21,19 @@ type LineInput struct {
 
 // expenseFields is the header payload shared by create and update.
 type expenseFields struct {
-	Department   string         `json:"department"`
-	Memo         string         `json:"memo"`
-	CustomFields map[string]any `json:"customFields"`
-	Items        []LineInput    `json:"items"`
+	// ClaimantEmployeeID is the employee the claim is for. Left out, it is the
+	// caller; setting it files the claim on another employee's behalf. Must be
+	// an Active employee.
+	ClaimantEmployeeID *int           `json:"claimantEmployeeId,omitempty"`
+	Department         string         `json:"department"`
+	Memo               string         `json:"memo"`
+	CustomFields       map[string]any `json:"customFields"`
+	Items              []LineInput    `json:"items"`
 }
 
-// CreateExpenseInput is the create-request payload. The claimant is never
-// taken as input -- it is always the acting caller's own resolved employee
-// (AD-2: self-service, mirrors requisition's owner-is-requester pattern).
+// CreateExpenseInput is the create-request payload. The claimant defaults to the
+// acting caller's own employee (AD-2: self-service); ClaimantEmployeeID files the
+// claim for another Active employee instead.
 type CreateExpenseInput struct {
 	expenseFields
 	// IdempotencyKey is the caller-namespaced Idempotency-Key header, set by the
@@ -73,8 +77,14 @@ type Expense struct {
 	// to approve collapsed out of the path (approvalchain.NextStatusCodes).
 	NextStatusCodes []string `json:"nextStatusCodes"`
 	OwnerUserID     string   `json:"-"`
+	// CreatorUserID is the login of whoever filed the claim, when that is not the
+	// claimant: they keep access to it under "own" scope. Never serialized.
+	CreatorUserID string `json:"-"`
+	// VendorBill is the bill raised when the claim was approved.
+	VendorBill *BillRef `json:"vendorBill,omitempty"`
 
 	ClaimantEmployeeID int    `json:"claimantEmployeeId"`
+	ClaimantName       string `json:"claimantName"`
 	Department         string `json:"department"`
 	Memo               string `json:"memo,omitempty"`
 
@@ -100,4 +110,13 @@ type Page struct {
 	Records    []Expense
 	NextCursor string
 	HasMore    bool
+}
+
+// BillRef is the vendor bill an approved claim raised: enough for the claim page
+// to link to it and show whether it has been paid.
+type BillRef struct {
+	ID         string `json:"id"`
+	Number     string `json:"number"`
+	StatusCode string `json:"statusCode"`
+	Status     string `json:"status"`
 }

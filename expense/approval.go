@@ -39,12 +39,44 @@ func moduleConfig() approvalchain.ModuleConfig {
 	return cfg
 }
 
+// approvalConfig is moduleConfig plus the in-transaction hook that raises the
+// claim's vendor bill. The engine moves the claim to Approved when the last
+// approver signs (or a super admin overrides); the hook runs in that same
+// transaction, so a claim is never Approved without its bill, nor billed without
+// being Approved.
+func approvalConfig() approvalchain.ModuleConfig {
+	cfg := moduleConfig()
+	cfg.AuditTx = func(ctx context.Context, tx pgx.Tx, internalID int, _, action string) error {
+		if action != "approve" {
+			return nil
+		}
+		var statusCode string
+		var approverID *int
+		if err := tx.QueryRow(ctx, `
+			SELECT rs.record_status_code, exp.expense_approved_by
+			FROM expense exp JOIN lkp_record_status rs ON rs.record_status_id = exp.expense_status
+			WHERE exp.expense_id = $1`, internalID).Scan(&statusCode, &approverID); err != nil {
+			return fmt.Errorf("load approved expense: %w", err)
+		}
+		// A sign-off short of quorum leaves the claim Submitted: nothing to bill yet.
+		if statusCode != approvedStatusCode {
+			return nil
+		}
+		actor := 0
+		if approverID != nil {
+			actor = *approverID
+		}
+		return createBillTx(ctx, tx, internalID, actor)
+	}
+	return cfg
+}
+
 // Approve records one approver's sign-off on an expense claim at its
 // current gate (SUBM, AD-4) via the shared approvalchain engine. Once every
 // configured approver has signed off -- or a super admin overrides -- the
 // claim auto-advances to the gate's target status in the same call.
 func Approve(ctx context.Context, pool *pgxpool.Pool, uuid string, approverEmployeeID int, callerIsSuperAdmin bool) (*Expense, error) {
-	_, err := approvalchain.Approve(ctx, pool, moduleConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
+	_, err := approvalchain.Approve(ctx, pool, approvalConfig(), uuid, approverEmployeeID, callerIsSuperAdmin)
 	switch {
 	case errors.Is(err, approvalchain.ErrNotFound):
 		return nil, ErrNotFound

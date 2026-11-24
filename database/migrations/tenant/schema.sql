@@ -10617,4 +10617,14 @@ ON CONFLICT (rule_key) DO NOTHING;
 
 INSERT INTO automation_state (rule_id, enabled_at)
 SELECT id, NOW() FROM automation_rules WHERE rule_key = 'install_tomorrow'
+-- ── Automation: vendor bill due reminders (internal) ──
+-- System rule, shipped enabled with enabled_at stamped (the platform switch is the master gate);
+-- offsets are days relative to the bill due date: 3 days before and on the due date.
+INSERT INTO automation_rules (rule_key, name, enabled, is_system, audience, rule)
+VALUES ('vendor_bill_due', 'Vendor bill due reminders', TRUE, TRUE, 'internal',
+        '{"cadence":[{"offsetDays":-3},{"offsetDays":0}]}')
+ON CONFLICT (rule_key) DO NOTHING;
+
+INSERT INTO automation_state (rule_id, enabled_at)
+SELECT id, NOW() FROM automation_rules WHERE rule_key = 'vendor_bill_due'
 ON CONFLICT (rule_id) DO NOTHING;

@@ -147,12 +147,9 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 		}
 	}
 
-	active, err := employeeActive(ctx, tx, actorEmployeeID)
+	claimantID, err := resolveClaimant(ctx, tx, in.ClaimantEmployeeID, actorEmployeeID)
 	if err != nil {
 		return nil, err
-	}
-	if !active {
-		return nil, ClientError{Msg: "Your employee record is inactive; you cannot file an expense claim."}
 	}
 
 	lines, err := resolveLines(ctx, tx, in.Items)
@@ -182,7 +179,7 @@ func Create(ctx context.Context, pool *pgxpool.Pool, in CreateExpenseInput, acto
 	cv := []colVal{
 		{"record_type", recordTypeID, ""},
 		{"expense_status", draftStatusID, ""},
-		{"expense_claimant_id", actorEmployeeID, ""},
+		{"expense_claimant_id", claimantID, ""},
 		{"expense_department", in.Department, ""},
 		{"expense_memo", in.Memo, ""},
 		{"expense_total", total, ""},

@@ -17,6 +17,25 @@ can manage which roles they hold, and use Deactivate account to remove their
 access. A deactivated person also stops counting as an approver and stops
 receiving approval emails (see Approval chains).
 
+## Employees
+
+Configuration → Employee lists the people who work for you, whether or not they
+can sign in. Add one with their name, email, phone, job title, department and
+address. Creating an employee does not create a login; people who already sign in
+appear here too, and their email can only be changed under Users.
+
+If approvers are set for Employee (Configure → Workflows → Employee → Approval
+Chain), a new employee waits as Pending Approval until every approver signs off;
+an approver can also reject it, and editing a rejected employee sends it back for
+approval. With no approvers, a new employee is Active straight away. Only Active
+employees can be picked as approvers, expense claimants or sales reps.
+
+Every Active employee has a matching vendor record of type Employee (Purchases →
+Vendors), created automatically, so an expense claim can be billed and paid to
+them. Name, email and contact changes on the employee carry over to that vendor,
+and making the employee Inactive makes the vendor Inactive. Employee vendors are
+managed from the Employee page, not from the vendor form.
+
 ## Roles and access
 
 Configure → Roles & Access is where you control what each role can see and

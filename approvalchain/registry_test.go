@@ -25,6 +25,7 @@ func TestForWorkflowKey(t *testing.T) {
 		{"refund", true, "RFND", []string{"PEND"}, []string{"APPV"}},
 		{"vendor_credit", true, "VCRD", []string{"DRFT"}, []string{"APPV"}},
 		{"bin_transfer", true, "BTRF", []string{"PAPV"}, []string{"APPV"}},
+		{"employee", true, "EMPL", []string{"PEND"}, []string{"ACTV"}},
 		{"lead", false, "", nil, nil},
 		{"prospect", false, "", nil, nil},
 		{"customer", false, "", nil, nil},
@@ -108,7 +109,7 @@ func TestRegistry_ApprovalNotificationScope(t *testing.T) {
 		"invoice": true, "payment": true, "credit_memo": true, "refund": true,
 		"purchase_order": true, "requisition": true, "vendor_bill": true,
 		"vendor_payment": true, "expense": true, "installation": true,
-		"vendor_credit": true, "bin_transfer": true,
+		"vendor_credit": true, "bin_transfer": true, "employee": true,
 	}
 	inboxOnly := map[string]bool{"estimate": true, "quote": true, "sales_order": true}
 	for key, cfg := range registry {
@@ -212,7 +213,7 @@ func TestRegistry_RejectModes(t *testing.T) {
 		"invoice": RejectToStatus, "purchase_order": RejectToStatus, "requisition": RejectToStatus,
 		"vendor_bill": RejectToStatus, "vendor_payment": RejectToStatus, "bin_transfer": RejectToStatus,
 		"credit_memo": RejectInPlace, "vendor_credit": RejectInPlace,
-		"payment": RejectInPlace, "refund": RejectInPlace,
+		"payment": RejectInPlace, "refund": RejectInPlace, "employee": RejectInPlace,
 		"expense": RejectUnsupported, "installation": RejectUnsupported,
 	}
 	for key := range registry {

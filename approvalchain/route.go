@@ -30,6 +30,7 @@ var moduleRoutes = map[string]moduleRoute{
 	"credit_memo":    {Domain: "sales", Module: "credit_memo"},
 	"refund":         {Domain: "sales", Module: "refund"},
 	"bin_transfer":   {Domain: "inventory", Module: "bin_transfer"},
+	"employee":       {Domain: "config", Module: "employees"},
 	// Not wired for approval notifications (no DisplayName), but the stuck-approval reminders
 	// link to them, and the web app serves their records at these paths.
 	"quote":       {Domain: "sales", Module: "quote"},

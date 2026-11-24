@@ -14,7 +14,7 @@ import (
 // (recomputing the total) inside one transaction. Allowed only at DRFT --
 // once submitted the claim is visible to an approver; recall it to draft
 // (SUBM->DRFT) or wait for a rejection (RJCT->DRFT) to revise. The claimant
-// is never changed by Update -- it is fixed at Create (AD-2).
+// can be changed while the claim is still a draft.
 func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateExpenseInput, actorEmployeeID int) (*Expense, error) {
 	if err := validateCustom(ctx, pool, in.CustomFields); err != nil {
 		return nil, err
@@ -26,14 +26,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateExpen
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var internalID, version int
+	var internalID, version, curClaimantID int
 	var statusCode string
 	err = tx.QueryRow(ctx, `
-		SELECT exp.expense_id, rs.record_status_code, exp.expense_record_version
+		SELECT exp.expense_id, rs.record_status_code, exp.expense_record_version, exp.expense_claimant_id
 		FROM expense exp JOIN lkp_record_status rs ON rs.record_status_id = exp.expense_status
 		WHERE exp.expense_uuid = $1 AND exp.expense_deleted_at IS NULL
 		FOR UPDATE OF exp`, uuid,
-	).Scan(&internalID, &statusCode, &version)
+	).Scan(&internalID, &statusCode, &version, &curClaimantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -47,6 +47,14 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateExpen
 	}
 	if statusCode != draftStatusCode {
 		return nil, ClientError{Msg: "Only a draft expense claim can be edited. Recall it to draft first."}
+	}
+
+	// The claimant stays as it is unless the editor picked a different employee.
+	claimantID := curClaimantID
+	if in.ClaimantEmployeeID != nil && *in.ClaimantEmployeeID > 0 && *in.ClaimantEmployeeID != curClaimantID {
+		if claimantID, err = resolveClaimant(ctx, tx, in.ClaimantEmployeeID, actorEmployeeID); err != nil {
+			return nil, err
+		}
 	}
 
 	lines, err := resolveLines(ctx, tx, in.Items)
@@ -67,6 +75,7 @@ func Update(ctx context.Context, pool *pgxpool.Pool, uuid string, in UpdateExpen
 	}
 
 	cv := []colVal{
+		{"expense_claimant_id", claimantID, ""},
 		{"expense_department", in.Department, ""},
 		{"expense_memo", in.Memo, ""},
 		{"expense_total", total, ""},

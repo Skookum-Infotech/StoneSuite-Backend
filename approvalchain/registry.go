@@ -256,7 +256,10 @@ var registry = map[string]ModuleConfig{
 			// expense_claimant_id), so it doubles as the notify owner.
 			OwnerColumn: "expense_claimant_id", NumberColumn: "expense_number",
 		},
-		Gates:       []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV", SkipTargetWhenUngated: true}},
+		// Approved is never skipped: reaching it is what creates the claim's
+		// Vendor Bill (expense/store_bill.go), so with nobody configured to
+		// approve a submit still lands on Approved rather than passing through.
+		Gates:       []Gate{{StatusCode: "SUBM", TargetStatusCode: "APPV"}},
 		DisplayName: "Expense Claim",
 		Resource:    "expense",
 	},
@@ -378,6 +381,26 @@ var registry = map[string]ModuleConfig{
 		Gates:       []Gate{{StatusCode: "PAPV", TargetStatusCode: "APPV", SkipTargetWhenUngated: true, Reject: RejectToStatus, RejectStatusCode: "DRFT"}},
 		DisplayName: "Bin Transfer",
 		Resource:    "bin_transfer",
+	},
+	// Employee: a new employee waits in Pending Approval until the configured
+	// approvers sign off, then becomes Active (and gets its Vendor record). The
+	// gate sits on the record's very first status, so a Reject keeps it there
+	// flagged rejected; editing it reopens approval.
+	"employee": {
+		RecordTypeCode: "EMPL", ApproverTable: "employee_approver", ApprovalTable: "employee_approval",
+		Record: RecordSpec{
+			Table: "employee", HistoryTable: "employee_history",
+			IDColumn: "employee_id", UUIDColumn: "employee_uuid", StatusColumn: "employee_status",
+			ApprovalStatusColumn: "employee_approval_status", ApprovedByColumn: "employee_approved_by",
+			UpdatedAtColumn: "employee_updated_at", UpdatedByColumn: "employee_updated_by",
+			RecordVersionColumn: "employee_record_version", DeletedAtColumn: "employee_deleted_at",
+			CreatedAtColumn: "employee_created_at",
+			// The person who created the employee is who gets told of the decision.
+			OwnerColumn: "employee_created_by", NumberColumn: "employee_number",
+		},
+		Gates:       []Gate{{StatusCode: "PEND", TargetStatusCode: "ACTV", Reject: RejectInPlace}},
+		DisplayName: "Employee",
+		Resource:    "employee",
 	},
 }
 

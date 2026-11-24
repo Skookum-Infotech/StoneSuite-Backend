@@ -18,6 +18,11 @@ const (
 	// whole table in pages of this size.
 	MaxTenantPageSize = 200
 
+	// tenantPageInitialCap is the starting capacity of a page buffer. It is a
+	// constant on purpose: sizing the slice from the caller-supplied limit would be
+	// an allocation driven by user input, so the slice grows by append instead.
+	tenantPageInitialCap = 32
+
 	tenantCursorSep = "|"
 )
 
@@ -77,7 +82,7 @@ func (c *ControlPlane) ListTenantsPage(ctx context.Context, limit int, cursor st
 	}
 	defer rows.Close()
 
-	out := make([]Tenant, 0, limit)
+	out := make([]Tenant, 0, tenantPageInitialCap)
 	for rows.Next() {
 		t, err := scanTenant(rows)
 		if err != nil {

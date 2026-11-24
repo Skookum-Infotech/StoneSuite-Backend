@@ -1,0 +1,7 @@
+              m              | n 
+-----------------------------+---
+ ops installs                | 2
+ ops bills                   | 2
+ ops approvals (PAPV q/e/so) | 2
+(3 rows)
+

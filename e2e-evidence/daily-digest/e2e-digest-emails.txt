@@ -1,0 +1,48 @@
+=== TO ops@e2e.local | Your daily digest
+View in browser: http://localhost:5199
+YOUR DAILY DIGEST
+Your daily digest
+Hello Olivia Ops,
+Here is what needs your attention today. Sent by E2E Stone Co.
+Installation Tue, Nov 24, 8:00 AMSORD-1001 - Acme Stone
+Installation Wed, Nov 25, 8:00 AMSORD-1001 - Acme Stone
+Installation Wed, Nov 25, 8:00 AMSORD-1001 - Acme Stone
+Installation Fri, Nov 27, 8:00 AMSORD-1001 - Acme Stone
+Vendor bill VB-101 (Granite Co)$500.00, overdue by 2 days
+Vendor bill VB-100 (Granite Co)$980.00, due tomorrow
+Vendor bill VB-200 (Granite Co)$700.00, due tomorrow
+Estimate waiting for your approval1
+Quote waiting for your approval2
+=== TO finance@e2e.local | Your daily digest
+View in browser: http://localhost:5199
+YOUR DAILY DIGEST
+Your daily digest
+Hello Frank Finance,
+Here is what needs your attention today. Sent by E2E Stone Co.
+Vendor bill VB-200 (Granite Co)$700.00, due tomorrow
+Open StoneSuite: http://localhost:5199/
+Button not working? Use this link instead: http://localhost:5199/.
+Need help? Reach out anytime at
+hello@stonesuite.app: mailto:hello@stonesuite.app.
+Regards,
+StoneSuite.
+Follow Us On
+: https://www.facebook.com/stonesuite: https://x.com/stonesuite: https://www.linkedin.com/company/stonesuite: https://www.pinterest.com/stonesuite: https://www.instagram.com/stonesuite
+=== TO empty@e2e.local | Your daily digest
+View in browser: http://localhost:5199
+YOUR DAILY DIGEST
+Your daily digest
+Hello Eve Empty,
+Nothing needs your attention today. Sent by E2E Stone Co.
+Open StoneSuite: http://localhost:5199/
+Button not working? Use this link instead: http://localhost:5199/.
+Need help? Reach out anytime at
+hello@stonesuite.app: mailto:hello@stonesuite.app.
+Regards,
+StoneSuite.
+Follow Us On
+: https://www.facebook.com/stonesuite: https://x.com/stonesuite: https://www.linkedin.com/company/stonesuite: https://www.pinterest.com/stonesuite: https://www.instagram.com/stonesuite
+You're receiving this because you turned on the daily digest in your notification settings.
+Estimate waiting for your approval1
+Quote waiting for your approval2
+Sales Order waiting for your approval1

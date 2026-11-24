@@ -1,0 +1,16 @@
+  recipient_email  | status  | reason | anchor_date 
+-------------------+---------+--------+-------------
+ empty@e2e.local   | sent    |        | 2026-11-24
+ finance@e2e.local | sent    |        | 2026-11-24
+ late@e2e.local    | skipped | empty  | 2026-11-24
+ ops@e2e.local     | sent    |        | 2026-11-24
+ retry@e2e.local   | sent    |        | 2026-11-24
+ viewer@e2e.local  | skipped | empty  | 2026-11-24
+ empty@e2e.local   | sent    |        | 2026-11-25
+ finance@e2e.local | sent    |        | 2026-11-25
+ late@e2e.local    | skipped | empty  | 2026-11-25
+ ops@e2e.local     | sent    |        | 2026-11-25
+ retry@e2e.local   | sent    |        | 2026-11-25
+ viewer@e2e.local  | skipped | empty  | 2026-11-25
+(12 rows)
+

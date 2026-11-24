@@ -1,0 +1,7 @@
+ops digest emails: 2
+Installation Wed, Nov 25, 8:00 AMSORD-1001 - Acme Stone
+Installation Sat, Nov 28, 8:00 AMSORD-1001 - Acme Stone
+Vendor bill VB-101 (Granite Co)$500.00, overdue by 3 days
+Vendor bill VB-200 (Granite Co)$700.00, due today
+Quote waiting for your approval1
+Sales Order waiting for your approval1

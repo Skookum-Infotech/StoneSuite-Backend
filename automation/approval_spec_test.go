@@ -30,9 +30,9 @@ func TestApprovalSpecs(t *testing.T) {
 		{"invoice", "invoice", nil},
 		{"expense", "expense", nil},
 		{"bin_transfer", "bin_transfer", nil},
-		{"quote excluded", "quote", []string{}},
-		{"estimate excluded", "estimate", []string{}},
-		{"sales_order excluded", "sales_order", []string{}},
+		{"quote reminder-only", "quote", []string{"PAPV"}},
+		{"estimate reminder-only", "estimate", []string{"PAPV"}},
+		{"sales_order reminder-only", "sales_order", []string{"PAPV"}},
 		{"payment excluded", "payment", []string{}},
 		{"refund excluded", "refund", []string{}},
 		{"credit_memo excluded", "credit_memo", []string{}},
@@ -88,4 +88,38 @@ func TestApprovalSpecIdent(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantMsg)
 		})
 	}
+}
+
+// Quotes, estimates and sales orders get stuck-approval reminders through ReminderName alone.
+// Their DisplayName and Resource must stay empty: setting them would also switch on approval
+// notifications and the self-approval anomaly check, which is a separate decision.
+func TestReminderOnlyModules(t *testing.T) {
+	labels := map[string]string{"quote": "Quote", "estimate": "Estimate", "sales_order": "Sales Order"}
+	for key, label := range labels {
+		t.Run(key, func(t *testing.T) {
+			cfg, ok := approvalchain.ForWorkflowKey(key)
+			require.True(t, ok)
+			assert.Equal(t, label, cfg.ReminderName)
+			assert.Equal(t, label, cfg.ReminderLabel())
+			assert.Empty(t, cfg.DisplayName, "notifications must stay off")
+			assert.Empty(t, cfg.Resource, "notifications must stay off")
+
+			var found *approvalSpec
+			for _, s := range approvalSpecs() {
+				if s.Workflow == key {
+					s := s
+					found = &s
+				}
+			}
+			require.NotNil(t, found, "%s must have a reminder spec", key)
+			assert.Equal(t, label, found.DisplayName, "the reminder email names the document type")
+			assert.NoError(t, found.ident())
+		})
+	}
+}
+
+func TestReminderLabelPrefersDisplayName(t *testing.T) {
+	assert.Equal(t, "Invoice", approvalchain.ModuleConfig{DisplayName: "Invoice", ReminderName: "Bill"}.ReminderLabel())
+	assert.Equal(t, "Quote", approvalchain.ModuleConfig{ReminderName: "Quote"}.ReminderLabel())
+	assert.Empty(t, approvalchain.ModuleConfig{}.ReminderLabel(), "a module with neither gets no reminders")
 }

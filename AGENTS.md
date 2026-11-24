@@ -274,7 +274,7 @@ machine after the response).
    user as owner.
 7. **Stuck approvals (`approval_stuck`, job `approval_reminders`, `automation/approval_*.go`)** is seeded **enabled**
    with a `+2/+4/+6`-day cadence after the record entered its approval gate (max 3 reminders).
-   Covers only notify-wired `approvalchain` registry modules (`DisplayName != ""`) and only
+   Covers `approvalchain` registry modules that have a reminder label (`ModuleConfig.ReminderLabel()`: `DisplayName`, or `ReminderName` for `quote`, `estimate` and `sales_order`, which stay notification-dark) and only
    gates whose `Reject != RejectInPlace`. Each unsigned live approver gets an **internal**
    digest, one per approver per day across all modules; when no unsigned live approver remains
    it falls back to the record owner plus active super admins. The clock restarts when the

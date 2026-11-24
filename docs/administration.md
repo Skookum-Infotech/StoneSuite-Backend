@@ -164,6 +164,13 @@ do not receive past reminders. For invoice payment reminders, Preview shows who
 would be emailed right now without sending anything. Changing a rule needs the
 Automation configure permission; read access only shows the page.
 
+Stuck-approval reminders cover every record type that has an approval step with
+approvers set up, including quotes, estimates and sales orders. When one of these
+sits waiting on an approver, that approver gets a reminder 2, 4 and 6 days after it
+entered the approval step, with a link to the document. For quotes, estimates and
+sales orders this is the only automatic approval email: they do not send an email
+when they are submitted, approved or rejected.
+
 The "Pause all automated emails" switch stops every automated email for this
 workspace at once without changing any rule; reminders resume when you switch it
 back on. If StoneSuite support has turned automation off for the whole platform,

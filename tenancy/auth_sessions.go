@@ -30,7 +30,10 @@ const (
 )
 
 // sessionTouchInterval bounds how often last_seen_at is written per session.
-const sessionTouchInterval = time.Minute
+// Well under the 15-minute window the sign-in prompt uses to decide whether
+// another browser is in use, so that stays accurate, while a status poll
+// writes to the database at most once in five minutes.
+const sessionTouchInterval = 5 * time.Minute
 
 // ErrSessionNotFound is returned when no session row matches.
 var ErrSessionNotFound = errors.New("auth session not found")
@@ -41,15 +44,18 @@ var ErrTakeoverTicketNotFound = errors.New("takeover ticket not found")
 
 // AuthSession is one browser sign-in of an identity.
 type AuthSession struct {
-	ID          string
-	IdentityID  string
-	CreatedAt   time.Time
-	LastSeenAt  time.Time
-	DeviceLabel string
-	ReplacedAt  *time.Time
-	ReplacedBy  string
-	EndsAt      *time.Time
-	EndedAt     *time.Time
+	ID         string
+	IdentityID string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	// LastActiveAt is the user's last real use of the app as the browser
+	// reported it (see RecordActivity); polling never moves it.
+	LastActiveAt time.Time
+	DeviceLabel  string
+	ReplacedAt   *time.Time
+	ReplacedBy   string
+	EndsAt       *time.Time
+	EndedAt      *time.Time
 }
 
 // Status classifies the session at instant now (see the Session* constants).
@@ -93,13 +99,13 @@ func (c *ControlPlane) CreateSession(ctx context.Context, in NewSessionInput) (s
 }
 
 const authSessionColumns = `id, identity_id, created_at, last_seen_at, device_label,
-	replaced_at, COALESCE(replaced_by::text, ''), ends_at, ended_at`
+	replaced_at, COALESCE(replaced_by::text, ''), ends_at, ended_at, last_active_at`
 
 // scanAuthSession scans one authSessionColumns row.
 func scanAuthSession(row pgx.Row) (*AuthSession, error) {
 	var s AuthSession
 	err := row.Scan(&s.ID, &s.IdentityID, &s.CreatedAt, &s.LastSeenAt, &s.DeviceLabel,
-		&s.ReplacedAt, &s.ReplacedBy, &s.EndsAt, &s.EndedAt)
+		&s.ReplacedAt, &s.ReplacedBy, &s.EndsAt, &s.EndedAt, &s.LastActiveAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSessionNotFound
 	}
@@ -158,6 +164,17 @@ func (c *ControlPlane) EndSession(ctx context.Context, id string) error {
 	if _, err := c.pool.Exec(ctx,
 		`UPDATE auth_sessions SET ended_at = NOW() WHERE id = $1 AND ended_at IS NULL`, id); err != nil {
 		return fmt.Errorf("end auth session: %w", err)
+	}
+	return nil
+}
+
+// RecordActivity moves the session's last user activity forward to at, never
+// back and never past now (a browser's clock may be ahead).
+func (c *ControlPlane) RecordActivity(ctx context.Context, id string, at time.Time) error {
+	if _, err := c.pool.Exec(ctx,
+		`UPDATE auth_sessions SET last_active_at = GREATEST(last_active_at, LEAST($2, NOW()))
+		 WHERE id = $1 AND ended_at IS NULL`, id, at); err != nil {
+		return fmt.Errorf("record session activity: %w", err)
 	}
 	return nil
 }

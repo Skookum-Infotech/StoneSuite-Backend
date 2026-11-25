@@ -414,3 +414,106 @@ func TestRefresh_LegacyTokenRefusedWhileAnotherSessionIsInUse_DB(t *testing.T) {
 	assert.Equal(t, tenancy.CodeSessionReplaced, decodeBody(t, rec)["code"])
 	assert.Equal(t, tenancy.SessionActive, f.status(t, a)["status"])
 }
+
+// refreshAt posts a refresh from b reporting lastActive as the user's last activity.
+func (f *loginFixture) refreshAt(t *testing.T, b *browser, lastActive time.Time) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh",
+		jsonBody(t, map[string]any{"lastActiveAt": lastActive.UnixMilli()}))
+	req.AddCookie(b.refresh)
+	rec := httptest.NewRecorder()
+	f.h.RefreshSession(rec, req)
+	b.keep(t, rec)
+	return rec
+}
+
+// ageSession backdates b's session: created age ago, last used idle ago.
+func (f *loginFixture) ageSession(t *testing.T, b *browser, age, idle time.Duration) {
+	t.Helper()
+	_, err := f.cp.Pool().Exec(context.Background(),
+		`UPDATE auth_sessions SET created_at = NOW() - $2::bigint * INTERVAL '1 second',
+		        last_active_at = NOW() - $3::bigint * INTERVAL '1 second' WHERE id = $1`,
+		b.sid(t), int64(age/time.Second), int64(idle/time.Second))
+	require.NoError(t, err)
+}
+
+func withSessionLimits(t *testing.T, idle, maxAge time.Duration) {
+	t.Helper()
+	prevIdle, prevMax := config.AppConfig.SessionIdleTimeout, config.AppConfig.SessionMaxAge
+	config.AppConfig.SessionIdleTimeout, config.AppConfig.SessionMaxAge = idle, maxAge
+	t.Cleanup(func() { config.AppConfig.SessionIdleTimeout, config.AppConfig.SessionMaxAge = prevIdle, prevMax })
+}
+
+func TestRefresh_ActiveUserIsRenewed_DB(t *testing.T) {
+	f := newLoginFixture(t)
+	withSessionLimits(t, time.Hour, 12*time.Hour)
+	a := &browser{ua: uaChromeWindows}
+	require.Equal(t, http.StatusOK, f.signIn(t, a).Code)
+	f.ageSession(t, a, 3*time.Hour, 2*time.Hour)
+
+	rec := f.refreshAt(t, a, time.Now().Add(-2*time.Minute))
+	require.Equal(t, http.StatusOK, rec.Code, "the browser saw the user 2 minutes ago: %s", rec.Body.String())
+	s, err := f.cp.SessionByID(context.Background(), a.sid(t))
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now().Add(-2*time.Minute), s.LastActiveAt, 5*time.Second, "activity recorded")
+}
+
+func TestRefresh_IdleUserIsSignedOut_DB(t *testing.T) {
+	f := newLoginFixture(t)
+	withSessionLimits(t, time.Hour, 12*time.Hour)
+	a := &browser{ua: uaChromeWindows}
+	require.Equal(t, http.StatusOK, f.signIn(t, a).Code)
+	f.ageSession(t, a, 3*time.Hour, 2*time.Hour)
+
+	rec := f.refreshAt(t, a, time.Now().Add(-61*time.Minute))
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	body := decodeBody(t, rec)
+	assert.Equal(t, codeSessionIdle, body["code"])
+	assert.Equal(t, "You were signed out after 60 minutes of inactivity.", body["message"])
+	assert.Equal(t, tenancy.SessionEnded, f.status(t, a)["status"], "the session is ended")
+
+	b := &browser{ua: uaEdgeWindows}
+	assert.Equal(t, http.StatusOK, f.signIn(t, b).Code, "so signing in elsewhere is not asked about it")
+}
+
+func TestRefresh_NoActivityReportUsesStoredActivity_DB(t *testing.T) {
+	f := newLoginFixture(t)
+	withSessionLimits(t, time.Hour, 12*time.Hour)
+	a := &browser{ua: uaChromeWindows}
+	require.Equal(t, http.StatusOK, f.signIn(t, a).Code)
+	f.ageSession(t, a, 3*time.Hour, 2*time.Hour)
+
+	rec := f.refresh(t, a.refresh.Value) // a browser that reports nothing
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "background requests can never keep an idle session alive")
+	assert.Equal(t, codeSessionIdle, decodeBody(t, rec)["code"])
+}
+
+func TestRefresh_TwelveHourMaximum_DB(t *testing.T) {
+	f := newLoginFixture(t)
+	withSessionLimits(t, time.Hour, 12*time.Hour)
+	a := &browser{ua: uaChromeWindows}
+	require.Equal(t, http.StatusOK, f.signIn(t, a).Code)
+
+	f.ageSession(t, a, 12*time.Hour-20*time.Minute, 0)
+	rec := f.refreshAt(t, a, time.Now())
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	expiresAt := time.UnixMilli(int64(decodeBody(t, rec)["expiresAt"].(float64)))
+	assert.WithinDuration(t, time.Now().Add(20*time.Minute), expiresAt, 10*time.Second,
+		"the last access token ends with the 12 hours, not an hour later")
+
+	f.ageSession(t, a, 12*time.Hour, 0)
+	rec = f.refreshAt(t, a, time.Now())
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "an active user still signs in again after 12 hours")
+	assert.Equal(t, codeSessionMaxAge, decodeBody(t, rec)["code"])
+}
+
+func TestGuard_LoggedOutSessionSaysEndedNotReplaced_DB(t *testing.T) {
+	f := newLoginFixture(t)
+	a := &browser{ua: uaChromeWindows}
+	require.Equal(t, http.StatusOK, f.signIn(t, a).Code)
+	require.NoError(t, f.cp.EndSession(context.Background(), a.sid(t)))
+
+	rec := f.refresh(t, a.refresh.Value)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, tenancy.CodeSessionEnded, decodeBody(t, rec)["code"], "no 'another computer' countdown for a plain logout")
+}

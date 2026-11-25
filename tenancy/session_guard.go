@@ -28,6 +28,13 @@ const sessionGuardTTL = 10 * time.Second
 // sessionGuardMax caps the cached session states held in memory.
 const sessionGuardMax = 10000
 
+// CodeSessionEnded marks a request from a session that ended without being
+// taken over (logout, inactivity, password change): the browser signs out.
+const CodeSessionEnded = "session_ended"
+
+// SessionEndedMessage is the user-facing text for an ended session.
+const SessionEndedMessage = "Your session has ended. Please sign in again."
+
 // SessionReplacedMessage is the user-facing text for a replaced session.
 const SessionReplacedMessage = "Your account was signed in on another computer."
 
@@ -168,6 +175,16 @@ func (g *SessionGuard) check(w http.ResponseWriter, r *http.Request, p middlewar
 			slog.String("identity", p.ID),
 			slog.String("session", p.SessionID),
 		)
+		if s.ReplacedAt == nil {
+			// Ended without another sign-in (logout, inactivity, revoked):
+			// the browser just signs out, no "another computer" countdown.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(models.APIResponse{
+				Success: false, Message: SessionEndedMessage, Code: CodeSessionEnded,
+			})
+			return false
+		}
 		writeSessionReplaced(w, http.StatusUnauthorized)
 		return false
 	}

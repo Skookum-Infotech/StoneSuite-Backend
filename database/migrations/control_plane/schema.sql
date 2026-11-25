@@ -814,3 +814,17 @@ CREATE TABLE IF NOT EXISTS saml_logout_requests (
     PRIMARY KEY (issuer, request_id)
 );
 CREATE INDEX IF NOT EXISTS idx_saml_logout_requests_expires ON saml_logout_requests(expires_at);
+
+-- When the user of a session last actually used the app (mouse, keyboard,
+-- touch), as reported by the browser on each token refresh -- unlike
+-- last_seen_at, background polling never moves it. A refresh is refused once
+-- it is older than SESSION_IDLE_TIMEOUT (default 60 minutes). Guarded so a
+-- warm boot takes no lock on auth_sessions.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'auth_sessions'
+                     AND column_name = 'last_active_at') THEN
+        ALTER TABLE auth_sessions ADD COLUMN last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    END IF;
+END $$;

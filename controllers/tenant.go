@@ -1244,8 +1244,17 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	// this must never block a refresh.
 	var req struct {
 		ActiveRoleID string `json:"activeRoleId"`
+		// LastActiveAt is the user's last real activity (unix ms) as the
+		// browser saw it; it keeps the session alive past the inactivity
+		// limit only while the user is really there (see refreshSessionID).
+		LastActiveAt int64 `json:"lastActiveAt"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	var reportedActive *time.Time
+	if req.LastActiveAt > 0 {
+		t := time.UnixMilli(req.LastActiveAt)
+		reportedActive = &t
+	}
 
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil || cookie.Value == "" {
@@ -1329,13 +1338,12 @@ func (h *TenantOps) RefreshSession(w http.ResponseWriter, r *http.Request) {
 
 	// A replaced or logged-out session may not be refreshed; a pre-session
 	// token is adopted into a new session (see refreshSessionID).
-	sid, adopted, ok := h.refreshSessionID(w, r, identity, rec, tenantEnforced)
+	sid, d, adopted, ok := h.refreshSessionID(w, r, identity, rec, tenantEnforced, reportedActive)
 	if !ok {
 		return
 	}
 
-	// Mint a new access token.
-	d := accessTokenLifetime()
+	// Mint a new access token (d is cut short near the session's 12-hour end).
 	// activeRoleID preserves whatever role the caller had selected (see the
 	// request body parsing above) instead of always dropping it -- silent
 	// refreshes happen often enough (any 401 against a cross-origin client

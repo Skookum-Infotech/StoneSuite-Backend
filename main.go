@@ -414,6 +414,12 @@ func main() {
 			config.AppConfig.IsProduction())
 		mux.Handle("GET /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Get)))
 		mux.Handle("PUT /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Update)))
+		// Platform-admin tenant usage (control-plane reads only, no tenant chain).
+		platformUsageOps := controllers.NewPlatformUsageOps(cp, usage.NewFleetStore(cp.Pool()), time.Now)
+		mux.Handle("GET /api/platform/usage/overview", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Overview)))
+		mux.Handle("GET /api/platform/usage/watchlist", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Watchlist)))
+		mux.Handle("GET /api/platform/usage/tenants/{tenantId}", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.TenantDetail)))
+		mux.Handle("POST /api/platform/usage/alerts/{alertId}/ack", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Ack)))
 		mux.Handle("POST /api/internal/automation/tick", automationRateLimiter.PerIPFunc(automationOps.Tick))
 		// Public: tenant-scoped login + password recovery. All credential-checking
 		// endpoints sit behind the per-IP rate limiter to blunt brute-force and

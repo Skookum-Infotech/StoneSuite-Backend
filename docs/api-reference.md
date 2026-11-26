@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-717 endpoints across 7 surfaces, read from `main.go`.
+721 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -13,7 +13,7 @@
 | staff token + tenant | 612 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 28 |
-| staff token | 23 |
+| staff token | 27 |
 | none | 17 |
 | portal token | 3 |
 | customer token | 2 |
@@ -332,7 +332,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 19 endpoints
+## `platform` — 23 endpoints
 
 Platform-admin operations across tenants.
 
@@ -389,6 +389,15 @@ Platform-admin operations across tenants.
 | `POST` | `/api/platform/tenants/{id}/repair-bucket` | staff token | `tenantOps.RepairBucket` |
 | `POST` | `/api/platform/tenants/{id}/repair-cors` | staff token | `tenantOps.RepairBucketCORS` |
 | `PUT` | `/api/platform/tenants/{id}/single-session` | staff token | `tenantOps.SetSingleSession` |
+
+### usage
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `POST` | `/api/platform/usage/alerts/{alertId}/ack` | staff token | `platformUsageOps.Ack` |
+| `GET` | `/api/platform/usage/overview` | staff token | `platformUsageOps.Overview` |
+| `GET` | `/api/platform/usage/tenants/{tenantId}` | staff token | `platformUsageOps.TenantDetail` |
+| `GET` | `/api/platform/usage/watchlist` | staff token | `platformUsageOps.Watchlist` |
 
 ## `tenant` — 611 endpoints
 

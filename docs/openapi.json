@@ -2239,6 +2239,150 @@
         ]
       }
     },
+    "/api/platform/usage/alerts/{alertId}/ack": {
+      "post": {
+        "operationId": "post_platform_usage_alerts_alertId_ack",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alertId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "platformUsageOps.Ack",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/usage/overview": {
+      "get": {
+        "operationId": "get_platform_usage_overview",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "platformUsageOps.Overview",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/usage/tenants/{tenantId}": {
+      "get": {
+        "operationId": "get_platform_usage_tenants_tenantId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenantId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "platformUsageOps.TenantDetail",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/api/platform/usage/watchlist": {
+      "get": {
+        "operationId": "get_platform_usage_watchlist",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Not permitted for this session"
+          },
+          "404": {
+            "description": "Not found, or outside the caller's scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "platformUsageOps.Watchlist",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/api/portal/auth/accept-invite": {
       "post": {
         "operationId": "post_portal_auth_accept_invite",

@@ -18,7 +18,7 @@ import (
 const anomalyScanJobName = "anomaly_scan"
 
 // anomalyScanLockKey is the Postgres advisory lock that keeps two anomaly scans
-// of one tenant database from running at once (the 15-minute tick and a manual
+// of one tenant database from running at once (the daily tick and a manual
 // "scan now" share it). Distinct from the tick lock.
 const anomalyScanLockKey int64 = 0x5354_414e_4f4d_3031 // "STANOM01"
 

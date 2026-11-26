@@ -1,9 +1,9 @@
 // automation-cron — Cloudflare Worker whose only job is to be the clock for
 // stonesuite-backend. The backend scales to zero on Fly, so it cannot keep its
 // own ticker. Two crons (wrangler.toml):
-//   - every 15 minutes: a signed POST /api/internal/automation/tick, which wakes
-//     the machine and runs date-triggered work (e.g. dispatching scheduled
-//     vendor payments). Gated by the platform switch (see below).
+//   - once a day at 14:00 UTC: a signed POST /api/internal/automation/tick,
+//     which wakes the machine and runs date-triggered work (e.g. dispatching
+//     scheduled vendor payments). Gated by the platform switch (see below).
 //   - daily at 02:41 UTC (USAGE_ROLLUP_CRON): a signed
 //     POST /api/internal/usage/rollup, which rolls up the previous UTC day's
 //     per-tenant usage metrics. NOT gated by the platform switch: metering must

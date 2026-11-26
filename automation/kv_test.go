@@ -70,3 +70,54 @@ func TestKVMirrorSet(t *testing.T) {
 		})
 	}
 }
+
+func TestKVMirrorGet(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		wantFound bool
+		wantErr   bool
+	}{
+		{"value present", http.StatusOK, `{"version":1}`, true, false},
+		{"key missing", http.StatusNotFound, `{"success":false}`, false, false},
+		{"cloudflare rejects", http.StatusForbidden, `{"success":false}`, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath, gotAuth, gotMethod string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotMethod, gotPath, gotAuth = r.Method, r.URL.Path, r.Header.Get("Authorization")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			m := NewKVMirror("acct1", "secret-token-not-real", "ns1")
+			m.baseURL = srv.URL
+
+			val, found, err := m.Get(context.Background(), WatchdogSnapshotKey)
+
+			assert.Equal(t, http.MethodGet, gotMethod)
+			assert.Equal(t, "/accounts/acct1/storage/kv/namespaces/ns1/values/"+WatchdogSnapshotKey, gotPath)
+			assert.Equal(t, "Bearer secret-token-not-real", gotAuth)
+			assert.Equal(t, tt.wantFound, found)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "secret-token-not-real")
+				assert.Contains(t, err.Error(), "403")
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantFound {
+				assert.Equal(t, tt.body, string(val))
+			}
+		})
+	}
+}
+
+func TestKVMirrorGetNotConfigured(t *testing.T) {
+	var m *KVMirror
+	_, found, err := m.Get(context.Background(), WatchdogSnapshotKey)
+	assert.False(t, found)
+	assert.Error(t, err)
+}

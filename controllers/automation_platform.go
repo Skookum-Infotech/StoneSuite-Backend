@@ -11,7 +11,7 @@ import (
 
 // msgAutomationScope tells the admin what this switch controls, since the
 // tick also dispatches scheduled vendor payments, not only reminders.
-const msgAutomationScope = "Controls the 15-minute scheduler for all tenants, including scheduled vendor-payment dispatch."
+const msgAutomationScope = "Controls the daily scheduler (runs once a day at 14:00 UTC) for all tenants, including scheduled vendor-payment dispatch."
 
 // automationSwitch is the platform switch store (automation.PlatformStore).
 type automationSwitch interface {

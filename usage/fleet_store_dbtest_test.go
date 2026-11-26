@@ -94,7 +94,7 @@ func TestFleetStore_TokensAndJobAndSignInStats(t *testing.T) {
 	for _, st := range []string{"succeeded", "failed", "dead", "pending"} {
 		_, err := pool.Exec(ctx, `
 			INSERT INTO async_jobs (job_type, tenant_id, status, created_at, updated_at)
-			VALUES ('usage_test', $1, $2, $3, $3 + interval '2 seconds')`, tenant, st, start)
+			VALUES ('usage_test', $1, $2, $3::timestamptz, $3::timestamptz + interval '2 seconds')`, tenant, st, start)
 		require.NoError(t, err)
 	}
 	js, err := s.JobStats(ctx, tenant, start, start.Add(24*time.Hour))

@@ -89,9 +89,20 @@ func TestFleetStore_AckSnoozeExpiryAndWatchlist(t *testing.T) {
 
 	// Snooze expiry: alert reappears and a new firing flips it back to open.
 	later := now.AddDate(0, 0, 8)
+	// The warning alert is still open, so it stays the top severity; the
+	// expired info snooze is back on the watch list alongside it.
 	top, err = s.TopSeverityByTenant(ctx, later)
 	require.NoError(t, err)
-	assert.Equal(t, SeverityInfo, top[tenant])
+	assert.Equal(t, SeverityWarning, top[tenant])
+	watch, err = s.Watchlist(ctx, later)
+	require.NoError(t, err)
+	var back bool
+	for _, a := range watch {
+		if a.ID == mine[2].ID {
+			back = true
+		}
+	}
+	assert.True(t, back, "an expired snooze returns to the watch list")
 	require.NoError(t, s.RecordFiring(ctx, firing(tenant, "a", MetricRequests, SeverityInfo, 2), later))
 	alerts, err := s.TenantAlerts(ctx, tenant, now.Add(-time.Hour))
 	require.NoError(t, err)

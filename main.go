@@ -915,6 +915,24 @@ func main() {
 			usage.NewStorageRefresher(usageStore, usage.R2Measurer{Client: r2Client}))
 		mux.Handle("GET /api/tenant/subscription/usage", tenantChain(subscriptionUsageOps.GetUsage))
 
+		// Internal: daily per-tenant usage rollup, called by the automation-cron
+		// Worker at 02:41 UTC. Same HMAC scheme/secret as the automation tick (route
+		// 404s while unset) but deliberately NOT gated by the platform automation
+		// switch -- metering runs while automation is off. Built here (not beside
+		// the tick) because it needs r2Client. Own per-IP limiter, like the tick's.
+		if cp != nil && cpPool != nil {
+			var usageRollup *usage.Rollup
+			if r2Client != nil {
+				usageRollup = usage.NewRollup(cp, tenantRouter, usage.NewFleetStore(cpPool),
+					usage.NewStorageRefresher(usageStore, usage.R2Measurer{Client: r2Client}), time.Now)
+			} else {
+				usageRollup = usage.NewRollup(cp, tenantRouter, usage.NewFleetStore(cpPool), nil, time.Now)
+			}
+			usageRollupOps := controllers.NewUsageRollupOps(usageRollup, config.AppConfig.AutomationTickSecret)
+			usageRollupRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.1, 5)
+			mux.Handle("POST /api/internal/usage/rollup", usageRollupRateLimiter.PerIPFunc(usageRollupOps.Rollup))
+		}
+
 		// Tenant's physical locations (Configuration -> Company Info -> Locations tab).
 		companyLocationOps := controllers.NewCompanyLocationOps()
 		mux.Handle("GET /api/tenant/company-locations", tenantChain(companyLocationOps.List))
@@ -1997,7 +2015,7 @@ func main() {
 	// their own duration -- the AI answer stream (rolling write deadline plus
 	// streamMaxDuration) and the automation tick (per-tenant timeouts).
 	// MaxBody sits inside Recover so an oversized request is still logged.
-	deadlineExemptPrefixes := []string{"/api/internal/automation/"}
+	deadlineExemptPrefixes := []string{"/api/internal/automation/", "/api/internal/usage/"}
 	deadlineExemptSuffixes := []string{"/ask/stream"}
 	// Pass a nil interface (not a typed-nil pointer) when there is no meter.
 	var requestObserver middleware.RequestObserver

@@ -16,10 +16,12 @@ compatibility_date = "2026-09-01"
 
 [vars]
 TICK_URL = "https://stonesuite-backend.fly.dev/api/internal/automation/tick"
+# Daily per-tenant usage rollup (cron "41 2 * * *"); not gated by the KV switch.
+USAGE_ROLLUP_URL = "https://stonesuite-backend.fly.dev/api/internal/usage/rollup"
 
 [[kv_namespaces]]
 binding = "AUTOMATION_KV"
 id = "REPLACE_WITH_KV_NAMESPACE_ID" # deploy fails until replaced, on purpose
 
 [triggers]
-crons = ["*/15 * * * *"]
+crons = ["*/15 * * * *", "41 2 * * *"]

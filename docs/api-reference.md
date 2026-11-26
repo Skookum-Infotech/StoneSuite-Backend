@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-716 endpoints across 7 surfaces, read from `main.go`.
+717 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -12,7 +12,7 @@
 |---|---:|
 | staff token + tenant | 612 |
 | portal token + tenant | 32 |
-| none (rate-limited) | 27 |
+| none (rate-limited) | 28 |
 | staff token | 23 |
 | none | 17 |
 | portal token | 3 |
@@ -49,6 +49,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `POST` | `/api/internal/automation/tick` | rate-limited per IP |
 | `POST` | `/api/internal/email/inbound` | rate-limited per IP |
 | `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | rate-limited per IP |
+| `POST` | `/api/internal/usage/rollup` | rate-limited per IP |
 | `GET` | `/api/metrics` | no rate limit |
 | `ANY` | `/api/onboarding/apply` | no rate limit |
 | `ANY` | `/api/onboarding/apply/` | no rate limit |
@@ -69,7 +70,7 @@ Every endpoint reachable with no credential. Worth re-reading whenever this list
 | `GET` | `/api/portal/auth/reset-password/{token}` | rate-limited per IP |
 | `GET` | `/api/readyz` | no rate limit |
 
-## `system` — 7 endpoints
+## `system` — 8 endpoints
 
 Liveness, readiness and metrics. No credential.
 
@@ -94,6 +95,12 @@ Liveness, readiness and metrics. No credential.
 |---|---|---|---|
 | `POST` | `/api/internal/email/inbound` | none (rate-limited) | `recordEmailOps.Inbound` |
 | `PUT` | `/api/internal/email/inbound/{ref}/attachments/{attachmentId}` | none (rate-limited) | `recordEmailOps.InboundAttachment` |
+
+### usage
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `POST` | `/api/internal/usage/rollup` | none (rate-limited) | `usageRollupOps.Rollup` |
 
 ## `auth` — 25 endpoints
 

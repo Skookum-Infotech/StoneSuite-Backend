@@ -384,7 +384,7 @@ func main() {
 	// Multi-tenant routes (the control plane is always configured at this point).
 	if tenantOps != nil {
 		// Internal: date-triggered automation (scheduled vendor payments, ...).
-		// Called by a Cloudflare Cron Trigger every 15 min, which also wakes the
+		// Called by a Cloudflare Cron Trigger once a day (14:00 UTC), which also wakes the
 		// scale-to-zero machine. HMAC-signed (AUTOMATION_TICK_SECRET; route 404s
 		// while unset), no JWT/TenantResolver — it fans out across tenants itself.
 		// Its own per-IP limiter so it never shares a bucket with login traffic.
@@ -414,6 +414,10 @@ func main() {
 			config.AppConfig.IsProduction())
 		mux.Handle("GET /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Get)))
 		mux.Handle("PUT /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Update)))
+		// Platform admin: latest stonesuite-watchdog snapshot (Neon usage, Fly
+		// crashes/awake time, website checks). Reads Cloudflare KV only.
+		systemHealthOps := controllers.NewSystemHealthPlatformOps(cp, automationKV)
+		mux.Handle("GET /api/platform/system-health", middleware.RequireAuth(http.HandlerFunc(systemHealthOps.Get)))
 		// Platform-admin tenant usage (control-plane reads only, no tenant chain).
 		platformUsageOps := controllers.NewPlatformUsageOps(cp, usage.NewFleetStore(cp.Pool()), time.Now)
 		mux.Handle("GET /api/platform/usage/overview", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Overview)))

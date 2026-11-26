@@ -28,7 +28,7 @@ type PlatformGate interface {
 }
 
 // AutomationOps serves POST /api/internal/automation/tick — the machine-only
-// entry point a Cloudflare Cron Trigger calls every 15 minutes to wake the
+// entry point a Cloudflare Cron Trigger calls once a day (14:00 UTC) to wake the
 // (scale-to-zero) app and run date-triggered work across tenants.
 type AutomationOps struct {
 	ticker  Ticker
@@ -43,7 +43,7 @@ type AutomationOps struct {
 // nil gate fails closed (the tick is skipped). mirror may be nil or an
 // unconfigured *automation.KVMirror: when the tick finds the platform switched
 // off it then re-writes "off" to KV (best effort), so a stale "on" mirror costs
-// one wasted wake instead of one every 15 minutes.
+// one wasted wake instead of one every day.
 func NewAutomationOps(ticker Ticker, gate PlatformGate, mirror automationMirror, secret string) *AutomationOps {
 	return &AutomationOps{ticker: ticker, gate: gate, mirror: mirror, secret: secret, replays: middleware.NewReplayGuard(), now: time.Now}
 }

@@ -207,7 +207,7 @@ func scanNowOutcome(res automation.Result, err error) (int, any) {
 }
 
 // ScanNow handles POST /api/tenant/anomalies/scan: run the scan and alert pass
-// for this workspace now instead of waiting for the next 15-minute tick. It needs
+// for this workspace now instead of waiting for the next daily tick. It needs
 // automation:configure (the same permission as the on/off switch).
 func (h *AnomalyOps) ScanNow(w http.ResponseWriter, r *http.Request) {
 	payload, err := middleware.GetUserFromContext(r.Context())

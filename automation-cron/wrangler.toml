@@ -9,7 +9,7 @@
 #   wrangler kv namespace create AUTOMATION_KV
 # The platform starts OFF (the key is absent); a platform admin turns it on with
 # PUT /api/platform/automation.
-# Test locally:      wrangler dev --test-scheduled  then  curl "http://localhost:8787/__scheduled?cron=*/15+*+*+*+*"
+# Test locally:      wrangler dev --test-scheduled  then  curl "http://localhost:8787/__scheduled?cron=0+14+*+*+*"
 name = "stonesuite-automation-cron"
 main = "worker.js"
 compatibility_date = "2026-09-01"
@@ -24,4 +24,10 @@ binding = "AUTOMATION_KV"
 id = "REPLACE_WITH_KV_NAMESPACE_ID" # deploy fails until replaced, on purpose
 
 [triggers]
-crons = ["*/15 * * * *", "41 2 * * *"]
+# Once a day at 14:00 UTC (08:00 America/Chicago in winter, 09:00 in summer).
+# It was every 15 minutes, which woke the Fly machine and Neon ~96 times a day
+# and used up the dev Neon project's 100 CU-hr free allowance (2026-11).
+# 14:00 UTC must stay inside every tenant's 08:00-18:00 local send window
+# (automation.InSendWindow), and the daily digest only reaches users whose
+# send_hour is at or before this local hour.
+crons = ["0 14 * * *", "41 2 * * *"]

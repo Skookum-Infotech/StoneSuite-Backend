@@ -170,7 +170,7 @@ func BuildDetail(in DetailInput) TenantDetail {
 	}
 	tables := make([]TableSizeView, 0, len(in.Tables))
 	for _, t := range in.Tables {
-		tables = append(tables, TableSizeView{TableName: t.TableName, TotalBytes: t.TotalBytes, RowEstimate: t.RowEstimate})
+		tables = append(tables, TableSizeView(t))
 	}
 	return TenantDetail{
 		GeneratedAt: in.Now.UTC(), Period: in.Period,

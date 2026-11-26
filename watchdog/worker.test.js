@@ -23,13 +23,15 @@ beforeEach(() => {
   realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
+    // Match on the parsed host and path, never a substring of the URL string.
+    const { hostname, pathname } = new URL(u);
     const json = (body) => new Response(JSON.stringify(body), { status: 200 });
-    if (u.startsWith("https://site.example")) return new Response("<html>", { status: 200 });
-    if (u.includes("console.neon.tech/api/v2/projects?")) return json({ projects: [{ id: "dev" }] });
-    if (u.includes("console.neon.tech/api/v2/projects/dev")) return json({ project: { id: "dev", name: "dev-db", compute_time_seconds: 110 * 3600, synthetic_storage_size: 1e8, data_transfer_bytes: 1e8 } });
-    if (u.includes("api.machines.dev/v1/apps?org_slug=")) return json({ apps: [{ name: "dev-api" }] });
-    if (u.includes("api.machines.dev/v1/apps/dev-api/machines")) return json(flyMachine());
-    if (u.includes("api.fly.io/prometheus/")) return json({ data: { result: [{ metric: { app: "dev-api" }, value: [0, "11"] }] } });
+    if (hostname === "site.example") return new Response("<html>", { status: 200 });
+    if (hostname === "console.neon.tech" && pathname === "/api/v2/projects") return json({ projects: [{ id: "dev" }] });
+    if (hostname === "console.neon.tech" && pathname === "/api/v2/projects/dev") return json({ project: { id: "dev", name: "dev-db", compute_time_seconds: 110 * 3600, synthetic_storage_size: 1e8, data_transfer_bytes: 1e8 } });
+    if (hostname === "api.machines.dev" && pathname === "/v1/apps") return json({ apps: [{ name: "dev-api" }] });
+    if (hostname === "api.machines.dev" && pathname === "/v1/apps/dev-api/machines") return json(flyMachine());
+    if (hostname === "api.fly.io" && pathname.startsWith("/prometheus/")) return json({ data: { result: [{ metric: { app: "dev-api" }, value: [0, "11"] }] } });
     if (u === "https://api.resend.com/emails") {
       assert.equal(init.headers.Authorization, "Bearer re_test");
       emails.push(JSON.parse(init.body));

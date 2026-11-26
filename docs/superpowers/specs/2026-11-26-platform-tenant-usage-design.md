@@ -31,20 +31,20 @@ size (`tenant_storage_snapshots`), but only per tenant, for the Subscription pag
 ```
 request → usage middleware → in-memory counters per tenant (no DB write per request)
             └─ flush every 60s + on graceful shutdown (shutdown.go) → tenant_request_hourly (one batched UPSERT)
-jobqueue runner → job duration → tenant_request_hourly.job_ms
+async_jobs (finished) → job time read at rollup (updated_at - created_at)
 
-automation-cron tick (/api/internal/…, every 15 min; first tick after 02:00 UTC runs the rollup once/day):
+automation-cron daily cron 02:41 UTC → POST /api/internal/usage/rollup (HMAC, not gated by the automation switch; rolls up yesterday UTC):
   1. tenant_request_hourly → tenant_usage_daily
   2. per tenant DB: pg_database_size + top tables (concurrency ≈ 5)
   3. R2 bytes/objects via StorageRefresher → tenant_usage_daily
   4. active users, records created, emails, LLM tokens → tenant_usage_daily
   5. evaluate watch-list rules → upsert tenant_usage_alerts
 ```
-Scale-to-zero rules out an in-process daily ticker, hence the cron tick. The rollup is
+Scale-to-zero rules out an in-process daily ticker, hence the daily cron call (see D1). The rollup is
 idempotent per (tenant, day), so a retried or doubled tick is harmless.
 
 ### 3. Tables (control plane, appended with `IF NOT EXISTS`, every query filters by `tenant_id`)
-- `tenant_request_hourly(tenant_id, hour, requests, errors_5xx, handler_ms, db_ms, job_ms, p95_ms)` — 90-day retention.
+- `tenant_request_hourly(tenant_id, hour, requests, errors_5xx, handler_ms, p95_ms)` — 90-day retention.
 - `tenant_usage_daily(tenant_id, day, metric_key, value NUMERIC, PRIMARY KEY (tenant_id, day, metric_key))` — 13-month retention; long-form so a new metric needs no migration.
 - `tenant_table_sizes(tenant_id, measured_at, table_name, total_bytes, row_estimate)` — latest snapshot.
 - `tenant_usage_alerts(id, tenant_id, rule_key, metric_key, severity, observed, baseline, message, detail, first_seen_at, last_seen_at, status, acted_by, snoozed_until)` — `status` ∈ `open|acked|snoozed|resolved`.
@@ -104,16 +104,34 @@ tenant: TenantUsageRow, metrics, series, topTables, topTablesMeasuredAt, activit
 `{ "snoozeDays": 7 | 30 }` → `{ success: true }`. Validate `snoozeDays`; log the action with
 the acting user id.
 
-## Decisions needing approval
-- **D1 Rollup trigger.** Run the daily rollup off the existing `automation-cron` tick. It is
-  currently gated by the platform automation switch (`/api/platform/automation`); usage metering
-  probably should **not** be — proposal: a separate internal endpoint or an ungated branch of the
-  tick.
-- **D2 R2 history.** Add a daily `r2_bytes`/`r2_objects` row to `tenant_usage_daily` from the
-  storage sweep (keep `tenant_storage_snapshots` as-is for the Subscription page).
-- **D3 Compute estimate.** Handler wall time includes time waiting on the DB/Ollama; acceptable
-  for a relative "who costs most" view, labelled "est." in the UI. Revisit if Neon ever moves to
-  per-tenant projects (then use Neon's consumption API).
+## Decisions (approved 2026-11-26)
+- **D1 Rollup trigger — its own daily call, not gated by the automation switch.** The
+  `automation-cron` Worker gets a second, **daily** cron (`41 2 * * *`) that signs
+  `POST /api/internal/usage/rollup` with the same `AUTOMATION_TICK_SECRET`. It is not gated by
+  `/api/platform/automation`, so metering keeps running while automation is off, and it wakes
+  the scale-to-zero machine and Neon **once a day**, not every 15 minutes. This is a deliberate,
+  documented exception to `automation/CLAUDE.md` rule 0 ("don't add a second scheduler path"),
+  which is amended to say so. The 15-minute tick is unchanged.
+- **D2 R2 history.** The rollup re-measures each bucket via `StorageRefresher` and writes
+  `r2_bytes` / `r2_objects` rows to `tenant_usage_daily`; `tenant_storage_snapshots` is
+  unchanged for the Subscription page.
+- **D3 Compute estimate.** Request handler wall time (metered) + background-job time
+  (`async_jobs.updated_at - created_at` for finished jobs, so it includes queue wait), labelled
+  "est." in the UI. Revisit if Neon moves to per-tenant projects.
+
+### Adjustments made while planning
+- **DB load share is deferred.** Measuring per-tenant DB query time needs a pgx tracer on every
+  pool; out of scope for v1. `dbShareOfFleetPct` is the tenant's share of total tenant DB
+  **size** instead.
+- **Request attribution.** `RequireAuth` stores its payload on the inner request context, so the
+  outer `RequestLogger` never sees the tenant (its `tenant_id` log field is currently always
+  empty). A per-request attribution slot set by `RequestLogger` and filled by `RequireAuth`
+  fixes both the meter and that log field.
+- **Activity sources.** Records created = tenant `audit_logs` rows with `action = 'create'`,
+  grouped by `resource`. Emails sent = `audit_logs` `document.sent` rows + `automation_deliveries`
+  with `status = 'sent'`. Automation runs = `automation_deliveries` whose `run_at` falls in the
+  day and status is terminal. Active users / last sign-in = control-plane `auth_sessions` joined
+  to `identities` (`last_seen_at` / `created_at`); total users = the tenant's `identities`.
 
 ## Testing
 Table tests for every rule evaluator (threshold edges, small-tenant noise guard, snooze expiry,

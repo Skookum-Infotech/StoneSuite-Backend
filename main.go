@@ -154,6 +154,8 @@ func main() {
 	var ollamaLifecycle *services.OllamaLifecycle
 	// usageRecorder meters per-tenant LLM tokens; flushed on shutdown.
 	var usageRecorder *usage.Recorder
+	// requestMeter aggregates per-tenant request counts hourly; nil without a control plane.
+	var requestMeter *usage.RequestMeter
 	// aiToggler implements controllers.PlatformToggleListener: it owns the
 	// shared Ollama Machine's start/stop + lease-renew lifecycle and the RAG
 	// index catch-up nudge on every platform AI-switch flip, including the
@@ -1997,7 +1999,14 @@ func main() {
 	// MaxBody sits inside Recover so an oversized request is still logged.
 	deadlineExemptPrefixes := []string{"/api/internal/automation/"}
 	deadlineExemptSuffixes := []string{"/ask/stream"}
-	globalHandler := middleware.RequestLogger(middleware.Recover(
+	// Pass a nil interface (not a typed-nil pointer) when there is no meter.
+	var requestObserver middleware.RequestObserver
+	if cpPool != nil {
+		requestMeter = usage.NewRequestMeter(usage.NewFleetStore(cpPool), usage.DefaultMeterFlushInterval)
+		requestMeter.Start()
+		requestObserver = requestMeter
+	}
+	globalHandler := middleware.NewRequestLogger(requestObserver)(middleware.Recover(
 		middleware.MaxBody(config.AppConfig.MaxRequestBodyBytes, ownBodyCapRoute,
 			middleware.Deadline(config.AppConfig.RequestTimeout, deadlineExemptPrefixes, deadlineExemptSuffixes, corsHandler))))
 
@@ -2078,14 +2087,21 @@ func main() {
 	}
 	stopWorkersConcurrently(workers, workerStopTimeout)
 
-	// Flush metered LLM tokens queued by the requests and workers just stopped.
+	// Flush metered LLM tokens and request counters queued by the requests and
+	// workers just stopped. Both share one cleanup budget so the meter adds no
+	// time to the shutdown sequence (it must stay under fly.toml's kill_timeout).
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), shutdownCleanupTimeout)
 	if usageRecorder != nil {
-		flushCtx, flushCancel := context.WithTimeout(context.Background(), shutdownCleanupTimeout)
 		if err := usageRecorder.Close(flushCtx); err != nil {
 			log.Printf("usage: token recorder flush incomplete: %v", err)
 		}
-		flushCancel()
 	}
+	if requestMeter != nil {
+		if err := requestMeter.Close(flushCtx); err != nil {
+			log.Printf("usage: request meter flush incomplete: %v", err)
+		}
+	}
+	flushCancel()
 
 	// Release this holder's Ollama lease and stop the shared embedder box
 	// alongside this process — but only if no other holder (the other

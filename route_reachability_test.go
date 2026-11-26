@@ -197,6 +197,10 @@ func TestUnauthenticatedEndpointsArePinned(t *testing.T) {
 		// AUTOMATION_TICK_SECRET + 5-min replay window; 404s while unset.
 		"POST /api/internal/automation/tick": true,
 
+		// Machine-only: the same Cloudflare Worker's daily usage rollup. Same HMAC
+		// scheme and secret as the tick; not gated by the automation switch.
+		"POST /api/internal/usage/rollup": true,
+
 		// Machine-only: stonesuite-notify forwarding a customer's reply to an
 		// order email (it receives Resend's email.received webhook and fetches the
 		// mail; this backend never contacts Resend). No JWT; HMAC-signed with

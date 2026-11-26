@@ -210,6 +210,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			IssuedAt:     issuedAt,
 		}
 
+		setAttribution(r.Context(), ctxPayload)
 		ctx := context.WithValue(r.Context(), UserContextKey, ctxPayload)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

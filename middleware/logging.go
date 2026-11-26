@@ -83,60 +83,107 @@ func (r *statusRecorder) Status() int {
 	return r.status
 }
 
-// RequestLogger assigns each request a correlation id, exposes it on the
+// RequestObserver receives one observation per authenticated request, after the
+// response is complete (implemented by usage.RequestMeter).
+type RequestObserver interface {
+	Observe(tenantID string, status int, elapsed time.Duration)
+}
+
+// attributionContextKey holds the per-request *attribution slot.
+const attributionContextKey contextKey = "requestAttribution"
+
+// attribution is the mutable per-request slot RequestLogger installs and
+// RequireAuth fills, because RequireAuth stores the payload on an inner
+// request context the outer logger can never see.
+type attribution struct {
+	tenantID   string
+	identityID string
+}
+
+// setAttribution fills the request's attribution slot from an authenticated payload.
+func setAttribution(ctx context.Context, payload UserContextPayload) {
+	if slot, ok := ctx.Value(attributionContextKey).(*attribution); ok && slot != nil {
+		slot.tenantID = payload.TenantID
+		slot.identityID = payload.ID
+	}
+}
+
+// RequestLogger is NewRequestLogger without a request observer.
+func RequestLogger(next http.Handler) http.Handler {
+	return NewRequestLogger(nil)(next)
+}
+
+// NewRequestLogger assigns each request a correlation id, exposes it on the
 // request context and the X-Request-ID response header, and emits one
 // structured slog line per request with method, path, status, latency, and —
-// when the request is authenticated — the tenant and identity it ran as.
+// when the request is authenticated — the tenant and identity it ran as. When
+// obs is non-nil it is notified of every request attributed to a tenant.
 //
 // It is the OUTERMOST middleware so it can observe every response, including
 // those produced by the panic-recovery layer it should wrap (Recover).
-func RequestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		reqID := newRequestID()
+func NewRequestLogger(obs RequestObserver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			reqID := newRequestID()
 
-		ctx := context.WithValue(r.Context(), RequestIDContextKey, reqID)
-		w.Header().Set(RequestIDHeader, reqID)
+			slot := &attribution{}
+			ctx := context.WithValue(r.Context(), RequestIDContextKey, reqID)
+			ctx = context.WithValue(ctx, attributionContextKey, slot)
+			w.Header().Set(RequestIDHeader, reqID)
 
-		rec := &statusRecorder{ResponseWriter: w}
-		next.ServeHTTP(rec, r.WithContext(ctx))
+			rec := &statusRecorder{ResponseWriter: w}
+			next.ServeHTTP(rec, r.WithContext(ctx))
 
-		// Record Prometheus metrics from the same single point that logs the
-		// request, so counts and the log line can never disagree. The route is
-		// normalized to bound label cardinality (ids → {id}).
-		elapsed := time.Since(start)
-		metrics.Observe(r.Method, metrics.NormalizeRoute(r.URL.Path), rec.Status(), elapsed.Seconds())
+			// Record Prometheus metrics from the same single point that logs the
+			// request, so counts and the log line can never disagree. The route is
+			// normalized to bound label cardinality (ids → {id}).
+			elapsed := time.Since(start)
+			metrics.Observe(r.Method, metrics.NormalizeRoute(r.URL.Path), rec.Status(), elapsed.Seconds())
 
-		attrs := []any{
-			slog.String("request_id", reqID),
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-			slog.Int("status", rec.Status()),
-			slog.Int("bytes", rec.bytes),
-			slog.Int64("latency_ms", elapsed.Milliseconds()),
-			slog.String("ip", ClientIP(r)),
-		}
-		// Attach auth context when present (set by RequireAuth). Unauthenticated
-		// requests — login, onboarding, preflight — simply omit these fields.
-		if payload, err := GetUserFromContext(ctx); err == nil {
-			if payload.TenantID != "" {
-				attrs = append(attrs, slog.String("tenant_id", payload.TenantID))
+			tenantID, identityID := slot.tenantID, slot.identityID
+			// Fallback: a payload on the logger's own context.
+			if payload, err := GetUserFromContext(ctx); err == nil {
+				if tenantID == "" {
+					tenantID = payload.TenantID
+				}
+				if identityID == "" {
+					identityID = payload.ID
+				}
 			}
-			if payload.ID != "" {
-				attrs = append(attrs, slog.String("identity_id", payload.ID))
-			}
-		}
 
-		msg := "request"
-		switch {
-		case rec.Status() >= 500:
-			slog.LogAttrs(ctx, slog.LevelError, msg, toLogAttrs(attrs)...)
-		case rec.Status() >= 400:
-			slog.LogAttrs(ctx, slog.LevelWarn, msg, toLogAttrs(attrs)...)
-		default:
-			slog.LogAttrs(ctx, slog.LevelInfo, msg, toLogAttrs(attrs)...)
-		}
-	})
+			if obs != nil && tenantID != "" {
+				obs.Observe(tenantID, rec.Status(), elapsed)
+			}
+
+			attrs := []any{
+				slog.String("request_id", reqID),
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Int("status", rec.Status()),
+				slog.Int("bytes", rec.bytes),
+				slog.Int64("latency_ms", elapsed.Milliseconds()),
+				slog.String("ip", ClientIP(r)),
+			}
+			// Unauthenticated requests — login, onboarding, preflight — omit these fields.
+			if tenantID != "" {
+				attrs = append(attrs, slog.String("tenant_id", tenantID))
+			}
+			if identityID != "" {
+				attrs = append(attrs, slog.String("identity_id", identityID))
+			}
+
+			msg := "request"
+			switch {
+			case rec.Status() >= 500:
+				slog.LogAttrs(ctx, slog.LevelError, msg, toLogAttrs(attrs)...)
+			case rec.Status() >= 400:
+				slog.LogAttrs(ctx, slog.LevelWarn, msg, toLogAttrs(attrs)...)
+			default:
+				slog.LogAttrs(ctx, slog.LevelInfo, msg, toLogAttrs(attrs)...)
+			}
+		})
+	}
 }
 
 // toLogAttrs converts the []any built above into the []slog.Attr that

@@ -16,6 +16,8 @@ compatibility_date = "2026-09-01"
 
 [vars]
 TICK_URL = "https://stonesuite-backend.fly.dev/api/internal/automation/tick"
+# Daily per-tenant usage rollup (cron "41 2 * * *"); not gated by the KV switch.
+USAGE_ROLLUP_URL = "https://stonesuite-backend.fly.dev/api/internal/usage/rollup"
 
 [[kv_namespaces]]
 binding = "AUTOMATION_KV"
@@ -28,4 +30,4 @@ id = "REPLACE_WITH_KV_NAMESPACE_ID" # deploy fails until replaced, on purpose
 # 14:00 UTC must stay inside every tenant's 08:00-18:00 local send window
 # (automation.InSendWindow), and the daily digest only reaches users whose
 # send_hour is at or before this local hour.
-crons = ["0 14 * * *"]
+crons = ["0 14 * * *", "41 2 * * *"]

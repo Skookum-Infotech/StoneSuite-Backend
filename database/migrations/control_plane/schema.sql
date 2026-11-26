@@ -814,3 +814,85 @@ CREATE TABLE IF NOT EXISTS saml_logout_requests (
     PRIMARY KEY (issuer, request_id)
 );
 CREATE INDEX IF NOT EXISTS idx_saml_logout_requests_expires ON saml_logout_requests(expires_at);
+
+-- When the user of a session last actually used the app (mouse, keyboard,
+-- touch), as reported by the browser on each token refresh -- unlike
+-- last_seen_at, background polling never moves it. A refresh is refused once
+-- it is older than SESSION_IDLE_TIMEOUT (default 60 minutes). Guarded so a
+-- warm boot takes no lock on auth_sessions.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = current_schema() AND table_name = 'auth_sessions'
+                     AND column_name = 'last_active_at') THEN
+        ALTER TABLE auth_sessions ADD COLUMN last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    END IF;
+END $$;
+
+-- ── tenant_request_hourly ─────────────────────────────────────────────
+-- Per-tenant API request rollup, one row per (tenant, UTC hour), incremented in
+-- place by the request meter so the table stays small. handler_ms is the summed
+-- handler time; p95_ms is the hour's 95th-percentile latency.
+CREATE TABLE IF NOT EXISTS tenant_request_hourly (
+    tenant_id   UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    hour        TIMESTAMPTZ NOT NULL,
+    requests    BIGINT      NOT NULL DEFAULT 0,
+    errors_5xx  BIGINT      NOT NULL DEFAULT 0,
+    handler_ms  BIGINT      NOT NULL DEFAULT 0,
+    p95_ms      INT         NOT NULL DEFAULT 0,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, hour)
+);
+
+-- ── tenant_usage_daily ────────────────────────────────────────────────
+-- Generic daily usage metric per tenant, one row per (tenant, UTC day,
+-- metric_key), written by the usage sweep.
+CREATE TABLE IF NOT EXISTS tenant_usage_daily (
+    tenant_id   UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    usage_date  DATE        NOT NULL,
+    metric_key  TEXT        NOT NULL,
+    value       NUMERIC     NOT NULL DEFAULT 0,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, usage_date, metric_key)
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_usage_daily_date ON tenant_usage_daily(usage_date);
+
+-- ── tenant_table_sizes ────────────────────────────────────────────────
+-- Latest measured size of each table in a tenant's database (one row per
+-- tenant and table), refreshed by the periodic usage sweep.
+CREATE TABLE IF NOT EXISTS tenant_table_sizes (
+    tenant_id     UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    table_name    TEXT        NOT NULL,
+    total_bytes   BIGINT      NOT NULL DEFAULT 0,
+    row_estimate  BIGINT      NOT NULL DEFAULT 0,
+    measured_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, table_name)
+);
+
+-- ── tenant_usage_alerts ───────────────────────────────────────────────
+-- Usage anomaly alerts raised per tenant. At most one live (non-resolved)
+-- alert exists per (tenant, rule, metric); acknowledging, snoozing and
+-- resolving are status transitions on that row.
+CREATE TABLE IF NOT EXISTS tenant_usage_alerts (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    rule_key      TEXT        NOT NULL,
+    metric_key    TEXT        NOT NULL,
+    severity      TEXT        NOT NULL,
+    status        TEXT        NOT NULL DEFAULT 'open',
+    observed      NUMERIC,
+    baseline      NUMERIC,
+    message       TEXT        NOT NULL DEFAULT '',
+    detail        TEXT        NOT NULL DEFAULT '',
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    acted_by      UUID,
+    acted_at      TIMESTAMPTZ,
+    snoozed_until TIMESTAMPTZ,
+    resolved_at   TIMESTAMPTZ,
+    CONSTRAINT tenant_usage_alerts_severity_chk CHECK (severity IN ('critical', 'warning', 'info')),
+    CONSTRAINT tenant_usage_alerts_status_chk CHECK (status IN ('open', 'acked', 'snoozed', 'resolved'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_usage_alerts_live
+    ON tenant_usage_alerts(tenant_id, rule_key, metric_key) WHERE status <> 'resolved';
+CREATE INDEX IF NOT EXISTS idx_tenant_usage_alerts_status ON tenant_usage_alerts(status);

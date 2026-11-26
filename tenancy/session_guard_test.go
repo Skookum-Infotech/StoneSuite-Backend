@@ -88,6 +88,7 @@ func TestSessionGuardCheck(t *testing.T) {
 		"live":      {ID: "live"},
 		"replacing": {ID: "replacing", ReplacedAt: &past, EndsAt: &future},
 		"ended":     {ID: "ended", ReplacedAt: &past, EndsAt: &past},
+		"loggedout": {ID: "loggedout", EndedAt: &past},
 	}
 	tests := []struct {
 		name, sid, method string
@@ -100,6 +101,7 @@ func TestSessionGuardCheck(t *testing.T) {
 		{"handover read", "replacing", http.MethodGet, nil, true, 0},
 		{"handover write", "replacing", http.MethodPost, nil, false, http.StatusConflict},
 		{"ended", "ended", http.MethodGet, nil, false, http.StatusUnauthorized},
+		{"logged out", "loggedout", http.MethodGet, nil, false, http.StatusUnauthorized},
 		{"unknown session", "gone", http.MethodGet, nil, false, http.StatusUnauthorized},
 		{"lookup failure: reads pass", "live", http.MethodGet, errors.New("db down"), true, 0},
 		{"lookup failure: writes refused", "live", http.MethodPost, errors.New("db down"), false, http.StatusServiceUnavailable},
@@ -119,8 +121,11 @@ func TestSessionGuardCheck(t *testing.T) {
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 			assert.False(t, body.Success)
 			want := CodeSessionReplaced
-			if tt.loadErr != nil {
+			switch {
+			case tt.loadErr != nil:
 				want = CodeSessionUnavailable
+			case tt.sid == "loggedout" || tt.sid == "gone":
+				want = CodeSessionEnded
 			}
 			assert.Equal(t, want, body.Code)
 		})

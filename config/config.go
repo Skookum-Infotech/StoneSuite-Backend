@@ -120,6 +120,16 @@ type Config struct {
 	// responses and the internal automation tick are exempt and bound themselves.
 	RequestTimeout time.Duration
 
+	// SessionIdleTimeout (SESSION_IDLE_TIMEOUT, default 60m): a staff session
+	// whose user has not touched the app for this long cannot be renewed --
+	// the browser reports its last real user activity on each refresh, and
+	// background polling never counts.
+	SessionIdleTimeout time.Duration
+	// SessionMaxAge (SESSION_MAX_AGE, default 12h): the longest a staff
+	// session may last from sign-in, active or not; then the user signs in
+	// again. Access tokens are cut short so none outlives it.
+	SessionMaxAge time.Duration
+
 	// PDFDefaultClientLogo (PDF_DEFAULT_CLIENT_LOGO, default true) makes document
 	// PDFs show the client's logo -- the one the app header already shows -- as
 	// the tenant's logo for any tenant that has not uploaded its own. Set it to
@@ -307,6 +317,8 @@ func Load() {
 		DBLockTimeout:       getEnvDuration("DB_LOCK_TIMEOUT", defaultDBLockTimeout),
 		DBIdleInTxTimeout:   getEnvDuration("DB_IDLE_IN_TX_TIMEOUT", defaultDBIdleInTxTimeout),
 		RequestTimeout:      getEnvDuration("REQUEST_TIMEOUT", defaultRequestTimeout),
+		SessionIdleTimeout:  getEnvDuration("SESSION_IDLE_TIMEOUT", defaultSessionIdleTimeout),
+		SessionMaxAge:       getEnvDuration("SESSION_MAX_AGE", defaultSessionMaxAge),
 		// Document PDFs
 		PDFDefaultClientLogo: getEnvBool("PDF_DEFAULT_CLIENT_LOGO", true),
 		// Observability
@@ -472,6 +484,8 @@ const (
 	defaultDBLockTimeout      = 5 * time.Second
 	defaultDBIdleInTxTimeout  = 60 * time.Second
 	defaultRequestTimeout     = 110 * time.Second
+	defaultSessionIdleTimeout = 60 * time.Minute
+	defaultSessionMaxAge      = 12 * time.Hour
 )
 
 // Document-extraction defaults (see Config.DocExtractEnabled).

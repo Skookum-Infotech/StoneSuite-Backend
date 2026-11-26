@@ -28,7 +28,7 @@ See [docs/SAML_SETUP.md](./docs/SAML_SETUP.md) for SAML 2.0 SSO setup (AWS Cogni
 
 ## Stack
 
-Go 1.26 + `net/http` + PostgreSQL (pgx), deployed to Fly.io (scale-to-zero) against Neon Postgres. Email goes through the separate `stonesuite-notify` service; date-triggered automation is ticked every 15 minutes by the `automation-cron` Cloudflare Worker; AI/RAG uses a self-hosted Ollama app.
+Go 1.26 + `net/http` + PostgreSQL (pgx), deployed to Fly.io (scale-to-zero) against Neon Postgres. Email goes through the separate `stonesuite-notify` service; date-triggered automation is ticked once a day (14:00 UTC) by the `automation-cron` Cloudflare Worker; AI/RAG uses a self-hosted Ollama app.
 
 ## Architectural Decisions
 

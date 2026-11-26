@@ -93,7 +93,7 @@ These apply while editing *other* packages, so they stay here:
 - **Schema changes:** append with `ADD COLUMN IF NOT EXISTS`, never edit an existing `CREATE TABLE` body, guard `ADD CONSTRAINT`, no destructive DDL — use `/add-migration` and read `database/migrations/CLAUDE.md`.
 
 ### API & HTTP
-1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
+1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls once a day at 14:00 UTC, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
 2. **All responses are JSON.** Status codes: 200, 400, 401, 403, 404, 409, 500.
 3. **Error responses always include `success: false, message: "..."`.**
 4. **Handlers must validate input.**

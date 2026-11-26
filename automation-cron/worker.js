@@ -1,6 +1,6 @@
 // automation-cron — Cloudflare Worker whose only job is to be the clock for
 // stonesuite-backend. The backend scales to zero on Fly, so it cannot keep its
-// own ticker; every 15 minutes this Worker sends a signed
+// own ticker; once a day (14:00 UTC, see wrangler.toml) this Worker sends a signed
 // POST /api/internal/automation/tick, which wakes the machine and runs
 // date-triggered work (e.g. dispatching scheduled vendor payments).
 //

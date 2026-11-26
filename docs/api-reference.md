@@ -4,7 +4,7 @@
 > Regenerate with `go run ./cmd/gen-apidocs`.
 > Narrative and architecture live in [architecture-overview.md](architecture-overview.md).
 
-716 endpoints across 7 surfaces, read from `main.go`.
+717 endpoints across 7 surfaces, read from `main.go`.
 
 ## Auth posture at a glance
 
@@ -13,7 +13,7 @@
 | staff token + tenant | 612 |
 | portal token + tenant | 32 |
 | none (rate-limited) | 27 |
-| staff token | 23 |
+| staff token | 24 |
 | none | 17 |
 | portal token | 3 |
 | customer token | 2 |
@@ -325,7 +325,7 @@ Second customer surface from PR #140. See the overlap note in architecture-overv
 | `GET` | `/api/customer/notes` | customer token | `customerPortal.ListMyNotes` |
 | `POST` | `/api/customer/notes` | customer token | `customerPortal.CreateNote` |
 
-## `platform` — 19 endpoints
+## `platform` — 20 endpoints
 
 Platform-admin operations across tenants.
 
@@ -372,6 +372,12 @@ Platform-admin operations across tenants.
 | Method | Path | Requires | Handler |
 |---|---|---|---|
 | `GET` | `/api/platform/setup/status` | none | `tenantOps.SetupStatus` |
+
+### system-health
+
+| Method | Path | Requires | Handler |
+|---|---|---|---|
+| `GET` | `/api/platform/system-health` | staff token | `systemHealthOps.Get` |
 
 ### tenants
 

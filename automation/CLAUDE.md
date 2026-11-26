@@ -3,7 +3,7 @@
 _Loaded automatically when Claude reads files under `automation/`. Moved verbatim from the root CLAUDE.md._
 
 ## Automation Engine (`automation/` + `POST /api/internal/automation/tick`)
-The `automation-cron` Worker signs a tick every 15 min; `automation.Runner` runs every
+The `automation-cron` Worker signs a tick once a day (14:00 UTC); `automation.Runner` runs every
 `DefaultJobs()` entry per servable tenant **inside the request** (scale-to-zero can stop the
 machine after the response).
 0. **Platform on/off, default OFF** (`platform_automation_settings`, control plane;

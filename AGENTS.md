@@ -227,7 +227,7 @@ type and carry `Domain`/`Module` route segments the frontend feeds to
    still use `query.StripLikeMeta` + `$n` params, never interpolation.
 
 ### Automation Engine (`automation/` + `POST /api/internal/automation/tick`)
-The `automation-cron` Worker signs a tick every 15 min; `automation.Runner` runs every
+The `automation-cron` Worker signs a tick once a day (14:00 UTC); `automation.Runner` runs every
 `DefaultJobs()` entry per servable tenant **inside the request** (scale-to-zero can stop the
 machine after the response).
 0. **Platform on/off, default OFF** (`platform_automation_settings`, control plane;
@@ -317,7 +317,7 @@ The `query` package is the **single, store-agnostic** way to do server-side filt
 7. **All queries accept `context.Context` as first parameter.**
 
 ### API & HTTP
-1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
+1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls once a day at 14:00 UTC, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
 2. **All responses are JSON.** Status codes: 200, 400, 401, 403, 404, 409, 500.
 3. **Error responses always include `success: false, message: "..."`.**
 4. **Handlers must validate input.**

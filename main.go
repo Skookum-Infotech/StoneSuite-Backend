@@ -154,6 +154,8 @@ func main() {
 	var ollamaLifecycle *services.OllamaLifecycle
 	// usageRecorder meters per-tenant LLM tokens; flushed on shutdown.
 	var usageRecorder *usage.Recorder
+	// requestMeter aggregates per-tenant request counts hourly; nil without a control plane.
+	var requestMeter *usage.RequestMeter
 	// aiToggler implements controllers.PlatformToggleListener: it owns the
 	// shared Ollama Machine's start/stop + lease-renew lifecycle and the RAG
 	// index catch-up nudge on every platform AI-switch flip, including the
@@ -412,6 +414,12 @@ func main() {
 			config.AppConfig.IsProduction())
 		mux.Handle("GET /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Get)))
 		mux.Handle("PUT /api/platform/automation", middleware.RequireAuth(http.HandlerFunc(automationPlatformOps.Update)))
+		// Platform-admin tenant usage (control-plane reads only, no tenant chain).
+		platformUsageOps := controllers.NewPlatformUsageOps(cp, usage.NewFleetStore(cp.Pool()), time.Now)
+		mux.Handle("GET /api/platform/usage/overview", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Overview)))
+		mux.Handle("GET /api/platform/usage/watchlist", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Watchlist)))
+		mux.Handle("GET /api/platform/usage/tenants/{tenantId}", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.TenantDetail)))
+		mux.Handle("POST /api/platform/usage/alerts/{alertId}/ack", middleware.RequireAuth(http.HandlerFunc(platformUsageOps.Ack)))
 		mux.Handle("POST /api/internal/automation/tick", automationRateLimiter.PerIPFunc(automationOps.Tick))
 		// Public: tenant-scoped login + password recovery. All credential-checking
 		// endpoints sit behind the per-IP rate limiter to blunt brute-force and
@@ -912,6 +920,24 @@ func main() {
 		subscriptionUsageOps := controllers.NewSubscriptionUsageOps(usageStore,
 			usage.NewStorageRefresher(usageStore, usage.R2Measurer{Client: r2Client}))
 		mux.Handle("GET /api/tenant/subscription/usage", tenantChain(subscriptionUsageOps.GetUsage))
+
+		// Internal: daily per-tenant usage rollup, called by the automation-cron
+		// Worker at 02:41 UTC. Same HMAC scheme/secret as the automation tick (route
+		// 404s while unset) but deliberately NOT gated by the platform automation
+		// switch -- metering runs while automation is off. Built here (not beside
+		// the tick) because it needs r2Client. Own per-IP limiter, like the tick's.
+		if cp != nil && cpPool != nil {
+			var usageRollup *usage.Rollup
+			if r2Client != nil {
+				usageRollup = usage.NewRollup(cp, tenantRouter, usage.NewFleetStore(cpPool),
+					usage.NewStorageRefresher(usageStore, usage.R2Measurer{Client: r2Client}), time.Now)
+			} else {
+				usageRollup = usage.NewRollup(cp, tenantRouter, usage.NewFleetStore(cpPool), nil, time.Now)
+			}
+			usageRollupOps := controllers.NewUsageRollupOps(usageRollup, config.AppConfig.AutomationTickSecret)
+			usageRollupRateLimiter := middleware.NewRateLimiter(shutdownCtx, 0.1, 5)
+			mux.Handle("POST /api/internal/usage/rollup", usageRollupRateLimiter.PerIPFunc(usageRollupOps.Rollup))
+		}
 
 		// Tenant's physical locations (Configuration -> Company Info -> Locations tab).
 		companyLocationOps := controllers.NewCompanyLocationOps()
@@ -1995,9 +2021,16 @@ func main() {
 	// their own duration -- the AI answer stream (rolling write deadline plus
 	// streamMaxDuration) and the automation tick (per-tenant timeouts).
 	// MaxBody sits inside Recover so an oversized request is still logged.
-	deadlineExemptPrefixes := []string{"/api/internal/automation/"}
+	deadlineExemptPrefixes := []string{"/api/internal/automation/", "/api/internal/usage/"}
 	deadlineExemptSuffixes := []string{"/ask/stream"}
-	globalHandler := middleware.RequestLogger(middleware.Recover(
+	// Pass a nil interface (not a typed-nil pointer) when there is no meter.
+	var requestObserver middleware.RequestObserver
+	if cpPool != nil {
+		requestMeter = usage.NewRequestMeter(usage.NewFleetStore(cpPool), usage.DefaultMeterFlushInterval)
+		requestMeter.Start()
+		requestObserver = requestMeter
+	}
+	globalHandler := middleware.NewRequestLogger(requestObserver)(middleware.Recover(
 		middleware.MaxBody(config.AppConfig.MaxRequestBodyBytes, ownBodyCapRoute,
 			middleware.Deadline(config.AppConfig.RequestTimeout, deadlineExemptPrefixes, deadlineExemptSuffixes, corsHandler))))
 
@@ -2078,14 +2111,21 @@ func main() {
 	}
 	stopWorkersConcurrently(workers, workerStopTimeout)
 
-	// Flush metered LLM tokens queued by the requests and workers just stopped.
+	// Flush metered LLM tokens and request counters queued by the requests and
+	// workers just stopped. Both share one cleanup budget so the meter adds no
+	// time to the shutdown sequence (it must stay under fly.toml's kill_timeout).
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), shutdownCleanupTimeout)
 	if usageRecorder != nil {
-		flushCtx, flushCancel := context.WithTimeout(context.Background(), shutdownCleanupTimeout)
 		if err := usageRecorder.Close(flushCtx); err != nil {
 			log.Printf("usage: token recorder flush incomplete: %v", err)
 		}
-		flushCancel()
 	}
+	if requestMeter != nil {
+		if err := requestMeter.Close(flushCtx); err != nil {
+			log.Printf("usage: request meter flush incomplete: %v", err)
+		}
+	}
+	flushCancel()
 
 	// Release this holder's Ollama lease and stop the shared embedder box
 	// alongside this process — but only if no other holder (the other

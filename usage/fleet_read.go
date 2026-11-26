@@ -79,6 +79,41 @@ func (s *FleetStore) SignInStats(ctx context.Context, tenantID string, from, to 
 	return st, nil
 }
 
+// SignInStatsByTenant is SignInStats for many tenants in one query, keyed by
+// tenant id; a tenant with no identities is absent (its zero value applies).
+func (s *FleetStore) SignInStatsByTenant(ctx context.Context, tenantIDs []string, from, to time.Time) (map[string]SignInStats, error) {
+	out := make(map[string]SignInStats, len(tenantIDs))
+	if len(tenantIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT i.tenant_id::text,
+		       COUNT(DISTINCT a.identity_id) FILTER (WHERE a.last_seen_at >= $2 AND a.last_seen_at < $3),
+		       COUNT(DISTINCT i.id),
+		       MAX(a.created_at)
+		FROM identities i
+		LEFT JOIN auth_sessions a ON a.identity_id = i.id
+		WHERE i.tenant_id = ANY($1::uuid[])
+		GROUP BY i.tenant_id`,
+		tenantIDs, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("read sign-in stats for %d tenants: %w", len(tenantIDs), err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var st SignInStats
+		if err := rows.Scan(&id, &st.ActiveUsers, &st.TotalUsers, &st.LastSignInAt); err != nil {
+			return nil, fmt.Errorf("scan sign-in stats row: %w", err)
+		}
+		out[id] = st
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sign-in stats rows: %w", err)
+	}
+	return out, nil
+}
+
 // DailyValues returns the tenants' daily metric values for days in [from, to] inclusive.
 func (s *FleetStore) DailyValues(ctx context.Context, tenantIDs []string, from, to time.Time) ([]DailyValue, error) {
 	rows, err := s.pool.Query(ctx, `

@@ -42,6 +42,7 @@ type platformUsageStore interface {
 	TokensBySource(ctx context.Context, tenantID string, from, to time.Time) (map[string]int64, error)
 	TableSizes(ctx context.Context, tenantID string) ([]usage.TableSize, *time.Time, error)
 	SignInStats(ctx context.Context, tenantID string, from, to time.Time) (usage.SignInStats, error)
+	SignInStatsByTenant(ctx context.Context, tenantIDs []string, from, to time.Time) (map[string]usage.SignInStats, error)
 	Watchlist(ctx context.Context, now time.Time) ([]usage.Alert, error)
 	TenantAlerts(ctx context.Context, tenantID string, since time.Time) ([]usage.Alert, error)
 	TopSeverityByTenant(ctx context.Context, now time.Time) (map[string]string, error)

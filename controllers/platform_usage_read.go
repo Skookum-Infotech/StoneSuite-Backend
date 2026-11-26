@@ -89,14 +89,19 @@ func (h *PlatformUsageOps) Overview(w http.ResponseWriter, r *http.Request) {
 	for _, t := range all {
 		infos = append(infos, tenantInfo(t))
 	}
+	pageIDs := make([]string, 0, len(page))
+	for _, t := range page {
+		pageIDs = append(pageIDs, t.ID)
+	}
+	// One batched query for the whole page, not one per tenant row.
+	signs, err := h.store.SignInStatsByTenant(ctx, pageIDs, win.Start(), win.End.Add(usageDay))
+	if err != nil {
+		h.failLoad(w, r, "sign-in stats", err)
+		return
+	}
 	rows := make([]usage.TenantUsageRow, 0, len(page))
 	for _, t := range page {
-		sign, err := h.store.SignInStats(ctx, t.ID, win.Start(), win.End.Add(usageDay))
-		if err != nil {
-			h.failLoad(w, r, "sign-in stats", err)
-			return
-		}
-		rows = append(rows, usage.BuildRow(tenantInfo(t), idx, win, sign, severities[t.ID]))
+		rows = append(rows, usage.BuildRow(tenantInfo(t), idx, win, signs[t.ID], severities[t.ID]))
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Success     bool                   `json:"success"`

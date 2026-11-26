@@ -118,6 +118,29 @@ func TestFleetStore_TokensAndJobAndSignInStats(t *testing.T) {
 	assert.Equal(t, 1, ss.TotalUsers)
 	require.NotNil(t, ss.LastSignInAt)
 	assert.True(t, ss.LastSignInAt.Equal(start))
+
+	// The batched form must agree with the single-tenant one, and report a
+	// tenant whose only identity never signed in (LEFT JOIN, no sessions).
+	quiet := insertTenant(t, pool)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO identities (tenant_id, email, password_hash)
+		VALUES ($1, 'usage-' || substr(gen_random_uuid()::text, 1, 8) || '@example.test', 'x')`, quiet)
+	require.NoError(t, err)
+	batch, err := s.SignInStatsByTenant(ctx, []string{tenant, quiet}, start, start.Add(24*time.Hour))
+	require.NoError(t, err)
+	require.Contains(t, batch, tenant)
+	assert.Equal(t, ss.ActiveUsers, batch[tenant].ActiveUsers)
+	assert.Equal(t, ss.TotalUsers, batch[tenant].TotalUsers)
+	require.NotNil(t, batch[tenant].LastSignInAt)
+	assert.True(t, batch[tenant].LastSignInAt.Equal(start))
+	require.Contains(t, batch, quiet)
+	assert.Equal(t, 0, batch[quiet].ActiveUsers)
+	assert.Equal(t, 1, batch[quiet].TotalUsers)
+	assert.Nil(t, batch[quiet].LastSignInAt)
+
+	empty, err := s.SignInStatsByTenant(ctx, nil, start, start.Add(24*time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, empty)
 }
 
 func TestFleetStore_TableSizesReplaceAndOrder(t *testing.T) {

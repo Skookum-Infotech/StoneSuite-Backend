@@ -84,6 +84,9 @@ func TestPlatformUsage_Ack(t *testing.T) {
 		{"snooze zero", `{"snoozeDays":0}`, platUsageAlertID, true, http.StatusBadRequest, 0},
 		{"invalid json", `{`, platUsageAlertID, true, http.StatusBadRequest, 0},
 		{"unknown field", `{"foo":1}`, platUsageAlertID, true, http.StatusBadRequest, 0},
+		{"trailing garbage", `{} junk`, platUsageAlertID, true, http.StatusBadRequest, 0},
+		{"two json values", `{}{"snoozeDays":7}`, platUsageAlertID, true, http.StatusBadRequest, 0},
+		{"trailing whitespace ok", "{\"snoozeDays\":7}\n  ", platUsageAlertID, true, http.StatusOK, 7},
 		{"unknown alert", `{}`, platUsageAlertID, false, http.StatusNotFound, 0},
 		{"malformed alert id", `{}`, "nope", true, http.StatusNotFound, 0},
 	}

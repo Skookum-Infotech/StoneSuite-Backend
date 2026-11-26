@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -124,7 +125,7 @@ func (h *UsageRollupOps) resolveDay(body []byte) (time.Time, string) {
 		return time.Time{}, "day must be a past UTC day."
 	}
 	if day.Before(today.AddDate(0, 0, -usageRollupMaxBackfillDays)) {
-		return time.Time{}, "day is older than the 31-day backfill window."
+		return time.Time{}, fmt.Sprintf("day is older than the %d-day backfill window.", usageRollupMaxBackfillDays)
 	}
 	return day, ""
 }

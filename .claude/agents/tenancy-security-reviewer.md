@@ -24,6 +24,21 @@ guess; verify first.
 
 ## The rules (the ONLY things you check)
 
+**Two route tiers outside the tenant model.** Rules 3–5 are written for tenant routes
+(`/api/tenant/`). Two other tiers are gated differently — check *their* gate instead
+and do not flag them under 3–5:
+- **Platform-admin routes (`/api/platform/`)** are gated by identity role, not record
+  scope: `middleware.RequireAuth` + `IsPlatformAdmin` (the `requirePlatformAdmin`
+  pattern in `controllers/automation_platform.go` / `platform_usage.go`), with a
+  security event logged on the 403. Cross-tenant control-plane reads/writes behind
+  that gate (e.g. `usage.FleetStore` watch list, fleet totals, alert ack by id) are
+  intended. Flag a `/api/platform/` handler that skips the admin check or touches a
+  tenant DB other than through that tenant's own pool. A uniform 403 for non-admins
+  is correct there (no per-record enumeration is possible).
+- **Machine-only routes (`/api/internal/`)** have no JWT: they must verify an HMAC
+  signature (`middleware.VerifyInternalSignature`) and a replay guard *before* any
+  work. Flag one that does not.
+
 1. **Tenant isolation is by database, not by filter.** Tenant-DB queries (in
    `lead/`, `prospect/`, `workflow/`, `crmstore/`) must NOT contain `WHERE tenant_id`.
    The DB connection IS the scope. (Control-plane queries in `tenancy/`, `controllers`

@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -113,4 +114,11 @@ func TestUsageRollup_ReplayRejected(t *testing.T) {
 	assert.Equal(t, http.StatusOK, first.Code)
 	assert.Equal(t, http.StatusUnauthorized, replay.Code)
 	assert.Equal(t, 1, fr.calls, "a replayed signature must not run the rollup again")
+}
+
+func TestUsageRollup_BackfillMessageUsesWindowConst(t *testing.T) {
+	h := NewUsageRollupOps(nil, usageRollupTestSecret)
+	h.now = func() time.Time { return time.Date(2026, 11, 26, 3, 0, 0, 0, time.UTC) }
+	_, msg := h.resolveDay([]byte(`{"day":"2026-10-01"}`))
+	assert.Equal(t, fmt.Sprintf("day is older than the %d-day backfill window.", usageRollupMaxBackfillDays), msg)
 }

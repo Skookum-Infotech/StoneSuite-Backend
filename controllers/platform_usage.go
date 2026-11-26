@@ -138,7 +138,13 @@ func (h *PlatformUsageOps) Ack(w http.ResponseWriter, r *http.Request) {
 	var body ackBody
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, usageMaxBodyBytes))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+	if err := dec.Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			fail(w, http.StatusBadRequest, msgUsageBadBody)
+			return
+		}
+	} else if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		// Exactly one JSON value: trailing data after it ("{} junk") is rejected.
 		fail(w, http.StatusBadRequest, msgUsageBadBody)
 		return
 	}

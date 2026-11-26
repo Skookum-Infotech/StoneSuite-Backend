@@ -54,8 +54,8 @@ func TestPlatformUsage_WatchlistShape(t *testing.T) {
 	require.Len(t, alerts, 1)
 	a := alerts[0].(map[string]any)
 	requirePlatUsageKeys(t, a, "id", "tenantId", "tenantName", "ruleKey", "metricKey", "severity", "message",
-		"firstSeenAt", "lastSeenAt", "status", "snoozedUntil")
-	assert.NotContains(t, a, "detail")
+		"firstSeenAt", "lastSeenAt", "status", "snoozedUntil", "detail")
+	assert.Equal(t, "", a["detail"], "detail is always present, empty when unset")
 	assert.Nil(t, a["snoozedUntil"])
 }
 

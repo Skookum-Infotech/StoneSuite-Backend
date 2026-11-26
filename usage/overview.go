@@ -121,7 +121,7 @@ type AlertView struct {
 	MetricKey    string     `json:"metricKey"`
 	Severity     string     `json:"severity"`
 	Message      string     `json:"message"`
-	Detail       string     `json:"detail,omitempty"`
+	Detail       string     `json:"detail"`
 	FirstSeenAt  time.Time  `json:"firstSeenAt"`
 	LastSeenAt   time.Time  `json:"lastSeenAt"`
 	Status       string     `json:"status"`

@@ -2410,7 +2410,7 @@
                 "reindex-help"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:1948"
+            "description": "Requires: staff token\nRegistered at main.go:1952"
           }
         },
         {
@@ -2435,7 +2435,7 @@
                 "settings"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:1959"
+            "description": "Requires: staff token\nRegistered at main.go:1963"
           }
         },
         {
@@ -2468,7 +2468,7 @@
                 "settings"
               ]
             },
-            "description": "Requires: staff token\nRegistered at main.go:1960"
+            "description": "Requires: staff token\nRegistered at main.go:1964"
           }
         },
         {
@@ -3236,7 +3236,7 @@
                 "ask"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1941"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1945"
           }
         },
         {
@@ -3270,7 +3270,7 @@
                 "stream"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1942"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1946"
           }
         },
         {
@@ -3295,7 +3295,7 @@
                 "conversations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1967"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1971"
           }
         },
         {
@@ -3328,7 +3328,7 @@
                 "conversations"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1966"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1970"
           }
         },
         {
@@ -3354,7 +3354,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1969"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1973"
           }
         },
         {
@@ -3380,7 +3380,7 @@
                 "{id}"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1968"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1972"
           }
         },
         {
@@ -3413,7 +3413,7 @@
                 "reindex"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1946"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1950"
           }
         },
         {
@@ -3446,7 +3446,7 @@
                 "settings"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1958"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1962"
           }
         },
         {
@@ -3471,7 +3471,7 @@
                 "status"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1957"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1961"
           }
         },
         {
@@ -3504,7 +3504,7 @@
                 "warm"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1947"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1951"
           }
         },
         {
@@ -16735,7 +16735,7 @@
                 "interpret"
               ]
             },
-            "description": "Requires: staff token + tenant\nRegistered at main.go:1945"
+            "description": "Requires: staff token + tenant\nRegistered at main.go:1949"
           }
         },
         {

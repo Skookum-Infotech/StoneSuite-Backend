@@ -1908,18 +1908,22 @@ func main() {
 			cp,
 			ollama.NewDocEmbedder(config.AppConfig.OllamaBaseURL, config.AppConfig.AIEmbedModel, config.AppConfig.AIEmbedDim),
 		)
-		if aiToggler.waker != nil {
-			// Reuse aiToggler's own waker instance (not a second one) so
-			// SetEnabled toggled by the platform-toggle listener and the
-			// waker Ask/AskStream/Warm consult are the same object.
-			aiOps = aiOps.WithOllamaWaker(aiToggler.waker)
-		}
-		aiOps = aiOps.WithPlatformToggleListener(aiToggler)
-		if aiToggler.lifecycle != nil {
-			// Only wire when configured — assigning a nil *OllamaLifecycle
-			// into the ollamaStater interface would make it a non-nil,
-			// typed-nil interface, defeating AIOps's own nil check.
-			aiOps = aiOps.WithOllamaStatus(aiToggler.lifecycle, aiToggler.lease)
+		// aiToggler is only built when tenant provisioning is configured (PROVISION_ADMIN_DB_URL);
+		// without it the assistant runs with no Ollama lifecycle, waker or platform-toggle listener.
+		if aiToggler != nil {
+			if aiToggler.waker != nil {
+				// Reuse aiToggler's own waker instance (not a second one) so
+				// SetEnabled toggled by the platform-toggle listener and the
+				// waker Ask/AskStream/Warm consult are the same object.
+				aiOps = aiOps.WithOllamaWaker(aiToggler.waker)
+			}
+			aiOps = aiOps.WithPlatformToggleListener(aiToggler)
+			if aiToggler.lifecycle != nil {
+				// Only wire when configured — assigning a nil *OllamaLifecycle
+				// into the ollamaStater interface would make it a non-nil,
+				// typed-nil interface, defeating AIOps's own nil check.
+				aiOps = aiOps.WithOllamaStatus(aiToggler.lifecycle, aiToggler.lease)
+			}
 		}
 		// Share the one process-wide AI-toggle cache with the RAG index
 		// maintenance loops (see aiSettingsCache doc above) — a toggle PUT

@@ -44,6 +44,14 @@ not used for a while, does not count as a move.
 For security, StoneSuite keeps the browser type
 and network address of each sign-in for 90 days after it ends.
 
+### Automatic sign-out
+
+StoneSuite signs you out after 60 minutes without using it (no clicks, typing
+or scrolling). Five minutes before that, a message asks whether to stay signed
+in; choose **Stay logged in** to keep working. Every sign-in also ends after 12
+hours, even if you are using it the whole time, and you sign in again. Leaving
+StoneSuite open in a tab you are not using does not keep you signed in.
+
 ## The sidebar and navigation areas
 
 The left sidebar is how you move around StoneSuite. It's organized into

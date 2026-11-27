@@ -93,7 +93,7 @@ These apply while editing *other* packages, so they stay here:
 - **Schema changes:** append with `ADD COLUMN IF NOT EXISTS`, never edit an existing `CREATE TABLE` body, guard `ADD CONSTRAINT`, no destructive DDL — use `/add-migration` and read `database/migrations/CLAUDE.md`.
 
 ### API & HTTP
-1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT — currently just the `automation/` tick the `automation-cron` Cloudflare Worker calls every 15 min, since scale-to-zero rules out in-process tickers; that tick is itself gated by the platform switch at `/api/platform/automation`).
+1. **Routes are prefixed by scope:** `/api/` general, `/api/auth/` auth, `/api/platform/` platform admin, `/api/onboarding/` public, `/api/tenant/` tenant-scoped (auth + TenantResolver required), `/api/internal/` machine-only (HMAC-signed via `middleware.VerifyInternalSignature`, no JWT). The `automation-cron` Cloudflare Worker is the clock, since scale-to-zero rules out in-process tickers: it calls the `automation/` tick once a day at 14:00 UTC, gated by the platform switch at `/api/platform/automation`, and `/api/internal/usage/rollup` once a day at 02:41 UTC, deliberately **not** gated (tenant usage metering must run while automation is off; see `automation/CLAUDE.md` rule 0). `/api/internal/email/inbound` is called by stonesuite-notify (signed with `NOTIFY_API_KEY`).
 2. **All responses are JSON.** Status codes: 200, 400, 401, 403, 404, 409, 500.
 3. **Error responses always include `success: false, message: "..."`.**
 4. **Handlers must validate input.**
@@ -108,7 +108,7 @@ These apply while editing *other* packages, so they stay here:
 1. **Structured logging only** (`log/slog`, JSON handler). No new `log.Printf` in request paths.
 2. **Every request is correlated** via `middleware.RequestLogger` (request id, one line per response).
 3. **Panics never crash the VM** — `middleware.Recover` wraps all routes.
-4. **Global chain is `RequestLogger(Recover(Deadline(corsHandler)))`.** `Deadline` cancels the request context after `REQUEST_TIMEOUT` (110s; must stay between the 100s Ollama client timeout and the 120s `WriteTimeout`); only self-bounded routes (`/ask/stream`, the automation tick) are exempt. Every pool connection also carries `DB_STATEMENT_TIMEOUT`/`DB_LOCK_TIMEOUT`/`DB_IDLE_IN_TX_TIMEOUT` (`tenancy.SessionTimeouts`); schema migrations lift the first two with `SET LOCAL`.
+4. **Global chain is `RequestLogger(Recover(Deadline(corsHandler)))`.** `Deadline` cancels the request context after `REQUEST_TIMEOUT` (110s; must stay between the 100s Ollama client timeout and the 120s `WriteTimeout`); only self-bounded routes (`/ask/stream`, the automation tick, the usage rollup under `/api/internal/usage/`) are exempt. Every pool connection also carries `DB_STATEMENT_TIMEOUT`/`DB_LOCK_TIMEOUT`/`DB_IDLE_IN_TX_TIMEOUT` (`tenancy.SessionTimeouts`); schema migrations lift the first two with `SET LOCAL`.
 5. **Unauthenticated credential endpoints are per-IP rate-limited.** Use `middleware.ClientIP(r)` for IP keying.
 6. **`GET /api/healthz`** liveness, **`GET /api/readyz`** readiness (control-plane DB ping), **`GET /api/metrics`** Prometheus.
 7. **Error tracking + log shipping are optional + graceful** (`SENTRY_DSN`, `AXIOM_TOKEN`+`AXIOM_DATASET`). The log shipper must never call `slog` (infinite loop).

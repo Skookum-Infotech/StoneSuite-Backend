@@ -1,0 +1,18 @@
+Output format is aligned.
+                                      metric                                      |       email       | n 
+----------------------------------------------------------------------------------+-------------------+---
+ installs (assigned, scheduled, install visit, live non-cancelled job, today..+3) | finance@e2e.local | 1
+ installs (assigned, scheduled, install visit, live non-cancelled job, today..+3) | ops@e2e.local     | 4
+(2 rows)
+
+                                     metric                                     |       email       | n 
+--------------------------------------------------------------------------------+-------------------+---
+ vendor bills (owner, else approver; APPV/PART/ODUE; balance>0; due <= today+3) | finance@e2e.local | 1
+ vendor bills (owner, else approver; APPV/PART/ODUE; balance>0; due <= today+3) | ops@e2e.local     | 3
+(2 rows)
+
+                                    metric                                     |     email     | n 
+-------------------------------------------------------------------------------+---------------+---
+ pending approvals at PAPV gate for the user (quote/estimate/sales_order only) | ops@e2e.local | 4
+(1 row)
+

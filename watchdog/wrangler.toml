@@ -1,0 +1,39 @@
+# stonesuite-watchdog: hourly health check + email alerts that never wake the
+# backend or the databases (reads Neon's and Fly's APIs only). See worker.js.
+#
+# Deploy manually:   cd watchdog && wrangler deploy
+# Secrets (set once; never commit them):
+#   wrangler secret put FLY_API_TOKEN    # read-only org token: fly tokens create readonly -o <org>  (paste the whole "FlyV1 fm2_..." string)
+#   wrangler secret put NEON_API_KEY     # Neon console > Organization settings > API keys
+#   wrangler secret put RESEND_API_KEY   # same Resend account stonesuite-notify sends with
+# KV: binds the SAME namespace as automation-cron, so the backend reads the
+# snapshot with its existing AUTOMATION_KV_* secrets. Paste that id below.
+# Test locally:      wrangler dev --test-scheduled  then  curl "http://localhost:8787/__scheduled?cron=0+*+*+*+*"
+# Unit tests:        node --test watchdog/
+name = "stonesuite-watchdog"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+FLY_ORG_SLUG = "skookum-infotech-932"       # Skookum Infotech (fly orgs list)
+FLY_APPS = ""                               # blank = every app in the org
+NEON_ORG_ID = "org-divine-block-69843547"   # Skookum Infotech
+SITE_URLS = "https://dev.stonesuite.app,https://uat.stonesuite.app,https://system.stonesuite.app,https://stonesuite.pages.dev"
+ALERT_EMAIL_TO = ""                         # team mailbox; comma-separate several
+ALERT_EMAIL_FROM = ""                       # a sender on the Resend-verified domain, e.g. "StoneSuite Alerts <alerts@your-domain>"
+DASHBOARD_URL = "https://system.stonesuite.app/platform/system-health"
+REPORT_HOUR_UTC = "14"
+# Neon Free plan allowances per project; raise these after upgrading.
+NEON_COMPUTE_LIMIT_CU_HOURS = "100"
+NEON_STORAGE_LIMIT_GB = "0.5"
+NEON_TRANSFER_LIMIT_GB = "5"
+AWAKE_WARN_HOURS = "6"
+ERRORS_WARN = "10"
+
+[[kv_namespaces]]
+binding = "WATCHDOG_KV"
+id = "REPLACE_WITH_AUTOMATION_KV_NAMESPACE_ID" # deploy fails until replaced, on purpose
+
+[triggers]
+# Hourly. Reading Neon/Fly APIs costs nothing on our side and wakes nothing.
+crons = ["0 * * * *"]

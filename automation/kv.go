@@ -19,6 +19,13 @@ const (
 	KVOn         = "1"
 	KVOff        = "0"
 
+	// WatchdogSnapshotKey holds the latest health snapshot JSON written hourly
+	// by the stonesuite-watchdog Worker (watchdog/worker.js SNAPSHOT_KEY), which
+	// binds this same namespace. Platform Admin > System Health reads it.
+	WatchdogSnapshotKey = "watchdog_snapshot"
+	// maxKVValue caps how much of a KV value is read (a snapshot is a few KB).
+	maxKVValue = 1 << 20
+
 	cfAPIBase     = "https://api.cloudflare.com/client/v4"
 	kvHTTPTimeout = 10 * time.Second
 	// maxKVErrBody caps how much of a Cloudflare error body is read into an error.
@@ -86,4 +93,43 @@ func (m *KVMirror) Set(ctx context.Context, enabled bool) error {
 		return fmt.Errorf("write kv value: cloudflare returned %d: %s", resp.StatusCode, bytes.TrimSpace(snippet))
 	}
 	return nil
+}
+
+// Get reads key from the namespace. found is false when the key does not
+// exist (Cloudflare answers 404). The token is never included in errors.
+func (m *KVMirror) Get(ctx context.Context, key string) (value []byte, found bool, err error) {
+	if m == nil {
+		return nil, false, fmt.Errorf("cloudflare kv mirror not configured")
+	}
+	endpoint := fmt.Sprintf("%s/accounts/%s/storage/kv/namespaces/%s/values/%s",
+		m.baseURL, url.PathEscape(m.accountID), url.PathEscape(m.namespaceID), url.PathEscape(key))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("build kv request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+m.apiToken)
+	resp, err := m.http.Do(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("read kv value: %w", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Warn("close cloudflare kv response body", "err", cerr)
+		}
+	}()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		snippet, rerr := io.ReadAll(io.LimitReader(resp.Body, maxKVErrBody))
+		if rerr != nil {
+			return nil, false, fmt.Errorf("read kv value: cloudflare returned %d (response unreadable: %v)", resp.StatusCode, rerr)
+		}
+		return nil, false, fmt.Errorf("read kv value: cloudflare returned %d: %s", resp.StatusCode, bytes.TrimSpace(snippet))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxKVValue))
+	if err != nil {
+		return nil, false, fmt.Errorf("read kv value body: %w", err)
+	}
+	return body, true, nil
 }

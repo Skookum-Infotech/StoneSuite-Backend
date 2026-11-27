@@ -117,6 +117,11 @@ func (s *StorageRefresher) refreshAsync(tenantID, bucket string) {
 	}()
 }
 
+// Measure lists the tenant's bucket and persists a fresh snapshot of it.
+func (s *StorageRefresher) Measure(ctx context.Context, tenantID, bucket string) (*StorageSnapshot, error) {
+	return s.measure(ctx, tenantID, bucket)
+}
+
 func (s *StorageRefresher) measure(ctx context.Context, tenantID, bucket string) (*StorageSnapshot, error) {
 	if s.measurer == nil {
 		return nil, errors.New("r2 not configured")

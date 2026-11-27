@@ -1,0 +1,8 @@
+{
+  "name": "stonesuite-watchdog",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test checks.test.js report.test.js worker.test.js"
+  }
+}

@@ -3,7 +3,7 @@
 _Loaded automatically when Claude reads files under `automation/`. Moved verbatim from the root CLAUDE.md._
 
 ## Automation Engine (`automation/` + `POST /api/internal/automation/tick`)
-The `automation-cron` Worker signs a tick every 15 min; `automation.Runner` runs every
+The `automation-cron` Worker signs a tick once a day (14:00 UTC); `automation.Runner` runs every
 `DefaultJobs()` entry per servable tenant **inside the request** (scale-to-zero can stop the
 machine after the response).
 0. **Platform on/off, default OFF** (`platform_automation_settings`, control plane;
@@ -12,7 +12,9 @@ machine after the response).
    does not call the backend unless it is `"1"`; the tick re-checks the DB flag as a
    backstop and fails closed. The DB row is the source of truth, KV is a mirror: PUT writes
    DB first, then KV (502 + retry if KV fails). It also gates scheduled vendor-payment
-   dispatch. Any new job inherits this; don't add a second scheduler path around it.
+   dispatch. Any new job inherits this; don't add a second scheduler path around it. The
+   daily usage rollup (`/api/internal/usage/rollup`, cron 02:41 UTC) is the single approved
+   exception — metering must run while automation is off, and it wakes the machine once a day.
 1. **"Today" is tenant-local, computed in Go** (`automation.TenantToday` /
    `TenantLocation`, from `company_profile.timezone`, fallback
    `AUTOMATION_DEFAULT_TIMEZONE`) and passed as a `$n` param. Automation SQL never uses
